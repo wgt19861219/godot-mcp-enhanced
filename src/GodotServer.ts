@@ -1,4 +1,4 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+﻿import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -9,6 +9,20 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSy
 import { join, resolve, dirname, basename, isAbsolute } from 'path';
 import { tmpdir } from 'os';
 import { parseTscn, parseTscnSummary, type ParsedScene } from './tscn-parser.js';
+import {
+  editNodeProperty,
+  deleteNode,
+  addConnection,
+  removeConnection,
+  setNodeScript,
+  changeNodeType,
+} from './tscn-editor.js';
+import {
+  readResource as readResourceFile,
+  writeResource as writeResourceFile,
+  listResources as listResourceFiles,
+} from './resource-manager.js';
+import { copyFileSync } from 'fs';
 
 const DEBUG = process.env.DEBUG === 'true';
 
