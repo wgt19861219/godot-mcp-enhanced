@@ -1,4 +1,4 @@
-﻿import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -277,10 +277,11 @@ export class GodotServer {
           inputSchema: {
             type: 'object' as const,
             properties: {
+                            project_path: { type: 'string', description: 'Path to Godot project directory' },
               scene_path: { type: 'string', description: 'Absolute path to the .tscn file' },
               summary_only: { type: 'boolean', description: 'Return human-readable summary instead of full JSON', default: false },
             },
-            required: ['scene_path'],
+            required: ['project_path', 'scene_path'],
           },
         },
         {
@@ -394,7 +395,7 @@ export class GodotServer {
           inputSchema: {
             type: 'object' as const,
             properties: { script_path: { type: 'string', description: 'Absolute path to the .gd file' } },
-            required: ['script_path'],
+            required: ['project_path', 'script_path'],
           },
         },
         {
@@ -403,6 +404,7 @@ export class GodotServer {
           inputSchema: {
             type: 'object' as const,
             properties: {
+                            project_path: { type: 'string', description: 'Path to Godot project directory' },
               script_path: { type: 'string', description: 'Absolute path to the .gd file' },
               content: { type: 'string', description: 'GDScript content to write' },
             },
