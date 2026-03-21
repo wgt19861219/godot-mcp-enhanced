@@ -1,0 +1,28 @@
+{
+  "name": "godot-mcp-enhanced",
+  "version": "0.1.0",
+  "description": "Enhanced MCP server for Godot game engine - closed-loop AI development with scene reading, script R/W, screenshots, and testing",
+  "keywords": ["godot", "mcp", "ai", "claude", "game-dev", "closed-loop"],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "godot-mcp-enhanced": "./build/index.js"
+  },
+  "files": ["build"],
+  "scripts": {
+    "build": "tsc",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "prepare": "npm run build",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "0.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
