@@ -322,7 +322,16 @@ export class GodotServer {
     }));
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: args } = request.params;
+      const { name, arguments: rawArgs } = request.params;
+      // Normalize camelCase -> snake_case
+      const args: Record<string, any> = {};
+      if (rawArgs) {
+        for (const [key, value] of Object.entries(rawArgs)) {
+          const snake = key.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase());
+          args[snake] = value;
+          args[key] = value;
+        }
+      }
       try {
         return await this.handleTool(name, args ?? {});
       } catch (err) {
@@ -457,7 +466,7 @@ func _ready():
 func _process(_delta):
     frames += 1
     if frames >= max_frames:
-        var img = get_viewport().get_texture().get_image()
+        var img = get_root().get_viewport().get_texture().get_image()
         img.save_png(output_path)
         print("[INFO] Screenshot saved to: " + output_path)
         quit()
@@ -656,7 +665,7 @@ func _process(_delta):
       // ══════════════════════════════════════════════════════════════════════
 
       case 'read_scene': {
-        const sp = validatePath(args.scene_path as string);
+        const sp = join(validatePath(args.project_path as string), args.scene_path as string);
         if (!existsSync(sp)) return text(`Scene file not found: ${sp}`);
 
         const content = readFileSync(sp, 'utf-8');
@@ -738,7 +747,7 @@ func _process(_delta):
       // ══════════════════════════════════════════════════════════════════════
 
       case 'read_script': {
-        const sp = validatePath(args.script_path as string);
+        const sp = join(validatePath(args.project_path as string), args.script_path as string);
         if (!existsSync(sp)) return text(`Script not found: ${sp}`);
 
         const content = readFileSync(sp, 'utf-8');
@@ -764,7 +773,7 @@ func _process(_delta):
       }
 
       case 'write_script': {
-        const sp = validatePath(args.script_path as string);
+        const sp = join(validatePath(args.project_path as string), args.script_path as string);
         const content = args.content as string;
 
         ensureDir(sp);
