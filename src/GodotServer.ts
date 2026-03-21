@@ -433,6 +433,42 @@ export class GodotServer {
             },
             required: ['output'],
           },
+        },        // ===== SCAFFOLDING & TEST TOOLS =====
+        {
+          name: 'create_project',
+          description: 'Create a complete Godot 4.5 project structure with project.godot, main scene, main script, and assets directory.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Directory path where the project will be created' },
+              project_name: { type: 'string', description: 'Project name (default: folder name)', default: '' },
+              renderer: { type: 'string', description: 'Renderer to use: "forward_plus" (default), "mobile", or "gl_compatibility"', default: 'forward_plus', enum: ['forward_plus', 'mobile', 'gl_compatibility'] },
+            },
+            required: ['project_path'],
+          },
+        },
+        {
+          name: 'generate_test',
+          description: 'Analyze a GDScript file and generate a GUT (Godot Unit Test) test script. Reads the script, extracts public methods, and generates test stubs. The generated code is returned as text — use write_script to save it.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              script_path: { type: 'string', description: 'Path to the GDScript to test, relative to project root (e.g. scripts/player.gd)' },
+            },
+            required: ['project_path', 'script_path'],
+          },
+        },
+        {
+          name: 'create_test_scene',
+          description: 'Create a GUT test runner scene (test_scene.tscn) for a Godot project. Checks if GUT addon is installed.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+            },
+            required: ['project_path'],
+          },
         },
       ],
     }));
@@ -1028,7 +1064,199 @@ export class GodotServer {
         const analysis = analyzeOutput(lines);
         return text(JSON.stringify(analysis, null, 2));
       }
-      default:
+        // ===== SCAFFOLDING & TEST TOOLS =====
+
+      case 'create_project': {
+        const p = validatePath(args.project_path as string);
+        const projectName = (args.project_name as string) || basename(p);
+        const renderer = (args.renderer as string) || 'forward_plus';
+        const validRenderers = ['forward_plus', 'mobile', 'gl_compatibility'];
+        if (!validRenderers.includes(renderer)) {
+          return text(`Error: Invalid renderer "${renderer}". Must be one of: ${validRenderers.join(', ')}`);
+        }
+
+        if (existsSync(join(p, 'project.godot'))) {
+          return text(`Error: project.godot already exists at ${p}. This directory appears to be an existing Godot project.`);
+        }
+
+        // Create directory structure
+        mkdirSync(join(p, 'scenes'), { recursive: true });
+        mkdirSync(join(p, 'scripts'), { recursive: true });
+        mkdirSync(join(p, 'assets'), { recursive: true });
+
+        // Write project.godot
+        const projectGodot = [
+          '; Engine configuration file.',
+          'config_version=5',
+          '',
+          '[application]',
+          '',
+          'config/name="' + projectName + '"',
+          'run/main_scene="res://scenes/main.tscn"',
+          'config/features=PackedStringArray("4.5")',
+          '',
+          '[display]',
+          '',
+          'window/size/viewport_width=1280',
+          'window/size/viewport_height=720',
+          '',
+          '[rendering]',
+          '',
+          'renderer="' + renderer + '"',
+          '',
+        ].join('\n');
+        writeFileSync(join(p, 'project.godot'), projectGodot, 'utf-8');
+
+        // Write main.tscn
+        const mainTscn = [
+          '[gd_scene load_steps=2 format=3 uid="uid://b6q8a1x2c3d4"]',
+          '',
+          '[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]',
+          '',
+          '[node name="Main" type="Node2D"]',
+          'script = ExtResource("1_main")',
+          '',
+        ].join('\n');
+        writeFileSync(join(p, 'scenes', 'main.tscn'), mainTscn, 'utf-8');
+
+        // Write main.gd
+        const mainGd = [
+          'extends Node2D',
+          '',
+          'func _ready() -> void:',
+          "\tprint(\"Hello, Godot 4.5!\")",
+          '',
+        ].join('\n');
+        writeFileSync(join(p, 'scripts', 'main.gd'), mainGd, 'utf-8');
+
+        return text(
+          `Project created successfully at ${p}\n\n` +
+          `Structure:\n` +
+          `  ├── project.godot      (name: ${projectName}, renderer: ${renderer})\n` +
+          `  ├── scenes/main.tscn   (Node2D root + main.gd script)\n` +
+          `  ├── scripts/main.gd    (_ready template)\n` +
+          `  └── assets/            (empty)\n\n` +
+          `Run with: launch_editor(project_path="${p}")`
+        );
+      }
+
+      case 'generate_test': {
+        const projectPath = validatePath(args.project_path as string);
+        const scriptPath = args.script_path as string;
+        if (!scriptPath) {
+          return text('Error: script_path is required (e.g. "scripts/player.gd")');
+        }
+
+        const fullScriptPath = join(projectPath, scriptPath);
+        if (!existsSync(fullScriptPath)) {
+          return text(`Error: Script not found: ${fullScriptPath}`);
+        }
+
+        const source = readFileSync(fullScriptPath, 'utf-8');
+        const srcLines = source.split('\n');
+
+        // Extract extends and class_name
+        let extendsClass = '';
+        let className = '';
+        for (const line of srcLines) {
+          const extMatch = line.match(/^extends\s+(\S+)/);
+          if (extMatch) extendsClass = extMatch[1];
+          const clsMatch = line.match(/^class_name\s+(\S+)/);
+          if (clsMatch) className = clsMatch[1];
+        }
+
+        // Extract public methods (func that don't start with _)
+        const publicMethods: string[] = [];
+        for (const line of srcLines) {
+          const funcMatch = line.match(/^func\s+(\w+)\s*\(/);
+          if (funcMatch && !funcMatch[1].startsWith('_')) {
+            publicMethods.push(funcMatch[1]);
+          }
+        }
+
+        if (publicMethods.length === 0) {
+          return text(
+            `No public methods found in ${scriptPath}.\n` +
+            `Only private methods (starting with _) were detected or the file has no functions.\n` +
+            `The script extends "${extendsClass || 'unknown'}".`
+          );
+        }
+
+        // Build GUT test script
+        const testTarget = className || (scriptPath.includes('/') ? scriptPath.split('/').pop()?.replace('.gd', '') || 'Target' : scriptPath.replace('.gd', ''));
+        const scriptResPath = scriptPath.startsWith('res://') ? scriptPath : `res://${scriptPath}`;
+
+        let testCode = 'extends GutTest\n\n';
+        testCode += `var ${testTarget}  # Instance under test\n\n`;
+        testCode += 'func before_each():\n';
+        testCode += `\t${testTarget} = load("${scriptResPath}").new()\n\n`;
+        testCode += 'func after_each():\n';
+        testCode += `\tif is_instance_valid(${testTarget}):\n`;
+        testCode += `\t\t${testTarget}.free()\n\n`;
+
+        for (const method of publicMethods) {
+          testCode += `func test_${method}():\n`;
+          testCode += `\tvar result = ${testTarget}.${method}()\n`;
+          testCode += `\tassert_not_null(result, "${method} should return a value")\n\n`;
+        }
+
+        const outputTestPath = join(projectPath, 'test', 'scripts', `test_${basename(scriptPath)}`);
+
+        return text(
+          `Generated GUT test for ${scriptPath}\n\n` +
+          `Target class: ${testTarget}\n` +
+          `Extends: ${extendsClass || 'N/A'}\n` +
+          `Class name: ${className || 'N/A'}\n` +
+          `Public methods found: ${publicMethods.length}\n` +
+          `  ${publicMethods.join(', ')}\n\n` +
+          `Suggested save path: ${outputTestPath}\n\n` +
+          `--- Generated test code ---\n${testCode}` +
+          `--- End of generated code ---\n\n` +
+          `To save, use: write_script(project_path="${projectPath}", script_path="test/scripts/test_${basename(scriptPath)}", content=<above code>)`
+        );
+      }
+
+      case 'create_test_scene': {
+        const p = validatePath(args.project_path as string);
+
+        // Check if GUT is installed
+        const gutDir = join(p, 'addons', 'gut');
+        if (!existsSync(gutDir)) {
+          return text(
+            `GUT (Godot Unit Test) addon not found at ${gutDir}.\n\n` +
+            `To install GUT:\n` +
+            `1. Download from: https://github.com/bitwes/Gut/releases\n` +
+            `2. Extract to ${join(p, 'addons', 'gut')}\n` +
+            `3. Or use the Godot Asset Library: https://godotengine.org/asset-library/asset/282\n\n` +
+            `After installing GUT, run create_test_scene again.`
+          );
+        }
+
+        // Ensure test directories
+        mkdirSync(join(p, 'test', 'scripts'), { recursive: true });
+
+        // Create test_scene.tscn
+        const testSceneContent = [
+          '[gd_scene load_steps=2 format=3]',
+          '',
+          '[ext_resource type="Script" path="res://addons/gut/gut.gd" id="1_gut"]',
+          '',
+          '[node name="TestScene" type="Node"]',
+          'script = ExtResource("1_gut")',
+          '',
+        ].join('\n');
+        writeFileSync(join(p, 'test_scene.tscn'), testSceneContent, 'utf-8');
+
+        return text(
+          `GUT test scene created at ${join(p, 'test_scene.tscn')}\n\n` +
+          `To run tests:\n` +
+          `1. Open test_scene.tscn in Godot editor\n` +
+          `2. Click "Run All" in the GUT panel\n` +
+          `3. Or use run_tests(project_path="${p}") for headless testing\n\n` +
+          `Test scripts should be placed in: test/scripts/`
+        );
+      }
+    default:
         return text(`Unknown tool: ${name}`);
     }
   }
