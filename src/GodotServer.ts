@@ -1,4 +1,4 @@
-﻿import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -31,6 +31,11 @@ import {
   findMethod,
   getInheritanceChain,
 } from './godot-docs.js';
+import { analyzeOutput } from './error-analyzer.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const DEBUG = process.env.DEBUG === 'true';
 
@@ -386,6 +391,31 @@ export class GodotServer {
               content: { type: 'string', description: 'GDScript content to write' },
             },
             required: ['script_path', 'content'],
+          },
+        },
+        // ===== Run Verification tools =====
+        {
+          name: 'run_and_verify',
+          description: 'One-click run a Godot project in headless mode and return structured analysis (errors, warnings, suggestions). Automatically stops after timeout.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              scene: { type: 'string', description: 'Optional scene file to run (e.g. res://scenes/main.tscn)' },
+              timeout: { type: 'number', description: 'Auto-stop after N seconds (default: 15)', default: 15 },
+            },
+            required: ['project_path'],
+          },
+        },
+        {
+          name: 'analyze_error',
+          description: 'Analyze existing Godot error output text and return structured analysis with fix suggestions. Use this to re-analyze previous output.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              output: { type: 'string', description: 'The Godot runtime output to analyze (full text)' },
+            },
+            required: ['output'],
           },
         },
       ],
@@ -931,6 +961,43 @@ func _process(_delta):
         return text(`Script written to ${sp} (${content.split('\n').length} lines)`);
       }
 
+      // ===== RUN VERIFICATION TOOLS =====
+
+      case 'run_and_verify': {
+        const projectPath = validatePath(args.project_path as string);
+        const timeout = (args.timeout as number) || 15;
+        const scene = args.scene as string | undefined;
+
+        const godot = await findGodot();
+        const cmdArgs = ['--headless', '--path', projectPath];
+        if (scene) cmdArgs.push(scene);
+
+        try {
+          const { stdout, stderr } = await execFileAsync(godot, cmdArgs, { timeout: timeout * 1000 });
+          const allOutput = [...(stdout || '').split('\n'), ...(stderr || '').split('\n')];
+          const analysis = analyzeOutput(allOutput);
+          return text(JSON.stringify(analysis, null, 2));
+        } catch (e: any) {
+          const allOutput = [...(e.stdout || '').split('\n'), ...(e.stderr || '').split('\n')];
+          const analysis = analyzeOutput(allOutput);
+          if (e.killed) {
+            analysis.summary += '\nNote: Process timed out after ' + timeout + 's (this is normal for interactive projects)';
+          } else {
+            analysis.summary += '\nNote: Process exited with code ' + (e.code || 'unknown');
+          }
+          return text(JSON.stringify(analysis, null, 2));
+        }
+      }
+
+      case 'analyze_error': {
+        const outputText = args.output as string;
+        if (!outputText || !outputText.trim()) {
+          return text('Error: "output" parameter is required and must not be empty.');
+        }
+        const lines = outputText.split('\n');
+        const analysis = analyzeOutput(lines);
+        return text(JSON.stringify(analysis, null, 2));
+      }
       default:
         return text(`Unknown tool: ${name}`);
     }
