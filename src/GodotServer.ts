@@ -23,6 +23,14 @@ import {
   listResources as listResourceFiles,
 } from './resource-manager.js';
 import { copyFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import {
+  initDocs as initGodotDocs,
+  getClassInfo,
+  searchClasses,
+  findMethod,
+  getInheritanceChain,
+} from './godot-docs.js';
 
 const DEBUG = process.env.DEBUG === 'true';
 
@@ -310,7 +318,55 @@ export class GodotServer {
             required: ['project_path', 'scene_path', 'texture_path'],
           },
         },
-        // ── Script tools ──
+        // ===== API Documentation tools =====
+        {
+          name: 'get_class_info',
+          description: 'Get complete information about a Godot class including methods, properties, signals, and constants.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              class_name: { type: 'string', description: 'Godot class name (e.g. Node2D, Control, CharacterBody2D)' },
+              include_inherited: { type: 'boolean', description: 'Include inherited members (default: true)', default: true },
+            },
+            required: ['class_name'],
+          },
+        },
+        {
+          name: 'search_classes',
+          description: 'Search Godot classes by name or description. Useful for discovering available classes.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              query: { type: 'string', description: 'Search query (e.g. "sprite", "physics", "audio")' },
+              limit: { type: 'number', description: 'Max results (default: 20)', default: 20 },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'find_method',
+          description: 'Find a specific method on a Godot class, searching up the inheritance chain. Returns signature, parameters, and description.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              class_name: { type: 'string', description: 'Godot class name' },
+              method_name: { type: 'string', description: 'Method name to find' },
+            },
+            required: ['class_name', 'method_name'],
+          },
+        },
+        {
+          name: 'get_inheritance',
+          description: 'Get the full inheritance chain of a Godot class.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              class_name: { type: 'string', description: 'Godot class name' },
+            },
+            required: ['class_name'],
+          },
+        },
+        // ===== Script tools =====
         {
           name: 'read_script',
           description: 'Read a GDScript (.gd) file with metadata (extends, class_name, line count).',
@@ -757,7 +813,86 @@ func _process(_delta):
       }
 
       // ══════════════════════════════════════════════════════════════════════
-      // SCRIPT TOOLS
+      // ===== API DOCUMENTATION TOOLS =====
+
+      case 'get_class_info': {
+        const className = args.class_name as string;
+        const includeInherited = args.include_inherited !== false;
+        const info = getClassInfo(className, includeInherited);
+        if (!info) {
+          return text(`Class not found: ${className}`);
+        }
+        const result = {
+          name: info.name,
+          inherits: info.inherits,
+          brief_description: info.brief_description,
+          description: info.description,
+          methods_count: info.methods.length,
+          methods: info.methods.map(m => ({
+            name: m.name,
+            signature: `${m.return_type} ${m.name}(${m.arguments.map(a => a.type + ' ' + a.name).join(', ')})`,
+            description: m.description,
+          })),
+          properties_count: info.properties.length,
+          properties: info.properties.map(p => ({
+            name: p.name,
+            type: p.type,
+            description: p.description,
+          })),
+          signals_count: info.signals.length,
+          signals: info.signals.map(s => ({
+            name: s.name,
+            description: s.description,
+          })),
+          constants_count: info.constants.length,
+          constants: info.constants.slice(0, 50),
+          enums_count: info.enums.length,
+        };
+        return text(JSON.stringify(result, null, 2));
+      }
+
+      case 'search_classes': {
+        const query = args.query as string;
+        const limit = (args.limit as number) || 20;
+        const results = searchClasses(query, limit);
+        if (results.length === 0) {
+          return text(`No classes found matching "${query}"`);
+        }
+        return text(JSON.stringify({ count: results.length, classes: results }, null, 2));
+      }
+
+      case 'find_method': {
+        const className = args.class_name as string;
+        const methodName = args.method_name as string;
+        const method = findMethod(className, methodName);
+        if (!method) {
+          return text(`Method "${methodName}" not found on ${className} or its parent classes.`);
+        }
+        const result = {
+          class: className,
+          name: method.name,
+          return_type: method.return_type,
+          arguments: method.arguments.map(a => ({
+            name: a.name,
+            type: a.type,
+            default: a.default_value,
+          })),
+          signature: `${method.return_type} ${method.name}(${method.arguments.map(a => a.type + ' ' + a.name + (a.default_value ? ' = ' + a.default_value : '')).join(', ')})`,
+          description: method.description,
+        };
+        return text(JSON.stringify(result, null, 2));
+      }
+
+      case 'get_inheritance': {
+        const className = args.class_name as string;
+        const chain = getInheritanceChain(className);
+        if (chain.length === 0) {
+          return text(`Class not found: ${className}`);
+        }
+        return text(JSON.stringify({ class: className, inheritance_chain: chain }, null, 2));
+      }
+
+      // ===== SCRIPT TOOLS =====
       // ══════════════════════════════════════════════════════════════════════
 
       case 'read_script': {
