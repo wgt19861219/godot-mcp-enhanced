@@ -1,4 +1,4 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+﻿import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
   CallToolRequestSchema,
@@ -6,7 +6,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { spawn, ChildProcess } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, rmSync } from 'fs';
-import { join, resolve, dirname, basename, isAbsolute } from 'path';
+import { join, resolve, dirname, basename, isAbsolute, extname } from 'path';
 import { tmpdir } from 'os';
 import { parseTscn, parseTscnSummary, type ParsedScene } from './tscn-parser.js';
 import {
@@ -32,6 +32,7 @@ import {
   getInheritanceChain,
 } from './godot-docs.js';
 import { analyzeOutput } from './error-analyzer.js';
+import { captureScreenshot } from './screenshot.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -181,16 +182,31 @@ export class GodotServer {
         },
         {
           name: 'capture_screenshot',
-          description: 'Capture a screenshot of a running Godot project scene via headless mode.',
+          description: 'Capture a screenshot of a Godot project scene (experimental). Uses headless mode with opengl3 driver. Falls back gracefully if rendering is not available.',
           inputSchema: {
             type: 'object' as const,
             properties: {
               project_path: { type: 'string', description: 'Path to Godot project directory' },
-              scene_path: { type: 'string', description: 'Scene file path relative to project (res://scenes/main.tscn)' },
-              output_path: { type: 'string', description: 'Output PNG path (absolute)' },
-              wait_frames: { type: 'number', description: 'Frames to wait before capture (default: 5)', default: 5 },
+              scene: { type: 'string', description: 'Scene file path relative to project (res://scenes/main.tscn). If omitted, captures the default scene or an empty viewport.' },
+              output_path: { type: 'string', description: 'Output PNG path (absolute). Defaults to <project_path>/screenshot.png' },
+              frame_delay: { type: 'number', description: 'Frames to wait before capture (default: 10)', default: 10 },
+              viewport_width: { type: 'number', description: 'Viewport width in pixels (default: 1280)', default: 1280 },
+              viewport_height: { type: 'number', description: 'Viewport height in pixels (default: 720)', default: 720 },
             },
-            required: ['project_path', 'output_path'],
+            required: ['project_path'],
+          },
+        },
+        {
+          name: 'analyze_screenshot',
+          description: 'Return a screenshot as a base64 image for AI visual analysis. The AI can then describe what it sees, identify UI elements, spot bugs, etc. Works with any image file (PNG, JPG).',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              image_path: { type: 'string', description: 'Absolute path to the image file (PNG or JPG)' },
+              project_path: { type: 'string', description: 'Project path - if provided, image_path is resolved relative to the project directory' },
+              question: { type: 'string', description: 'Question for the AI to answer about the image. Default: "Describe what you see in this game screenshot."', default: 'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.' },
+            },
+            required: [],
           },
         },
         {
@@ -442,7 +458,7 @@ export class GodotServer {
     });
   }
 
-  private async handleTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text: string }> }> {
+  private async handleTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }> {
     const text = (s: string) => ({ content: [{ type: 'text', text: s }] });
 
     switch (name) {
@@ -544,69 +560,83 @@ export class GodotServer {
       }
 
       case 'capture_screenshot': {
-        const p = validatePath(args.project_path as string);
-        const scene = (args.scene_path as string) || 'res://scenes/main.tscn';
-        const output = validatePath(args.output_path as string);
-        const waitFrames = (args.wait_frames as number) || 5;
+        const projectPath = validatePath(args.project_path as string);
+        const scene = args.scene as string | undefined;
+        const outputPath = args.output_path
+          ? validatePath(args.output_path as string)
+          : join(projectPath, 'screenshot.png');
+        const frameDelay = (args.frame_delay as number) || 10;
+        const viewportW = (args.viewport_width as number) || 1280;
+        const viewportH = (args.viewport_height as number) || 720;
         const godot = await findGodot();
 
-        // Create temporary GDScript
-        const screenshotScript = `
-extends SceneTree
-var frames = 0
-var max_frames = ${waitFrames}
-var output_path = "${output.replace(/\\/g, '\\\\')}"
-
-func _ready():
-    var scene = load("${scene}")
-    if scene:
-        var inst = scene.instantiate()
-        get_root().add_child(inst)
-
-func _process(_delta):
-    frames += 1
-    if frames >= max_frames:
-        var img = get_root().get_viewport().get_texture().get_image()
-        img.save_png(output_path)
-        print("[INFO] Screenshot saved to: " + output_path)
-        quit()
-`;
-        const tmpScript = join(tmpdir(), `screenshot_${Date.now()}.gd`);
-        writeFileSync(tmpScript, screenshotScript);
-        log('Screenshot script:', tmpScript);
-
-        return new Promise((resolve) => {
-          const proc = spawn(godot, ['--headless', '--path', p, '--script', tmpScript], {
-            stdio: ['pipe', 'pipe', 'pipe'],
-          });
-
-          let out = '';
-          proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
-          proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
-
-          proc.on('close', (code) => {
-            // Cleanup temp script
-            try { rmSync(tmpScript); } catch { /* ignore */ }
-
-            if (code !== 0) {
-              resolve({ content: [{ type: 'text', text: `Screenshot failed (exit code ${code}). Output:\n${out}` }] });
-            } else if (existsSync(output)) {
-              resolve({ content: [{ type: 'text', text: `Screenshot saved to: ${output}\nFrames waited: ${waitFrames}` }] });
-            } else {
-              resolve({ content: [{ type: 'text', text: `Screenshot command completed but file not found at: ${output}\nOutput:\n${out}` }] });
-            }
-          });
-
-          // Timeout after 30s
-          setTimeout(() => {
-            if (!proc.killed) {
-              proc.kill('SIGTERM');
-              resolve({ content: [{ type: 'text', text: 'Screenshot timed out after 30s.' }] });
-            }
-          }, 30000);
+        const result = await captureScreenshot({
+          godotPath: godot,
+          projectPath,
+          scene,
+          outputPath,
+          frameDelay,
+          viewportSize: { width: viewportW, height: viewportH },
+          timeout: 30,
         });
+
+        if (result.success) {
+          return text(
+            `Screenshot saved to: ${result.imagePath}\n` +
+            `File size: ${result.fileSize} bytes\n` +
+            `Viewport: ${viewportW}x${viewportH}\n` +
+            `Frames waited: ${frameDelay}\n\n` +
+            'Use analyze_screenshot to have the AI examine this image.'
+          );
+        } else {
+          return text(
+            `Screenshot failed: ${result.error}\n\n` +
+            (result.godotOutput ? `Godot output:\n${result.godotOutput}\n\n` : '') +
+            'Note: Screenshot capture is experimental. Headless rendering may not be available on all systems.'
+          );
+        }
       }
 
+      case 'analyze_screenshot': {
+        let imagePath = args.image_path as string | undefined;
+        const projectPath = args.project_path as string | undefined;
+        const question = (args.question as string) ||
+          'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.';
+
+        if (imagePath) {
+          if (!isAbsolute(imagePath) && projectPath) {
+            imagePath = resolve(projectPath, imagePath);
+          }
+          imagePath = validatePath(imagePath);
+        } else if (projectPath) {
+          imagePath = join(validatePath(projectPath), 'screenshot.png');
+        } else {
+          return text('Error: either image_path or project_path is required.');
+        }
+
+        if (!existsSync(imagePath)) {
+          return text(`Image not found: ${imagePath}`);
+        }
+
+        const imageBuffer = readFileSync(imagePath);
+        const base64 = imageBuffer.toString('base64');
+        const ext = extname(imagePath).toLowerCase();
+        const mimeType = (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' : 'image/png';
+
+        return {
+          content: [
+            {
+              type: 'image' as const,
+              data: base64,
+              mimeType,
+            },
+            {
+              type: 'text' as const,
+              text: question,
+            },
+          ],
+        };
+      }
       case 'run_tests': {
         const p = validatePath(args.project_path as string);
         const testScript = (args.test_script as string) || 'res://test/';
