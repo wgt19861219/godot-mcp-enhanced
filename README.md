@@ -2,7 +2,9 @@
 
 Enhanced MCP server for Godot game engine — designed for **closed-loop AI-assisted development**.
 
-Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps filled: scene reading, script R/W, screenshots, testing, and structured output.
+Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps filled: scene reading, script R/W, screenshots, testing, **dynamic GDScript execution**, and more.
+
+**[中文文档](README.zh.md)**
 
 ## What's New vs Original godot-mcp
 
@@ -26,6 +28,9 @@ Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps
 | **Read project config** | **No** | **Yes** |
 | **Capture screenshot** | **No** | **Yes** |
 | **Run unit tests (GUT)** | **No** | **Yes** |
+| **Execute arbitrary GDScript** | **No** | **Yes** |
+| **Query scene tree (runtime)** | **No** | **Yes** |
+| **Deep inspect node** | **No** | **Yes** |
 
 ## The Closed-Loop Problem
 
@@ -44,6 +49,8 @@ godot-mcp-enhanced closes the loop:
 read_scene/read_script -> understand structure -> write_script -> run_project
 -> get_debug_output/capture_screenshot -> analyze -> fix -> verify
 ```
+
+And now with `execute_gdscript`, the AI can perform **any operation** that GDScript supports — from manipulating nodes to querying engine state — all through a single flexible tool.
 
 ## Installation
 
@@ -74,7 +81,7 @@ Create `.cursor/mcp.json` in your project:
 }
 ```
 
-### Cline
+### Cline / Claude Code
 
 Add to your MCP settings:
 
@@ -94,7 +101,8 @@ Add to your MCP settings:
         "get_godot_version", "list_projects", "get_project_info",
         "list_files", "read_project_config",
         "read_scene", "create_scene", "add_node", "save_scene", "load_sprite",
-        "read_script", "write_script"
+        "read_script", "write_script",
+        "execute_gdscript", "query_scene_tree", "inspect_node"
       ]
     }
   }
@@ -108,7 +116,7 @@ Add to your MCP settings:
 | `GODOT_PATH` | Path to Godot executable | Auto-detected |
 | `DEBUG` | Enable verbose logging | `false` |
 
-## Tools (18 total)
+## Tools (30 total)
 
 ### Execution
 
@@ -121,6 +129,14 @@ Add to your MCP settings:
 | `capture_screenshot` | Capture game screenshot (headless mode) |
 | `run_tests` | Run GUT unit tests and parse results |
 | `get_godot_version` | Get installed Godot version |
+
+### Dynamic Execution (NEW)
+
+| Tool | Description |
+|------|-------------|
+| `execute_gdscript` | Execute arbitrary GDScript code in headless mode. Supports snippet mode (auto-wrapped) and full class mode. Returns structured key-value results. |
+| `query_scene_tree` | Load a scene and query its runtime node tree with resolved property values (not just static .tscn file data). |
+| `inspect_node` | Deep-inspect a node: all properties, signal connections, children with recursive depth control. |
 
 ### Project
 
@@ -148,6 +164,64 @@ Add to your MCP settings:
 | `read_script` | Read .gd file with metadata |
 | `write_script` | Write/overwrite .gd file |
 
+### API Documentation
+
+| Tool | Description |
+|------|-------------|
+| `get_class_info` | Get class methods, properties, signals, constants |
+| `search_classes` | Search for classes by name/description |
+| `find_method` | Find method details with inheritance lookup |
+| `get_inheritance` | Get full inheritance chain |
+
+## `execute_gdscript` Details
+
+### Snippet Mode (default)
+
+When your code doesn't contain `extends`, it's automatically wrapped:
+
+```gdscript
+# Your input:
+var scene = load("res://scenes/main.tscn")
+var root = scene.instantiate()
+_mcp_output("node_count", str(root.get_child_count()))
+_mcp_output("root_type", root.get_class())
+```
+
+This gets wrapped into a full `extends SceneTree` script with helper functions. Use `_mcp_output(key, value)` to return structured results.
+
+### Full Class Mode
+
+When your code contains `extends`, it's used as-is with helper injection:
+
+```gdscript
+extends SceneTree
+
+func _initialize():
+    var project = ProjectSettings.globalize_path("res://")
+    _mcp_output("project_path", project)
+    var screen = DisplayServer.screen_get_size(0)
+    _mcp_output("screen_size", str(screen))
+    quit()
+```
+
+### Response Format
+
+```json
+{
+  "success": true,
+  "compile_success": true,
+  "compile_error": "",
+  "run_success": true,
+  "run_error": "",
+  "outputs": [
+    { "key": "node_count", "value": "5" },
+    { "key": "root_type", "value": "Node2D" }
+  ],
+  "raw_output": "",
+  "duration_ms": 1250
+}
+```
+
 ## Closed-Loop Workflow Example
 
 ```
@@ -172,12 +246,15 @@ Add to your MCP settings:
 7. AI: stop_project()
    -> Gets full summary, checks if issues resolved
 
-8. If errors remain -> go back to step 2
+8. AI: execute_gdscript(project, code="var s=load('res://main.tscn').instantiate(); _mcp_output('children', str(s.get_child_count()))")
+   -> Queries runtime state for advanced debugging
+
+9. If errors remain -> go back to step 2
 ```
 
 ## Requirements
 
-- Godot Engine 4.x (tested with 4.5)
+- Godot Engine 4.x (tested with 4.5+)
 - Node.js >= 18
 - GUT addon (for `run_tests` tool)
 

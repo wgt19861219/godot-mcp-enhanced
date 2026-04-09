@@ -33,6 +33,7 @@ import {
 } from './godot-docs.js';
 import { analyzeOutput } from './error-analyzer.js';
 import { captureScreenshot } from './screenshot.js';
+import { executeGdscript } from './gdscript-executor.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -40,8 +41,46 @@ const execFileAsync = promisify(execFile);
 
 const DEBUG = process.env.DEBUG === 'true';
 
+const MCP_MARKER_RESULT = '___MCP_RESULT___';
+const MCP_MARKER_ERROR = '___MCP_ERROR___';
+
 function log(...args: unknown[]): void {
   if (DEBUG) console.error('[godot-mcp]', ...args);
+}
+
+// ─── MCP output parser for GDScript scripts ─────────────────────────────────
+
+function parseMcpScriptOutput(rawOutput: string, exitCode: number | null): unknown {
+  const lines = rawOutput.split('\n');
+  const logLines: string[] = [];
+  let parsed: unknown = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(MCP_MARKER_RESULT)) {
+      try {
+        parsed = JSON.parse(trimmed.substring(MCP_MARKER_RESULT.length));
+      } catch {
+        parsed = { success: false, error: 'Failed to parse result JSON', raw: trimmed };
+      }
+    } else if (trimmed.startsWith(MCP_MARKER_ERROR)) {
+      try {
+        parsed = JSON.parse(trimmed.substring(MCP_MARKER_ERROR.length));
+      } catch {
+        parsed = { success: false, error: 'Failed to parse error JSON', raw: trimmed };
+      }
+    } else {
+      logLines.push(trimmed);
+    }
+  }
+
+  if (parsed) return parsed;
+
+  return {
+    success: false,
+    error: exitCode !== 0 ? `Process exited with code ${exitCode}` : 'No structured output found',
+    raw_output: logLines.join('\n'),
+  };
 }
 
 // ─── Path helpers ────────────────────────────────────────────────────────────
@@ -470,6 +509,54 @@ export class GodotServer {
               project_path: { type: 'string', description: 'Path to Godot project directory' },
             },
             required: ['project_path'],
+          },
+        },
+        // ===== Dynamic Execution Tools =====
+        {
+          name: 'execute_gdscript',
+          description: 'Execute arbitrary GDScript code in a headless Godot process. '
+            + 'Two modes: (1) Snippet mode — provide code without "extends", auto-wrapped with helpers. '
+            + 'Use _mcp_output(key, value) to return structured results. '
+            + '(2) Full class mode — provide code with "extends SceneTree" for full control.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              code: { type: 'string', description: 'GDScript code to execute' },
+              timeout: { type: 'number', description: 'Timeout in seconds (default: 30)', default: 30 },
+            },
+            required: ['project_path', 'code'],
+          },
+        },
+        {
+          name: 'query_scene_tree',
+          description: 'Load a scene in headless mode and query its runtime node tree with resolved property values. '
+            + 'Unlike read_scene which parses the .tscn file, this instantiates the scene and returns actual runtime properties.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              scene_path: { type: 'string', description: 'Scene file path relative to project (e.g. res://scenes/main.tscn)' },
+              max_depth: { type: 'number', description: 'Maximum tree traversal depth (default: 5)', default: 5 },
+            },
+            required: ['project_path', 'scene_path'],
+          },
+        },
+        {
+          name: 'inspect_node',
+          description: 'Deep-inspect a specific node in a scene. Returns all properties, signal connections, '
+            + 'and child nodes with recursive depth control. Loads the scene in headless mode for runtime values.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              scene_path: { type: 'string', description: 'Scene file path relative to project' },
+              node_path: { type: 'string', description: 'Node path within scene (e.g. "root/Player/Sprite2D")', default: 'root' },
+              max_depth: { type: 'number', description: 'Max depth for child traversal (default: 3)', default: 3 },
+              include_signals: { type: 'boolean', description: 'Include signal connection info (default: true)', default: true },
+              include_properties: { type: 'boolean', description: 'Include property values (default: true)', default: true },
+            },
+            required: ['project_path', 'scene_path'],
           },
         },
       ],
@@ -1258,6 +1345,122 @@ export class GodotServer {
           `Test scripts should be placed in: test/scripts/`
         );
       }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // DYNAMIC EXECUTION TOOLS
+      // ══════════════════════════════════════════════════════════════════════
+
+      case 'execute_gdscript': {
+        const projectPath = validatePath(args.project_path as string);
+        const code = args.code as string;
+        const timeout = (args.timeout as number) || 30;
+        const godot = await findGodot();
+
+        const result = await executeGdscript({
+          godotPath: godot,
+          projectPath,
+          code,
+          timeout,
+        });
+
+        return text(JSON.stringify(result, null, 2));
+      }
+
+      case 'query_scene_tree': {
+        const p = validatePath(args.project_path as string);
+        const godot = await findGodot();
+        const scriptsDir = dirname(this.opsScript);
+        const treeScript = join(scriptsDir, 'query_scene_tree.gd');
+
+        if (!existsSync(treeScript)) {
+          return text(`Error: query_scene_tree.gd not found at ${treeScript}`);
+        }
+
+        const params = {
+          scene_path: args.scene_path,
+          max_depth: (args.max_depth as number) || 5,
+        };
+
+        return new Promise((resolve) => {
+          let out = '';
+          const proc = spawn(godot, [
+            '--headless', '--path', p,
+            '--script', treeScript,
+            JSON.stringify(params),
+          ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+          proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+          proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
+
+          const timer = setTimeout(() => {
+            if (!proc.killed) {
+              proc.kill('SIGTERM');
+              resolve(text('query_scene_tree timed out after 60s'));
+            }
+          }, 60000);
+
+          proc.on('close', (code) => {
+            clearTimeout(timer);
+            const result = parseMcpScriptOutput(out, code);
+            resolve(text(JSON.stringify(result, null, 2)));
+          });
+
+          proc.on('error', (err) => {
+            clearTimeout(timer);
+            resolve(text(`Error: ${err.message}`));
+          });
+        });
+      }
+
+      case 'inspect_node': {
+        const p = validatePath(args.project_path as string);
+        const godot = await findGodot();
+        const scriptsDir = dirname(this.opsScript);
+        const inspectScript = join(scriptsDir, 'inspect_node.gd');
+
+        if (!existsSync(inspectScript)) {
+          return text(`Error: inspect_node.gd not found at ${inspectScript}`);
+        }
+
+        const params = {
+          scene_path: args.scene_path,
+          node_path: args.node_path || 'root',
+          max_depth: (args.max_depth as number) || 3,
+          include_signals: args.include_signals !== false,
+          include_properties: args.include_properties !== false,
+        };
+
+        return new Promise((resolve) => {
+          let out = '';
+          const proc = spawn(godot, [
+            '--headless', '--path', p,
+            '--script', inspectScript,
+            JSON.stringify(params),
+          ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+          proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+          proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
+
+          const timer = setTimeout(() => {
+            if (!proc.killed) {
+              proc.kill('SIGTERM');
+              resolve(text('inspect_node timed out after 60s'));
+            }
+          }, 60000);
+
+          proc.on('close', (code) => {
+            clearTimeout(timer);
+            const result = parseMcpScriptOutput(out, code);
+            resolve(text(JSON.stringify(result, null, 2)));
+          });
+
+          proc.on('error', (err) => {
+            clearTimeout(timer);
+            resolve(text(`Error: ${err.message}`));
+          });
+        });
+      }
+
     default:
         return text(`Unknown tool: ${name}`);
     }
