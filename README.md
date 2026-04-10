@@ -31,6 +31,10 @@ Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps
 | **Execute arbitrary GDScript** | **No** | **Yes** |
 | **Query scene tree (runtime)** | **No** | **Yes** |
 | **Deep inspect node** | **No** | **Yes** |
+| **Batch add nodes** | **No** | **Yes** |
+| **Validate project** | **No** | **Yes** |
+| **Import resources** | **No** | **Yes** |
+| **Run & verify + scene tree** | **No** | **Yes** |
 
 ## The Closed-Loop Problem
 
@@ -102,7 +106,9 @@ Add to your MCP settings:
         "list_files", "read_project_config",
         "read_scene", "create_scene", "add_node", "save_scene", "load_sprite",
         "read_script", "write_script",
-        "execute_gdscript", "query_scene_tree", "inspect_node"
+        "execute_gdscript", "query_scene_tree", "inspect_node",
+        "batch_add_nodes", "validate_project", "import_resources",
+        "run_and_verify", "analyze_error"
       ]
     }
   }
@@ -116,7 +122,7 @@ Add to your MCP settings:
 | `GODOT_PATH` | Path to Godot executable | Auto-detected |
 | `DEBUG` | Enable verbose logging | `false` |
 
-## Tools (30 total)
+## Tools (33 total)
 
 ### Execution
 
@@ -130,7 +136,14 @@ Add to your MCP settings:
 | `run_tests` | Run GUT unit tests and parse results |
 | `get_godot_version` | Get installed Godot version |
 
-### Dynamic Execution (NEW)
+### Verification
+
+| Tool | Description |
+|------|-------------|
+| `run_and_verify` | One-click headless run with structured error/warning analysis. Supports `capture_tree` option to include scene tree snapshot. |
+| `analyze_error` | Re-analyze Godot output text with fix suggestions |
+
+### Dynamic Execution
 
 | Tool | Description |
 |------|-------------|
@@ -146,6 +159,8 @@ Add to your MCP settings:
 | `get_project_info` | Project metadata + file statistics |
 | `list_files` | List files with extension/subdirectory filters |
 | `read_project_config` | Parse project.godot into structured JSON |
+| `validate_project` | Check for missing resources, broken script references, orphaned .import files |
+| `import_resources` | Scan directories and generate .import stubs for images, audio, fonts, and 3D models |
 
 ### Scene
 
@@ -154,6 +169,7 @@ Add to your MCP settings:
 | `read_scene` | Parse .tscn into node tree JSON |
 | `create_scene` | Create new scene with root node |
 | `add_node` | Add node to existing scene |
+| `batch_add_nodes` | Add multiple nodes to a scene in one call (much faster than repeated `add_node`) |
 | `save_scene` | Save scene changes |
 | `load_sprite` | Load texture into sprite node |
 
@@ -222,6 +238,49 @@ func _initialize():
 }
 ```
 
+## New Tools in v0.3.0
+
+### `batch_add_nodes`
+
+Add multiple nodes in one headless Godot invocation, avoiding per-node startup overhead:
+
+```json
+{
+  "project_path": "/path/to/project",
+  "scene_path": "scenes/main.tscn",
+  "nodes": [
+    { "node_type": "Label", "node_name": "Title", "properties": { "text": "Hello" } },
+    { "node_type": "Button", "node_name": "StartBtn", "parent_node_path": "root/UI" },
+    { "node_type": "Sprite2D", "node_name": "PlayerIcon" }
+  ]
+}
+```
+
+### `validate_project`
+
+Static analysis of your Godot project for common issues:
+
+- Missing `ext_resource` file references in `.tscn` files
+- Broken `preload()` and `load()` paths in `.gd` scripts
+- Orphaned `.import` files (source asset deleted)
+
+Returns structured report with severity levels: `critical`, `error`, `warning`, `info`.
+
+### `import_resources`
+
+Bulk-register assets with the Godot project by generating `.import` stub files:
+
+```json
+{
+  "project_path": "/path/to/project",
+  "directory": "assets/ui",
+  "extensions": [".png", ".jpg", ".mp3"],
+  "recursive": true
+}
+```
+
+Supports: `.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`, `.mp3`, `.ogg`, `.wav`, `.ttf`, `.otf`, `.glb`, `.gltf`.
+
 ## Closed-Loop Workflow Example
 
 ```
@@ -234,22 +293,19 @@ func _initialize():
 3. AI: write_script("scripts/player_controller.gd", updated_code)
    -> Writes the fix
 
-4. AI: run_project(project, timeout=10)
-   -> Launches game
+4. AI: run_and_verify(project, capture_tree=true)
+   -> Headless run with error analysis + scene tree snapshot
 
-5. AI: get_debug_output()
-   -> Checks for errors
+5. AI: validate_project(project)
+   -> Check for missing resources, broken references
 
-6. AI: capture_screenshot(project, scene="scenes/level1.tscn")
-   -> Verifies visuals (headless)
+6. AI: batch_add_nodes(project, scene, nodes=[...])
+   -> Add multiple UI elements in one call
 
-7. AI: stop_project()
-   -> Gets full summary, checks if issues resolved
+7. AI: import_resources(project, directory="assets/ui")
+   -> Register new assets with the project
 
-8. AI: execute_gdscript(project, code="var s=load('res://main.tscn').instantiate(); _mcp_output('children', str(s.get_child_count()))")
-   -> Queries runtime state for advanced debugging
-
-9. If errors remain -> go back to step 2
+8. If errors remain -> go back to step 2
 ```
 
 ## Requirements
