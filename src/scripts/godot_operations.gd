@@ -61,6 +61,8 @@ func _init():
             create_scene(params)
         "add_node":
             add_node(params)
+        "batch_add_nodes":
+            batch_add_nodes(params)
         "load_sprite":
             load_sprite(params)
         "export_mesh_library":
@@ -556,6 +558,75 @@ func add_node(params):
                     printerr("File reported as saved but does not exist at: " + absolute_scene_path)
             else:
                 print("Node '" + params.node_name + "' of type '" + params.node_type + "' added successfully")
+        else:
+            printerr("Failed to save scene: " + str(save_error))
+    else:
+        printerr("Failed to pack scene: " + str(result))
+
+# Add multiple nodes to a scene in one operation
+func batch_add_nodes(params):
+    print("Batch adding nodes to scene: " + params.scene_path)
+
+    var full_scene_path = params.scene_path
+    if not full_scene_path.begins_with("res://"):
+        full_scene_path = "res://" + full_scene_path
+
+    var absolute_scene_path = ProjectSettings.globalize_path(full_scene_path)
+
+    if not FileAccess.file_exists(absolute_scene_path):
+        printerr("Scene file does not exist at: " + absolute_scene_path)
+        quit(1)
+
+    var scene = load(full_scene_path)
+    if not scene:
+        printerr("Failed to load scene: " + full_scene_path)
+        quit(1)
+
+    var scene_root = scene.instantiate()
+    var nodes = params.nodes
+    var added_count = 0
+    var failed_count = 0
+
+    for node_def in nodes:
+        var parent_path = "root"
+        if node_def.has("parent_node_path"):
+            parent_path = node_def.parent_node_path
+
+        var parent = scene_root
+        if parent_path != "root":
+            parent = scene_root.get_node(parent_path.replace("root/", ""))
+            if not parent:
+                printerr("Parent node not found: " + parent_path + " for node: " + node_def.node_name)
+                failed_count += 1
+                continue
+
+        var new_node = instantiate_class(node_def.node_type)
+        if not new_node:
+            printerr("Failed to instantiate: " + node_def.node_type)
+            failed_count += 1
+            continue
+
+        new_node.name = node_def.node_name
+
+        if node_def.has("properties"):
+            var properties = node_def.properties
+            for property in properties:
+                new_node.set(property, properties[property])
+
+        parent.add_child(new_node)
+        new_node.owner = scene_root
+        added_count += 1
+
+    # Pack and save once for all nodes
+    var packed_scene = PackedScene.new()
+    var result = packed_scene.pack(scene_root)
+
+    if result == OK:
+        var save_error = ResourceSaver.save(packed_scene, absolute_scene_path)
+        if save_error == OK:
+            print("Batch add completed: %d/%d nodes added to %s" % [added_count, nodes.size(), params.scene_path])
+            if failed_count > 0:
+                printerr("Failed to add %d nodes" % failed_count)
         else:
             printerr("Failed to save scene: " + str(save_error))
     else:

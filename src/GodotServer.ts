@@ -453,13 +453,15 @@ export class GodotServer {
         // ===== Run Verification tools =====
         {
           name: 'run_and_verify',
-          description: 'One-click run a Godot project in headless mode and return structured analysis (errors, warnings, suggestions). Automatically stops after timeout.',
+          description: 'One-click run a Godot project in headless mode and return structured analysis (errors, warnings, suggestions). Automatically stops after timeout. '
+            + 'Optionally captures a scene tree snapshot for runtime inspection.',
           inputSchema: {
             type: 'object' as const,
             properties: {
               project_path: { type: 'string', description: 'Path to Godot project directory' },
               scene: { type: 'string', description: 'Optional scene file to run (e.g. res://scenes/main.tscn)' },
               timeout: { type: 'number', description: 'Auto-stop after N seconds (default: 15)', default: 15 },
+              capture_tree: { type: 'boolean', description: 'Also capture a scene tree snapshot (default: false)', default: false },
             },
             required: ['project_path'],
           },
@@ -557,6 +559,69 @@ export class GodotServer {
               include_properties: { type: 'boolean', description: 'Include property values (default: true)', default: true },
             },
             required: ['project_path', 'scene_path'],
+          },
+        },
+        // ===== BATCH & VALIDATION TOOLS =====
+        {
+          name: 'batch_add_nodes',
+          description: 'Add multiple nodes to a scene in a single call. Much faster than calling add_node repeatedly. '
+            + 'Accepts an array of node definitions, each with type, name, optional parent and properties.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              scene_path: { type: 'string', description: 'Scene path relative to project' },
+              nodes: {
+                type: 'array',
+                description: 'Array of node definitions to add',
+                items: {
+                  type: 'object',
+                  properties: {
+                    node_type: { type: 'string', description: 'Node type (e.g. Sprite2D, Label)' },
+                    node_name: { type: 'string', description: 'Name for the node' },
+                    parent_node_path: { type: 'string', description: 'Parent path (default: root)', default: 'root' },
+                    properties: { type: 'object', description: 'Optional properties to set' },
+                  },
+                  required: ['node_type', 'node_name'],
+                },
+              },
+            },
+            required: ['project_path', 'scene_path', 'nodes'],
+          },
+        },
+        {
+          name: 'validate_project',
+          description: 'Validate a Godot project for common issues: missing resource references, broken script paths, '
+            + 'invalid scene files, and orphaned .import files. Returns a structured report of all issues found.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              check_resources: { type: 'boolean', description: 'Check for missing resource files (default: true)', default: true },
+              check_scripts: { type: 'boolean', description: 'Check for broken script references (default: true)', default: true },
+              check_scenes: { type: 'boolean', description: 'Validate scene file structure (default: true)', default: true },
+            },
+            required: ['project_path'],
+          },
+        },
+        {
+          name: 'import_resources',
+          description: 'Scan a directory for assets and register them with the Godot project. Generates .import stubs '
+            + 'so Godot recognizes the files. Supports images, audio, fonts, and other common asset types.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project_path: { type: 'string', description: 'Path to Godot project directory' },
+              directory: { type: 'string', description: 'Directory to scan (relative to project, e.g. "assets/ui")' },
+              extensions: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'File extensions to import (default: common image/audio/font types)',
+                default: ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.mp3', '.ogg', '.wav', '.ttf', '.otf', '.glb', '.gltf'],
+              },
+              recursive: { type: 'boolean', description: 'Scan subdirectories recursively (default: true)', default: true },
+            },
+            required: ['project_path', 'directory'],
           },
         },
       ],
@@ -1122,6 +1187,7 @@ export class GodotServer {
         const projectPath = validatePath(args.project_path as string);
         const timeout = (args.timeout as number) || 15;
         const scene = args.scene as string | undefined;
+        const captureTree = args.capture_tree === true;
 
         const godot = await findGodot();
         const cmdArgs = ['--headless', '--path', projectPath];
@@ -1131,14 +1197,40 @@ export class GodotServer {
           const { stdout, stderr } = await execFileAsync(godot, cmdArgs, { timeout: timeout * 1000 });
           const allOutput = [...(stdout || '').split('\n'), ...(stderr || '').split('\n')];
           const analysis = analyzeOutput(allOutput);
+
+          // Optionally capture scene tree
+          if (captureTree && scene) {
+            try {
+              const scriptsDir = dirname(this.opsScript);
+              const treeScript = join(scriptsDir, 'query_scene_tree.gd');
+              if (existsSync(treeScript)) {
+                const treeResult = await new Promise<string>((resolve) => {
+                  let out = '';
+                  const proc = spawn(godot, [
+                    '--headless', '--path', projectPath,
+                    '--script', treeScript,
+                    JSON.stringify({ scene_path: scene, max_depth: 3 }),
+                  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+                  proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+                  proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
+                  proc.on('close', () => resolve(out));
+                  setTimeout(() => { if (!proc.killed) proc.kill('SIGTERM'); resolve(''); }, 30000);
+                });
+                if (treeResult) {
+                  (analysis as any).scene_tree = parseMcpScriptOutput(treeResult, 0);
+                }
+              }
+            } catch { /* tree capture is optional */ }
+          }
+
           return text(JSON.stringify(analysis, null, 2));
         } catch (e: any) {
           const allOutput = [...(e.stdout || '').split('\n'), ...(e.stderr || '').split('\n')];
           const analysis = analyzeOutput(allOutput);
           if (e.killed) {
-            analysis.summary += '\nNote: Process timed out after ' + timeout + 's (this is normal for interactive projects)';
+            (analysis as any).summary += '\nNote: Process timed out after ' + timeout + 's (this is normal for interactive projects)';
           } else {
-            analysis.summary += '\nNote: Process exited with code ' + (e.code || 'unknown');
+            (analysis as any).summary += '\nNote: Process exited with code ' + (e.code || 'unknown');
           }
           return text(JSON.stringify(analysis, null, 2));
         }
@@ -1459,6 +1551,281 @@ export class GodotServer {
             resolve(text(`Error: ${err.message}`));
           });
         });
+      }
+
+      // ══════════════════════════════════════════════════════════════════════
+      // BATCH & VALIDATION TOOLS
+      // ══════════════════════════════════════════════════════════════════════
+
+      case 'batch_add_nodes': {
+        const p = validatePath(args.project_path as string);
+        const scenePath = args.scene_path as string;
+        const nodes = args.nodes as Array<{
+          node_type: string;
+          node_name: string;
+          parent_node_path?: string;
+          properties?: Record<string, unknown>;
+        }>;
+
+        if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
+          return text('Error: "nodes" must be a non-empty array of node definitions.');
+        }
+
+        const godot = await findGodot();
+
+        return new Promise((resolve) => {
+          log(`batch_add_nodes: adding ${nodes.length} nodes to ${scenePath}`);
+          const proc = spawn(godot, [
+            '--headless', '--path', p,
+            '--script', this.opsScript,
+            'batch_add_nodes', JSON.stringify({
+              scene_path: scenePath,
+              nodes: nodes,
+            }),
+          ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+          let out = '';
+          proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
+          proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
+
+          proc.on('close', (code) => {
+            if (code !== 0) {
+              resolve({ content: [{ type: 'text', text: `batch_add_nodes failed (exit code ${code}):\n${out}` }] });
+            } else {
+              resolve({ content: [{ type: 'text', text: out.trim() || `batch_add_nodes completed: ${nodes.length} nodes added.` }] });
+            }
+          });
+
+          setTimeout(() => {
+            if (!proc.killed) {
+              proc.kill('SIGTERM');
+              resolve({ content: [{ type: 'text', text: 'batch_add_nodes timed out after 60s.' }] });
+            }
+          }, 60000);
+        });
+      }
+
+      case 'validate_project': {
+        const p = validatePath(args.project_path as string);
+        const checkResources = args.check_resources !== false;
+        const checkScripts = args.check_scripts !== false;
+        const checkScenes = args.check_scenes !== false;
+
+        const issues: Array<{ severity: string; category: string; message: string; file?: string }> = [];
+
+        // Helper: recursively collect files
+        function collectFiles(dir: string, exts: string[], maxDepth: number = 10, depth: number = 0): string[] {
+          if (depth > maxDepth) return [];
+          const result: string[] = [];
+          try {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              if (entry.name.startsWith('.')) continue;
+              const full = join(dir, entry.name);
+              if (entry.isDirectory()) {
+                result.push(...collectFiles(full, exts, maxDepth, depth + 1));
+              } else {
+                const ext = '.' + entry.name.split('.').pop()!.toLowerCase();
+                if (exts.includes(ext)) result.push(full);
+              }
+            }
+          } catch { /* skip */ }
+          return result;
+        }
+
+        // Check project.godot exists
+        if (!existsSync(join(p, 'project.godot'))) {
+          issues.push({ severity: 'critical', category: 'project', message: 'project.godot not found' });
+          return text(JSON.stringify({ valid: false, issue_count: issues.length, issues }, null, 2));
+        }
+
+        // Check scenes
+        if (checkScenes) {
+          const sceneFiles = collectFiles(p, ['.tscn']);
+          for (const sceneFile of sceneFiles) {
+            const rel = sceneFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+            try {
+              const content = readFileSync(sceneFile, 'utf-8');
+              // Check ext_resource references
+              const extResRegex = /\[ext_resource[^[]*path="([^"]+)"/g;
+              let match;
+              while ((match = extResRegex.exec(content)) !== null) {
+                const resPath = match[1];
+                if (!resPath.startsWith('res://')) continue;
+                const absPath = join(p, resPath.replace('res://', ''));
+                if (!existsSync(absPath)) {
+                  issues.push({
+                    severity: 'error',
+                    category: 'missing_resource',
+                    message: `Referenced resource not found: ${resPath}`,
+                    file: rel,
+                  });
+                }
+              }
+            } catch (e) {
+              issues.push({
+                severity: 'warning',
+                category: 'scene_read',
+                message: `Cannot read scene file: ${(e as Error).message}`,
+                file: rel,
+              });
+            }
+          }
+        }
+
+        // Check scripts
+        if (checkScripts) {
+          const scriptFiles = collectFiles(p, ['.gd']);
+          for (const scriptFile of scriptFiles) {
+            const rel = scriptFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+            try {
+              const content = readFileSync(scriptFile, 'utf-8');
+              const preloadRegex = /preload\(["']([^"']+)["']\)/g;
+              let match;
+              while ((match = preloadRegex.exec(content)) !== null) {
+                const resPath = match[1];
+                if (!resPath.startsWith('res://')) continue;
+                const absPath = join(p, resPath.replace('res://', ''));
+                if (!existsSync(absPath)) {
+                  issues.push({
+                    severity: 'error',
+                    category: 'missing_preload',
+                    message: `preload() resource not found: ${resPath}`,
+                    file: rel,
+                  });
+                }
+              }
+              // Check load() references
+              const loadRegex = /(?:^|\s)load\(["']([^"']+)["']\)/g;
+              while ((match = loadRegex.exec(content)) !== null) {
+                const resPath = match[1];
+                if (!resPath.startsWith('res://')) continue;
+                const absPath = join(p, resPath.replace('res://', ''));
+                if (!existsSync(absPath)) {
+                  issues.push({
+                    severity: 'warning',
+                    category: 'missing_load',
+                    message: `load() resource not found: ${resPath}`,
+                    file: rel,
+                  });
+                }
+              }
+            } catch {
+              issues.push({ severity: 'warning', category: 'script_read', message: 'Cannot read script file', file: rel });
+            }
+          }
+        }
+
+        // Check orphaned .import files (files whose source asset was deleted)
+        if (checkResources) {
+          const importFiles = collectFiles(p, ['.import']);
+          for (const importFile of importFiles) {
+            const sourceFile = importFile.replace('.import', '');
+            if (!existsSync(sourceFile)) {
+              const rel = importFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+              issues.push({
+                severity: 'info',
+                category: 'orphaned_import',
+                message: `Orphaned .import file (source asset deleted)`,
+                file: rel,
+              });
+            }
+          }
+        }
+
+        const summary = {
+          valid: issues.filter(i => i.severity === 'critical' || i.severity === 'error').length === 0,
+          issue_count: issues.length,
+          critical: issues.filter(i => i.severity === 'critical').length,
+          errors: issues.filter(i => i.severity === 'error').length,
+          warnings: issues.filter(i => i.severity === 'warning').length,
+          info: issues.filter(i => i.severity === 'info').length,
+          issues: issues.slice(0, 100), // Cap at 100 to avoid huge responses
+        };
+
+        return text(JSON.stringify(summary, null, 2));
+      }
+
+      case 'import_resources': {
+        const p = validatePath(args.project_path as string);
+        const directory = args.directory as string;
+        const defaultExts = ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.mp3', '.ogg', '.wav', '.ttf', '.otf', '.glb', '.gltf'];
+        const extensions = (args.extensions as string[]) || defaultExts;
+        const recursive = args.recursive !== false;
+
+        const targetDir = join(p, directory.replace(/^res:\/\//, ''));
+        if (!existsSync(targetDir)) {
+          return text(`Error: Directory not found: ${targetDir}`);
+        }
+
+        const importedFiles: string[] = [];
+        const skippedFiles: string[] = [];
+
+        function scanDir(dir: string, depth: number): void {
+          if (depth > 15) return;
+          try {
+            for (const entry of readdirSync(dir, { withFileTypes: true })) {
+              if (entry.name.startsWith('.') || entry.name === '.import') continue;
+              const fullPath = join(dir, entry.name);
+              if (entry.isDirectory()) {
+                if (recursive) scanDir(fullPath, depth + 1);
+              } else {
+                const ext = '.' + entry.name.split('.').pop()!.toLowerCase();
+                if (!extensions.includes(ext)) continue;
+                // Check if .import file already exists
+                const importPath = fullPath + '.import';
+                if (existsSync(importPath)) {
+                  skippedFiles.push(fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
+                  continue;
+                }
+                // Generate a minimal .import file so Godot detects the resource
+                const uid = 'uid://' + Buffer.from(fullPath.replace(p, '').replace(/\\/g, '/')).toString('base64url').substring(0, 24);
+                const importerMap: Record<string, string> = {
+                  '.png': 'texture', '.jpg': 'texture', '.jpeg': 'texture', '.webp': 'texture', '.svg': 'texture',
+                  '.mp3': 'ogg_vorbis', '.ogg': 'ogg_vorbis', '.wav': 'wav',
+                  '.ttf': 'dynamic_font', '.otf': 'dynamic_font',
+                  '.glb': 'scene', '.gltf': 'scene',
+                };
+                const importer = importerMap[ext] || 'any';
+                const importContent = [
+                  `[remap]`,
+                  ``,
+                  `importer="${importer}"`,
+                  `type="CompressedTexture2D"`,
+                  `uid="${uid}"`,
+                  `path="res://.godot/imported/${entry.name}-${uid.substring(5, 13)}.ctex"`,
+                  `metadata={`,
+                  `"vram_texture": false`,
+                  `}`,
+                  ``,
+                  `[deps]`,
+                  ``,
+                  `source_file="res://${fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')}"`,
+                  ``,
+                  `[params]`,
+                  ``,
+                  `compress/mode=0`,
+                  `compress/high_quality=false`,
+                  `compress/lossy_quality=0.7`,
+                  ``,
+                ].join('\n');
+                writeFileSync(importPath, importContent, 'utf-8');
+                importedFiles.push(fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
+              }
+            }
+          } catch { /* skip */ }
+        }
+
+        scanDir(targetDir, 0);
+
+        return text(
+          `Import scan complete.\n\n` +
+          `Directory: ${directory}\n` +
+          `New imports: ${importedFiles.length}\n` +
+          `Already imported (skipped): ${skippedFiles.length}\n` +
+          `Extensions: ${extensions.join(', ')}\n\n` +
+          (importedFiles.length > 0 ? `Newly imported:\n${importedFiles.slice(0, 50).map(f => '  ' + f).join('\n')}${importedFiles.length > 50 ? `\n  ... and ${importedFiles.length - 50} more` : ''}\n\n` : '') +
+          `Note: Open the project in Godot editor once to fully process imports.`
+        );
       }
 
     default:
