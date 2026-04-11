@@ -35,6 +35,9 @@
 | **项目验证** | **不支持** | **支持** |
 | **资源导入** | **不支持** | **支持** |
 | **运行验证 + 场景树快照** | **不支持** | **支持** |
+| **编辑脚本（行范围替换）** | **不支持** | **支持** |
+| **Autoload 上下文执行** | **不支持** | **支持** |
+| **结构化错误分析** | **不支持** | **支持** |
 
 ## 核心亮点
 
@@ -45,6 +48,8 @@
 - **代码片段模式**：无需写 `extends`，输入的代码会被自动包装为完整的 `extends SceneTree` 脚本
 - **结构化输出**：通过 `_mcp_output(key, value)` 返回键值对结果
 - **超时控制**：防止代码死循环卡住
+- **Autoload 上下文**：设置 `load_autoloads=true` 可在完整项目环境中运行，访问 DataRegistry、PlayerData 等全局单例
+- **结构化错误**：返回 `errors` 数组，包含错误类型、文件、行号、消息和修复建议
 
 ### 批量操作
 
@@ -120,7 +125,7 @@ npm install
         "read_script", "write_script",
         "execute_gdscript", "query_scene_tree", "inspect_node",
         "batch_add_nodes", "validate_project", "import_resources",
-        "run_and_verify", "analyze_error"
+        "run_and_verify", "analyze_error", "edit_script"
       ]
     }
   }
@@ -134,7 +139,7 @@ npm install
 | `GODOT_PATH` | Godot 可执行文件路径 | 自动检测 |
 | `DEBUG` | 启用详细日志 | `false` |
 
-## 工具列表（共 33 个）
+## 工具列表（共 34 个）
 
 ### 执行工具
 
@@ -159,7 +164,7 @@ npm install
 
 | 工具 | 说明 |
 |------|------|
-| `execute_gdscript` | 在 headless 模式下执行任意 GDScript 代码。支持代码片段模式（自动包装）和完整类模式。 |
+| `execute_gdscript` | 在 headless 模式下执行任意 GDScript 代码。支持代码片段模式（自动包装）和完整类模式。设置 `load_autoloads=true` 可在完整 Autoload 上下文中运行（DataRegistry、PlayerData 等）。 |
 | `query_scene_tree` | 加载场景并查询运行时节点树，返回解析后的实际属性值。 |
 | `inspect_node` | 深度检查节点：所有属性、信号连接、子节点，支持递归深度控制。 |
 
@@ -191,6 +196,7 @@ npm install
 |------|------|
 | `read_script` | 读取 .gd 文件（含元数据） |
 | `write_script` | 写入/覆盖 .gd 文件 |
+| `edit_script` | 按行范围编辑 .gd 文件。自动检测 tab 缩进和 CRLF 换行。 |
 
 ### API 文档工具
 
@@ -202,6 +208,21 @@ npm install
 | `get_inheritance` | 获取完整继承链 |
 
 ## v0.3.0 新增工具详解
+
+### `edit_script`
+
+按行范围编辑现有 GDScript 文件。自动检测并保留原始 tab 缩进和 CRLF/LF 换行：
+
+```json
+{
+  "script_path": "scripts/player.gd",
+  "start_line": 10,
+  "end_line": 12,
+  "new_content": "func get_health() -> int:\n\treturn hp"
+}
+```
+
+比 `write_script` 更安全 — 仅修改指定行，不影响文件其余部分。
 
 ### `batch_add_nodes`
 

@@ -35,6 +35,9 @@ Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps
 | **Validate project** | **No** | **Yes** |
 | **Import resources** | **No** | **Yes** |
 | **Run & verify + scene tree** | **No** | **Yes** |
+| **Edit script (line range)** | **No** | **Yes** |
+| **Autoload context execution** | **No** | **Yes** |
+| **Structured error analysis** | **No** | **Yes** |
 
 ## The Closed-Loop Problem
 
@@ -108,7 +111,7 @@ Add to your MCP settings:
         "read_script", "write_script",
         "execute_gdscript", "query_scene_tree", "inspect_node",
         "batch_add_nodes", "validate_project", "import_resources",
-        "run_and_verify", "analyze_error"
+        "run_and_verify", "analyze_error", "edit_script"
       ]
     }
   }
@@ -122,7 +125,7 @@ Add to your MCP settings:
 | `GODOT_PATH` | Path to Godot executable | Auto-detected |
 | `DEBUG` | Enable verbose logging | `false` |
 
-## Tools (33 total)
+## Tools (34 total)
 
 ### Execution
 
@@ -147,7 +150,7 @@ Add to your MCP settings:
 
 | Tool | Description |
 |------|-------------|
-| `execute_gdscript` | Execute arbitrary GDScript code in headless mode. Supports snippet mode (auto-wrapped) and full class mode. Returns structured key-value results. |
+| `execute_gdscript` | Execute arbitrary GDScript code in headless mode. Supports snippet mode (auto-wrapped) and full class mode. Returns structured key-value results. Set `load_autoloads=true` to run with full autoload context (DataRegistry, PlayerData, etc.). |
 | `query_scene_tree` | Load a scene and query its runtime node tree with resolved property values (not just static .tscn file data). |
 | `inspect_node` | Deep-inspect a node: all properties, signal connections, children with recursive depth control. |
 
@@ -179,6 +182,7 @@ Add to your MCP settings:
 |------|-------------|
 | `read_script` | Read .gd file with metadata |
 | `write_script` | Write/overwrite .gd file |
+| `edit_script` | Edit .gd file by replacing a line range. Auto-detects tab indentation and CRLF line endings. |
 
 ### API Documentation
 
@@ -205,6 +209,10 @@ _mcp_output("root_type", root.get_class())
 
 This gets wrapped into a full `extends SceneTree` script with helper functions. Use `_mcp_output(key, value)` to return structured results.
 
+**Tips for snippet mode:**
+- Use `Variant` type for variables that hold `load().new()` results to avoid "Cannot infer type" errors
+- Autoloads are NOT available in snippet mode by default — use `load_autoloads=true` to enable them
+
 ### Full Class Mode
 
 When your code contains `extends`, it's used as-is with helper injection:
@@ -220,6 +228,20 @@ func _initialize():
     quit()
 ```
 
+### Autoload Context Mode
+
+Set `load_autoloads=true` to run code with full project autoload context. This loads the project through a scene instead of a raw script, making all registered autoloads (DataRegistry, PlayerData, etc.) available:
+
+```json
+{
+  "project_path": "/path/to/project",
+  "code": "var data = DataRegistry.get_table(\"hero\")\n_mcp_output(\"hero_count\", str(data.size()))",
+  "load_autoloads": true
+}
+```
+
+**Note:** Autoload mode is slower (requires full scene initialization) but necessary when your code depends on autoload singletons.
+
 ### Response Format
 
 ```json
@@ -227,6 +249,15 @@ func _initialize():
   "success": true,
   "compile_success": true,
   "compile_error": "",
+  "errors": [
+    {
+      "type": "script_error",
+      "file": "res://scripts/player.gd",
+      "line": 42,
+      "message": "Invalid access to property or key...",
+      "suggestion": "Check if the node exists before accessing..."
+    }
+  ],
   "run_success": true,
   "run_error": "",
   "outputs": [
@@ -238,7 +269,24 @@ func _initialize():
 }
 ```
 
+The `errors` array contains structured error objects with type, file, line, message, and fix suggestions — parsed from Godot's output by the error analyzer.
+
 ## New Tools in v0.3.0
+
+### `edit_script`
+
+Edit an existing GDScript file by replacing a line range. Automatically detects and preserves the original tab indentation and CRLF/LF line endings:
+
+```json
+{
+  "script_path": "scripts/player.gd",
+  "start_line": 10,
+  "end_line": 12,
+  "new_content": "func get_health() -> int:\n\treturn hp"
+}
+```
+
+This is safer than `write_script` for incremental edits — only the specified lines are changed, preserving the rest of the file.
 
 ### `batch_add_nodes`
 
