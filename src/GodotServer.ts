@@ -450,6 +450,22 @@ export class GodotServer {
             required: ['script_path', 'content'],
           },
         },
+        {
+          name: 'edit_script',
+          description: 'Edit an existing GDScript file by replacing a range of lines. '
+            + 'Automatically handles tab indentation and CRLF line endings. '
+            + 'Safer than write_script for incremental edits.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              script_path: { type: 'string', description: 'Absolute path to the .gd file to edit' },
+              start_line: { type: 'number', description: '1-based line number where replacement starts (inclusive)' },
+              end_line: { type: 'number', description: '1-based line number where replacement ends (inclusive). Use same as start_line for single line replace.' },
+              new_content: { type: 'string', description: 'New content to replace the specified line range. Will be indented to match the original indentation of start_line.' },
+            },
+            required: ['script_path', 'start_line', 'end_line', 'new_content'],
+          },
+        },
         // ===== Run Verification tools =====
         {
           name: 'run_and_verify',
@@ -517,15 +533,17 @@ export class GodotServer {
         {
           name: 'execute_gdscript',
           description: 'Execute arbitrary GDScript code in a headless Godot process. '
-            + 'Two modes: (1) Snippet mode — provide code without "extends", auto-wrapped with helpers. '
+            + 'Two modes: (1) Snippet mode \u2014 provide code without "extends", auto-wrapped with helpers. '
             + 'Use _mcp_output(key, value) to return structured results. '
-            + '(2) Full class mode — provide code with "extends SceneTree" for full control.',
+            + '(2) Full class mode \u2014 provide code with "extends SceneTree" for full control. '
+            + 'Set load_autoloads=true to run with full autoload context (slower but can access DataRegistry, PlayerData, etc.).',
           inputSchema: {
             type: 'object' as const,
             properties: {
               project_path: { type: 'string', description: 'Path to Godot project directory' },
               code: { type: 'string', description: 'GDScript code to execute' },
               timeout: { type: 'number', description: 'Timeout in seconds (default: 30)', default: 30 },
+              load_autoloads: { type: 'boolean', description: 'When true, runs with full autoload context so DataRegistry/PlayerData etc. are available (default: false)', default: false },
             },
             required: ['project_path', 'code'],
           },
@@ -1181,6 +1199,58 @@ export class GodotServer {
         return text(`Script written to ${sp} (${content.split('\n').length} lines)`);
       }
 
+      case 'edit_script': {
+        const scriptPath = args.script_path as string;
+        // Support both absolute paths and relative-to-project paths
+        const fullPath = isAbsolute(scriptPath)
+          ? scriptPath
+          : join(validatePath(args.project_path as string), scriptPath);
+        const startLine = args.start_line as number;
+        const endLine = args.end_line as number;
+        const newContent = args.new_content as string;
+
+        if (!existsSync(fullPath)) {
+          return text(`Error: File not found: ${fullPath}`);
+        }
+        if (startLine < 1 || endLine < startLine) {
+          return text(`Error: Invalid line range: start_line=${startLine}, end_line=${endLine}`);
+        }
+
+        const raw = readFileSync(fullPath, 'utf-8');
+        const hasCRLF = raw.includes('\r\n');
+        const lines = raw.split(/\r?\n/);
+
+        if (endLine > lines.length) {
+          return text(`Error: end_line ${endLine} exceeds file length ${lines.length}`);
+        }
+
+        // Detect indentation of the first replaced line
+        const originalLine = lines[startLine - 1] || '';
+        const indentMatch = originalLine.match(/^(\t*)/);
+        const baseIndent = indentMatch ? indentMatch[1] : '';
+
+        // Prepare new lines with matching indentation
+        const newLines = newContent.split(/\r?\n/);
+        // If new_content has its own indentation, detect and strip it, then re-add baseIndent
+        const newContentBaseIndent = newLines[0] ? (newLines[0].match(/^(\t*)/)?.[1] || '') : '';
+        const adjustedLines = newLines.map((line: string) => {
+          // Strip the new_content's base indent, then add the file's base indent
+          const stripped = newContentBaseIndent.length > 0 && line.startsWith(newContentBaseIndent)
+            ? line.substring(newContentBaseIndent.length)
+            : line;
+          return baseIndent + stripped;
+        });
+
+        // Replace lines
+        lines.splice(startLine - 1, endLine - startLine + 1, ...adjustedLines);
+
+        // Write back with original line endings
+        const result = lines.join(hasCRLF ? '\r\n' : '\n');
+        writeFileSync(fullPath, result, 'utf-8');
+
+        return text(`Edited ${fullPath}: replaced lines ${startLine}-${endLine} with ${adjustedLines.length} line(s)`);
+      }
+
       // ===== RUN VERIFICATION TOOLS =====
 
       case 'run_and_verify': {
@@ -1446,6 +1516,7 @@ export class GodotServer {
         const projectPath = validatePath(args.project_path as string);
         const code = args.code as string;
         const timeout = (args.timeout as number) || 30;
+        const loadAutoloads = (args.load_autoloads as boolean) || false;
         const godot = await findGodot();
 
         const result = await executeGdscript({
@@ -1453,6 +1524,7 @@ export class GodotServer {
           projectPath,
           code,
           timeout,
+          loadAutoloads,
         });
 
         return text(JSON.stringify(result, null, 2));

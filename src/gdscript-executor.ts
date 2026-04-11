@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { writeFileSync, mkdirSync, rmSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { analyzeOutput, type ParsedError } from './error-analyzer.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ export interface ExecuteGdscriptResult {
   success: boolean;
   compile_success: boolean;
   compile_error: string;
+  /** Structured error list with type, file, line, message, and suggestion */
+  errors: ParsedError[];
   run_success: boolean;
   run_error: string;
   outputs: OutputEntry[];
@@ -36,6 +39,8 @@ export interface ExecuteGdscriptOptions {
   projectPath: string;
   code: string;
   timeout: number; // seconds
+  /** When true, runs with full autoload context (slower but can access autoloads like DataRegistry) */
+  loadAutoloads?: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -92,12 +97,15 @@ function isFullClass(code: string): boolean {
 /**
  * Wrap a snippet into a valid `extends SceneTree` script with helper functions.
  * Uses `_initialize()` which runs after the SceneTree is fully set up.
+ * Uses Variant types to avoid strict type inference issues with load().new() etc.
  */
 function wrapSnippet(code: string): string {
   const lines = code.split('\n');
   const indented = lines.map(l => '\t' + l).join('\n');
 
   return `extends SceneTree
+## MCP snippet mode — autoloads are NOT available unless load_autoloads=true
+## Use Variant type for variables to avoid "Cannot infer type" errors
 
 var _mcp_outputs: Array = []
 
@@ -172,7 +180,7 @@ function parseMcpMarkers(raw: string): {
 export async function executeGdscript(
   options: ExecuteGdscriptOptions
 ): Promise<ExecuteGdscriptResult> {
-  const { godotPath, projectPath, code, timeout = 30 } = options;
+  const { godotPath, projectPath, code, timeout = 30, loadAutoloads = false } = options;
   const startTime = Date.now();
 
   // Prepare script content
@@ -192,6 +200,7 @@ export async function executeGdscript(
       success: false,
       compile_success: false,
       compile_error: `Failed to write temp script: ${err}`,
+      errors: [],
       run_success: false,
       run_error: '',
       outputs: [],
@@ -200,16 +209,26 @@ export async function executeGdscript(
     };
   }
 
+  // Build Godot arguments
+  const godotArgs: string[] = ['--headless', '--path', projectPath];
+  if (loadAutoloads) {
+    // Autoload mode: create a loader scene that initializes all autoloads first
+    const loaderScene = createAutoloadLoaderScene(tempFile);
+    const loaderScenePath = writeTempFile(loaderScene, '.tscn');
+    const loaderScriptPath = writeTempFile(createAutoloadLoaderScript(tempFile), '.gd');
+    godotArgs.push('--scene', loaderScenePath);
+    // Store both for cleanup
+    (tempFile as any) = JSON.stringify([tempFile, loaderScenePath, loaderScriptPath]);
+  } else {
+    godotArgs.push('--script', tempFile);
+  }
+
   // Spawn Godot process
   return new Promise<ExecuteGdscriptResult>((resolve) => {
     let stdout = '';
     let stderr = '';
 
-    const proc = spawn(godotPath, [
-      '--headless',
-      '--path', projectPath,
-      '--script', tempFile,
-    ], {
+    const proc = spawn(godotPath, godotArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env },
     });
@@ -225,12 +244,21 @@ export async function executeGdscript(
 
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
-      // Cleanup temp file
-      try { rmSync(tempFile, { force: true }); } catch { /* ignore */ }
+      // Cleanup temp files
+      try {
+        // Handle both single file and multiple files (autoload mode)
+        if (typeof tempFile === 'string' && tempFile.startsWith('[')) {
+          const files: string[] = JSON.parse(tempFile);
+          for (const f of files) { rmSync(f, { force: true }); }
+        } else {
+          rmSync(tempFile, { force: true });
+        }
+      } catch { /* ignore */ }
 
       const rawOutput = stdout + stderr;
       const duration = Date.now() - startTime;
       const { parsed, logLines } = parseMcpMarkers(rawOutput);
+      const analysis = analyzeOutput(logLines);
 
       if (parsed) {
         const isSuccess = parsed.success === true;
@@ -242,6 +270,7 @@ export async function executeGdscript(
           success: isSuccess && !hasCompileError,
           compile_success: !hasCompileError,
           compile_error: compileError,
+          errors: analysis.errors,
           run_success: isSuccess,
           run_error: parsed.error || '',
           outputs: (parsed.outputs || []) as OutputEntry[],
@@ -255,6 +284,7 @@ export async function executeGdscript(
           success: false,
           compile_success: compileError.length === 0,
           compile_error: compileError,
+          errors: analysis.errors,
           run_success: false,
           run_error: exitCode !== 0 ? `Process exited with code ${exitCode}` : 'No structured output found',
           outputs: [],
@@ -272,6 +302,7 @@ export async function executeGdscript(
         success: false,
         compile_success: false,
         compile_error: `Failed to spawn Godot: ${err.message}`,
+        errors: [],
         run_success: false,
         run_error: '',
         outputs: [],
@@ -298,4 +329,64 @@ function extractCompileError(raw: string): string {
     }
   }
   return errors.join('\n');
+}
+
+// ─── Autoload loader helpers ──────────────────────────────────────────────────
+
+/**
+ * Write a temp file with custom extension (.tscn or .gd)
+ */
+function writeTempFile(content: string, ext: string): string {
+  const dir = getTempDir();
+  const id = Math.random().toString(36).substring(2, 10);
+  const filePath = join(dir, `${TMP_PREFIX}loader-${id}${ext}`);
+  writeFileSync(filePath, content, 'utf-8');
+  return filePath;
+}
+
+/**
+ * Create a minimal .tscn scene that loads with autoload context.
+ * The scene runs the user's script from _ready().
+ */
+function createAutoloadLoaderScene(scriptPath: string): string {
+  const scriptPathRes = scriptPath.replace(/\\/g, '/');
+  return `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://__mcp_loader__.gd" id="1"]
+
+[node name="MCPLoader" type="Node"]
+script = ExtResource("1")
+_metadata/mcp_script_path = "${scriptPathRes}"
+`;
+}
+
+/**
+ * Create the loader GDScript that loads with autoload context.
+ * In _ready(), all autoloads are available. It then loads and runs the user script.
+ */
+function createAutoloadLoaderScript(_scriptPath: string): string {
+  return `extends Node
+
+var _mcp_outputs: Array = []
+
+func _mcp_output(key: String, value: Variant) -> void:
+\t_mcp_outputs.append({"key": key, "value": str(value)})
+
+func _ready() -> void:
+\t# Autoloads are fully initialized at this point
+\t# Load and execute user code dynamically
+\tvar script_path: String = get_meta("mcp_script_path")
+\tvar user_script: GDScript = load(script_path) as GDScript
+\tif user_script == null:
+\t\tprint("___MCP_ERROR___" + JSON.stringify({"success": false, "error": "Failed to load user script: " + script_path}))
+\t\tget_tree().quit()
+\t\treturn
+\t# Execute user code by creating instance and calling _initialize if available
+\tvar instance: Variant = user_script.new()
+\tif instance has_method("_initialize"):
+\t\tinstance._initialize()
+\telif instance has_method("_ready"):
+\t\tpass  # SceneTree _initialize already ran
+\tget_tree().quit()
+`;
 }
