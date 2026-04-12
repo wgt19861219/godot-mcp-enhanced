@@ -453,15 +453,22 @@ export class GodotServer {
         {
           name: 'edit_script',
           description: 'Edit an existing GDScript file by replacing a range of lines. '
-            + 'Automatically handles tab indentation and CRLF line endings. '
+            + 'Preserves CRLF line endings. By default inserts content as-is (raw mode). '
             + 'Safer than write_script for incremental edits.',
           inputSchema: {
             type: 'object' as const,
             properties: {
-              script_path: { type: 'string', description: 'Absolute path to the .gd file to edit' },
+              script_path: { type: 'string', description: 'Path to the .gd file to edit (absolute or relative to project)' },
               start_line: { type: 'number', description: '1-based line number where replacement starts (inclusive)' },
               end_line: { type: 'number', description: '1-based line number where replacement ends (inclusive). Use same as start_line for single line replace.' },
-              new_content: { type: 'string', description: 'New content to replace the specified line range. Will be indented to match the original indentation of start_line.' },
+              new_content: { type: 'string', description: 'New content to replace the specified line range.' },
+              indent_mode: {
+                type: 'string',
+                enum: ['raw', 'smart'],
+                description: 'Indentation mode: "raw" (default) inserts content exactly as provided. "smart" auto-adjusts indentation to match start_line.',
+                default: 'raw',
+              },
+              verify_content: { type: 'string', description: 'Optional: expected content at the replacement range. Edit is aborted if it does not match, preventing stale line-number edits.' },
             },
             required: ['script_path', 'start_line', 'end_line', 'new_content'],
           },
@@ -1190,7 +1197,11 @@ export class GodotServer {
       }
 
       case 'write_script': {
-        const sp = join(validatePath(args.project_path as string), args.script_path as string);
+        const scriptPath = args.script_path as string;
+        // Support both absolute paths and relative-to-project paths
+        const sp = isAbsolute(scriptPath)
+          ? scriptPath
+          : join(validatePath(args.project_path as string), scriptPath);
         const content = args.content as string;
 
         ensureDir(sp);
@@ -1208,6 +1219,8 @@ export class GodotServer {
         const startLine = args.start_line as number;
         const endLine = args.end_line as number;
         const newContent = args.new_content as string;
+        const indentMode = (args.indent_mode as string) || 'raw';
+        const verifyContent = args.verify_content as string | undefined;
 
         if (!existsSync(fullPath)) {
           return text(`Error: File not found: ${fullPath}`);
@@ -1216,30 +1229,60 @@ export class GodotServer {
           return text(`Error: Invalid line range: start_line=${startLine}, end_line=${endLine}`);
         }
 
-        const raw = readFileSync(fullPath, 'utf-8');
-        const hasCRLF = raw.includes('\r\n');
-        const lines = raw.split(/\r?\n/);
+        const rawFile = readFileSync(fullPath, 'utf-8');
+        const hasCRLF = rawFile.includes('\r\n');
+        const lines = rawFile.split(/\r?\n/);
 
         if (endLine > lines.length) {
           return text(`Error: end_line ${endLine} exceeds file length ${lines.length}`);
         }
 
-        // Detect indentation of the first replaced line
-        const originalLine = lines[startLine - 1] || '';
-        const indentMatch = originalLine.match(/^(\t*)/);
-        const baseIndent = indentMatch ? indentMatch[1] : '';
+        // Save before-state for diff response
+        const beforeLines = lines.slice(startLine - 1, endLine);
 
-        // Prepare new lines with matching indentation
+        // Verify content if requested — prevents stale line-number edits
+        if (verifyContent !== undefined) {
+          const existingContent = beforeLines.join('\n');
+          const normalize = (s: string) => s.replace(/\r\n/g, '\n').replace(/\t/g, '    ').trim();
+          if (normalize(existingContent) !== normalize(verifyContent)) {
+            return text(
+              `Error: Content verification failed at lines ${startLine}-${endLine}. The file has changed since the line numbers were read.\n` +
+              `--- Expected ---\n${verifyContent}\n` +
+              `--- Actual ---\n${existingContent}`
+            );
+          }
+        }
+
+        // Prepare replacement lines
         const newLines = newContent.split(/\r?\n/);
-        // If new_content has its own indentation, detect and strip it, then re-add baseIndent
-        const newContentBaseIndent = newLines[0] ? (newLines[0].match(/^(\t*)/)?.[1] || '') : '';
-        const adjustedLines = newLines.map((line: string) => {
-          // Strip the new_content's base indent, then add the file's base indent
-          const stripped = newContentBaseIndent.length > 0 && line.startsWith(newContentBaseIndent)
-            ? line.substring(newContentBaseIndent.length)
-            : line;
-          return baseIndent + stripped;
-        });
+        let adjustedLines: string[];
+
+        if (indentMode === 'smart') {
+          // Smart indent: detect start_line's indent, strip new_content's base indent,
+          // re-apply start_line's indent. Preserves relative indentation.
+          const originalLine = lines[startLine - 1] || '';
+          const baseIndent = (originalLine.match(/^(\t*)/) || ['',''])[1];
+          // Find minimum indent in new content to strip uniformly
+          let minIndent = Infinity;
+          for (const nl of newLines) {
+            if (nl.trim() === '') continue; // skip blank lines
+            const tabs = (nl.match(/^(\t*)/) || ['',''])[1].length;
+            if (tabs < minIndent) minIndent = tabs;
+          }
+          if (minIndent === Infinity) minIndent = 0;
+          const stripPrefix = '\t'.repeat(minIndent);
+
+          adjustedLines = newLines.map((line: string) => {
+            if (line.trim() === '') return line; // preserve blank lines as-is
+            const stripped = line.startsWith(stripPrefix)
+              ? line.substring(stripPrefix.length)
+              : line;
+            return baseIndent + stripped;
+          });
+        } else {
+          // Raw mode (default): insert content exactly as provided
+          adjustedLines = newLines;
+        }
 
         // Replace lines
         lines.splice(startLine - 1, endLine - startLine + 1, ...adjustedLines);
@@ -1248,7 +1291,12 @@ export class GodotServer {
         const result = lines.join(hasCRLF ? '\r\n' : '\n');
         writeFileSync(fullPath, result, 'utf-8');
 
-        return text(`Edited ${fullPath}: replaced lines ${startLine}-${endLine} with ${adjustedLines.length} line(s)`);
+        // Build response with before/after diff
+        const afterLines = adjustedLines;
+        const diffHeader = `Edited ${fullPath}: replaced lines ${startLine}-${endLine} (${beforeLines.length} lines → ${afterLines.length} lines)`;
+        const diffBody = `--- Before ---\n${beforeLines.join('\n')}\n--- After ---\n${afterLines.join('\n')}`;
+
+        return text(`${diffHeader}\n${diffBody}`);
       }
 
       // ===== RUN VERIFICATION TOOLS =====

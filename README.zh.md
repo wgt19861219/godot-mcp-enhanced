@@ -149,7 +149,7 @@ npm install
 | `run_project` | 以调试模式运行项目（自动超时） |
 | `stop_project` | 停止运行中的项目，返回结构化输出 |
 | `get_debug_output` | 获取分类调试输出（错误/警告/打印） |
-| `capture_screenshot` | 截取游戏画面（headless 模式） |
+| `capture_screenshot` | 截取游戏画面（Windows 默认窗口模式，Linux/macOS 自动降级） |
 | `run_tests` | 运行 GUT 单元测试并解析结果 |
 | `get_godot_version` | 获取 Godot 引擎版本 |
 
@@ -196,7 +196,7 @@ npm install
 |------|------|
 | `read_script` | 读取 .gd 文件（含元数据） |
 | `write_script` | 写入/覆盖 .gd 文件 |
-| `edit_script` | 按行范围编辑 .gd 文件。自动检测 tab 缩进和 CRLF 换行。 |
+| `edit_script` | 按行范围编辑 .gd 文件。支持 `raw`/`smart` 缩进模式、内容验证、变更前后对比。 |
 
 ### API 文档工具
 
@@ -211,18 +211,31 @@ npm install
 
 ### `edit_script`
 
-按行范围编辑现有 GDScript 文件。自动检测并保留原始 tab 缩进和 CRLF/LF 换行：
+按行范围编辑现有 GDScript 文件。自动保留 CRLF/LF 换行。
+
+**参数：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `script_path` | 是 | .gd 文件路径（绝对路径或相对于项目） |
+| `start_line` | 是 | 起始行号（1-based，包含） |
+| `end_line` | 是 | 结束行号（1-based，包含） |
+| `new_content` | 是 | 替换内容 |
+| `indent_mode` | 否 | `"raw"`（默认）— 原样插入。`"smart"` — 自动调整缩进匹配 `start_line`。 |
+| `verify_content` | 否 | 预期内容，不匹配时中止编辑，防止过期行号误改。 |
 
 ```json
 {
   "script_path": "scripts/player.gd",
   "start_line": 10,
   "end_line": 12,
-  "new_content": "func get_health() -> int:\n\treturn hp"
+  "new_content": "func get_health() -> int:\n\treturn hp",
+  "indent_mode": "raw",
+  "verify_content": "func get_hp():\n\treturn 0"
 }
 ```
 
-比 `write_script` 更安全 — 仅修改指定行，不影响文件其余部分。
+响应包含变更前后的 diff 对比。
 
 ### `batch_add_nodes`
 
@@ -302,6 +315,18 @@ npm install
 - Godot Engine 4.x（已测试 4.5+）
 - Node.js >= 18
 - GUT 插件（用于 `run_tests` 工具）
+
+## 截图功能平台说明
+
+`capture_screenshot` 工具根据平台使用不同的渲染策略：
+
+| 平台 | 模式 | 说明 |
+|------|------|------|
+| **Windows** | 窗口模式（默认） | Headless 模式下 viewport 纹理返回 null，必须使用 GPU 上下文 |
+| **Linux** | Headless → 窗口模式降级 | Headless + OpenGL3 取决于 GPU 驱动是否支持 |
+| **macOS** | Headless → 窗口模式降级 | 与 Linux 相同 |
+
+内置 `screenshot_capture.gd` 使用 `process_frame` 信号模式和 `call_deferred()` 确保场景加载和帧捕获的可靠性。
 
 ## 许可证
 

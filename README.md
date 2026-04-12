@@ -135,7 +135,7 @@ Add to your MCP settings:
 | `run_project` | Run project in debug mode with auto-timeout |
 | `stop_project` | Stop running project, return structured output |
 | `get_debug_output` | Get classified debug output (errors/warnings/prints) |
-| `capture_screenshot` | Capture game screenshot (headless mode) |
+| `capture_screenshot` | Capture game screenshot (windowed on Windows, headless fallback) |
 | `run_tests` | Run GUT unit tests and parse results |
 | `get_godot_version` | Get installed Godot version |
 
@@ -182,7 +182,7 @@ Add to your MCP settings:
 |------|-------------|
 | `read_script` | Read .gd file with metadata |
 | `write_script` | Write/overwrite .gd file |
-| `edit_script` | Edit .gd file by replacing a line range. Auto-detects tab indentation and CRLF line endings. |
+| `edit_script` | Edit .gd file by replacing a line range. Supports `raw`/`smart` indent modes, content verification, and before/after diff. |
 
 ### API Documentation
 
@@ -275,18 +275,31 @@ The `errors` array contains structured error objects with type, file, line, mess
 
 ### `edit_script`
 
-Edit an existing GDScript file by replacing a line range. Automatically detects and preserves the original tab indentation and CRLF/LF line endings:
+Edit an existing GDScript file by replacing a line range. Preserves CRLF/LF line endings automatically.
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `script_path` | Yes | Path to the .gd file (absolute or relative to project) |
+| `start_line` | Yes | 1-based line number where replacement starts (inclusive) |
+| `end_line` | Yes | 1-based line number where replacement ends (inclusive) |
+| `new_content` | Yes | New content to replace the specified line range |
+| `indent_mode` | No | `"raw"` (default) — insert content exactly as provided. `"smart"` — auto-adjust indentation to match `start_line`. |
+| `verify_content` | No | Expected content at the replacement range. Edit is aborted if it doesn't match, preventing stale line-number edits. |
 
 ```json
 {
   "script_path": "scripts/player.gd",
   "start_line": 10,
   "end_line": 12,
-  "new_content": "func get_health() -> int:\n\treturn hp"
+  "new_content": "func get_health() -> int:\n\treturn hp",
+  "indent_mode": "raw",
+  "verify_content": "func get_hp():\n\treturn 0"
 }
 ```
 
-This is safer than `write_script` for incremental edits — only the specified lines are changed, preserving the rest of the file.
+The response includes a before/after diff showing exactly what changed.
 
 ### `batch_add_nodes`
 
@@ -361,6 +374,18 @@ Supports: `.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`, `.mp3`, `.ogg`, `.wav`, `.tt
 - Godot Engine 4.x (tested with 4.5+)
 - Node.js >= 18
 - GUT addon (for `run_tests` tool)
+
+## Screenshot Platform Notes
+
+The `capture_screenshot` tool uses different rendering strategies per platform:
+
+| Platform | Mode | Notes |
+|----------|------|-------|
+| **Windows** | Windowed (default) | Headless mode returns null viewport textures — GPU context required |
+| **Linux** | Headless → Windowed fallback | Headless + OpenGL3 may work depending on GPU drivers |
+| **macOS** | Headless → Windowed fallback | Same as Linux |
+
+The bundled `screenshot_capture.gd` uses the `process_frame` signal pattern and `call_deferred()` for reliable scene loading and frame capture.
 
 ## License
 
