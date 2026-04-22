@@ -312,7 +312,7 @@ npm install
 
 ## 系统要求
 
-- Godot Engine 4.x（已测试 4.5+）
+- Godot Engine 4.x（已测试 4.6+）
 - Node.js >= 18
 - GUT 插件（用于 `run_tests` 工具）
 

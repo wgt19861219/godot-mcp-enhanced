@@ -371,7 +371,7 @@ Supports: `.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`, `.mp3`, `.ogg`, `.wav`, `.tt
 
 ## Requirements
 
-- Godot Engine 4.x (tested with 4.5+)
+- Godot Engine 4.x (tested with 4.6+)
 - Node.js >= 18
 - GUT addon (for `run_tests` tool)
 

@@ -502,7 +502,7 @@ export class GodotServer {
         },        // ===== SCAFFOLDING & TEST TOOLS =====
         {
           name: 'create_project',
-          description: 'Create a complete Godot 4.5 project structure with project.godot, main scene, main script, and assets directory.',
+          description: 'Create a complete Godot 4.6 project structure with project.godot, main scene, main script, and assets directory.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -1392,7 +1392,7 @@ export class GodotServer {
           '',
           'config/name="' + projectName + '"',
           'run/main_scene="res://scenes/main.tscn"',
-          'config/features=PackedStringArray("4.5")',
+          'config/features=PackedStringArray("4.6")',
           '',
           '[display]',
           '',
@@ -1423,7 +1423,7 @@ export class GodotServer {
           'extends Node2D',
           '',
           'func _ready() -> void:',
-          "\tprint(\"Hello, Godot 4.5!\")",
+          "\tprint(\"Hello, Godot 4.6!\")",
           '',
         ].join('\n');
         writeFileSync(join(p, 'scripts', 'main.gd'), mainGd, 'utf-8');
