@@ -38,6 +38,7 @@ Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps
 | **Edit script (line range)** | **No** | **Yes** |
 | **Autoload context execution** | **No** | **Yes** |
 | **Structured error analysis** | **No** | **Yes** |
+| **MCP Resources (godot://)** | **No** | **Yes** |
 
 ## The Closed-Loop Problem
 
@@ -192,6 +193,40 @@ Add to your MCP settings:
 | `search_classes` | Search for classes by name/description |
 | `find_method` | Find method details with inheritance lookup |
 | `get_inheritance` | Get full inheritance chain |
+
+## MCP Resources
+
+AI clients can discover and read project context via `godot://` URI scheme without explicit tool calls.
+
+### Static Resources
+
+| URI | Description |
+|-----|-------------|
+| `godot://project/info` | Project metadata + file statistics (JSON) |
+| `godot://project/config` | Raw `project.godot` file |
+
+### Resource Templates
+
+| URI Pattern | Description |
+|-------------|-------------|
+| `godot://scene/{path}` | Read a `.tscn` scene as a node tree summary |
+| `godot://script/{path}` | Read a `.gd` script file |
+| `godot://file/{path}` | Read any text file from the project |
+
+### Security
+
+- Paths must be under the project root (no `../` traversal)
+- `.godot/`, `.import/`, `node_modules/` directories are blocked
+- `.import`, `.uid`, `.godot` file extensions are blocked
+
+### Example Usage
+
+```
+Client: ListResources → discovers all scenes and scripts
+Client: ReadResource("godot://project/info") → project config + stats
+Client: ReadResource("godot://scene/scenes/main.tscn") → node tree summary
+Client: ReadResource("godot://script/scripts/player.gd") → GDScript source
+```
 
 ## `execute_gdscript` Details
 

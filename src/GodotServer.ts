@@ -3,6 +3,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { spawn, ChildProcess } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, rmSync } from 'fs';
@@ -34,6 +37,11 @@ import {
 import { analyzeOutput } from './error-analyzer.js';
 import { captureScreenshot } from './screenshot.js';
 import { executeGdscript } from './gdscript-executor.js';
+import {
+  listResources as listMcpResources,
+  listResourceTemplates as listMcpResourceTemplates,
+  readResource as readMcpResource,
+} from './resources.js';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -178,8 +186,8 @@ export class GodotServer {
   constructor(opsScript: string) {
     this.opsScript = opsScript;
     this.server = new Server(
-      { name: 'godot-mcp-enhanced', version: '0.1.0' },
-      { capabilities: { tools: {} } }
+      { name: 'godot-mcp-enhanced', version: '0.4.0' },
+      { capabilities: { tools: {}, resources: {} } }
     );
     this.setupHandlers();
   }
@@ -678,6 +686,32 @@ export class GodotServer {
         return { content: [{ type: 'text', text: `Error: ${msg}` }] };
       }
     });
+
+    // ── MCP Resources handlers ──────────────────────────────────────────────
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      const projectPath = this.detectProjectPath();
+      const resources = listMcpResources(projectPath);
+      return { resources };
+    });
+
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+      const templates = listMcpResourceTemplates();
+      return { resourceTemplates: templates };
+    });
+
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      const projectPath = this.detectProjectPath();
+      const content = readMcpResource(uri, projectPath);
+      return { contents: [content] };
+    });
+  }
+
+  private detectProjectPath(): string | undefined {
+    // Try to detect project from cwd
+    const cwd = process.cwd();
+    if (existsSync(join(cwd, 'project.godot'))) return cwd;
+    return undefined;
   }
 
   private async handleTool(name: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> }> {

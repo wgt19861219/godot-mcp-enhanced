@@ -38,6 +38,7 @@
 | **编辑脚本（行范围替换）** | **不支持** | **支持** |
 | **Autoload 上下文执行** | **不支持** | **支持** |
 | **结构化错误分析** | **不支持** | **支持** |
+| **MCP 资源（godot://）** | **不支持** | **支持** |
 
 ## 核心亮点
 
@@ -206,6 +207,40 @@ npm install
 | `search_classes` | 按名称/描述搜索类 |
 | `find_method` | 查找方法详情（含继承链） |
 | `get_inheritance` | 获取完整继承链 |
+
+## MCP 资源（Resources）
+
+AI 客户端可通过 `godot://` URI 方案发现和读取项目上下文，无需显式工具调用。
+
+### 静态资源
+
+| URI | 说明 |
+|-----|------|
+| `godot://project/info` | 项目元数据 + 文件统计（JSON） |
+| `godot://project/config` | 原始 `project.godot` 文件 |
+
+### 资源模板
+
+| URI 模式 | 说明 |
+|----------|------|
+| `godot://scene/{path}` | 读取 `.tscn` 场景为节点树摘要 |
+| `godot://script/{path}` | 读取 `.gd` 脚本文件 |
+| `godot://file/{path}` | 读取项目中任意文本文件 |
+
+### 安全限制
+
+- 路径必须在项目根目录下（禁止 `../` 遍历）
+- `.godot/`、`.import/`、`node_modules/` 目录被阻止
+- `.import`、`.uid`、`.godot` 文件扩展名被阻止
+
+### 使用示例
+
+```
+Client: ListResources → 发现所有场景和脚本
+Client: ReadResource("godot://project/info") → 项目配置 + 统计
+Client: ReadResource("godot://scene/scenes/main.tscn") → 节点树摘要
+Client: ReadResource("godot://script/scripts/player.gd") → GDScript 源码
+```
 
 ## v0.3.0 新增工具详解
 
