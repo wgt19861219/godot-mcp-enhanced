@@ -708,9 +708,14 @@ export class GodotServer {
   }
 
   private detectProjectPath(): string | undefined {
-    // Try to detect project from cwd
-    const cwd = process.cwd();
-    if (existsSync(join(cwd, 'project.godot'))) return cwd;
+    // Walk up from cwd to find project root
+    let dir = process.cwd();
+    for (let i = 0; i < 5; i++) {
+      if (existsSync(join(dir, 'project.godot'))) return dir;
+      const parent = join(dir, '..');
+      if (parent === dir) break;
+      dir = parent;
+    }
     return undefined;
   }
 

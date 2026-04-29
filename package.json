@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-enhanced",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Enhanced MCP server for Godot game engine - closed-loop AI development with dynamic GDScript execution, scene tree query, node inspection, and more",
   "keywords": ["godot", "mcp", "ai", "claude", "game-dev", "closed-loop"],
   "license": "MIT",
