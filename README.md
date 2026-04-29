@@ -1,66 +1,80 @@
 # Godot MCP Enhanced
 
-Enhanced MCP server for Godot game engine — designed for **closed-loop AI-assisted development**.
+增强版 Godot 引擎 MCP 服务器 — 为 **AI 辅助游戏开发闭环** 而设计。
 
-Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps filled: scene reading, script R/W, screenshots, testing, **dynamic GDScript execution**, and more.
+基于 [godot-mcp](https://github.com/Coding-Solo/godot-mcp) 二次开发，填补了关键能力空白：场景读取、脚本读写、截图、测试、**动态 GDScript 执行** 等。
 
-**[中文文档](README.zh.md)**
+**[English](README.en.md)**
 
-## What's New vs Original godot-mcp
+## 与原版 godot-mcp 对比
 
-| Feature | godot-mcp | godot-mcp-enhanced |
-|---------|:---------:|:------------------:|
-| Launch editor | Yes | Yes |
-| Run project | Yes | Yes (+ auto timeout) |
-| Get debug output | Yes (raw) | Yes (structured: errors/warnings/prints) |
-| Stop project | Yes | Yes (+ summary) |
-| Get version | Yes | Yes |
-| List projects | Yes | Yes |
-| Project info | Yes | Yes (+ file stats by extension) |
-| Create scene | Yes | Yes |
-| Add node | Yes | Yes |
-| Load sprite | Yes | Yes |
-| Save scene | Yes | Yes |
-| **Read scene (parse .tscn)** | **No** | **Yes** |
-| **Read script (.gd)** | **No** | **Yes** |
-| **Write script (.gd)** | **No** | **Yes** |
-| **List files (with filters)** | **No** | **Yes** |
-| **Read project config** | **No** | **Yes** |
-| **Capture screenshot** | **No** | **Yes** |
-| **Run unit tests (GUT)** | **No** | **Yes** |
-| **Execute arbitrary GDScript** | **No** | **Yes** |
-| **Query scene tree (runtime)** | **No** | **Yes** |
-| **Deep inspect node** | **No** | **Yes** |
-| **Batch add nodes** | **No** | **Yes** |
-| **Validate project** | **No** | **Yes** |
-| **Import resources** | **No** | **Yes** |
-| **Run & verify + scene tree** | **No** | **Yes** |
-| **Edit script (line range)** | **No** | **Yes** |
-| **Autoload context execution** | **No** | **Yes** |
-| **Structured error analysis** | **No** | **Yes** |
-| **MCP Resources (godot://)** | **No** | **Yes** |
+| 功能 | godot-mcp | godot-mcp-enhanced |
+|------|:---------:|:------------------:|
+| 启动编辑器 | 支持 | 支持 |
+| 运行项目 | 支持 | 支持（+ 自动超时） |
+| 获取调试输出 | 支持（原始） | 支持（结构化：错误/警告/打印分类） |
+| 停止项目 | 支持 | 支持（+ 摘要） |
+| 获取版本 | 支持 | 支持 |
+| 列出项目 | 支持 | 支持 |
+| 项目信息 | 支持 | 支持（+ 文件统计） |
+| 创建场景 | 支持 | 支持 |
+| 添加节点 | 支持 | 支持 |
+| 加载精灵 | 支持 | 支持 |
+| 保存场景 | 支持 | 支持 |
+| **读取场景（解析 .tscn）** | **不支持** | **支持** |
+| **读取脚本（.gd）** | **不支持** | **支持** |
+| **写入脚本（.gd）** | **不支持** | **支持** |
+| **列出文件（带过滤）** | **不支持** | **支持** |
+| **读取项目配置** | **不支持** | **支持** |
+| **截图** | **不支持** | **支持** |
+| **运行单元测试（GUT）** | **不支持** | **支持** |
+| **执行任意 GDScript** | **不支持** | **支持** |
+| **运行时场景树查询** | **不支持** | **支持** |
+| **深度检查节点** | **不支持** | **支持** |
+| **批量添加节点** | **不支持** | **支持** |
+| **项目验证** | **不支持** | **支持** |
+| **资源导入** | **不支持** | **支持** |
+| **运行验证 + 场景树快照** | **不支持** | **支持** |
+| **编辑脚本（行范围替换）** | **不支持** | **支持** |
+| **Autoload 上下文执行** | **不支持** | **支持** |
+| **结构化错误分析** | **不支持** | **支持** |
+| **MCP 资源（godot://）** | **不支持** | **支持** |
 
-## The Closed-Loop Problem
+## 核心亮点
 
-Original godot-mcp only covers the middle of the AI dev loop:
+### 动态 GDScript 执行
+
+`execute_gdscript` 工具让 AI 可以在 headless 模式下执行任意 GDScript 代码：
+
+- **代码片段模式**：无需写 `extends`，输入的代码会被自动包装为完整的 `extends SceneTree` 脚本
+- **结构化输出**：通过 `_mcp_output(key, value)` 返回键值对结果
+- **超时控制**：防止代码死循环卡住
+- **Autoload 上下文**：设置 `load_autoloads=true` 可在完整项目环境中运行，访问 DataRegistry、PlayerData 等全局单例
+- **结构化错误**：返回 `errors` 数组，包含错误类型、文件、行号、消息和修复建议
+
+### 批量操作
+
+`batch_add_nodes` 一次调用添加多个节点，只在最后做一次 pack+save，避免每个节点都启停 headless Godot，性能提升显著。
+
+### 项目验证
+
+`validate_project` 静态扫描项目，检查：
+- `.tscn` 文件中引用了不存在的资源
+- `.gd` 脚本中 `preload()`/`load()` 路径无效
+- 源资源已删除但 `.import` 文件残留
+
+### 资源导入
+
+`import_resources` 扫描目录批量注册资源（图片/音频/字体/3D模型），自动生成 `.import` 文件。
+
+## 闭环开发工作流
 
 ```
-[AI writes code] -> ??? -> [run project] -> [see errors]
-        |                                       |
-        +-- can't read scene/script <-----------+
-           can't see visuals
+read_scene/read_script → 理解结构 → write_script → run_and_verify
+→ validate_project → batch_add_nodes → import_resources → 验证通过
 ```
 
-godot-mcp-enhanced closes the loop:
-
-```
-read_scene/read_script -> understand structure -> write_script -> run_project
--> get_debug_output/capture_screenshot -> analyze -> fix -> verify
-```
-
-And now with `execute_gdscript`, the AI can perform **any operation** that GDScript supports — from manipulating nodes to querying engine state — all through a single flexible tool.
-
-## Installation
+## 安装
 
 ```bash
 git clone https://github.com/wgt19861219/godot-mcp-enhanced.git
@@ -68,11 +82,11 @@ cd godot-mcp-enhanced
 npm install
 ```
 
-## Configuration
+## 配置
 
 ### Cursor
 
-Create `.cursor/mcp.json` in your project:
+在项目中创建 `.cursor/mcp.json`：
 
 ```json
 {
@@ -91,7 +105,7 @@ Create `.cursor/mcp.json` in your project:
 
 ### Cline / Claude Code
 
-Add to your MCP settings:
+添加到 MCP 设置中：
 
 ```json
 {
@@ -119,209 +133,131 @@ Add to your MCP settings:
 }
 ```
 
-### Environment Variables
+### 环境变量
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `GODOT_PATH` | Path to Godot executable | Auto-detected |
-| `DEBUG` | Enable verbose logging | `false` |
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `GODOT_PATH` | Godot 可执行文件路径 | 自动检测 |
+| `DEBUG` | 启用详细日志 | `false` |
 
-## Tools (34 total)
+## 工具列表（共 34 个）
 
-### Execution
+### 执行工具
 
-| Tool | Description |
-|------|-------------|
-| `launch_editor` | Open Godot editor GUI for a project |
-| `run_project` | Run project in debug mode with auto-timeout |
-| `stop_project` | Stop running project, return structured output |
-| `get_debug_output` | Get classified debug output (errors/warnings/prints) |
-| `capture_screenshot` | Capture game screenshot (windowed on Windows, headless fallback) |
-| `run_tests` | Run GUT unit tests and parse results |
-| `get_godot_version` | Get installed Godot version |
+| 工具 | 说明 |
+|------|------|
+| `launch_editor` | 启动 Godot 编辑器 GUI |
+| `run_project` | 以调试模式运行项目（自动超时） |
+| `stop_project` | 停止运行中的项目，返回结构化输出 |
+| `get_debug_output` | 获取分类调试输出（错误/警告/打印） |
+| `capture_screenshot` | 截取游戏画面（Windows 默认窗口模式，Linux/macOS 自动降级） |
+| `run_tests` | 运行 GUT 单元测试并解析结果 |
+| `get_godot_version` | 获取 Godot 引擎版本 |
 
-### Verification
+### 验证工具
 
-| Tool | Description |
-|------|-------------|
-| `run_and_verify` | One-click headless run with structured error/warning analysis. Supports `capture_tree` option to include scene tree snapshot. |
-| `analyze_error` | Re-analyze Godot output text with fix suggestions |
+| 工具 | 说明 |
+|------|------|
+| `run_and_verify` | 一键 headless 运行并返回结构化错误/警告分析。支持 `capture_tree` 选项同时获取场景树快照。 |
+| `analyze_error` | 重新分析 Godot 输出文本，提供修复建议 |
 
-### Dynamic Execution
+### 动态执行工具
 
-| Tool | Description |
-|------|-------------|
-| `execute_gdscript` | Execute arbitrary GDScript code in headless mode. Supports snippet mode (auto-wrapped) and full class mode. Returns structured key-value results. Set `load_autoloads=true` to run with full autoload context (DataRegistry, PlayerData, etc.). |
-| `query_scene_tree` | Load a scene and query its runtime node tree with resolved property values (not just static .tscn file data). |
-| `inspect_node` | Deep-inspect a node: all properties, signal connections, children with recursive depth control. |
+| 工具 | 说明 |
+|------|------|
+| `execute_gdscript` | 在 headless 模式下执行任意 GDScript 代码。支持代码片段模式（自动包装）和完整类模式。设置 `load_autoloads=true` 可在完整 Autoload 上下文中运行（DataRegistry、PlayerData 等）。 |
+| `query_scene_tree` | 加载场景并查询运行时节点树，返回解析后的实际属性值。 |
+| `inspect_node` | 深度检查节点：所有属性、信号连接、子节点，支持递归深度控制。 |
 
-### Project
+### 项目工具
 
-| Tool | Description |
-|------|-------------|
-| `list_projects` | Find Godot projects in a directory |
-| `get_project_info` | Project metadata + file statistics |
-| `list_files` | List files with extension/subdirectory filters |
-| `read_project_config` | Parse project.godot into structured JSON |
-| `validate_project` | Check for missing resources, broken script references, orphaned .import files |
-| `import_resources` | Scan directories and generate .import stubs for images, audio, fonts, and 3D models |
+| 工具 | 说明 |
+|------|------|
+| `list_projects` | 搜索目录中的 Godot 项目 |
+| `get_project_info` | 项目元数据 + 文件统计 |
+| `list_files` | 列出文件（支持扩展名/子目录过滤） |
+| `read_project_config` | 解析 project.godot 为结构化 JSON |
+| `validate_project` | 检查缺失资源、无效脚本引用、孤立 .import 文件 |
+| `import_resources` | 扫描目录批量生成 .import 文件（图片/音频/字体/3D模型） |
 
-### Scene
+### 场景工具
 
-| Tool | Description |
-|------|-------------|
-| `read_scene` | Parse .tscn into node tree JSON |
-| `create_scene` | Create new scene with root node |
-| `add_node` | Add node to existing scene |
-| `batch_add_nodes` | Add multiple nodes to a scene in one call (much faster than repeated `add_node`) |
-| `save_scene` | Save scene changes |
-| `load_sprite` | Load texture into sprite node |
+| 工具 | 说明 |
+|------|------|
+| `read_scene` | 解析 .tscn 为节点树 JSON |
+| `create_scene` | 创建新场景 |
+| `add_node` | 向场景添加节点 |
+| `batch_add_nodes` | 一次调用添加多个节点（比重复 `add_node` 快得多） |
+| `save_scene` | 保存场景更改 |
+| `load_sprite` | 加载纹理到精灵节点 |
 
-### Script
+### 脚本工具
 
-| Tool | Description |
-|------|-------------|
-| `read_script` | Read .gd file with metadata |
-| `write_script` | Write/overwrite .gd file |
-| `edit_script` | Edit .gd file by replacing a line range. Supports `raw`/`smart` indent modes, content verification, and before/after diff. |
+| 工具 | 说明 |
+|------|------|
+| `read_script` | 读取 .gd 文件（含元数据） |
+| `write_script` | 写入/覆盖 .gd 文件 |
+| `edit_script` | 按行范围编辑 .gd 文件。支持 `raw`/`smart` 缩进模式、内容验证、变更前后对比。 |
 
-### API Documentation
+### API 文档工具
 
-| Tool | Description |
-|------|-------------|
-| `get_class_info` | Get class methods, properties, signals, constants |
-| `search_classes` | Search for classes by name/description |
-| `find_method` | Find method details with inheritance lookup |
-| `get_inheritance` | Get full inheritance chain |
+| 工具 | 说明 |
+|------|------|
+| `get_class_info` | 获取类的方法、属性、信号、常量 |
+| `search_classes` | 按名称/描述搜索类 |
+| `find_method` | 查找方法详情（含继承链） |
+| `get_inheritance` | 获取完整继承链 |
 
-## MCP Resources
+## MCP 资源（Resources）
 
-AI clients can discover and read project context via `godot://` URI scheme without explicit tool calls.
+AI 客户端可通过 `godot://` URI 方案发现和读取项目上下文，无需显式工具调用。
 
-### Static Resources
+### 静态资源
 
-| URI | Description |
-|-----|-------------|
-| `godot://project/info` | Project metadata + file statistics (JSON) |
-| `godot://project/config` | Raw `project.godot` file |
+| URI | 说明 |
+|-----|------|
+| `godot://project/info` | 项目元数据 + 文件统计（JSON） |
+| `godot://project/config` | 原始 `project.godot` 文件 |
 
-### Resource Templates
+### 资源模板
 
-| URI Pattern | Description |
-|-------------|-------------|
-| `godot://scene/{path}` | Read a `.tscn` scene as a node tree summary |
-| `godot://script/{path}` | Read a `.gd` script file |
-| `godot://file/{path}` | Read any text file from the project |
+| URI 模式 | 说明 |
+|----------|------|
+| `godot://scene/{path}` | 读取 `.tscn` 场景为节点树摘要 |
+| `godot://script/{path}` | 读取 `.gd` 脚本文件 |
+| `godot://file/{path}` | 读取项目中任意文本文件 |
 
-### Security
+### 安全限制
 
-- Paths must be under the project root (no `../` traversal)
-- `.godot/`, `.import/`, `node_modules/` directories are blocked
-- `.import`, `.uid`, `.godot` file extensions are blocked
+- 路径必须在项目根目录下（禁止 `../` 遍历）
+- `.godot/`、`.import/`、`node_modules/` 目录被阻止
+- `.import`、`.uid`、`.godot` 文件扩展名被阻止
 
-### Example Usage
+### 使用示例
 
 ```
-Client: ListResources → discovers all scenes and scripts
-Client: ReadResource("godot://project/info") → project config + stats
-Client: ReadResource("godot://scene/scenes/main.tscn") → node tree summary
-Client: ReadResource("godot://script/scripts/player.gd") → GDScript source
+Client: ListResources → 发现所有场景和脚本
+Client: ReadResource("godot://project/info") → 项目配置 + 统计
+Client: ReadResource("godot://scene/scenes/main.tscn") → 节点树摘要
+Client: ReadResource("godot://script/scripts/player.gd") → GDScript 源码
 ```
 
-## `execute_gdscript` Details
-
-### Snippet Mode (default)
-
-When your code doesn't contain `extends`, it's automatically wrapped:
-
-```gdscript
-# Your input:
-var scene = load("res://scenes/main.tscn")
-var root = scene.instantiate()
-_mcp_output("node_count", str(root.get_child_count()))
-_mcp_output("root_type", root.get_class())
-```
-
-This gets wrapped into a full `extends SceneTree` script with helper functions. Use `_mcp_output(key, value)` to return structured results.
-
-**Tips for snippet mode:**
-- Use `Variant` type for variables that hold `load().new()` results to avoid "Cannot infer type" errors
-- Autoloads are NOT available in snippet mode by default — use `load_autoloads=true` to enable them
-
-### Full Class Mode
-
-When your code contains `extends`, it's used as-is with helper injection:
-
-```gdscript
-extends SceneTree
-
-func _initialize():
-    var project = ProjectSettings.globalize_path("res://")
-    _mcp_output("project_path", project)
-    var screen = DisplayServer.screen_get_size(0)
-    _mcp_output("screen_size", str(screen))
-    quit()
-```
-
-### Autoload Context Mode
-
-Set `load_autoloads=true` to run code with full project autoload context. This loads the project through a scene instead of a raw script, making all registered autoloads (DataRegistry, PlayerData, etc.) available:
-
-```json
-{
-  "project_path": "/path/to/project",
-  "code": "var data = DataRegistry.get_table(\"hero\")\n_mcp_output(\"hero_count\", str(data.size()))",
-  "load_autoloads": true
-}
-```
-
-**Note:** Autoload mode is slower (requires full scene initialization) but necessary when your code depends on autoload singletons.
-
-### Response Format
-
-```json
-{
-  "success": true,
-  "compile_success": true,
-  "compile_error": "",
-  "errors": [
-    {
-      "type": "script_error",
-      "file": "res://scripts/player.gd",
-      "line": 42,
-      "message": "Invalid access to property or key...",
-      "suggestion": "Check if the node exists before accessing..."
-    }
-  ],
-  "run_success": true,
-  "run_error": "",
-  "outputs": [
-    { "key": "node_count", "value": "5" },
-    { "key": "root_type", "value": "Node2D" }
-  ],
-  "raw_output": "",
-  "duration_ms": 1250
-}
-```
-
-The `errors` array contains structured error objects with type, file, line, message, and fix suggestions — parsed from Godot's output by the error analyzer.
-
-## New Tools in v0.3.0
+## v0.3.0 新增工具详解
 
 ### `edit_script`
 
-Edit an existing GDScript file by replacing a line range. Preserves CRLF/LF line endings automatically.
+按行范围编辑现有 GDScript 文件。自动保留 CRLF/LF 换行。
 
-**Parameters:**
+**参数：**
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `script_path` | Yes | Path to the .gd file (absolute or relative to project) |
-| `start_line` | Yes | 1-based line number where replacement starts (inclusive) |
-| `end_line` | Yes | 1-based line number where replacement ends (inclusive) |
-| `new_content` | Yes | New content to replace the specified line range |
-| `indent_mode` | No | `"raw"` (default) — insert content exactly as provided. `"smart"` — auto-adjust indentation to match `start_line`. |
-| `verify_content` | No | Expected content at the replacement range. Edit is aborted if it doesn't match, preventing stale line-number edits. |
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `script_path` | 是 | .gd 文件路径（绝对路径或相对于项目） |
+| `start_line` | 是 | 起始行号（1-based，包含） |
+| `end_line` | 是 | 结束行号（1-based，包含） |
+| `new_content` | 是 | 替换内容 |
+| `indent_mode` | 否 | `"raw"`（默认）— 原样插入。`"smart"` — 自动调整缩进匹配 `start_line`。 |
+| `verify_content` | 否 | 预期内容，不匹配时中止编辑，防止过期行号误改。 |
 
 ```json
 {
@@ -334,11 +270,11 @@ Edit an existing GDScript file by replacing a line range. Preserves CRLF/LF line
 }
 ```
 
-The response includes a before/after diff showing exactly what changed.
+响应包含变更前后的 diff 对比。
 
 ### `batch_add_nodes`
 
-Add multiple nodes in one headless Godot invocation, avoiding per-node startup overhead:
+一次 headless Godot 调用添加多个节点，避免逐个启动的开销：
 
 ```json
 {
@@ -354,19 +290,19 @@ Add multiple nodes in one headless Godot invocation, avoiding per-node startup o
 
 ### `validate_project`
 
-Static analysis of your Godot project for common issues:
+静态分析项目常见问题：
 
-- Missing `ext_resource` file references in `.tscn` files
-- Broken `preload()` and `load()` paths in `.gd` scripts
-- Orphaned `.import` files (source asset deleted)
+- `.tscn` 文件中 `ext_resource` 引用了不存在的文件
+- `.gd` 脚本中 `preload()`/`load()` 路径无效
+- 源资源已删除但 `.import` 文件残留
 
-Supports `exclude_paths` to skip directories (default: `.godot`, `.import`, `tools`, `addons`). Directories containing `.gdignore` are automatically skipped.
+支持 `exclude_paths` 排除目录（默认排除 `.godot`、`.import`、`tools`、`addons`）。包含 `.gdignore` 的目录会自动跳过。
 
-Returns structured report with severity levels: `critical`, `error`, `warning`, `info`.
+返回结构化报告，包含严重级别：`critical`、`error`、`warning`、`info`。
 
 ### `import_resources`
 
-Bulk-register assets with the Godot project by generating `.import` stub files:
+批量注册资源到项目，自动生成 `.import` 文件：
 
 ```json
 {
@@ -377,53 +313,58 @@ Bulk-register assets with the Godot project by generating `.import` stub files:
 }
 ```
 
-Supports: `.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`, `.mp3`, `.ogg`, `.wav`, `.ttf`, `.otf`, `.glb`, `.gltf`.
+支持格式：`.png`、`.jpg`、`.jpeg`、`.webp`、`.svg`、`.mp3`、`.ogg`、`.wav`、`.ttf`、`.otf`、`.glb`、`.gltf`。
 
-## Closed-Loop Workflow Example
+## 闭环开发示例
 
 ```
 1. AI: read_scene("scenes/player.tscn")
-   -> Gets full node tree, understands structure
+   → 获取完整节点树，理解场景结构
 
 2. AI: read_script("scripts/player_controller.gd")
-   -> Reads current code, identifies what to change
+   → 读取当前代码，确定需要修改的内容
 
 3. AI: write_script("scripts/player_controller.gd", updated_code)
-   -> Writes the fix
+   → 写入修改
 
 4. AI: run_and_verify(project, capture_tree=true)
-   -> Headless run with error analysis + scene tree snapshot
+   → headless 运行 + 错误分析 + 场景树快照
 
 5. AI: validate_project(project)
-   -> Check for missing resources, broken references
+   → 检查缺失资源、无效引用
 
 6. AI: batch_add_nodes(project, scene, nodes=[...])
-   -> Add multiple UI elements in one call
+   → 一次添加多个 UI 元素
 
 7. AI: import_resources(project, directory="assets/ui")
-   -> Register new assets with the project
+   → 注册新资源到项目
 
-8. If errors remain -> go back to step 2
+8. 如果仍有问题 → 回到步骤 2
 ```
 
-## Requirements
+## 致谢
 
-- Godot Engine 4.x (tested with 4.6+)
+- [godot-mcp](https://github.com/Coding-Solo/godot-mcp) — 原始项目
+- [Hastur Operation Plugin](https://github.com/rayxuln/hastur-operation-plugin) — 动态 GDScript 执行和结构化输出的灵感来源
+
+## 系统要求
+
+- Godot Engine 4.x（已测试 4.6+）
 - Node.js >= 18
-- GUT addon (for `run_tests` tool)
+- GUT 插件（用于 `run_tests` 工具）
 
-## Screenshot Platform Notes
+## 截图功能平台说明
 
-The `capture_screenshot` tool uses different rendering strategies per platform:
+`capture_screenshot` 工具根据平台使用不同的渲染策略：
 
-| Platform | Mode | Notes |
-|----------|------|-------|
-| **Windows** | Windowed (default) | Headless mode returns null viewport textures — GPU context required |
-| **Linux** | Headless → Windowed fallback | Headless + OpenGL3 may work depending on GPU drivers |
-| **macOS** | Headless → Windowed fallback | Same as Linux |
+| 平台 | 模式 | 说明 |
+|------|------|------|
+| **Windows** | 窗口模式（默认） | Headless 模式下 viewport 纹理返回 null，必须使用 GPU 上下文 |
+| **Linux** | Headless → 窗口模式降级 | Headless + OpenGL3 取决于 GPU 驱动是否支持 |
+| **macOS** | Headless → 窗口模式降级 | 与 Linux 相同 |
 
-The bundled `screenshot_capture.gd` uses the `process_frame` signal pattern and `call_deferred()` for reliable scene loading and frame capture.
+内置 `screenshot_capture.gd` 使用 `process_frame` 信号模式和 `call_deferred()` 确保场景加载和帧捕获的可靠性。
 
-## License
+## 许可证
 
 MIT
