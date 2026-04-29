@@ -261,6 +261,8 @@ npm install
 - `.gd` 脚本中 `preload()`/`load()` 路径无效
 - 源资源已删除但 `.import` 文件残留
 
+支持 `exclude_paths` 排除目录（默认排除 `.godot`、`.import`、`tools`、`addons`）。包含 `.gdignore` 的目录会自动跳过。
+
 返回结构化报告，包含严重级别：`critical`、`error`、`warning`、`info`。
 
 ### `import_resources`

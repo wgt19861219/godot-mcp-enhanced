@@ -192,9 +192,11 @@ export async function executeGdscript(
   }
 
   // Write temp file
+  const tempFiles: string[] = [];
   let tempFile: string;
   try {
     tempFile = writeTempScript(scriptContent);
+    tempFiles.push(tempFile);
   } catch (err) {
     return {
       success: false,
@@ -213,12 +215,27 @@ export async function executeGdscript(
   const godotArgs: string[] = ['--headless', '--path', projectPath];
   if (loadAutoloads) {
     // Autoload mode: create a loader scene that initializes all autoloads first
-    const loaderScene = createAutoloadLoaderScene(tempFile);
-    const loaderScenePath = writeTempFile(loaderScene, '.tscn');
-    const loaderScriptPath = writeTempFile(createAutoloadLoaderScript(tempFile), '.gd');
-    godotArgs.push('--scene', loaderScenePath);
-    // Store both for cleanup
-    (tempFile as any) = JSON.stringify([tempFile, loaderScenePath, loaderScriptPath]);
+    try {
+      const loaderScene = createAutoloadLoaderScene(tempFile);
+      const loaderScenePath = writeTempFile(loaderScene, '.tscn');
+      tempFiles.push(loaderScenePath);
+      const loaderScriptPath = writeTempFile(createAutoloadLoaderScript(tempFile), '.gd');
+      tempFiles.push(loaderScriptPath);
+      godotArgs.push('--scene', loaderScenePath);
+    } catch (err) {
+      for (const f of tempFiles) { try { rmSync(f, { force: true }); } catch { /* ignore */ } }
+      return {
+        success: false,
+        compile_success: false,
+        compile_error: `Failed to create autoload loader files: ${err}`,
+        errors: [],
+        run_success: false,
+        run_error: '',
+        outputs: [],
+        raw_output: '',
+        duration_ms: Date.now() - startTime,
+      };
+    }
   } else {
     godotArgs.push('--script', tempFile);
   }
@@ -246,13 +263,7 @@ export async function executeGdscript(
       clearTimeout(timer);
       // Cleanup temp files
       try {
-        // Handle both single file and multiple files (autoload mode)
-        if (typeof tempFile === 'string' && tempFile.startsWith('[')) {
-          const files: string[] = JSON.parse(tempFile);
-          for (const f of files) { rmSync(f, { force: true }); }
-        } else {
-          rmSync(tempFile, { force: true });
-        }
+        for (const f of tempFiles) { rmSync(f, { force: true }); }
       } catch { /* ignore */ }
 
       const rawOutput = stdout + stderr;
@@ -296,7 +307,7 @@ export async function executeGdscript(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      try { rmSync(tempFile, { force: true }); } catch { /* ignore */ }
+      for (const f of tempFiles) { try { rmSync(f, { force: true }); } catch { /* ignore */ } }
 
       resolve({
         success: false,

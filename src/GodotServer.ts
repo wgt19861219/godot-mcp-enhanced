@@ -625,6 +625,13 @@ export class GodotServer {
               check_resources: { type: 'boolean', description: 'Check for missing resource files (default: true)', default: true },
               check_scripts: { type: 'boolean', description: 'Check for broken script references (default: true)', default: true },
               check_scenes: { type: 'boolean', description: 'Validate scene file structure (default: true)', default: true },
+              exclude_paths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Directory paths (relative to project root) to exclude from validation. '
+                  + 'Default excludes: .godot, .import, tools, addons. Directories containing .gdignore are always skipped.',
+                default: ['.godot', '.import', 'tools', 'addons'],
+              },
             },
             required: ['project_path'],
           },
@@ -1730,8 +1737,16 @@ export class GodotServer {
         const checkResources = args.check_resources !== false;
         const checkScripts = args.check_scripts !== false;
         const checkScenes = args.check_scenes !== false;
+        const excludePaths: string[] = (args.exclude_paths as string[]) || ['.godot', '.import', 'tools', 'addons'];
 
         const issues: Array<{ severity: string; category: string; message: string; file?: string }> = [];
+
+        // Check if a directory should be skipped (exclude list or .gdignore presence)
+        function shouldSkipDir(dirName: string, dirPath: string): boolean {
+          if (excludePaths.includes(dirName)) return true;
+          if (existsSync(join(dirPath, '.gdignore'))) return true;
+          return false;
+        }
 
         // Helper: recursively collect files
         function collectFiles(dir: string, exts: string[], maxDepth: number = 10, depth: number = 0): string[] {
@@ -1742,6 +1757,7 @@ export class GodotServer {
               if (entry.name.startsWith('.')) continue;
               const full = join(dir, entry.name);
               if (entry.isDirectory()) {
+                if (shouldSkipDir(entry.name, full)) continue;
                 result.push(...collectFiles(full, exts, maxDepth, depth + 1));
               } else {
                 const ext = '.' + entry.name.split('.').pop()!.toLowerCase();

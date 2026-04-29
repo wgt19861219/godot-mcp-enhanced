@@ -325,6 +325,8 @@ Static analysis of your Godot project for common issues:
 - Broken `preload()` and `load()` paths in `.gd` scripts
 - Orphaned `.import` files (source asset deleted)
 
+Supports `exclude_paths` to skip directories (default: `.godot`, `.import`, `tools`, `addons`). Directories containing `.gdignore` are automatically skipped.
+
 Returns structured report with severity levels: `critical`, `error`, `warning`, `info`.
 
 ### `import_resources`

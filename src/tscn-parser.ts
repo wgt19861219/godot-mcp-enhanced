@@ -49,7 +49,7 @@ export interface ParsedScene {
   nodeMap: Map<string, ParsedNode>;
 }
 
-function parseValue(raw: string): unknown {
+function parseValue(raw: string, maxDepth: number = 50): unknown {
   const trimmed = raw.trim();
 
   // String
@@ -72,9 +72,16 @@ function parseValue(raw: string): unknown {
   const subMatch = trimmed.match(/^SubResource\("([^"]+)"\)$/);
   if (subMatch) return { __type: 'SubResource', id: subMatch[1] };
 
-  // Array / Dictionary — simplified
-  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-    return trimmed;
+  // Array (with depth guard)
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    if (maxDepth <= 0) return trimmed;
+    return parseArrayContent(trimmed.slice(1, -1), maxDepth - 1);
+  }
+
+  // Dictionary (with depth guard)
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    if (maxDepth <= 0) return trimmed;
+    return parseDictContent(trimmed.slice(1, -1), maxDepth - 1);
   }
 
   // NodePath("...")
@@ -99,6 +106,84 @@ function parseValue(raw: string): unknown {
 
   // Fallback: raw string
   return trimmed;
+}
+
+/**
+ * Split a string by commas at the top level (respecting nesting and strings).
+ */
+function splitTopLevel(input: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  let inString = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inString) {
+      current += ch;
+      if (ch === '"') {
+        if (i + 1 < input.length && input[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inString = false;
+        }
+      }
+    } else {
+      if (ch === '"') {
+        inString = true;
+        current += ch;
+      } else if (ch === '[' || ch === '{' || ch === '(') {
+        depth++;
+        current += ch;
+      } else if (ch === ']' || ch === '}' || ch === ')') {
+        depth--;
+        current += ch;
+      } else if (ch === ',' && depth === 0) {
+        parts.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  if (current.trim()) parts.push(current.trim());
+  return parts;
+}
+
+function parseArrayContent(inner: string, maxDepth: number): unknown[] {
+  const trimmed = inner.trim();
+  if (!trimmed) return [];
+  const elements = splitTopLevel(trimmed);
+  return elements.map(el => parseValue(el, maxDepth));
+}
+
+function parseDictContent(inner: string, maxDepth: number): Record<string, unknown> {
+  const trimmed = inner.trim();
+  if (!trimmed) return {};
+  const result: Record<string, unknown> = {};
+  const entries = splitTopLevel(trimmed);
+  for (const entry of entries) {
+    // GDScript dict syntax: key = value  OR  "key": value
+    const eqIdx = entry.indexOf('=');
+    const colonIdx = entry.indexOf(':');
+    let key: string;
+    let valRaw: string;
+    if (eqIdx !== -1) {
+      key = entry.slice(0, eqIdx).trim();
+      valRaw = entry.slice(eqIdx + 1).trim();
+    } else if (colonIdx !== -1) {
+      key = entry.slice(0, colonIdx).trim();
+      valRaw = entry.slice(colonIdx + 1).trim();
+    } else {
+      continue;
+    }
+    if (key.startsWith('"') && key.endsWith('"')) {
+      key = key.slice(1, -1).replace(/""/g, '"');
+    }
+    result[key] = parseValue(valRaw, maxDepth);
+  }
+  return result;
 }
 
 function parseTypedValue(raw: string): NodeProperty {
