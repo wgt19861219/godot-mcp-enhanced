@@ -63,13 +63,19 @@ describe('validateVector3', () => {
     assert.deepStrictEqual(validateVector3({ x: -1, y: -2.5, z: -3 }), { x: -1, y: -2.5, z: -3 });
   });
   it('rejects missing field', () => {
-    assert.throws(() => validateVector3({ x: 1, y: 2 }), { message: /must be a number/ });
+    assert.throws(() => validateVector3({ x: 1, y: 2 }), { message: /finite number/ });
   });
   it('rejects non-number value', () => {
-    assert.throws(() => validateVector3({ x: '1', y: 2, z: 3 }), { message: /number/ });
+    assert.throws(() => validateVector3({ x: '1', y: 2, z: 3 }), { message: /finite number/ });
   });
   it('rejects null', () => {
     assert.throws(() => validateVector3(null), { message: /object/ });
+  });
+  it('rejects NaN', () => {
+    assert.throws(() => validateVector3({ x: NaN, y: 0, z: 0 }), { message: /finite number/ });
+  });
+  it('rejects Infinity', () => {
+    assert.throws(() => validateVector3({ x: 0, y: Infinity, z: 0 }), { message: /finite number/ });
   });
 });
 
@@ -125,6 +131,11 @@ describe('genSignalEmitScript', () => {
   it('rejects object args', () => {
     assert.throws(() => genSignalEmitScript('/root/Player', 'msg', [{ foo: 1 }]), { message: /basic types/ });
   });
+  it('includes _mcp_done for output marker', () => {
+    const script = genSignalEmitScript('/root/Player', 'died');
+    assert.ok(script.includes('_mcp_done'));
+    assert.ok(script.includes('___MCP_RESULT___'));
+  });
 });
 
 describe('genSignalListScript', () => {
@@ -141,6 +152,7 @@ describe('genRaycastScript', () => {
     assert.ok(script.includes('PhysicsRayQueryParameters3D.create'));
     assert.ok(script.includes('Vector3(0, 0, 0)'));
     assert.ok(script.includes('Vector3(10, 0, 0)'));
+    assert.ok(script.includes('get_root().get_viewport()'));
   });
   it('includes collision_mask when provided', () => {
     const script = genRaycastScript({x:0,y:0,z:0}, {x:10,y:0,z:0}, 0b111);
@@ -185,6 +197,15 @@ describe('genCreate3DScript', () => {
     const script = genCreate3DScript('OmniLight3D', 'Light1', '/root/Scene', undefined, undefined, undefined, { light_energy: 2.5, light_color: '"red"' });
     assert.ok(script.includes('light_energy'));
     assert.ok(script.includes('2.5'));
+  });
+  it('rejects invalid property names', () => {
+    assert.throws(() => genCreate3DScript('Node3D', 'X', '/root', undefined, undefined, undefined, { 'a;b': 1 }), { message: /Invalid property name/ });
+    assert.throws(() => genCreate3DScript('Node3D', 'X', '/root', undefined, undefined, undefined, { '1bad': 1 }), { message: /Invalid property name/ });
+  });
+  it('accepts valid property names', () => {
+    const script = genCreate3DScript('Node3D', 'X', '/root', undefined, undefined, undefined, { _private: 1, camelCase: 2 });
+    assert.ok(script.includes('_private'));
+    assert.ok(script.includes('camelCase'));
   });
 });
 

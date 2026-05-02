@@ -4,6 +4,8 @@ import { textResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 
+const MARKER_RESULT = '___MCP_RESULT___';
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 export const TYPE_WHITELIST = [
@@ -45,7 +47,7 @@ export function validateVector3(v: unknown): { x: number; y: number; z: number }
   if (typeof v !== 'object' || v === null) throw new Error('Vector3 must be an object with x, y, z number fields');
   const obj = v as Record<string, unknown>;
   for (const key of ['x', 'y', 'z']) {
-    if (typeof obj[key] !== 'number') throw new Error(`Vector3 field "${key}" must be a number`);
+    if (typeof obj[key] !== 'number' || !Number.isFinite(obj[key] as number)) throw new Error(`Vector3 field "${key}" must be a finite number`);
   }
   return { x: obj.x as number, y: obj.y as number, z: obj.z as number };
 }
@@ -59,6 +61,17 @@ function opsSuccess(data: unknown, warnings: string[] = []) {
   return { success: true, data, warnings };
 }
 
+function mcpPrint(): string {
+  return `\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))`;
+}
+
+const SCENE_TREE_HEADER = `extends SceneTree
+
+func _mcp_done() -> void:
+\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
+\tquit()
+`;
+
 // ─── GDScript Generators: Signals ──────────────────────────────────────────
 
 export function genSignalConnectScript(
@@ -66,22 +79,21 @@ export function genSignalConnectScript(
   targetPath: string, methodName: string, flags?: number
 ): string {
   const flagsArg = flags !== undefined ? `, ${flags}` : '';
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tvar target = get_node("${gdEscape(targetPath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(sourcePath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tif target == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(targetPath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tsource.connect("${gdEscape(signalName)}", Callable(target, "${gdEscape(methodName)}")${flagsArg})
 \t_mcp_output("connected", {"source": "${gdEscape(sourcePath)}", "signal": "${gdEscape(signalName)}", "target": "${gdEscape(targetPath)}", "method": "${gdEscape(methodName)}"})
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -89,18 +101,17 @@ export function genSignalDisconnectScript(
   sourcePath: string, signalName: string,
   targetPath: string, methodName: string
 ): string {
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tvar target = get_node("${gdEscape(targetPath)}")
 \tif source == null or target == null:
 \t\t_mcp_output("error", "Node not found")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tsource.disconnect("${gdEscape(signalName)}", Callable(target, "${gdEscape(methodName)}"))
 \t_mcp_output("disconnected", {"source": "${gdEscape(sourcePath)}", "signal": "${gdEscape(signalName)}"})
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -119,32 +130,30 @@ export function genSignalEmitScript(
     }
     argsStr = ', ' + serialized.join(', ');
   }
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(sourcePath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tsource.emit_signal("${gdEscape(signalName)}"${argsStr})
 \t_mcp_output("emitted", {"source": "${gdEscape(sourcePath)}", "signal": "${gdEscape(signalName)}"})
-\tquit()
+\t_mcp_done()
 `;
 }
 
 export function genSignalListScript(nodePath: string): string {
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tvar signals = node.get_signal_list()
 \t_mcp_output("signals", signals)
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -173,10 +182,9 @@ export function genRaycastScript(
 \tquery.exclude = exclude_bodies`;
   }
 
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
-\tvar space_state = get_viewport().get_world_3d().direct_space_state
+\tvar space_state = get_root().get_viewport().get_world_3d().direct_space_state
 \tvar query = PhysicsRayQueryParameters3D.create(Vector3(${from.x}, ${from.y}, ${from.z}), Vector3(${to.x}, ${to.y}, ${to.z}))${maskLine}${excludeBlock}
 \tvar result = space_state.intersect_ray(query)
 \tif result.is_empty():
@@ -187,18 +195,17 @@ func _initialize():
 \t\t_mcp_output("normal", {"x": result["normal"].x, "y": result["normal"].y, "z": result["normal"].z})
 \t\t_mcp_output("collider", str(result["collider"]))
 \t\t_mcp_output("rid", str(result["rid"]))
-\tquit()
+\t_mcp_done()
 `;
 }
 
 export function genBodyInfoScript(bodyPath: string): string {
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar body = get_node("${gdEscape(bodyPath)}")
 \tif body == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(bodyPath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tvar shapes = []
 \tfor child in body.get_children():
@@ -220,7 +227,7 @@ func _initialize():
 \t\t_mcp_output("shapes", shapes)
 \t_mcp_output("collision_layer", body.collision_layer)
 \t_mcp_output("collision_mask", body.collision_mask)
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -249,6 +256,9 @@ export function genCreate3DScript(
   let propsLines = '';
   if (properties) {
     for (const [key, value] of Object.entries(properties)) {
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+        throw new Error(`Invalid property name: "${key}"`);
+      }
       if (value === null || value === undefined) {
         propsLines += `\n\tnode.${key} = null`;
       } else if (typeof value === 'number') {
@@ -263,19 +273,18 @@ export function genCreate3DScript(
     }
   }
 
-  return `extends SceneTree
-
+  return `${SCENE_TREE_HEADER}
 func _initialize():
 \tvar parent = get_node("${gdEscape(parentPath)}")
 \tif parent == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(parentPath)}")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tvar node = ${nodeType}.new()
 \tnode.name = "${gdEscape(nodeName)}"${posLine}${rotLine}${scaleLine}${propsLines}
 \tparent.add_child(node)
 \t_mcp_output("created", {"type": "${gdEscape(nodeType)}", "name": "${gdEscape(nodeName)}", "path": str(parent.get_path()) + "/" + "${gdEscape(nodeName)}"})
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -295,7 +304,7 @@ export function genNavQueryScript(
 \t\t\t_mcp_output("path", [])
 \t\t\t_mcp_output("path_length", 0)
 \t\t\t_mcp_output("warning", "No navigation data available")
-\t\t\tquit()
+\t\t\t_mcp_done()
 \t\t\treturn
 \t\tmap_rid = maps[0]`;
   } else {
@@ -304,12 +313,12 @@ export function genNavQueryScript(
 \t\t_mcp_output("path", [])
 \t\t_mcp_output("path_length", 0)
 \t\t_mcp_output("warning", "No navigation data available")
-\t\tquit()
+\t\t_mcp_done()
 \t\treturn
 \tmap_rid = maps[0]`;
   }
 
-  return `extends SceneTree
+  return `${SCENE_TREE_HEADER}
 
 func _initialize():
 \tvar map_rid: RID
@@ -324,7 +333,7 @@ ${regionBlock}
 \t_mcp_output("path_length", path_data.size())
 \tif path_data.is_empty():
 \t\t_mcp_output("warning", "No path found")
-\tquit()
+\t_mcp_done()
 `;
 }
 
@@ -525,6 +534,7 @@ export async function handleTool(
         const targetPath = normalizeNodePath(args.target_path as string);
         const methodName = args.method_name as string;
         const flags = args.flags as number | undefined;
+        if (flags !== undefined && typeof flags !== 'number') return opsErrorResult('INVALID_SIGNAL', 'flags must be a number');
         if (!signalName || !methodName) return opsErrorResult('INVALID_SIGNAL', 'signal_name and method_name are required');
         script = genSignalConnectScript(sourcePath, signalName, targetPath, methodName, flags);
         break;
@@ -559,6 +569,7 @@ export async function handleTool(
         const from = validateVector3(args.from);
         const to = validateVector3(args.to);
         const mask = args.collision_mask as number | undefined;
+        if (mask !== undefined && typeof mask !== 'number') return opsErrorResult('INVALID_VECTOR', 'collision_mask must be a number');
         const excludeRaw = args.exclude_paths as string[] | undefined;
         const excludePaths = excludeRaw?.map(p => normalizeNodePath(p));
         script = genRaycastScript(from, to, mask, excludePaths);

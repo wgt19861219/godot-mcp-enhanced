@@ -164,7 +164,7 @@ export class GodotServer {
   constructor(opsScript: string) {
     this.opsScript = opsScript;
     this.server = new Server(
-      { name: 'godot-mcp-enhanced', version: '0.4.0' },
+      { name: 'godot-mcp-enhanced', version: '0.5.0' },
       { capabilities: { tools: {}, resources: {} } }
     );
     this.setupHandlers();
