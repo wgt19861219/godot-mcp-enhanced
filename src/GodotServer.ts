@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { spawn, ChildProcess } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, rmSync } from 'fs';
-import { join, resolve, dirname, basename, isAbsolute, extname } from 'path';
+import { join, resolve, dirname, basename, isAbsolute, extname, relative, sep } from 'path';
 import { tmpdir } from 'os';
 import { parseTscn, parseTscnSummary, type ParsedScene } from './tscn-parser.js';
 import {
@@ -94,8 +94,17 @@ function parseMcpScriptOutput(rawOutput: string, exitCode: number | null): unkno
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
 function validatePath(p: string): string {
-  if (p.includes('..')) throw new Error(`Path traversal detected: ${p}`);
   return isAbsolute(p) ? p : resolve(p);
+}
+
+function resolveWithinRoot(root: string, userPath: string): string {
+  const base = validatePath(root);
+  const resolved = resolve(base, userPath);
+  const rel = relative(base, resolved);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
+  return resolved;
 }
 
 function ensureDir(p: string): void {
@@ -1280,7 +1289,7 @@ export class GodotServer {
         const p = validatePath(args.project_path as string);
         const extensions = args.extensions as string[] | undefined;
         const subdir = args.subdirectory as string | undefined;
-        const target = subdir ? join(p, validatePath(subdir)) : p;
+        const target = subdir ? resolveWithinRoot(p, subdir) : p;
         const files: string[] = [];
 
         function scan(dir: string): void {
@@ -1319,7 +1328,7 @@ export class GodotServer {
       // ══════════════════════════════════════════════════════════════════════
 
       case 'read_scene': {
-        const sp = join(validatePath(args.project_path as string), args.scene_path as string);
+        const sp = resolveWithinRoot(validatePath(args.project_path as string), args.scene_path as string);
         if (!existsSync(sp)) return text(`Scene file not found: ${sp}`);
 
         const content = readFileSync(sp, 'utf-8');
@@ -1480,7 +1489,7 @@ export class GodotServer {
       // ══════════════════════════════════════════════════════════════════════
 
       case 'read_script': {
-        const sp = join(validatePath(args.project_path as string), args.script_path as string);
+        const sp = resolveWithinRoot(validatePath(args.project_path as string), args.script_path as string);
         if (!existsSync(sp)) return text(`Script not found: ${sp}`);
 
         const content = readFileSync(sp, 'utf-8');
@@ -1507,10 +1516,7 @@ export class GodotServer {
 
       case 'write_script': {
         const scriptPath = args.script_path as string;
-        // Support both absolute paths and relative-to-project paths
-        const sp = isAbsolute(scriptPath)
-          ? scriptPath
-          : join(validatePath(args.project_path as string), scriptPath);
+        const sp = resolveWithinRoot(validatePath(args.project_path as string), scriptPath);
         const content = args.content as string;
 
         ensureDir(sp);
@@ -1521,10 +1527,7 @@ export class GodotServer {
 
       case 'edit_script': {
         const scriptPath = args.script_path as string;
-        // Support both absolute paths and relative-to-project paths
-        const fullPath = isAbsolute(scriptPath)
-          ? scriptPath
-          : join(validatePath(args.project_path as string), scriptPath);
+        const fullPath = resolveWithinRoot(validatePath(args.project_path as string), scriptPath);
 
         if (!existsSync(fullPath)) {
           return text(`Error: File not found: ${fullPath}`);
