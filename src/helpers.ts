@@ -9,7 +9,12 @@ export function validatePath(p: string): string {
 
 export function resolveWithinRoot(root: string, userPath: string): string {
   const base = validatePath(root);
-  const resolved = resolve(base, userPath);
+  const normalizedPath = userPath.replace(/\\+/g, '/');
+  const segments = normalizedPath.split('/');
+  if (segments.includes('..')) {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
+  const resolved = resolve(base, normalizedPath);
   const rel = relative(base, resolved);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Path traversal detected: ${userPath}`);

@@ -51,11 +51,23 @@ describe('resolveWithinRoot', () => {
 
   it('rejects path with .. on Windows-style traversal', () => {
     assert.throws(
+      () => resolveWithinRoot(root, '..\\\\..\\\\etc\\\\passwd'),
+      { message: /Path traversal detected/ }
+    );
+  });
+
+
+  it('rejects repeated backslash traversal segments', () => {
+    assert.throws(
       () => resolveWithinRoot(root, '..\\..\\etc\\passwd'),
       { message: /Path traversal detected/ }
     );
   });
 
+  it('accepts normal Windows-style separators within root', () => {
+    const result = resolveWithinRoot(root, 'scripts\\player.gd');
+    assert.strictEqual(result, resolve(root, 'scripts/player.gd'));
+  });
   it('rejects mixed slash traversal', () => {
     assert.throws(
       () => resolveWithinRoot(root, 'valid/../../etc/passwd'),
