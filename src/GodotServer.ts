@@ -203,7 +203,9 @@ function collectScriptFiles(projectPath: string, excludeDirs: string[] = ['.godo
 
 function extractScriptErrors(output: string): string[] {
   return output.split('\n').filter(l =>
-    l.includes('Parse Error:') || l.includes('SCRIPT ERROR:')
+    l.includes('Parse Error:') ||
+    l.includes('SCRIPT ERROR:') ||
+    (l.includes('at:') && l.includes('res://'))
   );
 }
 
@@ -267,17 +269,37 @@ async function batchValidateScripts(
 
   const results: Array<{ file: string; errors: string[] }> = [];
 
-  // Match errors to script files using Godot's error format: res://path/to/file.gd:LINE
-  const matchErrorsToFile = (errors: string[], rels: string[]): Array<{ file: string; errors: string[] }> => {
-    const out: Array<{ file: string; errors: string[] }> = [];
-    for (const rel of rels) {
-      const normalizedRel = rel.replace(/\\/g, '/');
-      // Match "res://normalizedRel:" — the colon after .gd ensures exact file match
-      const pattern = 'res://' + normalizedRel + ':';
-      const fileErrors = errors.filter(l => l.includes(pattern));
-      if (fileErrors.length > 0) {
-        out.push({ file: rel, errors: fileErrors });
+  // Match errors to script files using Godot's error format.
+  // Godot outputs error blocks: error line followed by "at:" lines with file paths.
+  // We pair each error line with the next "at:" line to get both message and file.
+  const matchErrorsToFile = (allLines: string[], rels: string[]): Array<{ file: string; errors: string[] }> => {
+    // Build a map of file -> error messages by pairing error lines with their at: lines
+    const fileErrors = new Map<string, string[]>();
+    let lastErrorLine = '';
+
+    for (const line of allLines) {
+      const trimmed = line.trim();
+      if (trimmed.includes('Parse Error:') || trimmed.includes('SCRIPT ERROR:') || trimmed.startsWith('ERROR:')) {
+        lastErrorLine = trimmed;
+      } else if (trimmed.startsWith('at:') && trimmed.includes('res://') && lastErrorLine) {
+        // Find which file this at: line refers to
+        for (const rel of rels) {
+          const normalizedRel = rel.replace(/\\/g, '/');
+          const pattern = 'res://' + normalizedRel + ':';
+          if (trimmed.includes(pattern)) {
+            if (!fileErrors.has(rel)) fileErrors.set(rel, []);
+            fileErrors.get(rel)!.push(lastErrorLine);
+            fileErrors.get(rel)!.push(trimmed);
+            break;
+          }
+        }
+        lastErrorLine = '';
       }
+    }
+
+    const out: Array<{ file: string; errors: string[] }> = [];
+    for (const [file, errors] of fileErrors) {
+      out.push({ file, errors });
     }
     return out;
   };
