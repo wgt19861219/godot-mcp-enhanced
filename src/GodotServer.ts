@@ -25,8 +25,9 @@ import * as scene from './tools/scene.js';
 import * as script from './tools/script.js';
 import * as validation from './tools/validation.js';
 import * as docs from './tools/docs.js';
+import * as godotOps from './tools/godot-ops.js';
 
-const toolModules = [runtime, screenshot, project, scene, script, validation, docs];
+const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps];
 
 // ─── Godot binary detection ──────────────────────────────────────────────────
 

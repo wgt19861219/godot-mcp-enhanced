@@ -328,6 +328,316 @@ ${regionBlock}
 `;
 }
 
-// Placeholder exports for build — will be filled in later tasks
-export function getToolDefinitions(): Tool[] { return []; }
-export async function handleTool(_name: string, _args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult | null> { return null; }
+// ─── Tool Registration ──────────────────────────────────────────────────────
+
+const NON_PERSIST = '运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。';
+
+export function getToolDefinitions(): Tool[] {
+  return [
+    {
+      name: 'signal_connect',
+      description: `连接两个节点的信号。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          source_path: { type: 'string', description: '源节点路径（scene tree path，如 root/Player）' },
+          signal_name: { type: 'string', description: '信号名称' },
+          target_path: { type: 'string', description: '目标节点路径' },
+          method_name: { type: 'string', description: '目标方法名称' },
+          flags: { type: 'number', description: '连接标志（可选，默认 0）' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'source_path', 'signal_name', 'target_path', 'method_name'],
+      },
+    },
+    {
+      name: 'signal_disconnect',
+      description: `断开两个节点之间的信号连接。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          source_path: { type: 'string', description: '源节点路径' },
+          signal_name: { type: 'string', description: '信号名称' },
+          target_path: { type: 'string', description: '目标节点路径' },
+          method_name: { type: 'string', description: '目标方法名称' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'source_path', 'signal_name', 'target_path', 'method_name'],
+      },
+    },
+    {
+      name: 'signal_emit',
+      description: `发射节点信号。args 仅支持基础类型（string/number/bool/null）。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          source_path: { type: 'string', description: '源节点路径' },
+          signal_name: { type: 'string', description: '信号名称' },
+          args: { type: 'array', description: '信号参数（仅 string/number/bool/null）', items: {} },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'source_path', 'signal_name'],
+      },
+    },
+    {
+      name: 'signal_list',
+      description: `列出节点上可用的信号。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          node_path: { type: 'string', description: '节点路径' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'node_path'],
+      },
+    },
+    {
+      name: 'physics_raycast',
+      description: `执行 3D 射线检测。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          from: {
+            type: 'object',
+            description: '起点 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          to: {
+            type: 'object',
+            description: '终点 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          collision_mask: { type: 'number', description: '碰撞掩码（可选）' },
+          exclude_paths: { type: 'array', description: '排除节点路径数组（可选）', items: { type: 'string' } },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'from', 'to'],
+      },
+    },
+    {
+      name: 'physics_body_info',
+      description: `获取物理体的碰撞信息。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          body_path: { type: 'string', description: '物理体节点路径' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'body_path'],
+      },
+    },
+    {
+      name: 'node_create_3d',
+      description: `运行时创建 3D 节点。headless 创建的节点不持久化，持久化请用 add_node + save_scene。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          type: { type: 'string', description: '节点类型（仅限白名单）' },
+          name: { type: 'string', description: '节点名称' },
+          parent: { type: 'string', description: '父节点路径（默认 root）' },
+          position: {
+            type: 'object',
+            description: '位置 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          rotation: {
+            type: 'object',
+            description: '旋转 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          scale: {
+            type: 'object',
+            description: '缩放 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          properties: { type: 'object', description: '自定义属性（仅基本类型值）' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'type', 'name'],
+      },
+    },
+    {
+      name: 'nav_query_path',
+      description: `查询 3D 导航路径。${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          start_pos: {
+            type: 'object',
+            description: '起点 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          end_pos: {
+            type: 'object',
+            description: '终点 {x,y,z}',
+            properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } },
+            required: ['x', 'y', 'z'],
+          },
+          navigation_region: { type: 'string', description: 'NavigationRegion3D 节点路径（可选）' },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'start_pos', 'end_pos'],
+      },
+    },
+  ];
+}
+
+// ─── Tool Handler ───────────────────────────────────────────────────────────
+
+const TOOL_NAMES = [
+  'signal_connect', 'signal_disconnect', 'signal_emit', 'signal_list',
+  'physics_raycast', 'physics_body_info', 'node_create_3d', 'nav_query_path',
+] as const;
+
+function opsErrorResult(code: keyof typeof ERROR_CODES, message: string): ToolResult {
+  return textResult(JSON.stringify(opsError(code, message)));
+}
+
+export async function handleTool(
+  name: string, args: Record<string, unknown>, ctx: ToolContext
+): Promise<ToolResult | null> {
+  if (!(TOOL_NAMES as readonly string[]).includes(name)) return null;
+
+  try {
+    const projectPath = validatePath(args.project_path as string);
+    const godot = await ctx.findGodot();
+    const loadAutoloads = args.load_autoloads !== false;
+    let script: string;
+
+    switch (name) {
+      case 'signal_connect': {
+        const sourcePath = normalizeNodePath(args.source_path as string);
+        const signalName = args.signal_name as string;
+        const targetPath = normalizeNodePath(args.target_path as string);
+        const methodName = args.method_name as string;
+        const flags = args.flags as number | undefined;
+        if (!signalName || !methodName) return opsErrorResult('INVALID_SIGNAL', 'signal_name and method_name are required');
+        script = genSignalConnectScript(sourcePath, signalName, targetPath, methodName, flags);
+        break;
+      }
+      case 'signal_disconnect': {
+        const sourcePath = normalizeNodePath(args.source_path as string);
+        const signalName = args.signal_name as string;
+        const targetPath = normalizeNodePath(args.target_path as string);
+        const methodName = args.method_name as string;
+        if (!signalName || !methodName) return opsErrorResult('INVALID_SIGNAL', 'signal_name and method_name are required');
+        script = genSignalDisconnectScript(sourcePath, signalName, targetPath, methodName);
+        break;
+      }
+      case 'signal_emit': {
+        const sourcePath = normalizeNodePath(args.source_path as string);
+        const signalName = args.signal_name as string;
+        const signalArgs = args.args as unknown[] | undefined;
+        if (!signalName) return opsErrorResult('INVALID_SIGNAL', 'signal_name is required');
+        try {
+          script = genSignalEmitScript(sourcePath, signalName, signalArgs);
+        } catch (e) {
+          return opsErrorResult('INVALID_SIGNAL', (e as Error).message);
+        }
+        break;
+      }
+      case 'signal_list': {
+        const nodePath = normalizeNodePath(args.node_path as string);
+        script = genSignalListScript(nodePath);
+        break;
+      }
+      case 'physics_raycast': {
+        const from = validateVector3(args.from);
+        const to = validateVector3(args.to);
+        const mask = args.collision_mask as number | undefined;
+        const excludeRaw = args.exclude_paths as string[] | undefined;
+        const excludePaths = excludeRaw?.map(p => normalizeNodePath(p));
+        script = genRaycastScript(from, to, mask, excludePaths);
+        break;
+      }
+      case 'physics_body_info': {
+        const bodyPath = normalizeNodePath(args.body_path as string);
+        script = genBodyInfoScript(bodyPath);
+        break;
+      }
+      case 'node_create_3d': {
+        const nodeType = args.type as string;
+        const nodeName = args.name as string;
+        if (!TYPE_WHITELIST.includes(nodeType as typeof TYPE_WHITELIST[number])) {
+          return opsErrorResult('INVALID_TYPE', `Node type "${nodeType}" not in whitelist. Allowed: ${TYPE_WHITELIST.join(', ')}`);
+        }
+        const parentPath = normalizeNodePath((args.parent as string) || 'root');
+        const position = args.position ? validateVector3(args.position) : undefined;
+        const rotation = args.rotation ? validateVector3(args.rotation) : undefined;
+        const scale = args.scale ? validateVector3(args.scale) : undefined;
+        const properties = args.properties as Record<string, unknown> | undefined;
+        try {
+          script = genCreate3DScript(nodeType, nodeName, parentPath, position, rotation, scale, properties);
+        } catch (e) {
+          return opsErrorResult('INVALID_TYPE', (e as Error).message);
+        }
+        break;
+      }
+      case 'nav_query_path': {
+        const startPos = validateVector3(args.start_pos);
+        const endPos = validateVector3(args.end_pos);
+        const navRegion = args.navigation_region as string | undefined;
+        const normalizedRegion = navRegion ? normalizeNodePath(navRegion) : undefined;
+        script = genNavQueryScript(startPos, endPos, normalizedRegion);
+        break;
+      }
+      default:
+        return null;
+    }
+
+    // Execute the generated GDScript
+    const result = await executeGdscript({
+      godotPath: godot,
+      projectPath,
+      code: script,
+      timeout: 30,
+      loadAutoloads,
+    });
+
+    // Check for execution failure
+    if (!result.compile_success) {
+      return textResult(JSON.stringify(opsError('SCRIPT_EXEC_FAILED', result.compile_error)));
+    }
+    if (!result.run_success) {
+      return textResult(JSON.stringify(opsError('SCRIPT_EXEC_FAILED', result.run_error)));
+    }
+
+    // Parse outputs into unified result
+    const data: Record<string, unknown> = {};
+    const warnings: string[] = [];
+    for (const entry of result.outputs) {
+      if (entry.key === 'warning') {
+        warnings.push(String(entry.value));
+      } else if (entry.key === 'error') {
+        return textResult(JSON.stringify(opsError('NODE_NOT_FOUND', String(entry.value))));
+      } else {
+        try {
+          data[entry.key] = JSON.parse(entry.value);
+        } catch {
+          data[entry.key] = entry.value;
+        }
+      }
+    }
+
+    return textResult(JSON.stringify(opsSuccess(data, warnings)));
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes('NodePath')) return opsErrorResult('INVALID_PATH', msg);
+    if (msg.includes('Vector3')) return opsErrorResult('INVALID_VECTOR', msg);
+    return opsErrorResult('SCRIPT_EXEC_FAILED', msg);
+  }
+}
