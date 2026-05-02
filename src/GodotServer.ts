@@ -207,6 +207,115 @@ function extractScriptErrors(output: string): string[] {
   );
 }
 
+/**
+ * Batch-validate scripts using a single Godot process with a SceneTree-based validator.
+ * Avoids popup dialogs caused by running each script individually with --script
+ * (which requires scripts to extend SceneTree/MainLoop).
+ *
+ * The validator script extends SceneTree and uses load() to compile each script.
+ * Autoload context is available because the project is loaded before the script runs.
+ */
+async function batchValidateScripts(
+  godotPath: string,
+  projectPath: string,
+  scriptFiles: string[],
+  globalTimeoutMs: number = 15000
+): Promise<Array<{ file: string; errors: string[] }>> {
+  if (scriptFiles.length === 0) return [];
+
+  const pathSep = process.platform === 'win32' ? '\\' : '/';
+  const relOf = (absPath: string) => absPath.replace(projectPath + pathSep, '');
+  const scriptRels = scriptFiles.map(relOf);
+  const resPaths = scriptRels.map(rel => 'res://' + rel.replace(/\\/g, '/'));
+
+  // Write script list to temp JSON
+  const tmpDir = join(tmpdir(), 'godot-mcp-exec');
+  mkdirSync(tmpDir, { recursive: true });
+  const listId = Math.random().toString(36).substring(2, 10);
+  const listPath = join(tmpDir, `validate-list-${listId}.json`).replace(/\\/g, '/');
+  writeFileSync(listPath, JSON.stringify(resPaths), 'utf-8');
+
+  // Escape path for GDScript string literal
+  const gdSafePath = listPath.replace(/"/g, '\\"');
+
+  // Create validator GDScript that extends SceneTree (no popup dialogs)
+  const validatorCode = [
+    'extends SceneTree',
+    '',
+    'func _init():',
+    '\tvar tmp_path: String = "' + gdSafePath + '"',
+    '\tvar f := FileAccess.open(tmp_path, FileAccess.READ)',
+    '\tif f == null:',
+    '\t\tprint("MCP_VALIDATE_ERROR: Cannot read script list")',
+    '\t\tquit()',
+    '\t\treturn',
+    '\tvar json_text := f.get_as_text()',
+    '\tf.close()',
+    '\tvar scripts = JSON.parse_string(json_text)',
+    '\tif scripts == null or not scripts is Array:',
+    '\t\tprint("MCP_VALIDATE_ERROR: Invalid script list JSON")',
+    '\t\tquit()',
+    '\t\treturn',
+    '\tfor i in range(scripts.size()):',
+    '\t\tvar script_path: String = scripts[i]',
+    '\t\tvar _res = load(script_path)',
+    '\tquit()',
+  ].join('\n');
+
+  const validatorPath = join(tmpDir, `validate-${listId}.gd`);
+  writeFileSync(validatorPath, validatorCode, 'utf-8');
+
+  const results: Array<{ file: string; errors: string[] }> = [];
+
+  // Match errors to script files using Godot's error format: res://path/to/file.gd:LINE
+  const matchErrorsToFile = (errors: string[], rels: string[]): Array<{ file: string; errors: string[] }> => {
+    const out: Array<{ file: string; errors: string[] }> = [];
+    for (const rel of rels) {
+      const normalizedRel = rel.replace(/\\/g, '/');
+      // Match "res://normalizedRel:" — the colon after .gd ensures exact file match
+      const pattern = 'res://' + normalizedRel + ':';
+      const fileErrors = errors.filter(l => l.includes(pattern));
+      if (fileErrors.length > 0) {
+        out.push({ file: rel, errors: fileErrors });
+      }
+    }
+    return out;
+  };
+
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      godotPath,
+      ['--headless', '--path', projectPath, '--script', validatorPath],
+      { timeout: globalTimeoutMs }
+    );
+
+    const output = (stdout || '') + (stderr || '');
+    const errorLines = extractScriptErrors(output);
+    results.push(...matchErrorsToFile(errorLines, scriptRels));
+
+    // Catch unmatched errors
+    const allMatched = new Set(results.flatMap(r => r.errors));
+    const unmatched = errorLines.filter(l => !allMatched.has(l));
+    if (unmatched.length > 0) {
+      results.push({ file: '<unknown>', errors: unmatched });
+    }
+  } catch (e: any) {
+    const output = ((e.stdout || '') + (e.stderr || ''));
+    // Check for validator infrastructure errors
+    const infraErrors = output.split('\n').filter((l: string) => l.includes('MCP_VALIDATE_ERROR'));
+    if (infraErrors.length > 0) {
+      results.push({ file: '<validator>', errors: infraErrors });
+    }
+    const errorLines = extractScriptErrors(output);
+    results.push(...matchErrorsToFile(errorLines, scriptRels));
+  } finally {
+    try { rmSync(listPath, { force: true }); } catch {}
+    try { rmSync(validatorPath, { force: true }); } catch {}
+  }
+
+  return results;
+}
+
 // ─── Debug output state ──────────────────────────────────────────────────────
 
 let runningProcess: ChildProcess | null = null;
@@ -1511,27 +1620,14 @@ export class GodotServer {
         // Version mismatch check
         const versionWarning = await checkVersionMismatch(projectPath, godot);
 
-        // Pre-check script syntax (parallel, up to 10 scripts, 15s global timeout)
+        // Pre-check script syntax using single-process batch validation (no popup dialogs)
         const precheckErrors: Array<{ file: string; errors: string[] }> = [];
         try {
           const allScripts = collectScriptFiles(projectPath);
           const scriptsToCheck = allScripts.slice(0, 10);
-          const relOf = (f: string) => f.replace(projectPath + (process.platform === 'win32' ? '\\' : '/'), '');
-          const precheckResults = await Promise.allSettled(scriptsToCheck.map(async (scriptFile) => {
-            try {
-              const { stdout, stderr } = await execFileAsync(godot, ['--headless', '--path', projectPath, '--script', scriptFile], { timeout: 8000 });
-              return { file: relOf(scriptFile), output: (stdout || '') + (stderr || '') };
-            } catch (e: any) {
-              return { file: relOf(scriptFile), output: ((e.stdout || '') + (e.stderr || '')) };
-            }
-          }));
-          for (const r of precheckResults) {
-            if (r.status === 'fulfilled') {
-              const errorLines = extractScriptErrors(r.value.output);
-              if (errorLines.length > 0) {
-                precheckErrors.push({ file: r.value.file, errors: errorLines });
-              }
-            }
+          if (scriptsToCheck.length > 0) {
+            const batchResults = await batchValidateScripts(godot, projectPath, scriptsToCheck, 15000);
+            precheckErrors.push(...batchResults);
           }
         } catch { /* precheck is optional */ }
 
@@ -2130,23 +2226,25 @@ export class GodotServer {
 
         const relOf = (f: string) => f.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
 
-        // Parallel validation with Promise.allSettled
-        const validateResults = await Promise.allSettled(scriptsToValidate.map(async (scriptFile) => {
-          try {
-            const { stdout, stderr } = await execFileAsync(godot, ['--headless', '--path', p, '--script', scriptFile], { timeout: perScriptTimeout * 1000 });
-            return { file: relOf(scriptFile), output: (stdout || '') + (stderr || '') };
-          } catch (e: any) {
-            return { file: relOf(scriptFile), output: ((e.stdout || '') + (e.stderr || '')) };
-          }
-        }));
+        // Batch validation using single Godot process (no popup dialogs)
+        // Split into batches of 20 scripts to keep temp files manageable
+        const BATCH_SIZE = 20;
+        const allBatchResults: Array<{ file: string; errors: string[] }> = [];
+        for (let i = 0; i < scriptsToValidate.length; i += BATCH_SIZE) {
+          const batch = scriptsToValidate.slice(i, i + BATCH_SIZE);
+          const batchResults = await batchValidateScripts(godot, p, batch, Math.min(perScriptTimeout * Math.max(batch.length, 5), 60));
+          allBatchResults.push(...batchResults);
+        }
 
+        // Build results, including scripts with no errors
+        const errorMap = new Map(allBatchResults.map(r => [r.file, r.errors]));
         const results: Array<{ file: string; has_errors: boolean; errors: string[] }> = [];
         let totalErrors = 0;
-        for (const r of validateResults) {
-          if (r.status !== 'fulfilled') continue;
-          const errorLines = extractScriptErrors(r.value.output);
-          totalErrors += errorLines.length;
-          results.push({ file: r.value.file, has_errors: errorLines.length > 0, errors: errorLines });
+        for (const sf of scriptsToValidate) {
+          const rel = relOf(sf);
+          const errs = errorMap.get(rel) || [];
+          totalErrors += errs.length;
+          results.push({ file: rel, has_errors: errs.length > 0, errors: errs });
         }
 
         let summaryMsg = `Validated ${scriptsToValidate.length} scripts, found ${totalErrors} errors in ${results.filter(r => r.has_errors).length} files.`;
