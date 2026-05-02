@@ -7,7 +7,7 @@ import { promisify } from 'util';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { validatePath, resolveWithinRoot, parseMcpScriptOutput } from '../helpers.js';
+import { validatePath, resolveWithinRoot, parseMcpScriptOutput, normalizeUserProjectPath } from '../helpers.js';
 import { analyzeOutput } from '../error-analyzer.js';
 
 const execFileAsync = promisify(execFile);
@@ -593,12 +593,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
     case 'import_resources': {
       const p = validatePath(args.project_path as string);
-      const directory = args.directory as string;
+      const directoryRaw = args.directory as string;
+      const normalizedDir = normalizeUserProjectPath(directoryRaw);
+
+      if (!normalizedDir) {
+        return textResult('Error: directory must be a non-empty path inside project.');
+      }
+
       const defaultExts = ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.mp3', '.ogg', '.wav', '.ttf', '.otf', '.glb', '.gltf'];
       const extensions = (args.extensions as string[]) || defaultExts;
       const recursive = args.recursive !== false;
 
-      const targetDir = resolveWithinRoot(p, directory.replace(/^res:\/\//, ''));
+      const targetDir = resolveWithinRoot(p, normalizedDir);
       if (!existsSync(targetDir)) {
         return textResult(`Error: Directory not found: ${targetDir}`);
       }
@@ -663,7 +669,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       return textResult(
         `Import scan complete.\n\n` +
-        `Directory: ${directory}\n` +
+        `Directory: ${normalizedDir}\n` +
         `New imports: ${importedFiles.length}\n` +
         `Already imported (skipped): ${skippedFiles.length}\n` +
         `Extensions: ${extensions.join(', ')}\n\n` +

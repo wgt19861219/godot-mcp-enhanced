@@ -23,6 +23,17 @@ export function ensureDir(p: string): void {
   }
 }
 
+export function normalizeUserProjectPath(input: string): string {
+  const trimmed = String(input || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('res://')) return trimmed.slice('res://'.length);
+  return trimmed;
+}
+
+export function allowOutsideProjectPaths(): boolean {
+  return process.env.ALLOW_OUTSIDE_PROJECT_PATHS === 'true';
+}
+
 // ─── MCP output parser ───────────────────────────────────────────────────────
 
 const MCP_MARKER_RESULT = '___MCP_RESULT___';

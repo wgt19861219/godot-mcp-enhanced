@@ -4,7 +4,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { captureScreenshot } from '../screenshot.js';
-import { validatePath } from '../helpers.js';
+import { validatePath, resolveWithinRoot, normalizeUserProjectPath, allowOutsideProjectPaths } from '../helpers.js';
 
 const TOOL_NAMES = ['capture_screenshot', 'analyze_screenshot'] as const;
 
@@ -53,8 +53,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'capture_screenshot': {
       const projectPath = validatePath(args.project_path as string);
       const scene = args.scene as string | undefined;
-      const outputPath = args.output_path
-        ? validatePath(args.output_path as string)
+      const outputPathRaw = args.output_path as string | undefined;
+      const outputPath = outputPathRaw
+        ? (allowOutsideProjectPaths()
+            ? validatePath(outputPathRaw)
+            : resolveWithinRoot(projectPath, normalizeUserProjectPath(outputPathRaw)))
         : join(projectPath, 'screenshot.png');
       const frameDelay = (args.frame_delay as number) || 15;
       const viewportW = (args.viewport_width as number) || 1280;
@@ -90,17 +93,25 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
     case 'analyze_screenshot': {
       let imagePath = args.image_path as string | undefined;
-      const projectPath = args.project_path as string | undefined;
+      const projectPathRaw = args.project_path as string | undefined;
+      const projectPath = projectPathRaw ? validatePath(projectPathRaw) : undefined;
       const question = (args.question as string) ||
         'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.';
 
       if (imagePath) {
-        if (!isAbsolute(imagePath) && projectPath) {
-          imagePath = resolve(projectPath, imagePath);
+        if (allowOutsideProjectPaths()) {
+          if (!isAbsolute(imagePath) && projectPath) {
+            imagePath = resolve(projectPath, normalizeUserProjectPath(imagePath));
+          }
+          imagePath = validatePath(imagePath);
+        } else {
+          if (!projectPath) {
+            return textResult('Error: project_path is required when ALLOW_OUTSIDE_PROJECT_PATHS is not set.');
+          }
+          imagePath = resolveWithinRoot(projectPath, normalizeUserProjectPath(imagePath));
         }
-        imagePath = validatePath(imagePath);
       } else if (projectPath) {
-        imagePath = join(validatePath(projectPath), 'screenshot.png');
+        imagePath = join(projectPath, 'screenshot.png');
       } else {
         return textResult('Error: either image_path or project_path is required.');
       }

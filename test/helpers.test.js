@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
-import { validatePath, resolveWithinRoot, ensureDir } from '../build/helpers.js';
+import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths } from '../build/helpers.js';
 
 describe('validatePath', () => {
   it('resolves relative paths to absolute', () => {
@@ -80,5 +80,30 @@ describe('ensureDir', () => {
     writeFileSync(`${testBase}/existing/file.txt`, 'test');
     assert.doesNotThrow(() => ensureDir(`${testBase}/existing/other.txt`));
     rmSync(testBase, { recursive: true, force: true });
+  });
+});
+
+describe('normalizeUserProjectPath', () => {
+  it('strips res:// prefix', () => {
+    assert.strictEqual(normalizeUserProjectPath('res://scenes/main.tscn'), 'scenes/main.tscn');
+  });
+
+  it('returns plain relative path unchanged', () => {
+    assert.strictEqual(normalizeUserProjectPath('assets/ui'), 'assets/ui');
+  });
+
+  it('returns empty string for empty input', () => {
+    assert.strictEqual(normalizeUserProjectPath(''), '');
+    assert.strictEqual(normalizeUserProjectPath(undefined), '');
+  });
+
+  it('trims whitespace', () => {
+    assert.strictEqual(normalizeUserProjectPath('  res://foo  '), 'foo');
+  });
+});
+
+describe('allowOutsideProjectPaths', () => {
+  it('returns false by default', () => {
+    assert.strictEqual(allowOutsideProjectPaths(), false);
   });
 });
