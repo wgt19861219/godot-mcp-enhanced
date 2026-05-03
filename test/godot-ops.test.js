@@ -242,7 +242,7 @@ describe('genAudioPlayScript', () => {
   it('generates play script without stream_path', () => {
     const script = genAudioPlayScript('/root/SFX');
     assert.ok(script.includes('.play()'));
-    assert.ok(!script.includes('load('));
+    assert.ok(!script.includes('node.stream ='));
   });
   it('generates play script with from_position', () => {
     const script = genAudioPlayScript('/root/BGM', undefined, undefined, undefined, undefined, 5.0);

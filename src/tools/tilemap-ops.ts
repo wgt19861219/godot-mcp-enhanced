@@ -51,6 +51,7 @@ export function genTilemapReadScript(
   if (region) {
     return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -84,6 +85,7 @@ func _initialize():
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -120,6 +122,7 @@ export function genTilemapSetCellScript(
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -145,6 +148,7 @@ export function genTilemapEraseCellScript(
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -171,6 +175,7 @@ export function genTilemapFillRectScript(
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -200,6 +205,7 @@ export function genTilemapClearScript(
   const tileMapClear = clearAll ? '\t\tnode.clear()' : `\t\tnode.clear_layer(${layer ?? 0})`;
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -224,6 +230,7 @@ export function genTilemapCopyScript(
   const l = layer !== undefined ? layer : 0;
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -265,6 +272,7 @@ export function genTilemapPasteScript(
   const patternJson = JSON.stringify(pattern);
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -298,6 +306,7 @@ export function genTilemapSetTransformScript(
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")

@@ -6,6 +6,16 @@ export const MARKER_RESULT = '___MCP_RESULT___';
 
 export const SCENE_TREE_HEADER = `extends SceneTree
 
+func get_node(path: NodePath) -> Node:
+\treturn root.get_node(path)
+
+func _mcp_load_main_scene() -> void:
+\tvar _sp: Variant = ProjectSettings.get_setting("application/run/main_scene")
+\tif _sp != null and _sp != "":
+\t\tvar _sr = load(_sp)
+\t\tif _sr:
+\t\t\troot.add_child(_sr.instantiate())
+
 func _mcp_done() -> void:
 \tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 \tquit()

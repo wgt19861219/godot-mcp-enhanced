@@ -1,7 +1,9 @@
 ﻿// Godot API Documentation Query Module
 // Loads extension_api.json and provides fast lookup functions
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
 export interface MethodInfo {
   name: string;
@@ -180,8 +182,12 @@ export function initDocs(docsPath: string): void {
 }
 
 function ensureInit(): void {
-  if (!initialized) {
-    throw new Error('Godot docs not initialized. Call initDocs() first.');
+  if (initialized) return;
+  const docsPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'docs', 'api', 'extension_api.json');
+  if (existsSync(docsPath)) {
+    initDocs(docsPath);
+  } else {
+    throw new Error('Godot docs not initialized. extension_api.json not found at: ' + docsPath);
   }
 }
 

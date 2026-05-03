@@ -24,7 +24,10 @@ export function getToolDefinitions(): Tool[] {
       description: 'Read a GDScript (.gd) file with metadata (extends, class_name, line count).',
       inputSchema: {
         type: 'object' as const,
-        properties: { script_path: { type: 'string', description: 'Absolute path to the .gd file' } },
+        properties: {
+          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          script_path: { type: 'string', description: 'Absolute path to the .gd file' },
+        },
         required: ['project_path', 'script_path'],
       },
     },
@@ -51,6 +54,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
+          project_path: { type: 'string', description: 'Path to Godot project directory' },
           script_path: { type: 'string', description: 'Path to the .gd file to edit (absolute or relative to project)' },
           start_line: { type: 'number', description: '1-based line number where replacement starts (inclusive)' },
           end_line: { type: 'number', description: '1-based line number where replacement ends (inclusive). Use same as start_line for single line replace.' },

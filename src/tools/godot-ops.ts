@@ -69,6 +69,7 @@ export function genSignalConnectScript(
   const flagsArg = flags !== undefined ? `, ${flags}` : '';
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tvar target = get_node("${gdEscape(targetPath)}")
 \tif source == null:
@@ -91,6 +92,7 @@ export function genSignalDisconnectScript(
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tvar target = get_node("${gdEscape(targetPath)}")
 \tif source == null or target == null:
@@ -120,6 +122,7 @@ export function genSignalEmitScript(
   }
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar source = get_node("${gdEscape(sourcePath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(sourcePath)}")
@@ -134,6 +137,7 @@ func _initialize():
 export function genSignalListScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -172,6 +176,7 @@ export function genRaycastScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar space_state = get_root().get_viewport().get_world_3d().direct_space_state
 \tvar query = PhysicsRayQueryParameters3D.create(Vector3(${from.x}, ${from.y}, ${from.z}), Vector3(${to.x}, ${to.y}, ${to.z}))${maskLine}${excludeBlock}
 \tvar result = space_state.intersect_ray(query)
@@ -190,6 +195,7 @@ func _initialize():
 export function genBodyInfoScript(bodyPath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar body = get_node("${gdEscape(bodyPath)}")
 \tif body == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(bodyPath)}")
@@ -263,6 +269,7 @@ export function genCreate3DScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar parent = get_node("${gdEscape(parentPath)}")
 \tif parent == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(parentPath)}")
@@ -309,6 +316,7 @@ export function genNavQueryScript(
   return `${SCENE_TREE_HEADER}
 
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar map_rid: RID
 ${regionBlock}
 \tvar start = Vector3(${startPos.x}, ${startPos.y}, ${startPos.z})
@@ -343,6 +351,7 @@ export function genAudioPlayScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -361,6 +370,7 @@ func _initialize():
 export function genAudioStopScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -382,6 +392,7 @@ export function genAudioSetParamScript(
   const valStr = typeof value === 'string' ? `"${gdEscape(value)}"` : String(value);
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
@@ -400,6 +411,7 @@ func _initialize():
 export function genAudioQueryScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
+\t_mcp_load_main_scene()
 \tvar node = get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")

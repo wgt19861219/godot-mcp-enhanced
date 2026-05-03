@@ -168,12 +168,23 @@ function wrapSnippet(code: string): string {
 
 var _mcp_outputs: Array = []
 
+func get_node(path: NodePath) -> Node:
+\treturn root.get_node(path)
+
+func _mcp_load_main_scene() -> void:
+\tvar _sp: Variant = ProjectSettings.get_setting("application/run/main_scene")
+\tif _sp != null and _sp != "":
+\t\tvar _sr = load(_sp)
+\t\tif _sr:
+\t\t\troot.add_child(_sr.instantiate())
+
 func _mcp_output(key: String, value: Variant) -> void:
 \t_mcp_outputs.append({"key": key, "value": str(value)})
 ${classBody}
 func _initialize():
 \tvar _mcp_success: bool = true
-\tvar _mcp_error: String = ""${initBody}
+\tvar _mcp_error: String = ""
+\t_mcp_load_main_scene()${initBody}
 \tif _mcp_success:
 \t\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 \tquit()
