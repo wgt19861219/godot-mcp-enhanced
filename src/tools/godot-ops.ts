@@ -337,6 +337,104 @@ ${regionBlock}
 `;
 }
 
+// ─── GDScript Generators: Audio ──────────────────────────────────────────────
+
+export function genAudioPlayScript(
+  nodePath: string, streamPath?: string, volumeDb?: number,
+  pitchScale?: number, bus?: string, fromPosition?: number
+): string {
+  let streamLine = '';
+  if (streamPath) {
+    streamLine = `\n\tvar stream_res = load("${gdEscape(streamPath)}")\n\tif stream_res:\n\t\tnode.stream = stream_res`;
+  }
+  const fmtNum = (n: number) => Number.isInteger(n) ? n.toFixed(1) : String(n);
+  const volLine = volumeDb !== undefined ? `\n\tnode.volume_db = ${volumeDb}` : '';
+  const pitchLine = pitchScale !== undefined ? `\n\tnode.pitch_scale = ${fmtNum(pitchScale)}` : '';
+  const busLine = bus ? `\n\tnode.bus = "${gdEscape(bus)}"` : '';
+  const playArg = fromPosition !== undefined ? `(${fmtNum(fromPosition)})` : '()';
+
+  return `${SCENE_TREE_HEADER}
+func _initialize():
+\tvar node = get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tif not (node is AudioStreamPlayer or node is AudioStreamPlayer2D or node is AudioStreamPlayer3D):
+\t\t_mcp_output("error", "Node is not an AudioStreamPlayer type: " + node.get_class())
+\t\t_mcp_done()
+\t\treturn${streamLine}${volLine}${pitchLine}${busLine}
+\tnode.play${playArg}
+\t_mcp_output("playing", {"node": "${gdEscape(nodePath)}", "stream": str(node.stream) if node.stream else "None"})
+\t_mcp_done()
+`;
+}
+
+export function genAudioStopScript(nodePath: string): string {
+  return `${SCENE_TREE_HEADER}
+func _initialize():
+\tvar node = get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tif not (node is AudioStreamPlayer or node is AudioStreamPlayer2D or node is AudioStreamPlayer3D):
+\t\t_mcp_output("error", "Node is not an AudioStreamPlayer type")
+\t\t_mcp_done()
+\t\treturn
+\tnode.stop()
+\t_mcp_output("stopped", {"node": "${gdEscape(nodePath)}"})
+\t_mcp_done()
+`;
+}
+
+export function genAudioSetParamScript(
+  nodePath: string, param: string, value: number | string
+): string {
+  const valStr = typeof value === 'string' ? `"${gdEscape(value)}"` : String(value);
+  return `${SCENE_TREE_HEADER}
+func _initialize():
+\tvar node = get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tif not (node is AudioStreamPlayer or node is AudioStreamPlayer2D or node is AudioStreamPlayer3D):
+\t\t_mcp_output("error", "Node is not an AudioStreamPlayer type")
+\t\t_mcp_done()
+\t\treturn
+\tnode.${gdEscape(param)} = ${valStr}
+\t_mcp_output("param_set", {"node": "${gdEscape(nodePath)}", "param": "${gdEscape(param)}", "value": ${valStr}})
+\t_mcp_done()
+`;
+}
+
+export function genAudioQueryScript(nodePath: string): string {
+  return `${SCENE_TREE_HEADER}
+func _initialize():
+\tvar node = get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tif not (node is AudioStreamPlayer or node is AudioStreamPlayer2D or node is AudioStreamPlayer3D):
+\t\t_mcp_output("error", "Node is not an AudioStreamPlayer type")
+\t\t_mcp_done()
+\t\treturn
+\tvar info = {}
+\tinfo["playing"] = node.playing
+\tinfo["volume_db"] = node.volume_db
+\tinfo["pitch_scale"] = node.pitch_scale
+\tinfo["bus"] = node.bus
+\tinfo["stream"] = str(node.stream.resource_path) if node.stream else "None"
+\tinfo["playback_position"] = node.get_playback_position() if node.playing else 0.0
+\tinfo["stream_length"] = node.stream.get_length() if node.stream else 0.0
+\tinfo["node_type"] = node.get_class()
+\t_mcp_output("audio_info", info)
+\t_mcp_done()
+`;
+}
+
 // ─── Tool Registration ──────────────────────────────────────────────────────
 
 const NON_PERSIST = '运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。';

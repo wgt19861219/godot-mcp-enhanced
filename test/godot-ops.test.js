@@ -4,7 +4,8 @@ import {
   normalizeNodePath, gdEscape, validateVector3,
   TYPE_WHITELIST, ERROR_CODES,
   genSignalConnectScript, genSignalDisconnectScript, genSignalEmitScript, genSignalListScript,
-  genRaycastScript, genBodyInfoScript, genCreate3DScript, genNavQueryScript
+  genRaycastScript, genBodyInfoScript, genCreate3DScript, genNavQueryScript,
+  genAudioPlayScript, genAudioStopScript, genAudioSetParamScript, genAudioQueryScript
 } from '../build/tools/godot-ops.js';
 
 describe('normalizeNodePath', () => {
@@ -225,5 +226,61 @@ describe('genNavQueryScript', () => {
     const script = genNavQueryScript({x:0,y:0,z:0}, {x:10,y:0,z:10});
     assert.ok(script.includes('get_maps'));
     assert.ok(script.includes('warning'));
+  });
+});
+
+describe('genAudioPlayScript', () => {
+  it('generates play script with stream_path', () => {
+    const script = genAudioPlayScript('/root/BGMPlayer', 'res://audio/bgm.ogg', -10, 1.0, 'Master');
+    assert.ok(script.includes('get_node("/root/BGMPlayer")'));
+    assert.ok(script.includes('res://audio/bgm.ogg'));
+    assert.ok(script.includes('volume_db = -10'));
+    assert.ok(script.includes('pitch_scale = 1.0'));
+    assert.ok(script.includes('AudioStreamPlayer'));
+    assert.ok(script.includes('.play()'));
+  });
+  it('generates play script without stream_path', () => {
+    const script = genAudioPlayScript('/root/SFX');
+    assert.ok(script.includes('.play()'));
+    assert.ok(!script.includes('load('));
+  });
+  it('generates play script with from_position', () => {
+    const script = genAudioPlayScript('/root/BGM', undefined, undefined, undefined, undefined, 5.0);
+    assert.ok(script.includes('.play(5.0)'));
+  });
+});
+
+describe('genAudioStopScript', () => {
+  it('generates stop script', () => {
+    const script = genAudioStopScript('/root/BGMPlayer');
+    assert.ok(script.includes('get_node("/root/BGMPlayer")'));
+    assert.ok(script.includes('.stop()'));
+  });
+});
+
+describe('genAudioSetParamScript', () => {
+  it('generates volume_db param script', () => {
+    const script = genAudioSetParamScript('/root/BGM', 'volume_db', -5);
+    assert.ok(script.includes('volume_db = -5'));
+  });
+  it('generates pitch_scale param script', () => {
+    const script = genAudioSetParamScript('/root/BGM', 'pitch_scale', 1.5);
+    assert.ok(script.includes('pitch_scale = 1.5'));
+  });
+  it('generates bus param script', () => {
+    const script = genAudioSetParamScript('/root/BGM', 'bus', 'SFX');
+    assert.ok(script.includes('bus = "SFX"'));
+  });
+});
+
+describe('genAudioQueryScript', () => {
+  it('generates query script', () => {
+    const script = genAudioQueryScript('/root/BGM');
+    assert.ok(script.includes('get_node("/root/BGM")'));
+    assert.ok(script.includes('playing'));
+    assert.ok(script.includes('volume_db'));
+    assert.ok(script.includes('pitch_scale'));
+    assert.ok(script.includes('bus'));
+    assert.ok(script.includes('get_playback_position'));
   });
 });
