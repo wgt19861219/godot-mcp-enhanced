@@ -278,7 +278,8 @@ func _initialize():
 \tvar node = ${nodeType}.new()
 \tnode.name = "${gdEscape(nodeName)}"${posLine}${rotLine}${scaleLine}${propsLines}
 \tparent.add_child(node)
-\t_mcp_output("created", {"type": "${gdEscape(nodeType)}", "name": "${gdEscape(nodeName)}", "path": str(parent.get_path()) + "/" + "${gdEscape(nodeName)}"})
+\tnode.owner = parent.owner if parent.owner != null else parent
+\t_mcp_output("created", {"type": "${gdEscape(nodeType)}", "name": "${gdEscape(nodeName)}", "path": str(node.get_path()) if node.is_inside_tree() else "${gdEscape(nodeName)}"})
 \t_mcp_done()
 `;
 }

@@ -78,9 +78,9 @@ describe('validateParamType', () => {
 // ─── genMaterialReadScript ────────────────────────────────────────────────
 
 describe('genMaterialReadScript', () => {
-  it('contains material_override check', () => {
+  it('contains material check', () => {
     const script = genMaterialReadScript('/root/Player', 0);
-    assert.ok(script.includes('material_override'));
+    assert.ok(script.includes('material'));
   });
   it('contains get_surface_override_material', () => {
     const script = genMaterialReadScript('/root/Player', 0);
@@ -112,7 +112,7 @@ describe('genMaterialCreateScript', () => {
   it('creates ShaderMaterial', () => {
     const script = genMaterialCreateScript('/root/Player', 'ShaderMaterial');
     assert.ok(script.includes('ShaderMaterial.new()'));
-    assert.ok(script.includes('material_override'));
+    assert.ok(script.includes('material'));
   });
   it('creates StandardMaterial3D', () => {
     const script = genMaterialCreateScript('/root/Player', 'StandardMaterial3D');
@@ -211,9 +211,9 @@ describe('genMaterialLoadScript', () => {
     const script = genMaterialLoadScript('/root/Player', 'res://materials/player.tres');
     assert.ok(script.includes('load('));
   });
-  it('sets material_override', () => {
+  it('sets material', () => {
     const script = genMaterialLoadScript('/root/Player', 'res://materials/player.tres');
-    assert.ok(script.includes('material_override'));
+    assert.ok(script.includes('material'));
   });
   it('contains not found error for missing resource', () => {
     const script = genMaterialLoadScript('/root/Player', 'res://materials/missing.tres');
