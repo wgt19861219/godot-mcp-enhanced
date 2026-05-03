@@ -6,22 +6,43 @@ export const MARKER_RESULT = '___MCP_RESULT___';
 
 export const SCENE_TREE_HEADER = `extends SceneTree
 
+var _mcp_root: Node = null
+
+func _mcp_get_root() -> Node:
+\tif _mcp_root != null:
+\t\treturn _mcp_root
+\tif root != null:
+\t\t_mcp_root = root
+\t\treturn _mcp_root
+\tvar ml: Variant = Engine.get_main_loop()
+\tif ml != null and ml is SceneTree and ml.root != null:
+\t\t_mcp_root = ml.root
+\t\treturn _mcp_root
+\treturn null
+
 func get_node(path: NodePath) -> Node:
 \tvar _p: String = str(path)
 \tif _p.begins_with("/"):
 \t\t_p = _p.substr(1)
-\treturn root.get_node(_p)
+\tvar _r: Node = _mcp_get_root()
+\tif _r == null:
+\t\treturn null
+\treturn _r.get_node(_p)
 
 func _mcp_load_main_scene() -> void:
+\tvar _r: Node = _mcp_get_root()
+\tif _r == null:
+\t\treturn
 \tvar _sp: Variant = ProjectSettings.get_setting("application/run/main_scene")
 \tif _sp != null and _sp != "":
 \t\tvar _sr = load(_sp)
 \t\tif _sr:
-\t\t\troot.add_child(_sr.instantiate())
+\t\t\t_r.add_child(_sr.instantiate())
 
 func _mcp_done() -> void:
 \tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
-\tquit()
+\tif Engine.get_main_loop() == self:
+\t\tquit(0)
 `;
 
 export const NON_PERSIST = '运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。';
