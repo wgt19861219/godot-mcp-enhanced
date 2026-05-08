@@ -70,8 +70,8 @@ export function genSignalConnectScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar source = get_node("${gdEscape(sourcePath)}")
-\tvar target = get_node("${gdEscape(targetPath)}")
+\tvar source = _mcp_get_node("${gdEscape(sourcePath)}")
+\tvar target = _mcp_get_node("${gdEscape(targetPath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(sourcePath)}")
 \t\t_mcp_done()
@@ -93,8 +93,8 @@ export function genSignalDisconnectScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar source = get_node("${gdEscape(sourcePath)}")
-\tvar target = get_node("${gdEscape(targetPath)}")
+\tvar source = _mcp_get_node("${gdEscape(sourcePath)}")
+\tvar target = _mcp_get_node("${gdEscape(targetPath)}")
 \tif source == null or target == null:
 \t\t_mcp_output("error", "Node not found")
 \t\t_mcp_done()
@@ -123,7 +123,7 @@ export function genSignalEmitScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar source = get_node("${gdEscape(sourcePath)}")
+\tvar source = _mcp_get_node("${gdEscape(sourcePath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(sourcePath)}")
 \t\t_mcp_done()
@@ -138,7 +138,7 @@ export function genSignalListScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -196,7 +196,7 @@ export function genBodyInfoScript(bodyPath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar body = get_node("${gdEscape(bodyPath)}")
+\tvar body = _mcp_get_node("${gdEscape(bodyPath)}")
 \tif body == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(bodyPath)}")
 \t\t_mcp_done()
@@ -270,7 +270,7 @@ export function genCreate3DScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar parent = get_node("${gdEscape(parentPath)}")
+\tvar parent = _mcp_get_node("${gdEscape(parentPath)}")
 \tif parent == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(parentPath)}")
 \t\t_mcp_done()
@@ -291,7 +291,7 @@ export function genNavQueryScript(
 ): string {
   let regionBlock: string;
   if (navigationRegion) {
-    regionBlock = `\tvar region_node = get_node("${gdEscape(navigationRegion)}")
+    regionBlock = `\tvar region_node = _mcp_get_node("${gdEscape(navigationRegion)}")
 \tif region_node and region_node is NavigationRegion3D:
 \t\tmap_rid = NavigationServer3D.region_get_map(region_node.get_region_rid())
 \telse:
@@ -353,7 +353,7 @@ export function genAudioPlayScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -372,7 +372,7 @@ export function genAudioStopScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -394,7 +394,7 @@ export function genAudioSetParamScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -413,7 +413,7 @@ export function genAudioQueryScript(nodePath: string): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()

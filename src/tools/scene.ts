@@ -6,6 +6,9 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { validatePath, resolveWithinRoot, parseMcpScriptOutput } from '../helpers.js';
 import { parseTscn, parseTscnSummary } from '../tscn-parser.js';
+import { executeGdscript } from '../gdscript-executor.js';
+import { SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult } from './shared.js';
+import { normalizeNodePath, gdEscape } from './godot-ops.js';
 
 const TOOL_NAMES = [
   'read_scene',
@@ -16,6 +19,8 @@ const TOOL_NAMES = [
   'batch_add_nodes',
   'query_scene_tree',
   'inspect_node',
+  'edit_node',
+  'remove_node',
 ] as const;
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
@@ -147,6 +152,35 @@ export function getToolDefinitions(): Tool[] {
           },
         },
         required: ['project_path', 'scene_path', 'nodes'],
+      },
+    },
+    {
+      name: 'edit_node',
+      description: 'Edit properties of an existing node in a scene. Supports position, scale, rotation, and custom properties.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          scene_path: { type: 'string', description: 'Scene path relative to project' },
+          node_path: { type: 'string', description: 'Node path within scene (e.g. "root/Player/Sprite2D")' },
+          properties: { type: 'object', description: 'Properties to set. Supports basic types and Vector2/Vector3 as arrays.' },
+          load_autoloads: { type: 'boolean', description: 'Load Autoload context (default: true)', default: true },
+        },
+        required: ['project_path', 'scene_path', 'node_path', 'properties'],
+      },
+    },
+    {
+      name: 'remove_node',
+      description: 'Remove a node from a scene. This is a destructive operation protected by confirmation token.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          scene_path: { type: 'string', description: 'Scene path relative to project' },
+          node_path: { type: 'string', description: 'Node path to remove (e.g. "root/Player/Sprite2D")' },
+          load_autoloads: { type: 'boolean', description: 'Load Autoload context (default: true)', default: true },
+        },
+        required: ['project_path', 'scene_path', 'node_path'],
       },
     },
   ];
@@ -376,7 +410,93 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       });
     }
 
+    case 'edit_node': {
+      const p = validatePath(args.project_path as string);
+      const nodePath = normalizeNodePath(args.node_path as string);
+      const properties = args.properties as Record<string, unknown>;
+      if (!properties || typeof properties !== 'object' || Object.keys(properties).length === 0) {
+        return textResult('Error: "properties" must be a non-empty object.');
+      }
+
+      // Build GDScript property setter lines
+      let propLines = '';
+      for (const [key, value] of Object.entries(properties)) {
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+          return textResult(`Error: Invalid property name: "${key}"`);
+        }
+        propLines += `\n\t${gdScriptSetLine(key, value)}`;
+      }
+
+      const script = `${SCENE_TREE_HEADER}
+func _initialize():
+\t_mcp_load_main_scene()
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn${propLines}
+\t_mcp_output("edited", {"node": "${gdEscape(nodePath)}"})
+\t_mcp_done()
+`;
+      const godot = await ctx.findGodot();
+      const loadAutoloads = args.load_autoloads !== false;
+      const result = await executeGdscript({
+        godotPath: godot, projectPath: p, code: script, timeout: 30, loadAutoloads,
+      });
+      return parseGdscriptResult(result, [], (msg) => msg.includes('not found') ? 'NODE_NOT_FOUND' : 'SCRIPT_EXEC_FAILED');
+    }
+
+    case 'remove_node': {
+      const p = validatePath(args.project_path as string);
+      const nodePath = normalizeNodePath(args.node_path as string);
+
+      const script = `${SCENE_TREE_HEADER}
+func _initialize():
+\t_mcp_load_main_scene()
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tvar parent = node.get_parent()
+\tvar node_name = node.name
+\tif parent:
+\t\tvar child_owner = node.owner
+\t\tremove_child(node)
+\t\tnode.queue_free()
+\t\t_mcp_output("removed", {"node": "${gdEscape(nodePath)}", "name": str(node_name)})
+\telse:
+\t\t_mcp_output("error", "Cannot remove root node")
+\t_mcp_done()
+`;
+      const godot = await ctx.findGodot();
+      const loadAutoloads = args.load_autoloads !== false;
+      const result = await executeGdscript({
+        godotPath: godot, projectPath: p, code: script, timeout: 30, loadAutoloads,
+      });
+      return parseGdscriptResult(result, [], (msg) => msg.includes('not found') ? 'NODE_NOT_FOUND' : 'SCRIPT_EXEC_FAILED');
+    }
+
     default:
       return null;
   }
+}
+
+function gdScriptSetLine(key: string, value: unknown): string {
+  if (value === null || value === undefined) return `node.${key} = null`;
+  if (typeof value === 'boolean') return `node.${key} = ${value}`;
+  if (typeof value === 'number') return `node.${key} = ${value}`;
+  if (typeof value === 'string') return `node.${key} = "${gdEscape(value)}"`;
+  if (Array.isArray(value)) {
+    if (value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+      return `node.${key} = Vector2(${value[0]}, ${value[1]})`;
+    }
+    if (value.length === 3 && typeof value[0] === 'number' && typeof value[1] === 'number' && typeof value[2] === 'number') {
+      return `node.${key} = Vector3(${value[0]}, ${value[1]}, ${value[2]})`;
+    }
+    if (value.length === 4 && value.every(v => typeof v === 'number')) {
+      return `node.${key} = Color(${value[0]}, ${value[1]}, ${value[2]}, ${value[3]})`;
+    }
+  }
+  throw new Error(`Property "${key}" has unsupported type. Use string/number/bool/null, or array of 2 (Vector2), 3 (Vector3), or 4 (Color) numbers.`);
 }

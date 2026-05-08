@@ -129,9 +129,10 @@ function wrapSnippet(code: string): string {
     }
 
     // Top-level declarations: func, var, const, signal, enum, class_name, annotations
-    if (/^(func |static func |var |const |signal |enum |class_name |@export|@onready|@icon|@warning)/.test(trimmed)) {
+    // Only classify as declaration if the line starts at column 0 (no indentation).
+    // Indented var/const inside if/while/for blocks are local, not class-level.
+    if (/^[^\t ]/.test(line) && /^(func |static func |var |const |signal |enum |class_name |@export|@onready|@icon|@warning)/.test(trimmed)) {
       declarationLines.push(line);
-      // Track func bodies: if line starts with 'func' or 'static func' and doesn't end with pass/return on same line
       if (/^(static )?func /.test(trimmed)) {
         inFuncBody = true;
       }
@@ -140,7 +141,6 @@ function wrapSnippet(code: string): string {
 
     // Lines indented under a func declaration are part of that func body
     if (inFuncBody) {
-      // Check if this un-indented line ends the func body
       if (/^[^\t ]/.test(line) && !trimmed.startsWith('#')) {
         inFuncBody = false;
         // Fall through to statement classification below
@@ -181,15 +181,32 @@ func _mcp_get_root() -> Node:
 \t\treturn _mcp_root
 \treturn null
 
-func get_node(path: NodePath) -> Node:
+func _mcp_get_node(path: NodePath) -> Node:
 \tvar _p: String = str(path)
 \tif _p.begins_with("/"):
 \t\t_p = _p.substr(1)
 \tvar _r: Node = _mcp_get_root()
 \tif _r == null:
 \t\treturn null
-\treturn _r.get_node(_p)
-
+\t# Fallback: root.get_node() may fail in headless _initialize()
+\tvar _node: Node = _r.get_node_or_null(_p)
+\tif _node != null:
+\t\treturn _node
+\t# Manual traversal for headless compatibility
+\tvar _parts: PackedStringArray = _p.split("/")
+\t_node = _r
+\tfor _part in _parts:
+\t\tif _part == "" or _part == "root":
+\t\t\tcontinue
+\t\tvar _found: bool = false
+\t\tfor _ch in _node.get_children():
+\t\t\tif _ch.name == _part:
+\t\t\t\t_node = _ch
+\t\t\t\t_found = true
+\t\t\t\tbreak
+\t\tif not _found:
+\t\t\treturn null
+\treturn _node
 func _mcp_load_main_scene() -> void:
 \tvar _r: Node = _mcp_get_root()
 \tif _r == null:
@@ -211,6 +228,77 @@ func _initialize():
 \t\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 \t\tif Engine.get_main_loop() == self:
 \t\t\tquit(0)
+`;
+}
+
+/**
+ * Wrap a snippet as `extends Node` for autoload mode.
+ * The loader scene instantiates this via .new(), so it must be a Node subclass.
+ */
+function wrapSnippetAsNode(code: string): string {
+  const lines = code.split('\n');
+  const declarationLines: string[] = [];
+  const statementLines: string[] = [];
+
+  let inFuncBody = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed === '') {
+      if (inFuncBody) {
+        declarationLines.push(line);
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('#') && !inFuncBody) {
+      declarationLines.push(line);
+      continue;
+    }
+
+    if (/^[^\t ]/.test(line) && /^(func |static func |var |const |signal |enum |class_name |@export|@onready|@icon|@warning)/.test(trimmed)) {
+      declarationLines.push(line);
+      if (/^(static )?func /.test(trimmed)) {
+        inFuncBody = true;
+      }
+      continue;
+    }
+
+    if (inFuncBody) {
+      if (/^[^\t ]/.test(line) && !trimmed.startsWith('#')) {
+        inFuncBody = false;
+      } else {
+        declarationLines.push(line);
+        continue;
+      }
+    }
+
+    statementLines.push(line);
+  }
+
+  const classBody = declarationLines.length > 0
+    ? '\n' + declarationLines.join('\n') + '\n'
+    : '';
+
+  const initBody = statementLines.length > 0
+    ? '\n' + statementLines.map(l => '\t' + l).join('\n')
+    : '';
+
+  const safeBody = classBody.replace(/func _initialize\(/g, "func _mcp_user_init(");
+  const hasUserInit = /func _mcp_user_init\(/.test(safeBody);
+  const userInitCall = hasUserInit ? "\n\t_mcp_user_init()" : "";
+
+  return `extends Node
+## MCP autoload snippet mode — runs as Node child in loader scene
+
+var _mcp_outputs: Array = []
+
+func _mcp_output(key: String, value: Variant) -> void:
+\t_mcp_outputs.append({"key": key, "value": str(value)})
+${safeBody}
+func _initialize() -> void:${initBody}${userInitCall}
+	print("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
+	get_tree().quit(0)
 `;
 }
 
@@ -272,13 +360,33 @@ function parseMcpMarkers(raw: string): {
 export async function executeGdscript(
   options: ExecuteGdscriptOptions
 ): Promise<ExecuteGdscriptResult> {
-  const { godotPath, projectPath, code, timeout = 30, loadAutoloads = false } = options;
+  const { godotPath, projectPath, code, timeout = 30 } = options;
+  let loadAutoloads = options.loadAutoloads ?? false;
   const startTime = Date.now();
 
   // Prepare script content
+  // Routing logic:
+  // --script mode requires extends SceneTree/MainLoop
+  // --scene (autoload) mode uses loader that calls .new(), requires extends Node
+  // SceneTree-based scripts (using root/quit/get_node override) CANNOT run as Node,
+  // so autoload mode is downgraded to --script for them.
   let scriptContent: string;
   if (isFullClass(code)) {
-    scriptContent = injectHelpers(code);
+    const extendsSceneTree = /^\s*extends\s+(SceneTree|MainLoop)/m.test(code);
+    if (extendsSceneTree) {
+      // SceneTree scripts always use --script mode (root/quit API incompatible with Node)
+      loadAutoloads = false;
+      scriptContent = injectHelpers(code);
+    } else if (loadAutoloads) {
+      // Full class extending Node etc. with autoloads → inject helpers, loader calls .new()
+      scriptContent = injectHelpers(code);
+    } else {
+      // Full class extending Node/etc. without autoloads → strip extends, wrap as SceneTree
+      const strippedCode = code.replace(/^\s*extends\s+\S+.*\n?/m, '');
+      scriptContent = wrapSnippet(strippedCode);
+    }
+  } else if (loadAutoloads) {
+    scriptContent = wrapSnippetAsNode(code);
   } else {
     scriptContent = wrapSnippet(code);
   }

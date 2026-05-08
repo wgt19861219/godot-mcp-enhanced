@@ -28,8 +28,11 @@ import * as docs from './tools/docs.js';
 import * as godotOps from './tools/godot-ops.js';
 import * as tilemapOps from './tools/tilemap-ops.js';
 import * as materialOps from './tools/material-ops.js';
+import * as gameBridge from './tools/game-bridge.js';
+import * as workflow from './tools/workflow.js';
+import { requiresConfirmation, createPendingToken, consumeToken } from './guard.js';
 
-const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps];
+const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow];
 
 // ─── Godot binary detection ──────────────────────────────────────────────────
 
@@ -159,12 +162,52 @@ function parseConfigValue(raw: string): unknown {
 
 // ─── GodotServer class ───────────────────────────────────────────────────────
 
+// ─── Write tools (filtered in READ_ONLY_MODE) ─────────────────────────────────
+
+const WRITE_TOOLS = new Set([
+  'create_scene', 'add_node', 'save_scene', 'load_sprite', 'batch_add_nodes',
+  'write_script', 'edit_script', 'create_test_scene', 'execute_gdscript',
+  'import_resources',
+  'tilemap_set_cell', 'tilemap_erase_cell', 'tilemap_fill_rect', 'tilemap_clear', 'tilemap_paste', 'tilemap_set_transform',
+  'material_write', 'shader_edit',
+  'signal_connect', 'signal_disconnect', 'signal_emit',
+  'node_create_3d',
+  'audio_play', 'audio_stop', 'audio_set_param',
+  'capture_screenshot',
+  'create_project',
+  'confirm_and_execute',
+  'edit_node',
+  'remove_node',
+  'game_bridge_install', 'game_bridge_uninstall',
+  'game_query', 'game_input', 'game_wait',
+  'dev_loop', 'scene_snapshot', 'batch_validate',
+]);
+
+// ─── Lite mode tools (14 core tools) ──────────────────────────────────────────
+
+const LITE_TOOLS = new Set([
+  'list_projects', 'get_project_info', 'list_files', 'read_project_config',
+  'read_scene', 'create_scene', 'add_node', 'save_scene',
+  'read_script', 'write_script', 'edit_script',
+  'execute_gdscript', 'get_godot_version',
+  'run_and_verify', 'confirm_and_execute',
+]);
+
+// ─── Server options ───────────────────────────────────────────────────────────
+
+export interface ServerOptions {
+  mode?: 'full' | 'lite';
+  readOnly?: boolean;
+}
+
 export class GodotServer {
   private server: Server;
   private opsScript: string;
+  private options: ServerOptions;
 
-  constructor(opsScript: string) {
+  constructor(opsScript: string, options: ServerOptions = {}) {
     this.opsScript = opsScript;
+    this.options = options;
     this.server = new Server(
       { name: 'godot-mcp-enhanced', version: '0.7.0' },
       { capabilities: { tools: {}, resources: {} } }
@@ -174,7 +217,19 @@ export class GodotServer {
 
   private async setupHandlers(): Promise<void> {
     // ── Collect tool definitions from all modules ──
-    const allTools = toolModules.flatMap(m => m.getToolDefinitions());
+    let allTools = toolModules.flatMap(m => m.getToolDefinitions());
+
+    // P0.1: Filter write tools in READ_ONLY_MODE
+    if (this.options.readOnly) {
+      allTools = allTools.filter(t => !WRITE_TOOLS.has(t.name));
+      log('READ_ONLY_MODE: %d tools available', allTools.length);
+    }
+
+    // P0.2: Filter to lite toolset
+    if (this.options.mode === 'lite') {
+      allTools = allTools.filter(t => LITE_TOOLS.has(t.name));
+      log('LITE mode: %d tools available', allTools.length);
+    }
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: allTools,
@@ -197,6 +252,7 @@ export class GodotServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: rawArgs } = request.params;
+      const startTime = Date.now();
       // Normalize camelCase -> snake_case
       const args: Record<string, any> = {};
       if (rawArgs) {
@@ -207,10 +263,53 @@ export class GodotServer {
         }
       }
       try {
+        // P1.1: Confirmation Token guard
+        if (name === 'confirm_and_execute') {
+          const token = args.token as string;
+          if (!token || typeof token !== 'string') {
+            return { content: [{ type: 'text', text: 'Error: confirmation_token is required' }] };
+          }
+          const pending = consumeToken(token);
+          if (!pending) {
+            return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }] };
+          }
+          // Re-dispatch with original tool name and args
+          for (const mod of toolModules) {
+            const result = await mod.handleTool(pending.toolName, pending.args, ctx);
+            if (result !== null) {
+              const duration = Date.now() - startTime;
+              result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
+              return result;
+            }
+          }
+          return { content: [{ type: 'text', text: `Unknown tool: ${pending.toolName}` }] };
+        }
+
+        if (requiresConfirmation(name)) {
+          const token = createPendingToken(name, args);
+          return {
+            content: [{
+              type: 'text',
+              text: JSON.stringify({
+                requires_confirmation: true,
+                tool: name,
+                confirmation_token: token,
+                message: `Tool "${name}" requires confirmation. Call confirm_and_execute with this token to proceed.`,
+                ttl_seconds: 180,
+              }),
+            }],
+          };
+        }
+
         // Dispatch to the appropriate module handler
         for (const mod of toolModules) {
           const result = await mod.handleTool(name, args, ctx);
-          if (result !== null) return result;
+          if (result !== null) {
+            // P0.3: Append duration as separate content entry
+            const duration = Date.now() - startTime;
+            result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
+            return result;
+          }
         }
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
       } catch (err) {

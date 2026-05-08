@@ -88,6 +88,152 @@ function guessMimeType(filePath: string): string {
 
 // ─── Resource readers ─────────────────────────────────────────────────────────
 
+// ─── Built-in guides ────────────────────────────────────────────────────────
+
+const GUIDES: Record<string, { name: string; description: string; text: string }> = {
+  'getting-started': {
+    name: 'Getting Started',
+    description: 'Quick start guide for Godot MCP Enhanced',
+    text: `# Getting Started with Godot MCP Enhanced
+
+## Setup
+1. Ensure Godot 4.x is installed and accessible via PATH or GODOT_PATH env var
+2. Run the MCP server: \`npx godot-mcp-enhanced\`
+3. For read-only mode: set \`READ_ONLY_MODE=true\`
+4. For lite mode (14 core tools): add \`--lite\` flag
+
+## Core Workflow
+1. **list_projects** — find Godot projects
+2. **read_scene** / **inspect_node** — understand existing structure
+3. **add_node** / **edit_node** — modify scenes
+4. **write_script** / **edit_script** — create or edit GDScript
+5. **save_scene** — persist changes
+6. **run_and_verify** — validate the project runs correctly
+
+## Safety Features
+- **Confirmation Token**: Dangerous tools (remove_node, execute_gdscript, etc.) require a confirmation token
+- **READ_ONLY_MODE**: Blocks all write operations
+- **Lite mode**: Only 14 essential tools registered
+
+## Tips
+- Use \`execute_gdscript\` for operations not covered by dedicated tools
+- Use \`query_scene_tree\` for runtime property values (not just .tscn parsing)
+- Use \`batch_add_nodes\` to add multiple nodes efficiently
+`,
+  },
+  'scene-workflow': {
+    name: 'Scene Creation Workflow',
+    description: 'Best practices for creating and modifying Godot scenes',
+    text: `# Scene Creation Workflow
+
+## Creating a New Scene
+1. create_scene — creates .tscn with root node
+2. add_node / batch_add_nodes — add child nodes
+3. load_sprite — attach textures to Sprite2D nodes
+4. edit_node — set position, scale, rotation, custom properties
+5. save_scene — persist to disk
+
+## Editing Existing Scenes
+1. read_scene — parse .tscn to understand structure
+2. inspect_node — deep-inspect a specific node's runtime state
+3. edit_node — modify properties (supports Vector2/Vector3/Color as arrays)
+4. add_node — add new children
+5. remove_node — delete nodes (requires confirmation token)
+6. save_scene — persist changes
+
+## edit_node Property Types
+- number: "opacity": 0.5
+- string: "text": "Hello"
+- boolean: "visible": true
+- Vector2: "position": [100, 200]
+- Vector3: "position": [1, 2, 3]
+- Color: "modulate": [1, 0, 0, 1]
+
+## Batch Operations
+Use batch_add_nodes to add multiple nodes in one call.
+`,
+  },
+  'script-development': {
+    name: 'Script Development',
+    description: 'GDScript writing and testing workflow',
+    text: `# Script Development Workflow
+
+## Writing Scripts
+1. **read_script** — view existing GDScript
+2. **write_script** — create new .gd files
+3. **edit_script** — line-range or search-and-replace editing
+4. **validate_scripts** — check syntax without running
+
+## Testing Scripts
+1. **execute_gdscript** — run GDScript snippets dynamically
+   - Snippet mode: no extends, auto-wrapped with helpers
+   - Full mode: extends SceneTree for complete control
+   - Use _mcp_output(key, value) to return structured data
+2. **run_and_verify** — full project validation with error analysis
+3. **generate_test** + **run_tests** — GUT unit test framework
+
+## Autoload Context
+Set load_autoloads: true (default) to access project autoloads.
+`,
+  },
+  'game-bridge': {
+    name: 'Game Bridge (E2E Testing)',
+    description: 'How to use the Game Bridge for live game interaction',
+    text: `# Game Bridge — Live Game Interaction
+
+## Installation
+1. **game_bridge_install** — copies mcp_bridge.gd to project and registers autoload
+2. Run the game — the bridge starts a TCP server on port 9081
+
+## Querying Game State
+- game_query method ping — check bridge is alive
+- game_query method get_tree — full scene tree
+- game_query method find_nodes — search by name/type
+- game_query method get_node_properties — read properties
+- game_query method get_performance — FPS, frame time
+
+## Simulating Input
+- game_input method send_key — keyboard events
+- game_input method send_mouse_click — mouse clicks
+- game_input method send_text — text input
+
+## Waiting for Conditions
+- game_wait method wait_for_node — check if node exists
+- game_wait method wait_for_property — check property value
+
+## Cleanup
+- game_bridge_uninstall — removes autoload and script
+
+## Architecture
+TCP + NDJSON protocol, zero external dependencies.
+`,
+  },
+  'troubleshooting': {
+    name: 'Troubleshooting',
+    description: 'Common issues and solutions',
+    text: `# Troubleshooting Guide
+
+## Godot Binary Not Found
+Set GODOT_PATH env var or add Godot to PATH.
+
+## Scene Save Fails
+- Use relative path: res://scenes/main.tscn
+- Run validate_project to check for missing references
+
+## Confirmation Token Issues
+Tokens expire after 3 minutes, single-use, max 100 pending.
+
+## Game Bridge Connection Refused
+- Ensure game is running with bridge autoload
+- Check port 9081 is not blocked
+- Look for "[MCP Bridge] Listening" in Godot output
+
+## READ_ONLY_MODE
+Set READ_ONLY_MODE=false or remove the env var.
+`,
+  },
+};
+
 function readProjectInfo(projectPath: string): McpResourceContent {
   const projectFile = join(projectPath, 'project.godot');
   if (!existsSync(projectFile)) {
@@ -171,6 +317,16 @@ export function listResources(projectPath: string | undefined): McpResource[] {
     { uri: 'godot://project/info', name: 'Project Info', description: 'Project metadata, config summary, file statistics', mimeType: 'application/json' },
     { uri: 'godot://project/config', name: 'project.godot', description: 'Raw project.godot config file', mimeType: 'text/plain' },
   ];
+
+  // Built-in guides
+  for (const [id, guide] of Object.entries(GUIDES)) {
+    resources.push({
+      uri: `godot://guide/${id}`,
+      name: guide.name,
+      description: guide.description,
+      mimeType: 'text/markdown',
+    });
+  }
 
   scanForResources(projectPath, '', resources, 0);
   if (resources.length >= MAX_RESOURCES) {
@@ -293,6 +449,12 @@ export function readResource(uri: string, projectPath: string | undefined): McpR
     case 'file':
       if (!isSafePath(projectPath, resourcePath)) return { uri, mimeType: 'text/plain', text: `Access denied: ${resourcePath}` };
       return readFileResource(projectPath, resourcePath);
+
+    case 'guide': {
+      const guide = GUIDES[resourcePath];
+      if (!guide) return { uri, mimeType: 'text/plain', text: `Unknown guide: ${resourcePath}. Available: ${Object.keys(GUIDES).join(', ')}` };
+      return { uri, mimeType: 'text/markdown', text: guide.text };
+    }
 
     default:
       return { uri, mimeType: 'text/plain', text: `Unknown resource category: ${category}` };

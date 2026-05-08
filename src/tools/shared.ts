@@ -20,15 +20,32 @@ func _mcp_get_root() -> Node:
 \t\treturn _mcp_root
 \treturn null
 
-func get_node(path: NodePath) -> Node:
+func _mcp_get_node(path: NodePath) -> Node:
 \tvar _p: String = str(path)
 \tif _p.begins_with("/"):
 \t\t_p = _p.substr(1)
 \tvar _r: Node = _mcp_get_root()
 \tif _r == null:
 \t\treturn null
-\treturn _r.get_node(_p)
-
+\t# Fallback: root.get_node() may fail in headless _initialize()
+\tvar _node: Node = _r.get_node_or_null(_p)
+\tif _node != null:
+\t\treturn _node
+\t# Manual traversal for headless compatibility
+\tvar _parts: PackedStringArray = _p.split("/")
+\t_node = _r
+\tfor _part in _parts:
+\t\tif _part == "" or _part == "root":
+\t\t\tcontinue
+\t\tvar _found: bool = false
+\t\tfor _ch in _node.get_children():
+\t\t\tif _ch.name == _part:
+\t\t\t\t_node = _ch
+\t\t\t\t_found = true
+\t\t\t\tbreak
+\t\tif not _found:
+\t\t\treturn null
+\treturn _node
 func _mcp_load_main_scene() -> void:
 \tvar _r: Node = _mcp_get_root()
 \tif _r == null:

@@ -52,7 +52,7 @@ export function genTilemapReadScript(
     return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -86,7 +86,7 @@ func _initialize():
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -123,7 +123,7 @@ export function genTilemapSetCellScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -149,7 +149,7 @@ export function genTilemapEraseCellScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -176,7 +176,7 @@ export function genTilemapFillRectScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -206,7 +206,7 @@ export function genTilemapClearScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -231,7 +231,7 @@ export function genTilemapCopyScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -273,7 +273,7 @@ export function genTilemapPasteScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
@@ -307,7 +307,7 @@ export function genTilemapSetTransformScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar node = get_node("${gdEscape(nodePath)}")
+\tvar node = _mcp_get_node("${gdEscape(nodePath)}")
 \tif node == null:
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
