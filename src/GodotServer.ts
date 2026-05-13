@@ -34,13 +34,14 @@ import * as workflow from './tools/workflow.js';
 import * as animationOps from './tools/animation-ops.js';
 import * as profilerOps from './tools/profiler-ops.js';
 import * as spatialOps from './tools/spatial-ops.js';
+import * as testFramework from './tools/test-framework.js';
 import { requiresConfirmation, createPendingToken, consumeToken } from './guard.js';
 import { registerTools } from './core/tool-registry.js';
 import { ReadOnlyGuard } from './core/ReadOnlyGuard.js';
 import { EditorConnection } from './core/EditorConnection.js';
 import { EditorToolExecutor } from './core/EditorToolExecutor.js';
 
-const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, profilerOps, spatialOps];
+const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, profilerOps, spatialOps, testFramework];
 
 // 注册工具标签
 const allMeta: Array<{ name: string; readonly: boolean; long_running: boolean }> = [];

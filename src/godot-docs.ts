@@ -82,10 +82,16 @@ interface ApiData {
   classes: RawClass[];
   singletons?: string[];
   native_structures?: unknown[];
+  header?: {
+    version_major?: number;
+    version_minor?: number;
+    version_patch?: number;
+  };
 }
 
 let classMap: Map<string, RawClass> = new Map();
 let initialized = false;
+let docsVersion: string | null = null;
 
 const COMMON_CLASSES: string[] = [
   'Object', 'RefCounted', 'Resource', 'Node',
@@ -172,13 +178,19 @@ export function initDocs(docsPath: string): void {
   const raw = readFileSync(docsPath, 'utf-8');
   const data: ApiData = JSON.parse(raw);
 
+  // 提取版本号
+  if (data.header?.version_major != null && data.header?.version_minor != null && data.header?.version_patch != null) {
+    docsVersion = `${data.header.version_major}.${data.header.version_minor}.${data.header.version_patch}`;
+  }
+
   classMap.clear();
   for (const cls of data.classes) {
     classMap.set(cls.name, cls);
   }
 
   initialized = true;
-  console.error(`[godot-docs] Loaded ${classMap.size} classes from ${docsPath}`);
+  const versionInfo = docsVersion ? ` (Godot ${docsVersion})` : '';
+  console.error(`[godot-docs] Loaded ${classMap.size} classes from ${docsPath}${versionInfo}`);
 }
 
 function ensureInit(): void {
@@ -187,7 +199,11 @@ function ensureInit(): void {
   if (existsSync(docsPath)) {
     initDocs(docsPath);
   } else {
-    throw new Error('Godot docs not initialized. extension_api.json not found at: ' + docsPath);
+    throw new Error(
+      'Godot docs database not found. Extension API file missing.\n' +
+      'Run: npx godot-mcp-enhanced generate-docs\n' +
+      'Or place extension_api.json in docs/api/ directory.'
+    );
   }
 }
 
@@ -388,4 +404,19 @@ export function findProperty(className: string, propertyName: string): PropertyI
 
 export function getCommonClasses(): string[] {
   return [...COMMON_CLASSES];
+}
+
+export function getDocsVersion(): string | null {
+  return docsVersion;
+}
+
+/** 测试专用：尝试从指定路径初始化文档 */
+export function testEnsureInit(path: string): void {
+  if (existsSync(path)) {
+    initDocs(path);
+  } else {
+    throw new Error(
+      "Godot docs database not found. Run 'npx godot-mcp-enhanced generate-docs' first."
+    );
+  }
 }
