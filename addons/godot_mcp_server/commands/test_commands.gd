@@ -1,5 +1,10 @@
 extends Node
 
+var _plugin: EditorPlugin
+
+func setup(plugin: EditorPlugin) -> void:
+	_plugin = plugin
+
 func handle_test_assert(params: Dictionary) -> Dictionary:
 	var assertion_type: String = params.get("assertion_type", "")
 	var path: String = params.get("path", "")
@@ -46,19 +51,19 @@ func handle_test_assert(params: Dictionary) -> Dictionary:
 			return {"error": {"code": -32004, "message": "Unknown assertion type: " + assertion_type}}
 
 func _get_edited_scene_root() -> Node:
+	if _plugin != null:
+		var ei = _plugin.get_editor_interface()
+		if ei != null:
+			var edited = ei.get_edited_scene_root()
+			if edited != null:
+				return edited
+	# Fallback via SceneTree
 	var ml = Engine.get_main_loop()
 	if ml == null or not (ml is SceneTree):
 		return null
 	var st = ml as SceneTree
 	if st == null or st.root == null:
 		return null
-	var ei = EditorInterface
-	if ei == null:
-		return null
-	var edited = ei.get_edited_scene_root()
-	if edited != null:
-		return edited
-	# Fallback: first child of root
 	if st.root.get_child_count() > 0:
 		return st.root.get_child(0)
 	return null

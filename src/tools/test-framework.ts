@@ -7,6 +7,8 @@ import { gdEscape } from './godot-ops.js';
 
 const TOOL_NAMES = ['test_assert', 'test_stress', 'export_list_presets', 'export_get_preset', 'export_build'] as const;
 
+const VALID_ASSERTIONS = new Set(['node_exists', 'property_equals', 'signal_connected', 'node_count']);
+
 // ─── Tool definitions ──────────────────────────────────────────────────────
 
 export function getToolDefinitions(): Tool[] {
@@ -93,7 +95,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
   if (!(TOOL_NAMES as readonly string[]).includes(name)) return null;
 
   try {
-    // Export tools are Editor-only, return error in Headless mode
+    // Export tools: Editor-only. In Editor mode, GodotServer.ts dispatches to editorExecutor
+    // before reaching this module, so this path only fires in Headless mode.
     if (name === 'export_list_presets' || name === 'export_get_preset' || name === 'export_build') {
       return opsErrorResult('EDITOR_ONLY', `Tool "${name}" requires Editor mode. Set GODOT_MCP_MODE=editor and install the Godot plugin.`);
     }
@@ -112,7 +115,16 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 }
 
 async function handleTestAssert(args: Record<string, unknown>, godot: string, projectPath: string): Promise<ToolResult> {
-  const assertionType = gdEscape(args.assertion_type as string);
+  const rawAssertionType = args.assertion_type as string;
+  if (!VALID_ASSERTIONS.has(rawAssertionType)) {
+    return opsErrorResult('INVALID_PARAMS', `Invalid assertion_type: "${rawAssertionType}". Must be one of: ${[...VALID_ASSERTIONS].join(', ')}`);
+  }
+  // node_count requires count parameter
+  if (rawAssertionType === 'node_count' && typeof args.count !== 'number') {
+    return opsErrorResult('INVALID_PARAMS', 'node_count assertion requires "count" parameter');
+  }
+
+  const assertionType = gdEscape(rawAssertionType);
   const path = gdEscape((args.path as string) || '');
   const property = gdEscape((args.property as string) || '');
   const expectedStr = JSON.stringify(args.expected);
@@ -144,8 +156,8 @@ func _init():
 \t\t\t\t_mcp_output("result", JSON.stringify({"passed": false, "message": "Node not found: " + _path}))
 \t\t\telse:
 \t\t\t\tvar _prop = "${property}"
-\t\t\t\tvar _val = var_to_str(_n.get(_prop))
-\t\t\t\tvar _expected = "${gdEscape(expectedStr)}"
+\t\t\t\tvar _val = str(_n.get(_prop))
+\t\t\t\tvar _expected = str(${gdEscape(JSON.stringify(args.expected))})
 \t\t\t\tvar _match = _val == _expected
 \t\t\t\t_mcp_output("result", JSON.stringify({"passed": _match, "message": "%s.%s = %s (expected: %s)" % [_path, _prop, _val, _expected], "actual": _val}))
 \t\t"signal_connected":
@@ -187,6 +199,7 @@ func _init():
 \t\treturn
 \tvar _type = "${nodeType}"
 \tvar _iters = ${iterations}
+\tvar _obj_before = Performance.get_monitor(Performance.OBJECT_COUNT)
 \tvar _mem_before = Performance.get_monitor(Performance.MEMORY_STATIC)
 \tvar _peak = _mem_before
 \tfor _i in range(_iters):
@@ -200,13 +213,19 @@ func _init():
 \t\tif _mem > _peak:
 \t\t\t_peak = _mem
 \t\t_n.queue_free()
-\tawait get_tree().process_frame
+\tfor _f in range(3):
+\t\tawait get_tree().process_frame
+\tvar _obj_after = Performance.get_monitor(Performance.OBJECT_COUNT)
 \tvar _mem_after = Performance.get_monitor(Performance.MEMORY_STATIC)
-\tvar _leaked = _mem_after > _mem_before * 1.1
+\tvar _obj_leaked = (_obj_after - _obj_before) > _iters * 0.1
+\tvar _mem_leaked = _mem_after > _mem_before * 1.1
+\tvar _leaked = _obj_leaked or _mem_leaked
 \t_mcp_output("result", JSON.stringify({
 \t\t"success": not _leaked,
 \t\t"iterations": _iters,
 \t\t"node_type": _type,
+\t\t"object_count_before": _obj_before,
+\t\t"object_count_after": _obj_after,
 \t\t"memory_before": _mem_before,
 \t\t"memory_after": _mem_after,
 \t\t"peak_memory": _peak,

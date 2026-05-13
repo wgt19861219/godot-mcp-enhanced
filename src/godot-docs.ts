@@ -155,7 +155,7 @@ const COMMON_CLASSES: string[] = [
   'PackedInt64Array', 'PackedFloat32Array', 'PackedFloat64Array',
   'PackedStringArray', 'PackedVector2Array', 'PackedVector3Array',
   'PackedColorArray',
-  'Input', 'InputEvent',
+  'Input',
   'AudioServer', 'AudioBusLayout',
   'ProjectSettings', 'Performance',
   'Engine', 'ClassDB',

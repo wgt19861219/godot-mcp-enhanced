@@ -67,9 +67,9 @@ func handle_export_build(params: Dictionary) -> Dictionary:
 			break
 	if not found:
 		return {"error": {"code": -32002, "message": "Export preset not found: " + preset_name}}
-	# Export build is complex and requires EditorExportPlatform API
-	# Return status for now - actual build orchestration happens at Node.js level
-	return {"result": {"status": "export_started", "preset": preset_name, "message": "Export initiated. Check editor output for progress."}}
+	# Export build requires EditorExportPlatform API (not fully scriptable in GDScript)
+	# This is a stub — validates preset exists but does not trigger actual build
+	return {"result": {"status": "not_implemented", "preset": preset_name, "message": "Export build is a stub. EditorExportPlatform API is limited. Use editor GUI for now."}}
 
 func _is_sensitive_key(key: String) -> bool:
 	var sensitive_patterns = ["keystore", "certificate", "codesign", "identity", "provisioning", "password", "secret", "token", "api_key"]

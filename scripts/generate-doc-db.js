@@ -27,7 +27,7 @@ function findGodotBinary() {
 
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
-    const result = execSync(`${which} godot 2>/dev/null`, { encoding: 'utf-8' }).trim();
+    const result = execSync(`${which} godot`, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
     const candidates = result.split('\n').map(s => s.trim()).filter(Boolean);
     if (candidates.length > 0) return candidates[0];
   } catch {

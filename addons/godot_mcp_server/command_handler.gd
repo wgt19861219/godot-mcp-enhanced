@@ -19,6 +19,7 @@ func setup(plugin: EditorPlugin) -> void:
 	add_child(_node_commands)
 
 	_test_commands = preload("commands/test_commands.gd").new()
+	_test_commands.setup(plugin)
 	add_child(_test_commands)
 
 	_export_commands = preload("commands/export_commands.gd").new()
