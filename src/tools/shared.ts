@@ -61,8 +61,9 @@ func _mcp_load_scene(sp: String) -> bool:
 \tif _r == null:
 \t\t_mcp_output("error", "Scene root not available")
 \t\treturn false
-\tif _mcp_scene_instance != null and _mcp_scene_instance.get_parent() != null:
-\t\t_mcp_scene_instance.get_parent().remove_child(_mcp_scene_instance)
+\tif _mcp_scene_instance != null:
+\t\tif _mcp_scene_instance.get_parent() != null:
+\t\t\t_mcp_scene_instance.get_parent().remove_child(_mcp_scene_instance)
 \t\t_mcp_scene_instance.queue_free()
 \t\t_mcp_scene_instance = null
 \tvar _sr = load(sp)
@@ -77,7 +78,7 @@ func _mcp_get_scene_node(path: String) -> Node:
 \t# Search within loaded scene instance (avoids root/SceneName prefix issue)
 \tif _mcp_scene_instance != null:
 \t\tvar _p: String = path
-\t\tif _p.begins_with("/"):
+\t\twhile _p.begins_with("/"):
 \t\t\t_p = _p.substr(1)
 \t\t# Strip leading "root/" or "root" prefix
 \t\tif _p.begins_with("root/"):

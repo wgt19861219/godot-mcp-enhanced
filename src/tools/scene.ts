@@ -223,19 +223,19 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       const params: Record<string, unknown> = {};
       if (name === 'create_scene') {
-        params.scene_path = args.scene_path;
+        params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         params.root_node_type = args.root_node_type || 'Node2D';
       } else if (name === 'add_node') {
-        params.scene_path = args.scene_path;
+        params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         params.node_type = args.node_type;
         params.node_name = args.node_name;
         params.parent_node_path = args.parent_node_path || 'root';
         if (args.properties) params.properties = args.properties;
       } else if (name === 'save_scene') {
-        params.scene_path = args.scene_path;
+        params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         if (args.new_path) params.new_path = args.new_path;
       } else if (name === 'load_sprite') {
-        params.scene_path = args.scene_path;
+        params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         params.texture_path = args.texture_path;
         params.node_path = args.node_path || 'root';
       }
@@ -285,7 +285,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       const params = {
-        scene_path: args.scene_path,
+        scene_path: normalizeUserProjectPath(args.scene_path as string),
         max_depth: (args.max_depth as number) || 5,
       };
 
@@ -331,7 +331,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       const params = {
-        scene_path: args.scene_path,
+        scene_path: normalizeUserProjectPath(args.scene_path as string),
         node_path: args.node_path || 'root',
         max_depth: (args.max_depth as number) || 3,
         include_signals: args.include_signals !== false,
@@ -371,7 +371,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
     case 'batch_add_nodes': {
       const p = validatePath(args.project_path as string);
-      const scenePath = args.scene_path as string;
+      const scenePath = normalizeUserProjectPath(args.scene_path as string);
       const nodes = args.nodes as Array<{
         node_type: string;
         node_name: string;
