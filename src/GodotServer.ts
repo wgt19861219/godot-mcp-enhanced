@@ -37,6 +37,8 @@ import * as spatialOps from './tools/spatial-ops.js';
 import { requiresConfirmation, createPendingToken, consumeToken } from './guard.js';
 import { registerTools } from './core/tool-registry.js';
 import { ReadOnlyGuard } from './core/ReadOnlyGuard.js';
+import { EditorConnection } from './core/EditorConnection.js';
+import { EditorToolExecutor } from './core/EditorToolExecutor.js';
 
 const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, profilerOps, spatialOps];
 
@@ -150,7 +152,9 @@ const LITE_TOOLS = new Set([
 
 export interface ServerOptions {
   mode?: 'full' | 'lite';
+  connectionMode?: 'headless' | 'editor';
   readOnly?: boolean;
+  noFallback?: boolean;
 }
 
 export class GodotServer {
@@ -158,11 +162,17 @@ export class GodotServer {
   private opsScript: string;
   private options: ServerOptions;
   private readOnlyGuard: ReadOnlyGuard;
+  private editorConn: EditorConnection | null = null;
+  private editorExecutor: EditorToolExecutor | null = null;
+  private connectionMode: 'headless' | 'editor';
+  private noFallback: boolean;
 
   constructor(opsScript: string, options: ServerOptions = {}) {
     this.opsScript = opsScript;
     this.options = options;
     this.readOnlyGuard = new ReadOnlyGuard(options.readOnly ?? false);
+    this.connectionMode = options.connectionMode ?? 'headless';
+    this.noFallback = options.noFallback ?? false;
     this.server = new Server(
       { name: 'godot-mcp-enhanced', version: '0.7.0' },
       { capabilities: { tools: {}, resources: {} } }
@@ -225,6 +235,14 @@ export class GodotServer {
             content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: guardResult.errorCode, message: guardResult.message } }) }],
             isError: true,
           };
+        }
+
+        // Editor mode: forward to plugin
+        if (this.connectionMode === 'editor' && this.editorExecutor) {
+          const editorResult = await this.editorExecutor.execute(name, args);
+          const duration = Date.now() - startTime;
+          (editorResult.content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: `_duration_ms: ${duration}` });
+          return editorResult as ToolResult & { [k: string]: unknown };
         }
 
         // P1.1: Confirmation Token guard
@@ -320,5 +338,27 @@ export class GodotServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     log('Godot MCP Enhanced server running on stdio');
+
+    if (this.connectionMode === 'editor') {
+      const port = parseInt(process.env.GODOT_EDITOR_PORT ?? '9090', 10);
+      this.editorConn = new EditorConnection({ port, reconnect: true });
+      try {
+        await this.editorConn.connect();
+        this.editorExecutor = new EditorToolExecutor(this.editorConn);
+        log('Editor: Connected to Godot plugin on port %d', port);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (this.noFallback) {
+          console.error(`[FATAL] Editor mode required but connection failed: ${msg}`);
+          console.error('Set GODOT_MCP_NO_FALLBACK=false to allow fallback, or install the plugin.');
+          process.exit(1);
+        }
+        console.error(`[FALLBACK] Editor mode requested but plugin not found at port ${port}.`);
+        console.error('[FALLBACK] Running in Headless mode. UndoRedo disabled, no scene state persistence.');
+        console.error('[FALLBACK] To enforce editor mode, set GODOT_MCP_NO_FALLBACK=true.');
+        this.connectionMode = 'headless';
+        this.editorConn = null;
+      }
+    }
   }
 }
