@@ -61,6 +61,10 @@ func _mcp_load_scene(sp: String) -> bool:
 \tif _r == null:
 \t\t_mcp_output("error", "Scene root not available")
 \t\treturn false
+\tif _mcp_scene_instance != null and _mcp_scene_instance.get_parent() != null:
+\t\t_mcp_scene_instance.get_parent().remove_child(_mcp_scene_instance)
+\t\t_mcp_scene_instance.queue_free()
+\t\t_mcp_scene_instance = null
 \tvar _sr = load(sp)
 \tif _sr == null:
 \t\t_mcp_output("error", "Failed to load scene: " + sp)
@@ -85,6 +89,8 @@ func _mcp_get_scene_node(path: String) -> Node:
 \t\t\tvar _scene_name: String = _mcp_scene_instance.name + "/"
 \t\t\tif _p.begins_with(_scene_name):
 \t\t\t\t_p = _p.substr(_scene_name.length())
+\t\t\telif _p == _mcp_scene_instance.name:
+\t\t\t\t_p = ""
 \t\tif _p == "":
 \t\t\treturn _mcp_scene_instance
 \t\tvar _node: Node = _mcp_scene_instance.get_node_or_null(_p)

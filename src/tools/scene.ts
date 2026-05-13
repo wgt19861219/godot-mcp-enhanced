@@ -193,7 +193,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
   switch (name) {
     case 'read_scene': {
-      const sp = resolveWithinRoot(validatePath(args.project_path as string), args.scene_path as string);
+      const sp = resolveWithinRoot(validatePath(args.project_path as string), normalizeUserProjectPath(args.scene_path as string));
       if (!existsSync(sp)) return textResult(`Scene file not found: ${sp}`);
 
       const content = readFileSync(sp, 'utf-8');

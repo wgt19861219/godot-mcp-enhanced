@@ -324,11 +324,11 @@ func _initialize():
 \t\t_mcp_done()
 \t\treturn
 \tvar space_state = world.direct_space_state
-	if space_state == null:
-		_mcp_output("error", "Physics space state not available (PhysicsServer may not be initialized in headless mode)")
-		_mcp_done()
-		return
-	var center_v = Vector3(${center.x}, ${center.y}, ${center.z})
+\tif space_state == null:
+\t\t_mcp_output("error", "Physics space state not available (PhysicsServer may not be initialized in headless mode)")
+\t\t_mcp_done()
+\t\treturn
+\tvar center_v = Vector3(${center.x}, ${center.y}, ${center.z})
 \tvar sphere = SphereShape3D.new()
 \tsphere.radius = ${radius}
 \tvar query = PhysicsShapeQueryParameters3D.new()
