@@ -38,13 +38,14 @@ import * as testFramework from './tools/test-framework.js';
 import * as animtreeOps from './tools/animtree.js';
 import * as navigationOps from './tools/navigation.js';
 import * as particlesOps from './tools/particles.js';
+import * as batchTools from './tools/batch-tools.js';
 import { requiresConfirmation, createPendingToken, consumeToken } from './guard.js';
 import { registerTools } from './core/tool-registry.js';
 import { ReadOnlyGuard } from './core/ReadOnlyGuard.js';
 import { EditorConnection } from './core/EditorConnection.js';
 import { EditorToolExecutor } from './core/EditorToolExecutor.js';
 
-const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, profilerOps, spatialOps, testFramework, animtreeOps, navigationOps, particlesOps];
+const toolModules = [runtime, screenshot, project, scene, script, validation, docs, godotOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, profilerOps, spatialOps, testFramework, animtreeOps, navigationOps, particlesOps, batchTools];
 
 // 注册工具标签
 const allMeta: Array<{ name: string; readonly: boolean; long_running: boolean }> = [];
