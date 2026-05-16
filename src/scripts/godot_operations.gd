@@ -525,6 +525,8 @@ func _is_safe_property(prop_name: String) -> bool:
 		return false
 	if prop_name in BLOCKED_PROPERTIES:
 		return false
+	if "." in prop_name and prop_name.split(".")[0] in BLOCKED_PROPERTIES:
+		return false
 	return true
 
 

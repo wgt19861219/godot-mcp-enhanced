@@ -116,58 +116,35 @@ func _stop_server() -> void:
 # ─── Protocol handling ─────────────────────────────────────────────────────
 
 func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
-	var key := "buf_" + str(pid)
-	var raw: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
-	# Find complete lines (delimited by 0x0A = newline) and decode them
-	while true:
-		var nl_idx := raw.find(0x0A)
-		if nl_idx == -1:
-			break
-		var line_bytes: PackedByteArray = raw.slice(0, nl_idx)
-		raw = raw.slice(nl_idx + 1)
-		var line := line_bytes.get_string_from_utf8()
-		if line == "":
-			continue
-		if not _authenticated_peers.has(pid):
-			var parsed: Variant = JSON.parse_string(line)
-			if parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
-				_authenticated_peers[pid] = true
-				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "
-")
-				continue
-			else:
-				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "
-")
-				continue
-		var response := _handle_message(line)
-		peer.put_utf8_string(response + "
-")
-	_peer_buffers[key] = raw
+\tvar key := "buf_" + str(pid)
+\tvar raw: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
+\twhile true:
+\t\tvar nl_idx := raw.find(0x0A)
+\t\tif nl_idx == -1:
+\t\t\tbreak
+\t\tvar line_bytes: PackedByteArray = raw.slice(0, nl_idx)
+\t\traw = raw.slice(nl_idx + 1)
+\t\tif line_bytes.size() == 0:
+\t\t\tcontinue
+\t\tvar line := line_bytes.get_string_from_utf8()
+\t\tif line == "" and line_bytes.size() > 0:
+\t\t\tpush_warning("[MCP Bridge] Invalid UTF-8 in message from peer %d, disconnecting" % pid)
+\t\t\tpeer.disconnect_from_host()
+\t\t\tbreak
+\t\tif not _authenticated_peers.has(pid):
+\t\t\tvar parsed: Variant = JSON.parse_string(line)
+\t\t\tif parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
+\t\t\t\t_authenticated_peers[pid] = true
+\t\t\t\tpeer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n")
+\t\t\t\tcontinue
+\t\t\telse:
+\t\t\t\tpeer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n")
+\t\t\t\tcontinue
+\t\tvar response := _handle_message(line)
+\t\tpeer.put_utf8_string(response + "\n")
+\t_peer_buffers[key] = raw
 
 
-func _process_buffer(peer: StreamPeerTCP, pid: int) -> void:
-	var buf: String = str(_peer_buffers.get(pid, ""))
-	while true:
-		var idx := buf.find("\n")
-		if idx == -1:
-			break
-		var line := buf.substr(0, idx).strip_edges()
-		buf = buf.substr(idx + 1)
-		if line == "":
-			continue
-		# C1: Require auth handshake — first message must be {"method":"auth","secret":"..."}
-		if not _authenticated_peers.has(pid):  # authenticated flag
-			var parsed: Variant = JSON.parse_string(line)
-			if parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
-				_authenticated_peers[pid] = true  # mark authenticated
-				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n")
-				continue
-			else:
-				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n")
-				continue
-		var response := _handle_message(line)
-		peer.put_utf8_string(response + "\n")
-	_peer_buffers[pid] = buf
 
 
 func _handle_message(raw: String) -> String:
