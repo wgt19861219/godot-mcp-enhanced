@@ -23,6 +23,7 @@ const TOOL_NAMES = [
   'edit_node',
   'remove_node',
   'instance_scene',
+  'set_instance_property',
 ] as const;
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
@@ -217,6 +218,23 @@ export function getToolDefinitions(): Tool[] {
           properties: { type: 'object', description: 'Optional initial property overrides' },
         },
         required: ['project_path', 'scene_path', 'instance_path'],
+      },
+    },
+    {
+      name: 'set_instance_property',
+      description: 'Set a property override on an instanced scene node. '
+        + 'Validates the target node is an instance child (not the scene root) before setting.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          scene_path: { type: 'string', description: 'Target scene path relative to project' },
+          node_path: { type: 'string', description: 'Path to the instance node (e.g. "root/Player")' },
+          property: { type: 'string', description: 'Property name to set' },
+          value: { description: 'Property value (string, number, bool, null, array for Vector2/Vector3/Color)' },
+          load_autoloads: { type: 'boolean', description: 'Load Autoload context (default: true)', default: true },
+        },
+        required: ['project_path', 'scene_path', 'node_path', 'property', 'value'],
       },
     },
   ];
@@ -642,6 +660,10 @@ func _initialize():
       return handleInstanceScene(args, ctx);
     }
 
+    case 'set_instance_property': {
+      return handleSetInstanceProperty(args, ctx);
+    }
+
     default:
       return null;
   }
@@ -800,6 +822,92 @@ func _initialize():
   });
 }
 
+// ─── set_instance_property handler ────────────────────────────────────────────
+
+async function handleSetInstanceProperty(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
+  // 必需参数校验
+  if (!args.project_path) return opsErrorResult('MISSING_PARAM', 'project_path is required');
+  if (!args.scene_path) return opsErrorResult('MISSING_PARAM', 'scene_path is required');
+  if (!args.node_path) return opsErrorResult('MISSING_PARAM', 'node_path is required');
+  if (!args.property) return opsErrorResult('MISSING_PARAM', 'property is required');
+  if (args.value === undefined) return opsErrorResult('MISSING_PARAM', 'value is required');
+
+  const p = validatePath(args.project_path as string);
+  const scenePath = resolveWithinRoot(p, normalizeUserProjectPath(args.scene_path as string));
+  const nodePath = normalizeNodePath(args.node_path as string);
+  const propName = String(args.property);
+  const propValue = args.value;
+
+  // 属性名安全检查
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(propName)) {
+    return opsErrorResult('INVALID_PARAM', `Invalid property name: "${propName}"`);
+  }
+  if (BLOCKED_PROPS.has(propName)) {
+    return opsErrorResult('BLOCKED_PROP', `Property "${propName}" is not allowed`);
+  }
+
+  // 生成属性设置行
+  let propLine: string;
+  try {
+    propLine = gdScriptSetLine(propName, propValue).replace(/node\./g, 'target.').replace(/node,/g, 'target,');
+  } catch (e: unknown) {
+    return opsErrorResult('INVALID_VALUE', (e as Error).message);
+  }
+  if (propLine.startsWith('# skipped')) {
+    return opsErrorResult('INVALID_VALUE', `Cannot set property "${propName}": non-finite value`);
+  }
+
+  const trySetHelper = `
+func _try_set(node: Node, prop: String, value: Variant) -> void:
+\tvar _ok = false
+\tif node.get_property_list().any(func(p): return p.name == prop):
+\t\tnode.set(prop, value)
+\t\t_ok = true
+\tif not _ok and node is Control:
+\t\tvar _vtype = typeof(value)
+\t\tif _vtype == TYPE_VECTOR2:
+\t\t\tnode.add_theme_font_size_override(prop, int(value.x))
+\t\telif _vtype == TYPE_COLOR:
+\t\t\tnode.add_theme_color_override(prop, value)
+\t\telif _vtype == TYPE_FLOAT or _vtype == TYPE_INT:
+\t\t\tif node.has_theme_constant(prop):
+\t\t\t\tnode.add_theme_constant_override(prop, int(value))
+`;
+
+  const script = `${SCENE_TREE_HEADER}
+${trySetHelper}
+func _initialize():
+\tif not _mcp_load_scene("${gdEscape(scenePath)}"):
+\t\t_mcp_done()
+\t\treturn
+\tvar target = _mcp_get_scene_node("${gdEscape(nodePath)}")
+\tif target == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tvar root = _mcp_scene_instance
+\tvar is_instance = (target != root and target.owner == root)
+\tif not is_instance:
+\t\t_mcp_output("error", "NODE_NOT_INSTANCE: node '${gdEscape(nodePath)}' is not an instanced scene child")
+\t\t_mcp_done()
+\t\treturn
+\t${propLine}
+\t_mcp_output("set_property", {"node": "${gdEscape(nodePath)}", "property": "${gdEscape(propName)}"})
+\t_mcp_done()
+`;
+
+  const godot = await ctx.findGodot();
+  const loadAutoloads = args.load_autoloads !== false;
+  const result = await executeGdscript({
+    godotPath: godot, projectPath: p, code: script, timeout: 30, loadAutoloads,
+  });
+  return parseGdscriptResult(result, [], (msg) => {
+    if (msg.includes('not found')) return 'NODE_NOT_FOUND';
+    if (msg.includes('NODE_NOT_INSTANCE')) return 'NODE_NOT_INSTANCE';
+    return 'SCRIPT_EXEC_FAILED';
+  });
+}
+
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean }> = {
   read_scene: { readonly: true, long_running: false },
   create_scene: { readonly: false, long_running: false },
@@ -813,4 +921,5 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
   edit_node: { readonly: false, long_running: false },
   remove_node: { readonly: false, long_running: false },
   instance_scene: { readonly: false, long_running: true },
+  set_instance_property: { readonly: false, long_running: true },
 };
