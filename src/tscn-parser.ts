@@ -24,6 +24,7 @@ export interface ParsedNode {
   type: string;
   parent: string;
   instance?: number; // ExtResource id
+  instance_of?: string; // resolved path from ext_resources
   properties: NodeProperty[];
   children: ParsedNode[];
 }
@@ -263,7 +264,7 @@ export function parseTscn(content: string): ParsedScene {
           for (const pair of pairs) {
             const eq = pair.indexOf('=');
             const key = pair.slice(0, eq);
-            const val = pair.slice(eq + 1);
+            const val = pair.slice(eq + 1).replace(/^"|"$/g, '');
             if (key === 'id') currentExt!.id = parseInt(val);
             else if (key === 'type') currentExt!.type = val;
             else if (key === 'path') currentExt!.path = val;
@@ -289,7 +290,7 @@ export function parseTscn(content: string): ParsedScene {
           for (const pair of pairs) {
             const eq = pair.indexOf('=');
             const key = pair.slice(0, eq);
-            const val = pair.slice(eq + 1);
+            const val = pair.slice(eq + 1).replace(/^"|"$/g, '');
             if (key === 'id') currentSub!.id = val;
             else if (key === 'type') currentSub!.type = val;
             else currentSub![key] = val;
@@ -318,7 +319,12 @@ export function parseTscn(content: string): ParsedScene {
             if (key === 'name') currentNode!.name = val;
             else if (key === 'type') currentNode!.type = val;
             else if (key === 'parent') currentNode!.parent = val;
-            else if (key === 'instance') currentNode!.instance = parseInt(val);
+            else if (key === 'instance') {
+              const erMatch = val.match(/ExtResource\(["']?(\d+)["']?\)/);
+              if (erMatch) {
+                currentNode!.instance = parseInt(erMatch[1]);
+              }
+            }
           }
         }
       }
@@ -398,6 +404,19 @@ export function parseTscn(content: string): ParsedScene {
 
   // Build node tree using unique paths as keys (avoids collisions when nodes share the same name)
   const nodeMap = new Map<string, ParsedNode>();
+
+  // Resolve instance_of paths from ext_resources
+  const extMap = new Map<number, string>();
+  for (const ext of result.extResources) {
+    if (ext.path) extMap.set(ext.id, ext.path as string);
+  }
+  for (const node of result.nodes) {
+    if (node.instance != null) {
+      const path = extMap.get(node.instance);
+      if (path) node.instance_of = path;
+    }
+  }
+
   for (const node of result.nodes) {
     node.children = [];
     const uniquePath = node.parent ? `${node.parent}/${node.name}` : node.name;
