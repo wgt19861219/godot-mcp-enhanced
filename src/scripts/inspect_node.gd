@@ -98,7 +98,7 @@ func _get_all_properties(node: Node) -> Dictionary:
 	for prop in node.get_property_list():
 		var name = prop["name"]
 		# Skip noisy internal properties
-		if name.begins_with("_") or name in ["script", "owner"]:
+		if name.begins_with("_") or name in ["script", "owner", "meta", "input_event", "process_mode", "process_priority", "process_input", "process_unhandled_input", "process_unhandled_key_input", "process_internal", "physics_process_mode", "physics_interpolation_mode"]:
 			continue
 		if prop.usage & PROPERTY_USAGE_STORAGE or prop.usage & PROPERTY_USAGE_EDITOR:
 			var val = node.get(name)

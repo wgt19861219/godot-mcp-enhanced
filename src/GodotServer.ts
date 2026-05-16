@@ -200,7 +200,7 @@ export class GodotServer {
     this.setupHandlers();
   }
 
-  private async setupHandlers(): Promise<void> {
+  private setupHandlers(): void {
     // ── Collect tool definitions from all modules ──
     let allTools = toolModules.flatMap(m => m.getToolDefinitions());
 

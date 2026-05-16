@@ -697,6 +697,9 @@ export async function handleTool(
               return opsErrorResult('INVALID_MATERIAL_TYPE', `material_type must be one of: ${ALLOWED_MATERIAL_TYPES.join(', ')}`);
             }
             const shaderPath = args.shader_path as string | undefined;
+            if (shaderPath && (shaderPath.includes('/../') || shaderPath.includes('\\'))) {
+              return opsErrorResult('INVALID_PATH', 'shader_path contains path traversal');
+            }
             script = genMaterialCreateScript(nodePath, materialType, shaderPath);
             break;
           }

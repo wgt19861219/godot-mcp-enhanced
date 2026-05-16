@@ -628,16 +628,22 @@ func _initialize():
 function gdScriptSetLine(key: string, value: unknown): string {
   if (value === null || value === undefined) return `node.${key} = null`;
   if (typeof value === 'boolean') return `node.${key} = ${value}`;
-  if (typeof value === 'number') return `node.${key} = ${value}`;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return `# skipped ${key}: non-finite number`;
+    return `node.${key} = ${value}`;
+  }
   if (typeof value === 'string') return `node.${key} = "${gdEscape(value)}"`;
   if (Array.isArray(value)) {
     if (value.length === 2 && typeof value[0] === 'number' && typeof value[1] === 'number') {
+      if (!Number.isFinite(value[0]) || !Number.isFinite(value[1])) return `# skipped ${key}: non-finite number in array`;
       return `_try_set(node, "${gdEscape(key)}", Vector2(${value[0]}, ${value[1]}))`;
     }
     if (value.length === 3 && typeof value[0] === 'number' && typeof value[1] === 'number' && typeof value[2] === 'number') {
+      if (!Number.isFinite(value[0]) || !Number.isFinite(value[1]) || !Number.isFinite(value[2])) return `# skipped ${key}: non-finite number in array`;
       return `_try_set(node, "${gdEscape(key)}", Vector3(${value[0]}, ${value[1]}, ${value[2]}))`;
     }
     if (value.length === 4 && value.every(v => typeof v === 'number')) {
+      if (!value.every(v => Number.isFinite(v as number))) return `# skipped ${key}: non-finite number in array`;
       return `_try_set(node, "${gdEscape(key)}", Color(${value[0]}, ${value[1]}, ${value[2]}, ${value[3]}))`;
     }
   }
