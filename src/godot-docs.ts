@@ -93,6 +93,10 @@ let classMap: Map<string, RawClass> = new Map();
 let initialized = false;
 let docsVersion: string | null = null;
 
+// 单条目缓存：缓存 extension_api.json 的解析结果
+let cachedApiData: ApiData | null = null;
+let cachedApiPath: string | null = null;
+
 const COMMON_CLASSES: string[] = [
   'Object', 'RefCounted', 'Resource', 'Node',
   'Node2D', 'CanvasItem', 'CanvasLayer',
@@ -173,10 +177,26 @@ const COMMON_CLASSES: string[] = [
 ];
 
 export function initDocs(docsPath: string): void {
-  if (initialized) return;
+  if (initialized && cachedApiPath === docsPath) return;
 
-  const raw = readFileSync(docsPath, 'utf-8');
-  const data: ApiData = JSON.parse(raw);
+  let data: ApiData;
+
+  // 缓存命中：同一路径且已解析过，直接使用缓存
+  if (cachedApiData && cachedApiPath === docsPath) {
+    data = cachedApiData;
+  } else {
+    // 缓存未命中：读取并解析文件
+    const raw = readFileSync(docsPath, 'utf-8');
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      // 解析失败不缓存，允许重试
+      throw err;
+    }
+    // 解析成功，写入缓存
+    cachedApiData = data;
+    cachedApiPath = docsPath;
+  }
 
   // 提取版本号
   if (data.header?.version_major != null && data.header?.version_minor != null && data.header?.version_patch != null) {
@@ -423,4 +443,13 @@ export function testEnsureInit(path: string): void {
       "Godot docs database not found. Run 'npx godot-mcp-enhanced generate-docs' first."
     );
   }
+}
+
+/** 清除 API 缓存（供测试使用） */
+export function clearApiCache(): void {
+  cachedApiData = null;
+  cachedApiPath = null;
+  classMap.clear();
+  initialized = false;
+  docsVersion = null;
 }
