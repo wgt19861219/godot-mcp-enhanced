@@ -689,24 +689,9 @@ function gdScriptSetLine(key: string, value: unknown): string {
   throw new Error(`Property "${key}" has unsupported type. Use string/number/bool/null, array [2]=Vector2/[3]=Vector3/[4]=Color, or object {x,y}/{x,y,z}/{r,g,b,a}.`);
 }
 
-// ─── GDScript value literal helper ──────────────────────────────────────────
+// ─── instance_scene handler ──────────────────────────────────────────────────
 
 const BLOCKED_PROPS = new Set(['script', 'owner', 'name', 'parent', 'children', 'tree']);
-
-function gdScriptValue(v: unknown): string {
-  if (typeof v === 'string') return '"' + gdEscape(v) + '"';
-  if (typeof v === 'number') return String(v);
-  if (typeof v === 'boolean') return v ? 'true' : 'false';
-  if (v === null || v === undefined) return 'null';
-  if (Array.isArray(v)) return '[' + v.map(gdScriptValue).join(', ') + ']';
-  if (typeof v === 'object') {
-    const entries = Object.entries(v as Record<string, unknown>);
-    return '{' + entries.map(([k, val]) => '"' + gdEscape(k) + '": ' + gdScriptValue(val)).join(', ') + '}';
-  }
-  return String(v);
-}
-
-// ─── instance_scene handler ──────────────────────────────────────────────────
 
 async function handleInstanceScene(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult> {
   // 必需参数校验
@@ -723,8 +708,9 @@ async function handleInstanceScene(args: Record<string, unknown>, ctx: ToolConte
     return opsErrorResult('INVALID_PARAM', 'instance_path must end with .tscn');
   }
 
-  // 循环引用检查
-  if (scenePath === instancePath || args.scene_path === args.instance_path) {
+  // 循环引用检查：对 instancePath 做与 scenePath 相同的路径解析，防止 res://scenes/../scenes/main.tscn 绕过
+  const instancePathResolved = resolveWithinRoot(p, normalizeUserProjectPath(instancePath));
+  if (scenePath === instancePathResolved) {
     return opsErrorResult('CIRCULAR_REFERENCE', 'CIRCULAR: scene_path and instance_path must not be the same');
   }
 
@@ -738,14 +724,37 @@ async function handleInstanceScene(args: Record<string, unknown>, ctx: ToolConte
   let propLines = '';
   for (const [key, value] of safeProps) {
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) continue;
-    const gdVal = gdScriptValue(value);
-    propLines += `\n\tif _inst.get_property_list().any(func(p): return p.name == "${gdEscape(key)}"):`;
-    propLines += `\n\t\t_inst.set("${gdEscape(key)}", ${gdVal})`;
+    try {
+      const line = gdScriptSetLine(key, value).replace(/node\./g, '_inst.').replace(/node,/g, '_inst,');
+      if (!line.startsWith('# skipped')) {
+        propLines += `\n\t${line}`;
+      }
+    } catch {
+      // unsupported type — skip this property
+    }
   }
+
+  const trySetHelper = `
+func _try_set(node: Node, prop: String, value: Variant) -> void:
+\tvar _ok = false
+\tif node.get_property_list().any(func(p): return p.name == prop):
+\t\tnode.set(prop, value)
+\t\t_ok = true
+\tif not _ok and node is Control:
+\t\tvar _vtype = typeof(value)
+\t\tif _vtype == TYPE_VECTOR2:
+\t\t\tnode.add_theme_font_size_override(prop, int(value.x))
+\t\telif _vtype == TYPE_COLOR:
+\t\t\tnode.add_theme_color_override(prop, value)
+\t\telif _vtype == TYPE_FLOAT or _vtype == TYPE_INT:
+\t\t\tif node.has_theme_constant(prop):
+\t\t\t\tnode.add_theme_constant_override(prop, int(value))
+`;
 
   const nameLine = nodeName ? `\n\t_inst.name = "${gdEscape(nodeName)}"` : '';
 
   const script = `${SCENE_TREE_HEADER}
+${trySetHelper}
 func _initialize():
 \tif not _mcp_load_scene("${gdEscape(scenePath)}"):
 \t\t_mcp_done()
