@@ -9,6 +9,7 @@ import {
   genUiAnchorPresetScript,
   genUiSetThemeScript,
   genUiContainerAddScript,
+  genUiDrawRecipeScript,
   genThemeCreateScript,
   genThemeSetPropertyScript,
   colorToGd,
@@ -258,6 +259,125 @@ describe('genUiContainerAddScript', () => {
   it('handles node path correctly', () => {
     const script = genUiContainerAddScript('/scene.tscn', '/root/UI/VBox', 'Panel', 'MyPanel');
     assert.ok(script.includes('_mcp_get_scene_node("/root/UI/VBox")'));
+  });
+});
+
+// ─── genUiDrawRecipeScript ─────────────────────────────────────────────────
+
+describe('genUiDrawRecipeScript', () => {
+  it('generates rect draw op', () => {
+    const ops = [{ kind: 'rect', position: [10, 20], size: [100, 50], color: [1, 0, 0, 1] }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_rect'));
+    assert.ok(script.includes('Rect2(10, 20, 100, 50)'));
+    assert.ok(script.includes('Color(1, 0, 0, 1)'));
+    assert.ok(script.includes('_mcp_load_scene'));
+    assert.ok(script.includes('_mcp_output("draw_recipe_attached"'));
+  });
+
+  it('generates circle draw op', () => {
+    const ops = [{ kind: 'circle', center: [50, 50], radius: 30, color: [0, 1, 0] }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Circle', ops);
+    assert.ok(script.includes('draw_circle'));
+    assert.ok(script.includes('Vector2(50, 50)'));
+    assert.ok(script.includes('Color(0, 1, 0, 1)'));
+  });
+
+  it('generates line draw op', () => {
+    const ops = [{ kind: 'line', from: [0, 0], to: [100, 100], color: [0, 0, 1, 0.8], width: 2 }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_line'));
+    assert.ok(script.includes('Vector2(0, 0)'));
+    assert.ok(script.includes('Vector2(100, 100)'));
+    assert.ok(script.includes('Color(0, 0, 1, 0.8)'));
+    assert.ok(script.includes(', 2)'));
+  });
+
+  it('generates arc draw op', () => {
+    const ops = [{ kind: 'arc', center: [50, 50], radius: 25, start_angle: 0, end_angle: 3.14, color: [1, 1, 0, 1], width: 1.5 }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_arc'));
+    assert.ok(script.includes('25'));
+    assert.ok(script.includes('3.14'));
+    assert.ok(script.includes('Color(1, 1, 0, 1)'));
+    assert.ok(script.includes(', 1.5)'));
+  });
+
+  it('generates polygon draw op (filled)', () => {
+    const ops = [{ kind: 'polygon', points: [[0, 0], [100, 0], [50, 80]], color: [0.5, 0.5, 0.5], filled: true }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_colored_polygon'));
+    assert.ok(script.includes('PackedVector2Array'));
+    assert.ok(script.includes('Color(0.5, 0.5, 0.5, 1)'));
+  });
+
+  it('generates polygon draw op (unfilled)', () => {
+    const ops = [{ kind: 'polygon', points: [[0, 0], [100, 0], [50, 80]], color: [1, 0, 0], filled: false }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_polyline'));
+    assert.ok(script.includes('PackedVector2Array'));
+  });
+
+  it('generates polyline draw op', () => {
+    const ops = [{ kind: 'polyline', points: [[10, 10], [20, 30], [30, 10]], color: [1, 1, 1, 1], width: 3 }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_polyline'));
+    assert.ok(script.includes('PackedVector2Array'));
+    assert.ok(script.includes(', 3)'));
+  });
+
+  it('generates string draw op', () => {
+    const ops = [{ kind: 'string', text: 'Hello World', position: [10, 30], color: [1, 1, 1, 1], font_size: 24 }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_string'));
+    assert.ok(script.includes('"Hello World"'));
+    assert.ok(script.includes('Vector2(10, 30)'));
+    assert.ok(script.includes('24'));
+    assert.ok(script.includes('ThemeDB.fallback_font'));
+  });
+
+  it('generates string draw op with default font_size', () => {
+    const ops = [{ kind: 'string', text: 'Test', position: [0, 0] }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_string'));
+    assert.ok(script.includes('16'));
+  });
+
+  it('generates multiple ops in sequence', () => {
+    const ops = [
+      { kind: 'rect', position: [0, 0], size: [200, 100], color: [0, 0, 0, 1] },
+      { kind: 'line', from: [0, 0], to: [200, 100], color: [1, 1, 1, 1] },
+    ];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('draw_rect'));
+    assert.ok(script.includes('draw_line'));
+  });
+
+  it('throws for unknown kind', () => {
+    assert.throws(
+      () => genUiDrawRecipeScript('/scene.tscn', 'root/Panel', [{ kind: 'unknown' }]),
+      /Unknown draw op kind/,
+    );
+  });
+
+  it('throws for ops exceeding max limit', () => {
+    const ops = Array(201).fill({ kind: 'rect', position: [0, 0], size: [1, 1], color: [1, 1, 1] });
+    assert.throws(
+      () => genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops),
+      /Maximum 200 draw ops/,
+    );
+  });
+
+  it('handles empty ops array', () => {
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', []);
+    assert.ok(script.includes('_mcp_output("draw_recipe_attached"'));
+    assert.ok(script.includes('"ops_count": 0'));
+  });
+
+  it('validates node is Control', () => {
+    const ops = [{ kind: 'rect', position: [0, 0], size: [1, 1], color: [1, 1, 1] }];
+    const script = genUiDrawRecipeScript('/scene.tscn', 'root/Panel', ops);
+    assert.ok(script.includes('if not node is Control:'));
   });
 });
 

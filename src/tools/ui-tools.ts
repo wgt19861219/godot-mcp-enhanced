@@ -383,6 +383,101 @@ func _initialize():
 `;
 }
 
+// ─── ui_draw_recipe ──────────────────────────────────────────────────────────
+
+const MAX_DRAW_OPS = 200;
+
+export type DrawOp = { kind: string; [key: string]: unknown };
+
+function drawOpToGd(op: DrawOp): string {
+  const col = (c: unknown) => colorToGd(c ?? [1, 1, 1, 1]);
+
+  switch (op.kind) {
+    case 'rect': {
+      const pos = op.position as number[];
+      const sz = op.size as number[];
+      return `\tdraw_rect(Rect2(${pos[0]}, ${pos[1]}, ${sz[0]}, ${sz[1]}), ${col(op.color)})`;
+    }
+    case 'circle': {
+      const ctr = op.center as number[];
+      const r = op.radius as number;
+      return `\tdraw_circle(Vector2(${ctr[0]}, ${ctr[1]}), ${r}, ${col(op.color)})`;
+    }
+    case 'line': {
+      const from = op.from as number[];
+      const to = op.to as number[];
+      const w = op.width as number | undefined;
+      return `\tdraw_line(Vector2(${from[0]}, ${from[1]}), Vector2(${to[0]}, ${to[1]}), ${col(op.color)}${w != null ? `, ${w}` : ''})`;
+    }
+    case 'arc': {
+      const ctr = op.center as number[];
+      const r = op.radius as number;
+      const sa = op.start_angle as number;
+      const ea = op.end_angle as number;
+      const w = op.width as number | undefined;
+      return `\tdraw_arc(Vector2(${ctr[0]}, ${ctr[1]}), ${r}, ${sa}, ${ea}, ${col(op.color)}${w != null ? `, ${w}` : ''})`;
+    }
+    case 'polygon': {
+      const pts = op.points as number[][];
+      const packedPts = pts.map(p => `Vector2(${p[0]}, ${p[1]})`).join(', ');
+      const filled = op.filled !== false;
+      if (filled) {
+        return `\tdraw_colored_polygon(PackedVector2Array([${packedPts}]), ${col(op.color)})`;
+      }
+      const w = op.width as number | undefined;
+      return `\tdraw_polyline(PackedVector2Array([${packedPts}]), ${col(op.color)}${w != null ? `, ${w}` : ''})`;
+    }
+    case 'polyline': {
+      const pts = op.points as number[][];
+      const packedPts = pts.map(p => `Vector2(${p[0]}, ${p[1]})`).join(', ');
+      const w = op.width as number | undefined;
+      return `\tdraw_polyline(PackedVector2Array([${packedPts}]), ${col(op.color)}${w != null ? `, ${w}` : ''})`;
+    }
+    case 'string': {
+      const text = String(op.text ?? '');
+      const pos = op.position as number[];
+      const fs = (op.font_size as number) ?? 16;
+      return `\tdraw_string(ThemeDB.fallback_font, Vector2(${pos[0]}, ${pos[1]}), "${gdEscape(text)}", HORIZONTAL_ALIGNMENT_LEFT, -1, ${fs}, ${col(op.color)})`;
+    }
+    default:
+      throw new Error(`Unknown draw op kind: "${op.kind}". Must be one of: ${DRAW_OP_KINDS.join(', ')}`);
+  }
+}
+
+export function genUiDrawRecipeScript(
+  scenePath: string,
+  nodePath: string,
+  ops: DrawOp[],
+): string {
+  if (ops.length > MAX_DRAW_OPS) {
+    throw new Error(`Maximum ${MAX_DRAW_OPS} draw ops allowed, got ${ops.length}`);
+  }
+
+  const drawLines = ops.map(op => drawOpToGd(op)).join('\n');
+
+  return `${SCENE_TREE_HEADER}
+func _initialize():
+\tif not _mcp_load_scene("${gdEscape(scenePath)}"):
+\t\t_mcp_done()
+\t\treturn
+\tvar node = _mcp_get_scene_node("${gdEscape(nodePath)}")
+\tif node == null:
+\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
+\t\t_mcp_done()
+\t\treturn
+\tif not node is Control:
+\t\t_mcp_output("error", "Node is not a Control: " + node.get_class())
+\t\t_mcp_done()
+\t\treturn
+\tvar _draw_fn = func():
+${drawLines || '\t\tpass'}
+\tnode.draw.connect(_draw_fn)
+\tnode.queue_redraw()
+\t_mcp_output("draw_recipe_attached", {"node": "${gdEscape(nodePath)}", "ops_count": ${ops.length}})
+\t_mcp_done()
+`;
+}
+
 // ─── theme_create ──────────────────────────────────────────────────────────
 
 export function genThemeCreateScript(
