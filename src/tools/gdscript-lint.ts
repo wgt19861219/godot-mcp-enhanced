@@ -344,7 +344,7 @@ function lintCallOrder(
       }
       case "L015": {
         if (func.name === '_process' || func.name === '_physics_process') {
-          if (/\.look_at\s*\(/.test(body) && /RigidBody|rigid|rb\b/.test(body)) {
+          if (/\.look_at\s*\(/.test(body) && /RigidBody3D|RigidBody2D/.test(body)) {
             errors.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
               message: rule.message, suggestion: rule.suggestion, confirmed: true });
           }

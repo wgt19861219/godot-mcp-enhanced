@@ -611,8 +611,6 @@ function validateFlexChild(flex: FlexChild, warnings: string[]): void {
   }
 }
 
-let _savedCounter = 0;
-
 function resolveFlexContainer(layout: FlexLayout): {
   containerType: string;
   isReverse: boolean;
@@ -685,7 +683,7 @@ function genFlexContainerProps(layout: FlexLayout, indent: string, warnings: str
   return lines;
 }
 
-function applyAlignSelf(align: string, isRow: boolean, indent: string): string {
+function applyAlignSelf(align: string, isRow: boolean, indent: string, warnings?: string[]): string {
   if (align === 'stretch') {
     if (isRow) {
       return `\n${indent}node.size_flags_vertical = node.size_flags_vertical | Control.SIZE_EXPAND_FILL`;
@@ -698,11 +696,13 @@ function applyAlignSelf(align: string, isRow: boolean, indent: string): string {
     } else {
       return `\n${indent}node.size_flags_horizontal = (node.size_flags_horizontal & ~Control.SIZE_EXPAND & ~Control.SIZE_FILL) | Control.SIZE_SHRINK_CENTER`;
     }
+  } else if (align === 'flex-end') {
+    warnings?.push('align/flex.align_self "flex-end" is approximated as default alignment (no anchor offset support in Container)');
   }
   return '';
 }
 
-function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string): string {
+function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string, warnings?: string[]): string {
   let lines = '';
 
   if (flex.grow !== undefined && flex.grow > 0) {
@@ -715,7 +715,7 @@ function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string): str
   }
 
   if (flex.align_self && flex.align_self !== 'auto') {
-    lines += applyAlignSelf(flex.align_self, isRow, indent);
+    lines += applyAlignSelf(flex.align_self, isRow, indent, warnings);
   }
 
   if (flex.min_width !== undefined || flex.min_height !== undefined) {
@@ -727,9 +727,9 @@ function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string): str
   return lines;
 }
 
-function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[] = []): string {
+function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[] = [], nextId: () => number = () => 0): string {
   if (spec.layout) {
-    return uiNodeToGdWithLayout(spec, parentVar, ownerVar, indent, warnings);
+    return uiNodeToGdWithLayout(spec, parentVar, ownerVar, indent, warnings, nextId);
   }
   const anchorLine = spec.anchor_preset
     ? `\n${indent}node.set_anchors_preset(${ANCHOR_PRESETS[spec.anchor_preset]})`
@@ -748,11 +748,11 @@ ${indent}\treturn
 ${indent}node.name = "${gdEscape(spec.name)}"${anchorLine}${propLines}`;
 
   if (spec.children && spec.children.length > 0) {
-    const savedIdx = _savedCounter++;
+    const savedIdx = nextId();
     const savedVar = `_saved_${savedIdx}`;
     lines += `\n${indent}var ${savedVar} = node`;
     for (const child of spec.children) {
-      lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings);
+      lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings, nextId);
     }
     lines += `\n${indent}node = ${savedVar}`;
   }
@@ -763,7 +763,7 @@ ${indent}node.owner = ${ownerVar}`;
   return lines;
 }
 
-function uiNodeToGdWithLayout(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[]): string {
+function uiNodeToGdWithLayout(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[], nextId: () => number): string {
   const layout = spec.layout!;
   const { containerType, isReverse, isWrap } = resolveFlexContainer(layout);
   const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
@@ -791,7 +791,7 @@ ${indent}node.name = "${gdEscape(spec.name)}"`;
     const p = typeof layout.padding === 'number'
       ? [layout.padding, layout.padding, layout.padding, layout.padding]
       : layout.padding;
-    const marginIdx = _savedCounter++;
+    const marginIdx = nextId();
     marginWrapperVar = `_margin_${marginIdx}`;
     const marginBlock = `${indent}var ${marginWrapperVar} = ClassDB.instantiate("MarginContainer")
 ${indent}${marginWrapperVar}.name = "${gdEscape(spec.name)}_margin"
@@ -803,7 +803,7 @@ ${indent}${marginWrapperVar}.set_anchors_preset(${preset})`;
     lines = marginBlock + '\n' + lines;
   }
 
-  const savedIdx = _savedCounter++;
+  const savedIdx = nextId();
   const savedVar = `_saved_${savedIdx}`;
   lines += `\n${indent}var ${savedVar} = node`;
 
@@ -813,14 +813,14 @@ ${indent}${marginWrapperVar}.set_anchors_preset(${preset})`;
   }
 
   for (const child of children) {
-    lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings);
+    lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings, nextId);
 
     if (layout.align && (!child.flex || !child.flex.align_self || child.flex.align_self === 'auto')) {
-      lines += applyAlignSelf(layout.align, isRow, indent);
+      lines += applyAlignSelf(layout.align, isRow, indent, warnings);
     }
 
     if (child.flex) {
-      lines += genFlexChildLines(child.flex, isRow, indent);
+      lines += genFlexChildLines(child.flex, isRow, indent, warnings);
     }
   }
 
@@ -848,8 +848,9 @@ export function genUiBuildLayoutScript(
   const warnings: string[] = [];
   validateUiNodeSpec(tree, 1, warnings);
 
-  _savedCounter = 0;
-  const buildBlock = uiNodeToGd(tree, 'parent', 'root', '\t', warnings);
+  let _idCounter = 0;
+  const nextId = () => _idCounter++;
+  const buildBlock = uiNodeToGd(tree, 'parent', 'root', '\t', warnings, nextId);
 
   const warningLines = warnings.length > 0
     ? `\n\t_mcp_output("warnings", ${JSON.stringify(warnings.map(w => {

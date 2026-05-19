@@ -216,7 +216,7 @@ describe('GDScript Lint', () => {
   // L015
   describe('L015 RigidBody3D.look_at in _process', () => {
     it('命中: _physics_process 内 look_at', () => {
-      assert.ok(lintGDScript('func _physics_process(delta):\n\trb.look_at(target)').errors.some(e => e.rule === 'L015'));
+      assert.ok(lintGDScript('func _physics_process(delta):\n\tvar rb: RigidBody3D = get_node("rb")\n\trb.look_at(target)').errors.some(e => e.rule === 'L015'));
     });
     it('忽略: _integrate_forces 内', () => {
       assert.ok(!lintGDScript('func _integrate_forces(state):\n\tpass').errors.some(e => e.rule === 'L015'));
