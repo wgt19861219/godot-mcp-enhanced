@@ -527,7 +527,7 @@ function validateUiNodeSpec(spec: UiNodeSpec, depth: number, warnings: string[] 
   if (depth > MAX_NESTING_DEPTH) {
     throw new Error(`Maximum nesting depth is ${MAX_NESTING_DEPTH}, exceeded at node "${spec.name}"`);
   }
-  if (!CONTROL_TYPES.includes(spec.type as typeof CONTROL_TYPES[number])) {
+  if (!spec.layout && !CONTROL_TYPES.includes(spec.type as typeof CONTROL_TYPES[number])) {
     throw new Error(`INVALID_CONTROL_TYPE: "${spec.type}" is not a whitelisted Control type`);
   }
   if (!spec.name) {
@@ -632,23 +632,27 @@ function resolveFlexContainer(layout: FlexLayout): {
   return { containerType, isReverse, isWrap };
 }
 
-function genFlexContainerProps(layout: FlexLayout, indent: string): string {
+function genFlexContainerProps(layout: FlexLayout, indent: string, warnings: string[] = []): string {
   const { isWrap } = resolveFlexContainer(layout);
   const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
   let lines = '';
 
-  if (layout.justify && !isWrap) {
-    const justifyMap: Record<string, number> = {
-      'flex-start': 0,
-      'center': 1,
-      'flex-end': 2,
-      'space-between': 0,
-      'space-around': 1,
-      'space-evenly': 1,
-    };
-    const alignment = justifyMap[layout.justify];
-    if (alignment !== undefined) {
-      lines += `\n${indent}node.alignment = ${alignment}`;
+  if (layout.justify) {
+    if (isWrap) {
+      warnings.push('layout.justify is ignored when wrap is "wrap" (FlowContainer has no alignment)');
+    } else {
+      const justifyMap: Record<string, number> = {
+        'flex-start': 0,
+        'center': 1,
+        'flex-end': 2,
+        'space-between': 0,
+        'space-around': 1,
+        'space-evenly': 1,
+      };
+      const alignment = justifyMap[layout.justify];
+      if (alignment !== undefined) {
+        lines += `\n${indent}node.alignment = ${alignment}`;
+      }
     }
   }
 
@@ -748,7 +752,7 @@ ${indent}node.name = "${gdEscape(spec.name)}"${anchorLine}${propLines}`;
     const savedVar = `_saved_${savedIdx}`;
     lines += `\n${indent}var ${savedVar} = node`;
     for (const child of spec.children) {
-      lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent);
+      lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings);
     }
     lines += `\n${indent}node = ${savedVar}`;
   }
@@ -780,7 +784,7 @@ ${indent}node.name = "${gdEscape(spec.name)}"`;
     ).join('\n');
   }
 
-  lines += genFlexContainerProps(layout, indent);
+  lines += genFlexContainerProps(layout, indent, warnings);
 
   let marginWrapperVar: string | null = null;
   if (isWrap && layout.padding !== undefined) {
