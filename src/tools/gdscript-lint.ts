@@ -277,6 +277,22 @@ const RULES: LintRule[] = [
       return hasTypeContext(context.precedingLines, ['Node3D']);
     },
   },
+  // L001: look_at before add_child
+  { id: "L001", severity: "error", pattern: /^$/m, isCallOrder: true,
+    message: "look_at() 在 add_child() 之前调用，节点不在场景树中",
+    suggestion: "先调用 add_child() 将节点加入场景树，再调用 look_at()" },
+  // L014: AStarGrid2D update clears point data
+  { id: "L014", severity: "warning", pattern: /^$/m, isCallOrder: true,
+    message: "set_point_solid() 在 update() 之前调用，update() 会清除所有 point data",
+    suggestion: "先调用 grid.update()，再调用 grid.set_point_solid()" },
+  // L015: RigidBody3D.look_at in _process
+  { id: "L015", severity: "error", pattern: /^$/m, isCallOrder: true,
+    message: "在 _process/_physics_process 内对 RigidBody3D 调用 look_at() 会破坏物理模拟",
+    suggestion: "在 _integrate_forces() 中实现跟随逻辑" },
+  // L016: add_child followed by immediate method call
+  { id: "L016", severity: "warning", pattern: /^$/m, isCallOrder: true,
+    message: "add_child() 后同函数内立即访问子节点方法，可能因 _ready 未触发而失败",
+    suggestion: "使用 await get_tree().process_frame 等待一帧后再访问" },
 ];
 
 // ─── Main Lint Function ────────────────────────────────────────────────────
@@ -312,7 +328,56 @@ function lintCallOrder(
   errors: LintResult[],
   warnings: LintResult[],
 ): void {
-  // Populated in Task 4
+  for (const func of functions) {
+    const body = func.body;
+    switch (rule.id) {
+      case "L001": {
+        const lookAtMatch = body.match(/\.look_at\s*\(/);
+        const addChildMatch = body.match(/add_child\s*\(/);
+        if (lookAtMatch && addChildMatch) {
+          if (body.indexOf(lookAtMatch[0]) < body.indexOf(addChildMatch[0])) {
+            errors.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
+              message: rule.message, suggestion: rule.suggestion, confirmed: true });
+          }
+        }
+        break;
+      }
+      case "L014": {
+        const solidMatch = body.match(/\.set_point_solid\s*\(/);
+        const updateMatch = body.match(/\.update\s*\(\s*\)/);
+        if (solidMatch && updateMatch) {
+          if (body.indexOf(solidMatch[0]) < body.indexOf(updateMatch[0])) {
+            warnings.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
+              message: rule.message, suggestion: rule.suggestion, confirmed: true });
+          }
+        }
+        break;
+      }
+      case "L015": {
+        if (func.name === '_process' || func.name === '_physics_process') {
+          if (/\.look_at\s*\(/.test(body) && /RigidBody|rigid|rb\b/.test(body)) {
+            errors.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
+              message: rule.message, suggestion: rule.suggestion, confirmed: true });
+          }
+        }
+        break;
+      }
+      case "L016": {
+        const acReg = /add_child\s*\(\s*(\w+)\s*\)/g;
+        let acMatch;
+        while ((acMatch = acReg.exec(body)) !== null) {
+          const childVar = acMatch[1];
+          const after = body.substring(acMatch.index + acMatch[0].length).trimStart();
+          if (after.startsWith(childVar + '.') || after.startsWith(childVar + ' ')) {
+            warnings.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
+              message: rule.message, suggestion: rule.suggestion, confirmed: true });
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
 }
 
 function lintRegex(

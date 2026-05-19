@@ -176,4 +176,65 @@ describe('GDScript Lint', () => {
       assert.ok(!lintGDScript('# visibility_range_begin', true).errors.some(e => e.rule === 'L007'));
     });
   });
+
+  // L001
+  describe('L001 look_at order', () => {
+    it('命中: _ready 内 look_at 在 add_child 前', () => {
+      const code = 'func _ready():\n\tvar cam := Camera3D.new()\n\tcam.look_at(target)\n\tadd_child(cam)';
+      assert.ok(lintGDScript(code, true).errors.some(e => e.rule === 'L001'));
+    });
+    it('忽略: add_child 在 look_at 前', () => {
+      const code = 'func _ready():\n\tvar cam := Camera3D.new()\n\tadd_child(cam)\n\tcam.look_at(target)';
+      assert.ok(!lintGDScript(code, true).errors.some(e => e.rule === 'L001'));
+    });
+    it('边界: 跨函数不在检测范围', () => {
+      const code = 'func _ready():\n\tadd_child(cam)\nfunc _process(delta):\n\tcam.look_at(target)';
+      assert.ok(!lintGDScript(code, true).errors.some(e => e.rule === 'L001'));
+    });
+  });
+
+  // L014
+  describe('L014 AStarGrid2D update', () => {
+    it('命中: 先 set_point_solid 后 update', () => {
+      const code = 'func _ready():\n\tgrid.set_point_solid(Vector2i(1, 1), true)\n\tgrid.update()';
+      assert.ok(lintGDScript(code, true).warnings.some(w => w.rule === 'L014'));
+    });
+    it('忽略: 先 update 后 set_point_solid', () => {
+      const code = 'func _ready():\n\tgrid.update()\n\tgrid.set_point_solid(Vector2i(1, 1), true)';
+      assert.ok(!lintGDScript(code, true).warnings.some(w => w.rule === 'L014'));
+    });
+    it('边界: 无 update 调用', () => {
+      const code = 'func _ready():\n\tgrid.set_point_solid(Vector2i(1, 1), true)';
+      assert.ok(!lintGDScript(code, true).warnings.some(w => w.rule === 'L014'));
+    });
+  });
+
+  // L015
+  describe('L015 RigidBody3D.look_at in _process', () => {
+    it('命中: _physics_process 内 look_at', () => {
+      assert.ok(lintGDScript('func _physics_process(delta):\n\trb.look_at(target)', true).errors.some(e => e.rule === 'L015'));
+    });
+    it('忽略: _integrate_forces 内', () => {
+      assert.ok(!lintGDScript('func _integrate_forces(state):\n\tpass', true).errors.some(e => e.rule === 'L015'));
+    });
+    it('边界: _ready 内一次性 look_at', () => {
+      assert.ok(!lintGDScript('func _ready():\n\tvar cam := Camera3D.new()\n\tadd_child(cam)\n\tcam.look_at(target)', true).errors.some(e => e.rule === 'L015'));
+    });
+  });
+
+  // L016
+  describe('L016 add_child followed by method call', () => {
+    it('命中: add_child 后立即调用方法', () => {
+      const code = 'func _ready():\n\tvar node := Node3D.new()\n\tadd_child(node)\n\tnode.set_something()';
+      assert.ok(lintGDScript(code, true).warnings.some(w => w.rule === 'L016'));
+    });
+    it('忽略: await 后访问', () => {
+      const code = 'func _ready():\n\tadd_child(node)\n\tawait get_tree().process_frame\n\tnode.set_something()';
+      assert.ok(!lintGDScript(code, true).warnings.some(w => w.rule === 'L016'));
+    });
+    it('边界: 跨函数不在范围', () => {
+      const code = 'func _ready():\n\tadd_child(node)\nfunc _process(delta):\n\tnode.set_something()';
+      assert.ok(!lintGDScript(code, true).warnings.some(w => w.rule === 'L016'));
+    });
+  });
 });
