@@ -11,6 +11,7 @@ import {
   genUiContainerAddScript,
   genThemeCreateScript,
   genThemeSetPropertyScript,
+  colorToGd,
 } from '../build/tools/ui-tools.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
@@ -430,5 +431,22 @@ describe('getToolDefinitions', () => {
     assert.ok(enumValues.includes('color'));
     assert.ok(enumValues.includes('constant'));
     assert.ok(enumValues.includes('stylebox'));
+  });
+});
+
+// ─── colorToGd ──────────────────────────────────────────────────────────────
+
+describe('colorToGd', () => {
+  it('converts [r,g,b] to Color(r,g,b,1)', () => {
+    assert.strictEqual(colorToGd([0.5, 0.8, 1.0]), 'Color(0.5, 0.8, 1, 1)');
+  });
+  it('converts [r,g,b,a] to Color(r,g,b,a)', () => {
+    assert.strictEqual(colorToGd([1, 0, 0, 0.5]), 'Color(1, 0, 0, 0.5)');
+  });
+  it('throws for array shorter than 3', () => {
+    assert.throws(() => colorToGd([0.5, 0.8]), /Color must be \[r, g, b\] or \[r, g, b, a\]/);
+  });
+  it('throws for non-array input', () => {
+    assert.throws(() => colorToGd('red'), /Color must be \[r, g, b\] or \[r, g, b, a\]/);
   });
 });

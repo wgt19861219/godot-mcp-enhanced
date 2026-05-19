@@ -14,6 +14,8 @@ export const TOOL_NAMES = [
   'ui_anchor_preset',
   'ui_set_theme',
   'ui_container_add',
+  'ui_draw_recipe',
+  'ui_build_layout',
   'theme_create',
   'theme_set_property',
 ] as const;
@@ -51,12 +53,15 @@ const ERROR_CODES = {
   INVALID_CONTROL_TYPE: 'INVALID_CONTROL_TYPE',
   INVALID_ANCHOR_PRESET: 'INVALID_ANCHOR_PRESET',
   INVALID_PARAMS: 'INVALID_PARAMS',
+  INVALID_DRAW_OP: 'INVALID_DRAW_OP',
   NODE_NOT_FOUND: 'NODE_NOT_FOUND',
   SCRIPT_EXEC_FAILED: 'SCRIPT_EXEC_FAILED',
   THEME_NOT_FOUND: 'THEME_NOT_FOUND',
   INVALID_THEME_PROPERTY: 'INVALID_THEME_PROPERTY',
   INVALID_THEME_ITEM_TYPE: 'INVALID_THEME_ITEM_TYPE',
 } as const;
+
+const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyline', 'string'] as const;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -74,6 +79,14 @@ function genPropertyLines(properties: Record<string, unknown>): string {
     lines += `\n\tnode.set("${gdEscape(key)}", ${serializePropertyValue(value)})`;
   }
   return lines;
+}
+
+function colorToGd(c: unknown): string {
+  if (!Array.isArray(c) || c.length < 3) {
+    throw new Error('Color must be [r, g, b] or [r, g, b, a] (values 0-1)');
+  }
+  const a = c.length >= 4 ? c[3] : 1;
+  return `Color(${c[0]}, ${c[1]}, ${c[2]}, ${a})`;
 }
 
 // ─── GDScript Generators ───────────────────────────────────────────────────
@@ -895,3 +908,5 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
   theme_create: { readonly: false, long_running: false },
   theme_set_property: { readonly: false, long_running: false },
 };
+
+export { colorToGd };
