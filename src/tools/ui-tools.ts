@@ -68,7 +68,10 @@ const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyline', '
 function serializePropertyValue(value: unknown): string {
   if (value === null || value === undefined) return 'null';
   if (typeof value === 'boolean') return String(value);
-  if (typeof value === 'number') return String(value);
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error(`Non-finite number not supported: ${value}`);
+    return String(value);
+  }
   if (typeof value === 'string') return `"${gdEscape(value)}"`;
   throw new Error(`Unsupported property type: ${typeof value}`);
 }
@@ -112,7 +115,11 @@ func _initialize():
 \t\t_mcp_output("error", "Parent node not found: ${gdEscape(parentPath)}")
 \t\t_mcp_done()
 \t\treturn
-\tvar node = ${nodeType}.new()
+\tvar node = ClassDB.instantiate("${gdEscape(nodeType)}")
+	if node == null:
+		_mcp_output("error", "Failed to instantiate: ${gdEscape(nodeType)}")
+		_mcp_done()
+		return
 \tnode.name = "${gdEscape(nodeName)}"${propLines}
 \tparent.add_child(node)
 \tnode.owner = parent.owner if parent.owner != null else parent
@@ -374,7 +381,11 @@ func _initialize():
 \t\t_mcp_output("error", "Container node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
 \t\treturn
-\tvar child = ${childType}.new()
+\tvar child = ClassDB.instantiate("${gdEscape(childType)}")
+	if child == null:
+		_mcp_output("error", "Failed to instantiate: ${gdEscape(childType)}")
+		_mcp_done()
+		return
 \tchild.name = "${gdEscape(childName)}"${propLines}
 \tcontainer.add_child(child)
 \tchild.owner = container.owner if container.owner != null else container
@@ -480,11 +491,33 @@ ${drawLines || '\t\tpass'}
 
 // ─── ui_build_layout ─────────────────────────────────────────────────────────
 
+export interface FlexLayout {
+  direction: 'row' | 'column' | 'row-reverse' | 'column-reverse';
+  justify?: 'flex-start' | 'center' | 'flex-end' | 'space-between' | 'space-around' | 'space-evenly';
+  align?: 'stretch' | 'flex-start' | 'center' | 'flex-end';
+  wrap?: 'nowrap' | 'wrap';
+  gap?: number;
+  row_gap?: number;
+  padding?: number | [number, number, number, number];
+}
+
+export interface FlexChild {
+  grow?: number;
+  shrink?: number;
+  align_self?: 'auto' | 'flex-start' | 'center' | 'flex-end' | 'stretch';
+  min_width?: number;
+  min_height?: number;
+  max_width?: number;
+  max_height?: number;
+}
+
 export type UiNodeSpec = {
   type: string;
   name: string;
   properties?: Record<string, unknown>;
   anchor_preset?: string;
+  layout?: FlexLayout;
+  flex?: FlexChild;
   children?: UiNodeSpec[];
 };
 
@@ -523,6 +556,10 @@ function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, inden
     : '';
 
   let lines = `${indent}node = ClassDB.instantiate("${gdEscape(spec.type)}")
+${indent}if node == null:
+${indent}\t_mcp_output("error", "Failed to instantiate: ${gdEscape(spec.type)}")
+${indent}\t_mcp_done()
+${indent}\treturn
 ${indent}node.name = "${gdEscape(spec.name)}"${anchorLine}${propLines}`;
 
   if (spec.children && spec.children.length > 0) {
