@@ -723,7 +723,10 @@ function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string): str
   return lines;
 }
 
-function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string): string {
+function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[] = []): string {
+  if (spec.layout) {
+    return uiNodeToGdWithLayout(spec, parentVar, ownerVar, indent, warnings);
+  }
   const anchorLine = spec.anchor_preset
     ? `\n${indent}node.set_anchors_preset(${ANCHOR_PRESETS[spec.anchor_preset]})`
     : '';
@@ -756,15 +759,99 @@ ${indent}node.owner = ${ownerVar}`;
   return lines;
 }
 
+function uiNodeToGdWithLayout(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[]): string {
+  const layout = spec.layout!;
+  const { containerType, isReverse, isWrap } = resolveFlexContainer(layout);
+  const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
+
+  let lines = `${indent}node = ClassDB.instantiate("${gdEscape(containerType)}")
+${indent}if node == null:
+${indent}\t_mcp_output("error", "Failed to instantiate: ${gdEscape(containerType)}")
+${indent}\t_mcp_done()
+${indent}\treturn
+${indent}node.name = "${gdEscape(spec.name)}"`;
+
+  const preset = spec.anchor_preset ? ANCHOR_PRESETS[spec.anchor_preset] : 15;
+  lines += `\n${indent}node.set_anchors_preset(${preset})`;
+
+  if (spec.properties && Object.keys(spec.properties).length > 0) {
+    lines += '\n' + Object.entries(spec.properties).map(
+      ([k, v]) => `${indent}node.set("${gdEscape(k)}", ${serializePropertyValue(v)})`
+    ).join('\n');
+  }
+
+  lines += genFlexContainerProps(layout, indent);
+
+  let marginWrapperVar: string | null = null;
+  if (isWrap && layout.padding !== undefined) {
+    const p = typeof layout.padding === 'number'
+      ? [layout.padding, layout.padding, layout.padding, layout.padding]
+      : layout.padding;
+    const marginIdx = _savedCounter++;
+    marginWrapperVar = `_margin_${marginIdx}`;
+    const marginBlock = `${indent}var ${marginWrapperVar} = ClassDB.instantiate("MarginContainer")
+${indent}${marginWrapperVar}.name = "${gdEscape(spec.name)}_margin"
+${indent}${marginWrapperVar}.add_theme_constant_override("margin_top", ${p[0]})
+${indent}${marginWrapperVar}.add_theme_constant_override("margin_right", ${p[1]})
+${indent}${marginWrapperVar}.add_theme_constant_override("margin_bottom", ${p[2]})
+${indent}${marginWrapperVar}.add_theme_constant_override("margin_left", ${p[3]})
+${indent}${marginWrapperVar}.set_anchors_preset(${preset})`;
+    lines = marginBlock + '\n' + lines;
+  }
+
+  const savedIdx = _savedCounter++;
+  const savedVar = `_saved_${savedIdx}`;
+  lines += `\n${indent}var ${savedVar} = node`;
+
+  let children = spec.children ?? [];
+  if (isReverse) {
+    children = [...children].reverse();
+  }
+
+  for (const child of children) {
+    lines += '\n' + uiNodeToGd(child, savedVar, ownerVar, indent, warnings);
+
+    if (layout.align && (!child.flex || !child.flex.align_self || child.flex.align_self === 'auto')) {
+      lines += applyAlignSelf(layout.align, isRow, indent);
+    }
+
+    if (child.flex) {
+      lines += genFlexChildLines(child.flex, isRow, indent);
+    }
+  }
+
+  lines += `\n${indent}node = ${savedVar}`;
+
+  if (marginWrapperVar) {
+    lines += `\n${indent}node = ${marginWrapperVar}`;
+    lines += `\n${indent}${marginWrapperVar}.add_child(${savedVar})`;
+    lines += `\n${indent}${savedVar}.owner = ${ownerVar}`;
+    lines += `\n${indent}${parentVar}.add_child(node)`;
+    lines += `\n${indent}node.owner = ${ownerVar}`;
+  } else {
+    lines += `\n${indent}${parentVar}.add_child(node)`;
+    lines += `\n${indent}node.owner = ${ownerVar}`;
+  }
+
+  return lines;
+}
+
 export function genUiBuildLayoutScript(
   scenePath: string,
   parentPath: string,
   tree: UiNodeSpec,
 ): string {
-  validateUiNodeSpec(tree, 1);
+  const warnings: string[] = [];
+  validateUiNodeSpec(tree, 1, warnings);
 
   _savedCounter = 0;
-  const buildBlock = uiNodeToGd(tree, 'parent', 'root', '\t');
+  const buildBlock = uiNodeToGd(tree, 'parent', 'root', '\t', warnings);
+
+  const warningLines = warnings.length > 0
+    ? `\n\t_mcp_output("warnings", ${JSON.stringify(warnings.map(w => ({ field: "layout", message: w })))})`
+    : '';
+
+  const rootType = tree.layout ? resolveFlexContainer(tree.layout).containerType : tree.type;
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
@@ -778,8 +865,8 @@ func _initialize():
 \t\treturn
 \tvar parent = root
 \tvar node: Node
-${buildBlock}
-\t_mcp_output("layout_built", {"parent": "${gdEscape(parentPath)}", "root_type": "${gdEscape(tree.type)}", "root_name": "${gdEscape(tree.name)}"})
+${buildBlock}${warningLines}
+\t_mcp_output("layout_built", {"parent": "${gdEscape(parentPath)}", "root_type": "${gdEscape(rootType)}", "root_name": "${gdEscape(tree.name)}"})
 \t_mcp_done()
 `;
 }
