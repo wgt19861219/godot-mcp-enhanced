@@ -6,6 +6,7 @@ import { textResult } from '../types.js';
 import { validatePath, resolveWithinRoot, ensureDir } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
+import { lintGDScript, formatLintResults } from './gdscript-lint.js';
 
 function detectDuplicateLines(lines: string[]): string[] {
   const warnings: string[] = [];
@@ -264,7 +265,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       ensureDir(sp);
       writeFileSync(sp, content, 'utf-8');
 
-      return textResult(`Script written to ${sp} (${content.split('\n').length} lines)`);
+      let lintSection = '';
+      if (sp.endsWith('.gd')) {
+        const lintOutput = lintGDScript(content, true);
+        lintSection = formatLintResults(lintOutput);
+      }
+      return textResult(`Script written to ${sp} (${content.split('\n').length} lines)${lintSection}`);
     }
 
     case 'edit_script': {
@@ -322,7 +328,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           const dupWarns = detectDuplicateLines(finalContent.split(/\r?\n/));
           const dw = formatDuplicateWarnings(dupWarns);
 
-          return textResult(`Edited ${fullPath}: replaced all ${count} occurrences of search text.${dw}`);
+          let editLintSection = '';
+          if (fullPath.endsWith('.gd')) {
+            const editedContent = readFileSync(fullPath, 'utf-8');
+            editLintSection = formatLintResults(lintGDScript(editedContent, true));
+          }
+
+          return textResult(`Edited ${fullPath}: replaced all ${count} occurrences of search text.${dw}${editLintSection}`);
         }
 
         let pos = 0;
@@ -355,7 +367,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const dupWarns = detectDuplicateLines(finalContent.split(/\r?\n/));
         const dw = formatDuplicateWarnings(dupWarns);
 
-        return textResult(`Edited ${fullPath}: replaced occurrence ${occurrence} of search text (${foundCount} total matches found).${dw}`);
+        let editLintSection = '';
+        if (fullPath.endsWith('.gd')) {
+          const editedContent = readFileSync(fullPath, 'utf-8');
+          editLintSection = formatLintResults(lintGDScript(editedContent, true));
+        }
+
+        return textResult(`Edited ${fullPath}: replaced occurrence ${occurrence} of search text (${foundCount} total matches found).${dw}${editLintSection}`);
       }
 
       // Line-number mode
@@ -447,7 +465,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         ? "\nNote: Auto-validate only supports .gd files. Other file types are not validated."
         : "";
 
-      return textResult(`${diffHeader}\n${diffBody}${ctxBefore}${ctxAfter}${warnings}${skipNote}`);
+      let editLintSection = '';
+      if (fullPath.endsWith('.gd')) {
+        const editedContent = readFileSync(fullPath, 'utf-8');
+        editLintSection = formatLintResults(lintGDScript(editedContent, true));
+      }
+
+      return textResult(`${diffHeader}\n${diffBody}${ctxBefore}${ctxAfter}${warnings}${skipNote}${editLintSection}`);
     }
 
     case 'generate_test': {
