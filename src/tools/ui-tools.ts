@@ -904,6 +904,71 @@ export function getToolDefinitions(): Tool[] {
         required: ['project_path', 'theme_node_path', 'item_type', 'name', 'value'],
       },
     },
+    {
+      name: 'ui_draw_recipe',
+      description: `Attach declarative vector draw operations to a Control node via _draw(). Bypasses layout calculation. ${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          scene_path: { type: 'string', description: 'Scene path relative to project' },
+          node_path: { type: 'string', description: 'Control 节点路径' },
+          ops: {
+            type: 'array',
+            description: '绘图操作数组（最多 200 个）',
+            items: {
+              type: 'object',
+              properties: {
+                kind: { type: 'string', enum: [...DRAW_OP_KINDS], description: '操作类型' },
+                position: { type: 'array', items: { type: 'number' }, description: '[x, y]' },
+                size: { type: 'array', items: { type: 'number' }, description: '[w, h]' },
+                center: { type: 'array', items: { type: 'number' }, description: '[x, y] 圆心' },
+                radius: { type: 'number', description: '半径' },
+                from: { type: 'array', items: { type: 'number' }, description: '[x, y] 起点' },
+                to: { type: 'array', items: { type: 'number' }, description: '[x, y] 终点' },
+                start_angle: { type: 'number', description: '起始角度（弧度）' },
+                end_angle: { type: 'number', description: '结束角度（弧度）' },
+                points: { type: 'array', items: { type: 'array', items: { type: 'number' } }, description: '[[x,y], ...]' },
+                text: { type: 'string', description: '文本' },
+                color: { type: 'array', items: { type: 'number' }, description: '[r,g,b] 或 [r,g,b,a]，0-1' },
+                width: { type: 'number', description: '线宽' },
+                filled: { type: 'boolean', description: '是否填充（默认 true）' },
+                font_size: { type: 'number', description: '字号（默认 16）' },
+              },
+              required: ['kind'],
+            },
+          },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'scene_path', 'node_path', 'ops'],
+      },
+    },
+    {
+      name: 'ui_build_layout',
+      description: `Build a UI tree from a nested spec. ui_create_control is the single-node version; this supports recursive tree creation. ${NON_PERSIST}`,
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          scene_path: { type: 'string', description: 'Scene path relative to project' },
+          parent_path: { type: 'string', description: '父节点路径' },
+          tree: {
+            type: 'object',
+            description: 'UI 节点树（最大深度 10）',
+            properties: {
+              type: { type: 'string', enum: [...CONTROL_TYPES], description: 'Control 子类' },
+              name: { type: 'string', description: '节点名称' },
+              properties: { type: 'object', additionalProperties: true, description: '节点属性' },
+              anchor_preset: { type: 'string', enum: Object.keys(ANCHOR_PRESETS), description: '锚点预设' },
+              children: { type: 'array', items: { type: 'object', additionalProperties: true }, description: '子节点' },
+            },
+            required: ['type', 'name'],
+          },
+          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+        },
+        required: ['project_path', 'scene_path', 'parent_path', 'tree'],
+      },
+    },
   ];
 }
 
@@ -1054,6 +1119,48 @@ export async function handleTool(
         );
         break;
       }
+      case 'ui_draw_recipe': {
+        const scenePath = resolveWithinRoot(projectPath, normalizeUserProjectPath(args.scene_path as string));
+        const nodePath = normalizeNodePath(args.node_path as string);
+        const ops = args.ops as DrawOp[];
+        if (!Array.isArray(ops)) {
+          return opsErrorResult(ERROR_CODES.INVALID_DRAW_OP, 'ops must be an array');
+        }
+        try {
+          script = genUiDrawRecipeScript(scenePath, nodePath, ops);
+        } catch (err) {
+          const msg = (err as Error).message;
+          if (msg.includes('Unknown draw op kind') || msg.includes('Maximum') || msg.includes('Color must be')) {
+            return opsErrorResult(ERROR_CODES.INVALID_DRAW_OP, msg);
+          }
+          return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, msg);
+        }
+        break;
+      }
+      case 'ui_build_layout': {
+        const scenePath = resolveWithinRoot(projectPath, normalizeUserProjectPath(args.scene_path as string));
+        const parentPath = normalizeNodePath((args.parent_path as string) || 'root');
+        const tree = args.tree as UiNodeSpec;
+        if (!tree || typeof tree !== 'object') {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'tree is required and must be an object');
+        }
+        try {
+          script = genUiBuildLayoutScript(scenePath, parentPath, tree);
+        } catch (err) {
+          const msg = (err as Error).message;
+          if (msg.includes('INVALID_CONTROL_TYPE')) {
+            return opsErrorResult(ERROR_CODES.INVALID_CONTROL_TYPE, msg);
+          }
+          if (msg.includes('INVALID_ANCHOR_PRESET')) {
+            return opsErrorResult(ERROR_CODES.INVALID_ANCHOR_PRESET, msg);
+          }
+          if (msg.includes('name is required') || msg.includes('Maximum nesting')) {
+            return opsErrorResult(ERROR_CODES.INVALID_PARAMS, msg);
+          }
+          return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, msg);
+        }
+        break;
+      }
       default:
         return null;
     }
@@ -1093,6 +1200,8 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
   ui_container_add: { readonly: false, long_running: false },
   theme_create: { readonly: false, long_running: false },
   theme_set_property: { readonly: false, long_running: false },
+  ui_draw_recipe: { readonly: false, long_running: false },
+  ui_build_layout: { readonly: false, long_running: false },
 };
 
 export { colorToGd };

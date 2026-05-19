@@ -19,8 +19,8 @@ import {
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 
 describe('TOOL_NAMES', () => {
-  it('contains exactly 8 UI tool names', () => {
-    assert.strictEqual(TOOL_NAMES.length, 8);
+  it('contains exactly 10 UI tool names', () => {
+    assert.strictEqual(TOOL_NAMES.length, 10);
   });
   it('includes ui_create_control', () => {
     assert.ok(TOOL_NAMES.includes('ui_create_control'));
@@ -556,9 +556,9 @@ describe('genThemeSetPropertyScript', () => {
 // ─── getToolDefinitions ─────────────────────────────────────────────────────
 
 describe('getToolDefinitions', () => {
-  it('returns 8 tool definitions', () => {
+  it('returns 10 tool definitions', () => {
     const defs = getToolDefinitions();
-    assert.strictEqual(defs.length, 8);
+    assert.strictEqual(defs.length, 10);
   });
   it('each definition has a name from TOOL_NAMES', () => {
     const defs = getToolDefinitions();
