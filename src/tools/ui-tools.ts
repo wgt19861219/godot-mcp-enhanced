@@ -613,6 +613,116 @@ function validateFlexChild(flex: FlexChild, warnings: string[]): void {
 
 let _savedCounter = 0;
 
+function resolveFlexContainer(layout: FlexLayout): {
+  containerType: string;
+  isReverse: boolean;
+  isWrap: boolean;
+} {
+  const isReverse = layout.direction === 'row-reverse' || layout.direction === 'column-reverse';
+  const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
+  const isWrap = layout.wrap === 'wrap';
+
+  let containerType: string;
+  if (isWrap) {
+    containerType = isRow ? 'HFlowContainer' : 'VFlowContainer';
+  } else {
+    containerType = isRow ? 'HBoxContainer' : 'VBoxContainer';
+  }
+
+  return { containerType, isReverse, isWrap };
+}
+
+function genFlexContainerProps(layout: FlexLayout, indent: string): string {
+  const { isWrap } = resolveFlexContainer(layout);
+  const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
+  let lines = '';
+
+  if (layout.justify && !isWrap) {
+    const justifyMap: Record<string, number> = {
+      'flex-start': 0,
+      'center': 1,
+      'flex-end': 2,
+      'space-between': 0,
+      'space-around': 1,
+      'space-evenly': 1,
+    };
+    const alignment = justifyMap[layout.justify];
+    if (alignment !== undefined) {
+      lines += `\n${indent}node.alignment = ${alignment}`;
+    }
+  }
+
+  if (layout.gap !== undefined) {
+    if (isWrap) {
+      if (isRow) {
+        lines += `\n${indent}node.add_theme_constant_override("h_separation", ${layout.gap})`;
+        const vSep = layout.row_gap ?? layout.gap;
+        lines += `\n${indent}node.add_theme_constant_override("v_separation", ${vSep})`;
+      } else {
+        const hSep = layout.row_gap ?? layout.gap;
+        lines += `\n${indent}node.add_theme_constant_override("h_separation", ${hSep})`;
+        lines += `\n${indent}node.add_theme_constant_override("v_separation", ${layout.gap})`;
+      }
+    } else {
+      lines += `\n${indent}node.add_theme_constant_override("separation", ${layout.gap})`;
+    }
+  }
+
+  if (layout.padding !== undefined && !isWrap) {
+    const p = typeof layout.padding === 'number'
+      ? [layout.padding, layout.padding, layout.padding, layout.padding]
+      : layout.padding;
+    lines += `\n${indent}node.add_theme_constant_override("margin_top", ${p[0]})`;
+    lines += `\n${indent}node.add_theme_constant_override("margin_right", ${p[1]})`;
+    lines += `\n${indent}node.add_theme_constant_override("margin_bottom", ${p[2]})`;
+    lines += `\n${indent}node.add_theme_constant_override("margin_left", ${p[3]})`;
+  }
+
+  return lines;
+}
+
+function applyAlignSelf(align: string, isRow: boolean, indent: string): string {
+  if (align === 'stretch') {
+    if (isRow) {
+      return `\n${indent}node.size_flags_vertical = node.size_flags_vertical | Control.SIZE_EXPAND_FILL`;
+    } else {
+      return `\n${indent}node.size_flags_horizontal = node.size_flags_horizontal | Control.SIZE_EXPAND_FILL`;
+    }
+  } else if (align === 'center') {
+    if (isRow) {
+      return `\n${indent}node.size_flags_vertical = node.size_flags_vertical | Control.SIZE_SHRINK_CENTER`;
+    } else {
+      return `\n${indent}node.size_flags_horizontal = node.size_flags_horizontal | Control.SIZE_SHRINK_CENTER`;
+    }
+  }
+  return '';
+}
+
+function genFlexChildLines(flex: FlexChild, isRow: boolean, indent: string): string {
+  let lines = '';
+
+  if (flex.grow !== undefined && flex.grow > 0) {
+    lines += `\n${indent}node.size_flags_stretch_ratio = ${flex.grow}`;
+    if (isRow) {
+      lines += `\n${indent}node.size_flags_horizontal = node.size_flags_horizontal | Control.SIZE_EXPAND`;
+    } else {
+      lines += `\n${indent}node.size_flags_vertical = node.size_flags_vertical | Control.SIZE_EXPAND`;
+    }
+  }
+
+  if (flex.align_self && flex.align_self !== 'auto') {
+    lines += applyAlignSelf(flex.align_self, isRow, indent);
+  }
+
+  if (flex.min_width !== undefined || flex.min_height !== undefined) {
+    const w = flex.min_width ?? 'node.custom_minimum_size.x';
+    const h = flex.min_height ?? 'node.custom_minimum_size.y';
+    lines += `\n${indent}node.custom_minimum_size = Vector2(${w}, ${h})`;
+  }
+
+  return lines;
+}
+
 function uiNodeToGd(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string): string {
   const anchorLine = spec.anchor_preset
     ? `\n${indent}node.set_anchors_preset(${ANCHOR_PRESETS[spec.anchor_preset]})`
