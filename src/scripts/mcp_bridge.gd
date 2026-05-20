@@ -156,14 +156,11 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
 			peer.disconnect_from_host()
 			break
 		if not _authenticated_peers.has(pid):
-			# Use IP for lockout tracking (peer instance_id changes on reconnect)
 			var peer_ip: String = peer.get_connected_host()
-			# Check lockout by IP
 			if _auth_locked_until.has(peer_ip):
 				var locked_until: float = _auth_locked_until[peer_ip]
 				if Time.get_ticks_msec() / 1000.0 < locked_until:
-					peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "
-")
+					peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "\n")
 					continue
 				else:
 					_auth_locked_until.erase(peer_ip)
@@ -172,21 +169,18 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
 			if parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
 				_authenticated_peers[pid] = true
 				_auth_fail_count.erase(peer_ip)
-				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "
-")
+				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n")
 				continue
 			else:
 				var fails: int = int(_auth_fail_count.get(peer_ip, 0)) + 1
 				_auth_fail_count[peer_ip] = fails
 				if fails >= MAX_AUTH_FAILS:
 					_auth_locked_until[peer_ip] = Time.get_ticks_msec() / 1000.0 + LOCKOUT_SECONDS
-				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "
-")
+				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n")
 				continue
 		var response := _handle_message(line)
 		peer.put_utf8_string(response + "\n")
 	_peer_buffers[key] = raw
-
 
 func _handle_message(raw: String) -> String:
 	var parsed: Variant

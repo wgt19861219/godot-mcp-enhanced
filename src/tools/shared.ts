@@ -24,7 +24,6 @@ export function gdEscape(s: string): string {
   return s
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .replace(/\\u([0-9a-fA-F]{4})/g, '\\\\u$1')
     .replace(/\\/g, '\\\\')
     .replace(/\n/g, '\\n')
     .replace(/"/g, '\\"')
