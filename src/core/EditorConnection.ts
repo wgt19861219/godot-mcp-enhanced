@@ -72,6 +72,12 @@ export class EditorConnection {
       ws.on('close', () => {
         this.connected = false;
         this.ws = null;
+        // Reject all pending requests — they will never receive a response
+        for (const [, pending] of this.pending) {
+          clearTimeout(pending.timer);
+          pending.reject(new Error('Connection lost'));
+        }
+        this.pending.clear();
         this.notificationHandlers.clear();
         this.onDisconnect?.();
         if (this.reconnectEnabled) this.scheduleReconnect();
@@ -101,7 +107,7 @@ export class EditorConnection {
             }
           }
         }
-      } catch { /* ignore non-JSON messages */ }
+      } catch { /* non-JSON or malformed — silently skip */ }
     });
   }
 

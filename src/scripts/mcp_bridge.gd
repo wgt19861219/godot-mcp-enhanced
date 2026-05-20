@@ -6,13 +6,18 @@ extends Node
 ## Default port: 9081
 
 const PORT := 9081
+const MAX_AUTH_FAILS := 5
+const LOCKOUT_SECONDS := 30.0
 
 var _server: TCPServer = null
 var _peers: Array[StreamPeerTCP] = []
 var _peer_buffers: Dictionary = {}
 var _authenticated_peers: Dictionary = {}
+var _auth_fail_count: Dictionary = {}
+var _auth_locked_until: Dictionary = {}
 var _secret: String = ""
 var _secret_file: String = ""
+var _crypto: Crypto = null
 
 const BLOCKED_PROPERTIES := [
 	"script", "owner", "process_mode", "process_priority", "process_input",
@@ -73,13 +78,14 @@ func _process(_delta: float) -> void:
 		var pid := _peers[i].get_instance_id()
 		_peer_buffers.erase("buf_" + str(pid))
 		_authenticated_peers.erase(pid)
+		# Auth fail/lockout counts are IP-based — do NOT clear on disconnect
 		_peers.remove_at(i)
 
 
 # ─── Server management ─────────────────────────────────────────────────────
 
 func _start_server() -> void:
-	randomize()
+	_crypto = Crypto.new()
 	_secret = _generate_secret()
 	_server = TCPServer.new()
 	var err := _server.listen(PORT)
@@ -93,6 +99,7 @@ func _start_server() -> void:
 	if f:
 		f.store_string(_secret)
 		f.close()
+
 ## Compat: Godot 4.6 renamed TCPServer.accept() to take_connection()
 func _server_take_connection() -> StreamPeerTCP:
 	if _server.has_method("take_connection"):
@@ -100,12 +107,18 @@ func _server_take_connection() -> StreamPeerTCP:
 	return _server.accept()
 
 
-
 func _generate_secret() -> String:
 	var chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	var result := ""
-	for i in range(32):
-		result += chars[randi() % chars.length()]
+	var rng_bytes: PackedByteArray = _crypto.generate_random_bytes(64)
+	var idx := 0
+	while result.length() < 32 and idx < rng_bytes.size():
+		var b: int = rng_bytes[idx]
+		idx += 1
+		# Rejection sampling: skip bytes causing modulo bias (256 % 62 = 8, skip >= 248)
+		if b >= 256 - (256 % chars.length()):
+			continue
+		result += chars[b % chars.length()]
 	return result
 
 
@@ -115,6 +128,8 @@ func _stop_server() -> void:
 			p.disconnect_from_host()
 	_peers.clear()
 	_authenticated_peers.clear()
+	_auth_fail_count.clear()
+	_auth_locked_until.clear()
 	if _server:
 		_server.stop()
 		if _secret_file != "" and FileAccess.file_exists(_secret_file):
@@ -125,35 +140,52 @@ func _stop_server() -> void:
 # ─── Protocol handling ─────────────────────────────────────────────────────
 
 func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
-\tvar key := "buf_" + str(pid)
-\tvar raw: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
-\twhile true:
-\t\tvar nl_idx := raw.find(0x0A)
-\t\tif nl_idx == -1:
-\t\t\tbreak
-\t\tvar line_bytes: PackedByteArray = raw.slice(0, nl_idx)
-\t\traw = raw.slice(nl_idx + 1)
-\t\tif line_bytes.size() == 0:
-\t\t\tcontinue
-\t\tvar line := line_bytes.get_string_from_utf8()
-\t\tif line == "" and line_bytes.size() > 0:
-\t\t\tpush_warning("[MCP Bridge] Invalid UTF-8 in message from peer %d, disconnecting" % pid)
-\t\t\tpeer.disconnect_from_host()
-\t\t\tbreak
-\t\tif not _authenticated_peers.has(pid):
-\t\t\tvar parsed: Variant = JSON.parse_string(line)
-\t\t\tif parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
-\t\t\t\t_authenticated_peers[pid] = true
-\t\t\t\tpeer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n")
-\t\t\t\tcontinue
-\t\t\telse:
-\t\t\t\tpeer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n")
-\t\t\t\tcontinue
-\t\tvar response := _handle_message(line)
-\t\tpeer.put_utf8_string(response + "\n")
-\t_peer_buffers[key] = raw
-
-
+	var key := "buf_" + str(pid)
+	var raw: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
+	while true:
+		var nl_idx := raw.find(0x0A)
+		if nl_idx == -1:
+			break
+		var line_bytes: PackedByteArray = raw.slice(0, nl_idx)
+		raw = raw.slice(nl_idx + 1)
+		if line_bytes.size() == 0:
+			continue
+		var line := line_bytes.get_string_from_utf8()
+		if line == "" and line_bytes.size() > 0:
+			push_warning("[MCP Bridge] Invalid UTF-8 in message from peer %d, disconnecting" % pid)
+			peer.disconnect_from_host()
+			break
+		if not _authenticated_peers.has(pid):
+			# Use IP for lockout tracking (peer instance_id changes on reconnect)
+			var peer_ip: String = peer.get_connected_host()
+			# Check lockout by IP
+			if _auth_locked_until.has(peer_ip):
+				var locked_until: float = _auth_locked_until[peer_ip]
+				if Time.get_ticks_msec() / 1000.0 < locked_until:
+					peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "
+")
+					continue
+				else:
+					_auth_locked_until.erase(peer_ip)
+					_auth_fail_count[peer_ip] = 0
+			var parsed: Variant = JSON.parse_string(line)
+			if parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
+				_authenticated_peers[pid] = true
+				_auth_fail_count.erase(peer_ip)
+				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "
+")
+				continue
+			else:
+				var fails: int = int(_auth_fail_count.get(peer_ip, 0)) + 1
+				_auth_fail_count[peer_ip] = fails
+				if fails >= MAX_AUTH_FAILS:
+					_auth_locked_until[peer_ip] = Time.get_ticks_msec() / 1000.0 + LOCKOUT_SECONDS
+				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "
+")
+				continue
+		var response := _handle_message(line)
+		peer.put_utf8_string(response + "\n")
+	_peer_buffers[key] = raw
 
 
 func _handle_message(raw: String) -> String:

@@ -13,7 +13,7 @@ export function resolvePath(p: string): string {
   return isAbsolute(p) ? p : resolve(p);
 }
 
-/** @deprecated Use resolvePath instead */
+/** Validate and resolve a project root path. Delegates to resolvePath; use resolveWithinRoot for sub-path traversal protection. */
 export const validatePath = resolvePath;
 
 export function resolveWithinRoot(root: string, userPath: string): string {

@@ -1,5 +1,5 @@
 import { createConnection } from 'net';
-import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync, chmodSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -22,10 +22,23 @@ interface BridgeResponse {
 }
 
 let _nextRequestId = 1;
+let _permWarned = false;
 
 function readBridgeSecret(): string | null {
   const secretPath = join(tmpdir(), `mcp_bridge_${BRIDGE_PORT}.secret`);
   try {
+    // Tighten permissions: owner-only read (0o600 on Unix; no-op on Windows)
+    if (process.platform !== 'win32') {
+      try {
+        chmodSync(secretPath, 0o600);
+      } catch { /* best effort */ }
+    }
+    const stat = statSync(secretPath);
+    // On Unix, warn once if file is world-readable
+    if (!_permWarned && process.platform !== 'win32' && (stat.mode & 0o007) !== 0) {
+      _permWarned = true;
+      console.error(`[SECURITY] Bridge secret file ${secretPath} is world-readable. Attempted chmod 0600.`);
+    }
     return readFileSync(secretPath, 'utf-8').trim();
   } catch {
     return null;

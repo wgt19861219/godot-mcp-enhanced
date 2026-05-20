@@ -102,8 +102,10 @@ function parseValue(raw: string, maxDepth: number = 50): unknown {
   if (v3Match) return { __type: 'Vector3', value: v3Match[1] };
 
   // Number (int or float)
-  const num = Number(trimmed);
-  if (!isNaN(num)) return num;
+  if (trimmed !== '') {
+    const num = Number(trimmed);
+    if (!isNaN(num)) return num;
+  }
 
   // Fallback: raw string
   return trimmed;
