@@ -53,18 +53,24 @@ import { EditorConnection } from './core/EditorConnection.js';
 import { EditorToolExecutor } from './core/EditorToolExecutor.js';
 import { findGodot, clearGodotPathCache, getCachedGodotPath } from './core/godot-finder.js';
 import * as ps from './core/process-state.js';
+import { killProcess } from './core/process-state.js';
 
 // Re-export for backward compatibility (tests import from GodotServer)
 export { clearGodotPathCache, getCachedGodotPath };
 
 const toolModules = [runtime, screenshot, project, scene, script, validation, docs, node3dOps, physicsOps, audioOps, tilemapOps, materialOps, gameBridge, workflow, animationOps, animationTrack, profilerOps, spatialOps, testFramework, animtreeOps, navigationOps, particlesOps, signalOps, batchTools, uiOps, recordingOps, editorSync];
 
+interface ToolMetaExport {
+  TOOL_META?: Record<string, { readonly: boolean; long_running: boolean }>;
+}
+
 // 注册工具标签
 const allMeta: Array<{ name: string; readonly: boolean; long_running: boolean }> = [];
 for (const mod of toolModules) {
-  if ((mod as any).TOOL_META) {
-    for (const [name, meta] of Object.entries((mod as any).TOOL_META as Record<string, { readonly: boolean; long_running: boolean }>)) {
-      allMeta.push({ name, ...meta });
+  const meta = (mod as ToolMetaExport).TOOL_META;
+  if (meta) {
+    for (const [name, m] of Object.entries(meta)) {
+      allMeta.push({ name, ...m });
     }
   }
 }
@@ -198,6 +204,14 @@ export class GodotServer {
           if (!pending) {
             return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }] };
           }
+          // Re-check ReadOnlyGuard for the confirmed tool
+          const guardResult = this.readOnlyGuard.check(pending.toolName);
+          if (guardResult.blocked) {
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: guardResult.errorCode, message: guardResult.message } }) }],
+              isError: true,
+            };
+          }
           // Re-dispatch with original tool name and args
           for (const mod of toolModules) {
             const result = await mod.handleTool(pending.toolName, pending.args, ctx);
@@ -303,5 +317,22 @@ export class GodotServer {
         this.editorConn = null;
       }
     }
+  }
+
+  async close(): Promise<void> {
+    if (this.editorConn) {
+      this.editorConn.disconnect();
+      this.editorConn = null;
+      this.editorExecutor = null;
+      log('Editor connection closed');
+    }
+    const proc = ps.getRunningProcess();
+    if (proc && !proc.killed) {
+      await killProcess(proc);
+      ps.setRunningProcess(null);
+      log('Running Godot process killed');
+    }
+    await this.server.close();
+    log('Server shut down');
   }
 }

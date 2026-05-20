@@ -19,6 +19,7 @@ import { existsSync, statSync, mkdirSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import * as os from 'os';
+import { forceKillTree } from './core/process-state.js';
 
 export interface ScreenshotResult {
   success: boolean;
@@ -76,20 +77,18 @@ function runScreenshot(
     proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
     proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
 
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     const timer = setTimeout(() => {
       if (!settled && !proc.killed) {
         settled = true;
-        proc.kill('SIGTERM');
-        killTimer = setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
+        forceKillTree(proc);
+        // SIGKILL fallback no longer needed
         resolve({ code: -1, output: out + `\n[TIMEOUT] Killed after ${timeout}s` });
       }
     }, timeout * 1000);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
       if (settled) return;
       settled = true;
       resolve({ code, output: out });

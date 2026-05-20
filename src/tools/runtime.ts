@@ -2,36 +2,10 @@ import { spawn } from 'child_process';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { appendOutput, clearOutputBuffer } from '../core/process-state.js';
+import { appendOutput, clearOutputBuffer, killProcess } from '../core/process-state.js';
 import { validatePath, checkVersionMismatch } from '../helpers.js';
 import { existsSync } from 'fs';
 import { join } from 'path';
-
-const isWin = process.platform === 'win32';
-
-function killProcess(proc: import('child_process').ChildProcess): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch { /* already dead */ }
-      resolve();
-    }, 5000);
-
-    proc.on('close', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-
-    if (isWin) {
-      try {
-        spawn('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { stdio: 'ignore' });
-      } catch {
-        proc.kill();
-      }
-    } else {
-      proc.kill('SIGTERM');
-    }
-  });
-}
 
 const TOOL_NAMES = [
   'launch_editor',
@@ -181,7 +155,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (timeout > 0) {
         const autoStopTimer = setTimeout(() => {
           if (ctx.runningProcess === proc) {
-            killProcess(proc);
+            void killProcess(proc);
             ctx.setRunningProcess(null);
           }
         }, timeout * 1000);
@@ -248,7 +222,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
 
         const timer = setTimeout(() => {
-          if (!proc.killed) killProcess(proc);
+          if (!proc.killed) void killProcess(proc);
         }, 120000);
 
         proc.on('close', (code) => {

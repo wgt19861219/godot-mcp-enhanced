@@ -5,6 +5,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { validatePath } from '../helpers.js';
+import { forceKillTree } from '../core/process-state.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, parseGdscriptResult } from './shared.js';
 import { gdEscape } from './shared.js';
@@ -232,7 +233,7 @@ function runVerification(godot: string, projectPath: string): Promise<Record<str
     proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
 
     const timer = setTimeout(() => {
-      if (!proc.killed) proc.kill('SIGTERM');
+      if (!proc.killed) forceKillTree(proc);
       resolve({ status: 'timeout', output: out.slice(-2000) });
     }, 20000);
 

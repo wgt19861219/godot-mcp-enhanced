@@ -10,6 +10,7 @@ import { findInstanceNode, detachInstance, nodePathToNameAndParent } from '../ts
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult } from './shared.js';
 import { normalizeNodePath, gdEscape } from './shared.js';
+import { forceKillTree } from '../core/process-state.js';
 
 const TOOL_NAMES = [
   'read_scene',
@@ -336,7 +337,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timer = setTimeout(() => {
           if (!settled && !proc.killed) {
             settled = true;
-            proc.kill('SIGTERM');
+            forceKillTree(proc);
             resolve({ content: [{ type: 'text', text: `${name} timed out.` }] });
           }
         }, 60000);
@@ -470,7 +471,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timer = setTimeout(() => {
           if (!settled && !proc.killed) {
             settled = true;
-            proc.kill('SIGTERM');
+            forceKillTree(proc);
             resolve(textResult('query_scene_tree timed out after 60s'));
           }
         }, 60000);
@@ -525,7 +526,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timer = setTimeout(() => {
           if (!settled && !proc.killed) {
             settled = true;
-            proc.kill('SIGTERM');
+            forceKillTree(proc);
             resolve(textResult('inspect_node timed out after 60s'));
           }
         }, 60000);
@@ -581,7 +582,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timer = setTimeout(() => {
           if (!settled && !proc.killed) {
             settled = true;
-            proc.kill('SIGTERM');
+            forceKillTree(proc);
             resolve({ content: [{ type: 'text', text: 'batch_add_nodes timed out after 60s.' }] });
           }
         }, 60000);

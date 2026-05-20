@@ -8,6 +8,7 @@ import { validatePath, resolveWithinRoot, normalizeUserProjectPath, ensureDir } 
 import { analyzeOutput } from '../error-analyzer.js';
 import { batchValidateScripts } from './validation.js';
 import { lintGDScript, formatLintResults } from './gdscript-lint.js';
+import { forceKillTree } from '../core/process-state.js';
 import { parseTscn } from '../tscn-parser.js';
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
@@ -309,7 +310,7 @@ function runSingleVerify(
     proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
 
     const timer = setTimeout(() => {
-      if (!proc.killed) proc.kill('SIGTERM');
+      if (!proc.killed) forceKillTree(proc);
       resolve({ scene, status: 'timed_out' });
     }, timeoutSec * 1000);
 

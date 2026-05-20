@@ -14,6 +14,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
+import { forceKillTree } from './core/process-state.js';
 
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -464,18 +465,14 @@ export async function executeGdscript(
     proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
     proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       if (!proc.killed) {
-        proc.kill('SIGTERM');
-        // SIGKILL fallback after 3s if SIGTERM didn't work (especially on Windows)
-        killTimer = setTimeout(() => { if (!proc.killed) proc.kill('SIGKILL'); }, 3000);
+        forceKillTree(proc);
       }
     }, timeout * 1000);
 
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
       // Cleanup session directory
       try { rmSync(sessionDir, { recursive: true, force: true }); } catch { /* ignore */ }
 
@@ -540,7 +537,6 @@ export async function executeGdscript(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
       try { rmSync(sessionDir, { recursive: true, force: true }); } catch { /* ignore */ }
 
       resolve({

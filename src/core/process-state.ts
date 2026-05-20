@@ -1,6 +1,45 @@
 import type { ChildProcess } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
+
+const isWin = process.platform === 'win32';
 
 const MAX_OUTPUT_BUFFER_SIZE = 5000;
+
+// ─── Cross-platform process termination ────────────────────────────────────
+
+/** Synchronous kill: terminates the process tree on Windows, sends SIGTERM on Unix. */
+export function forceKillTree(proc: ChildProcess): void {
+  if (proc.killed) return;
+  if (isWin) {
+    try {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { stdio: 'ignore' });
+    } catch {
+      proc.kill();
+    }
+  } else {
+    proc.kill('SIGTERM');
+  }
+}
+
+/** Async kill: waits for 'close' event, with 5 s fallback. */
+export function killProcess(proc: ChildProcess): Promise<void> {
+  return new Promise((resolve) => {
+    if (proc.killed) { resolve(); return; }
+    let resolved = false;
+    const done = () => { if (!resolved) { resolved = true; resolve(); } };
+    const timer = setTimeout(() => {
+      forceKillTree(proc);
+      done();
+    }, 5000);
+
+    proc.on('close', () => {
+      clearTimeout(timer);
+      done();
+    });
+
+    forceKillTree(proc);
+  });
+}
 
 let _runningProcess: ChildProcess | null = null;
 let _outputBuffer: string[] = [];

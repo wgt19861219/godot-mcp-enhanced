@@ -10,6 +10,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { validatePath, resolveWithinRoot, parseMcpScriptOutput, normalizeUserProjectPath, checkVersionMismatch } from '../helpers.js';
 import { analyzeOutput, type AnalysisResult } from '../error-analyzer.js';
+import { forceKillTree } from '../core/process-state.js';
 
 // ─── Known base class methods/properties whitelist ───────────────────────────
 // The Godot headless parser cannot resolve inherited methods from base classes
@@ -198,7 +199,7 @@ export async function batchValidateScripts(
     proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
 
     const timer = setTimeout(() => {
-      if (!proc.killed) proc.kill('SIGTERM');
+      if (!proc.killed) forceKillTree(proc);
     }, globalTimeoutMs);
 
     proc.on('error', (err) => {
@@ -520,7 +521,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                 proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
                 proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
                 proc.on('close', () => resolve(out));
-                setTimeout(() => { if (!proc.killed) proc.kill('SIGTERM'); resolve(''); }, 30000);
+                setTimeout(() => { if (!proc.killed) forceKillTree(proc); resolve(''); }, 30000);
               });
               if (treeResult) {
                 (analysis as ExtendedAnalysisResult).scene_tree = parseMcpScriptOutput(treeResult, 0);
