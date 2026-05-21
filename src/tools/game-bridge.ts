@@ -42,8 +42,8 @@ function readBridgeSecret(): string | null {
       console.error(`[SECURITY] Bridge secret file ${secretPath} is world-readable. Attempted chmod 0600.`);
     }
     _cachedSecret = readFileSync(secretPath, 'utf-8').trim();
-    // Delete secret file immediately after first read to minimize exposure window
-    try { unlinkSync(secretPath); } catch { /* best effort */ }
+    // Keep secret file on disk — bridge owns lifecycle and deletes on _stop_server()
+    // Previously deleted here which broke multi-instance scenarios
     return _cachedSecret;
   } catch {
     return null;
@@ -305,7 +305,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const response = await sendToBridge(method, params, timeout);
         if (response.error) {
           // Clear cached secret on auth failure so next call re-reads from disk
-          if (response.error.code === 403 || String(response.error.message).toLowerCase().includes('auth')) {
+          // Bridge error codes: -32001 (auth required), -32002 (locked out)
+          if (response.error.code === -32001 || response.error.code === -32002) {
             _cachedSecret = null;
           }
           return textResult(`Bridge error (${response.error.code}): ${response.error.message}`);

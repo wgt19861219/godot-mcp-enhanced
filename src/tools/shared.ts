@@ -245,8 +245,8 @@ export async function quickVerify(
     return { passed: false, checks: [], error: `No quickVerify handler for tool: ${toolName}` };
   }
 
-  // Not yet implemented — returns explicit signal so callers know verification was not performed
-  return { passed: true, checks: [{ name: 'not_implemented', passed: true, detail: 'L1 quickVerify not yet implemented for this tool' }] };
+  // Not yet implemented — returns explicit failure so callers know verification was not performed
+  return { passed: false, checks: [{ name: 'not_implemented', passed: false, detail: 'L1 quickVerify not yet implemented for this tool' }] };
 }
 
 /** Shared assertion wrapper — called by both dev_loop.acceptance and delivery.ts assertions */

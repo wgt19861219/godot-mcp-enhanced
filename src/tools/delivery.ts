@@ -138,11 +138,13 @@ export function checkSceneIntegrity(projectPath: string, scenePath: string): { p
   return { passed: !hasErrors(issues), issues };
 }
 
-export function findAssociatedScenes(projectPath: string, scriptPath: string): string[] {
-  const scenes: string[] = [];
-  const scriptResPath = `res://${scriptPath}`;
+// Cache: scene path → file content (avoids O(n*m) re-reading)
+let _sceneContentCache: Map<string, string> | null = null;
 
-  function scanDir(dir: string, relPrefix: string): void {
+function getSceneContentCache(projectPath: string): Map<string, string> {
+  if (_sceneContentCache !== null) return _sceneContentCache;
+  _sceneContentCache = new Map();
+  (function scanDir(dir: string, relPrefix: string): void {
     try {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.isDirectory()) {
@@ -151,15 +153,29 @@ export function findAssociatedScenes(projectPath: string, scriptPath: string): s
           }
         } else if (entry.name.endsWith('.tscn')) {
           const content = safeReadFile(join(dir, entry.name));
-          if (content && content.includes(`"${scriptResPath}"`)) {
-            scenes.push(`${relPrefix}${entry.name}`);
+          if (content) {
+            _sceneContentCache!.set(`${relPrefix}${entry.name}`, content);
           }
         }
       }
     } catch { /* ignore unreadable dirs */ }
-  }
+  })(projectPath, '');
+  return _sceneContentCache;
+}
 
-  scanDir(projectPath, '');
+export function resetSceneCache(): void {
+  _sceneContentCache = null;
+}
+
+export function findAssociatedScenes(projectPath: string, scriptPath: string): string[] {
+  const scenes: string[] = [];
+  const scriptResPath = `res://${scriptPath}`;
+  const cache = getSceneContentCache(projectPath);
+  for (const [sceneRelPath, content] of cache) {
+    if (content.includes(`"${scriptResPath}"`)) {
+      scenes.push(sceneRelPath);
+    }
+  }
   return scenes;
 }
 
@@ -176,6 +192,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
   }
 
   const projectPath = validatePath(args.project_path);
+  if (!existsSync(join(projectPath, 'project.godot'))) {
+    return textResult(JSON.stringify({ passed: false, error: `Not a valid Godot project (missing project.godot): ${projectPath}` }));
+  }
+  // Invalidate scene cache for fresh verification
+  resetSceneCache();
   const scope = args.scope;
   const checks = (args.checks as Record<string, unknown>) ?? {};
 
@@ -392,48 +413,30 @@ func _initialize():
       dimensionResults.push({ dim: 'assertions', passed: false });
     } else {
       const godot = await ctx.findGodot();
-      // Build combined assertion code with indexed outputs for reliable matching
       const assertionResults: Array<Record<string, unknown>> = [];
-      const combinedCode = assertions.map((a, i) =>
-        `# --- assertion ${i}: ${a.description ?? 'unnamed'} ---\n${a.gdscript}`,
-      ).join('\n');
 
-      try {
-        const wrappedCode = wrapAssertionCode(combinedCode, 'verify_delivery assertions');
-        const assertResult = await executeGdscript({
-          godotPath: godot, projectPath, code: wrappedCode, timeout: ASSERTION_TIMEOUT_S, loadAutoloads: false,
-        });
+      // Execute each assertion independently for isolation
+      for (let i = 0; i < assertions.length; i++) {
+        const a = assertions[i];
+        const desc = a.description ?? 'unnamed assertion';
+        try {
+          const wrappedCode = wrapAssertionCode(a.gdscript, desc);
+          const assertResult = await executeGdscript({
+            godotPath: godot, projectPath, code: wrappedCode, timeout: ASSERTION_TIMEOUT_S, loadAutoloads: false,
+          });
 
-        if (!assertResult.compile_success) {
-          for (const a of assertions) {
-            assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: assertResult.compile_error });
-          }
-        } else if (!assertResult.run_success) {
-          for (const a of assertions) {
-            assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: assertResult.run_error });
-          }
-        } else {
-          // Collect outputs keyed by assert_N and assert_result
-          const assertOutputs: Record<string, string> = {};
-          for (const entry of assertResult.outputs) {
-            if (entry.key.startsWith('assert_')) {
-              assertOutputs[entry.key] = entry.value;
-            }
-          }
-
-          for (let i = 0; i < assertions.length; i++) {
-            const a = assertions[i];
-            const desc = a.description ?? 'unnamed assertion';
+          if (!assertResult.compile_success) {
+            assertionResults.push({ description: desc, passed: false, error: assertResult.compile_error });
+          } else if (!assertResult.run_success) {
+            assertionResults.push({ description: desc, passed: false, error: assertResult.run_error });
+          } else {
+            const actual = String(assertResult.outputs.find(e => e.key.startsWith('assert_') || e.key === 'assert_result')?.value ?? '');
             const expected = a.expect;
-            // Match assert_N first, fall back to assert_result for single-assertion compat
-            const actual = String(assertOutputs[`assert_${i}`] ?? assertOutputs['assert_result'] ?? '');
             const passed = expected ? actual === expected : true;
             assertionResults.push({ description: desc, passed, actual, expected });
           }
-        }
-      } catch (err) {
-        for (const a of assertions) {
-          assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: err instanceof Error ? err.message : String(err) });
+        } catch (err) {
+          assertionResults.push({ description: desc, passed: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
 

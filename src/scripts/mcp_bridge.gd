@@ -174,6 +174,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
 				var locked_until: float = _auth_locked_until[peer_ip]
 				if Time.get_ticks_msec() / 1000.0 < locked_until:
 					peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "\n")
+					peer.disconnect_from_host()
 					continue
 				else:
 					_auth_locked_until.erase(peer_ip)

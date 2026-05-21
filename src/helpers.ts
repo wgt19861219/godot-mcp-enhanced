@@ -85,6 +85,28 @@ export async function checkVersionMismatch(projectPath: string, godotBin: string
 
 // ─── Shared: parseConfigValue ────────────────────────────────────────────────
 
+/** Split a comma-separated string while respecting quoted segments. */
+function splitRespectingQuotes(s: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      current += ch;
+    } else if (ch === ',' && !inQuotes) {
+      parts.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  const last = current.trim();
+  if (last) parts.push(last);
+  return parts;
+}
+
 export function parseConfigValue(raw: string, depth = 0): unknown {
   if (depth > 8) return raw;
   if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
@@ -96,7 +118,7 @@ export function parseConfigValue(raw: string, depth = 0): unknown {
   if (raw.startsWith('[') && raw.endsWith(']')) {
     const inner = raw.slice(1, -1).trim();
     if (!inner) return [];
-    return inner.split(',').map(s => parseConfigValue(s.trim(), depth + 1)).filter(s => s !== '');
+    return splitRespectingQuotes(inner).map(s => parseConfigValue(s, depth + 1)).filter(s => s !== '');
   }
   return raw;
 }
