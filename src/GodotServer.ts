@@ -10,7 +10,7 @@ import {
 import { existsSync } from 'fs';
 import { join } from 'path';
 import type { ChildProcess } from 'child_process';
-import type { ToolResult } from './types.js';
+import type { ToolResult, ToolContext } from './types.js';
 import {
   listResources as listMcpResources,
   listResourceTemplates as listMcpResourceTemplates,
@@ -64,17 +64,42 @@ interface ToolMetaExport {
   TOOL_META?: Record<string, { readonly: boolean; long_running: boolean }>;
 }
 
-// 注册工具标签
+// 注册工具标签 + 构建工具名→模块映射
 const allMeta: Array<{ name: string; readonly: boolean; long_running: boolean }> = [];
+const toolModuleMap = new Map<string, typeof toolModules[number]>();
 for (const mod of toolModules) {
   const meta = (mod as ToolMetaExport).TOOL_META;
   if (meta) {
     for (const [name, m] of Object.entries(meta)) {
       allMeta.push({ name, ...m });
+      toolModuleMap.set(name, mod);
     }
   }
 }
 registerTools(allMeta);
+
+async function dispatchTool(
+  toolName: string, args: Record<string, unknown>, ctx: ToolContext, startTime: number
+): Promise<ToolResult> {
+  const targetMod = toolModuleMap.get(toolName);
+  if (targetMod) {
+    const result = await targetMod.handleTool(toolName, args, ctx);
+    if (result !== null) {
+      const duration = Date.now() - startTime;
+      result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
+      return result;
+    }
+  }
+  for (const mod of toolModules) {
+    const result = await mod.handleTool(toolName, args, ctx);
+    if (result !== null) {
+      const duration = Date.now() - startTime;
+      result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
+      return result;
+    }
+  }
+  return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };
+}
 
 const DEBUG = process.env.DEBUG === 'true';
 
@@ -191,7 +216,7 @@ export class GodotServer {
           const editorResult = await this.editorExecutor.execute(name, args);
           const duration = Date.now() - startTime;
           (editorResult.content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: `_duration_ms: ${duration}` });
-          return editorResult as ToolResult & { [k: string]: unknown };
+          return editorResult;
         }
 
         // P1.1: Confirmation Token guard
@@ -213,15 +238,7 @@ export class GodotServer {
             };
           }
           // Re-dispatch with original tool name and args
-          for (const mod of toolModules) {
-            const result = await mod.handleTool(pending.toolName, pending.args, ctx);
-            if (result !== null) {
-              const duration = Date.now() - startTime;
-              result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
-              return result;
-            }
-          }
-          return { content: [{ type: 'text', text: `Unknown tool: ${pending.toolName}` }] };
+          return dispatchTool(pending.toolName, pending.args, ctx, startTime);
         }
 
         if (requiresConfirmation(name)) {
@@ -241,16 +258,7 @@ export class GodotServer {
         }
 
         // Dispatch to the appropriate module handler
-        for (const mod of toolModules) {
-          const result = await mod.handleTool(name, args, ctx);
-          if (result !== null) {
-            // P0.3: Append duration as separate content entry
-            const duration = Date.now() - startTime;
-            result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
-            return result;
-          }
-        }
-        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }] };
+        return dispatchTool(name, args, ctx, startTime);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log('Tool error:', name, msg);

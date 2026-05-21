@@ -93,6 +93,13 @@ function runScreenshot(
       settled = true;
       resolve({ code, output: out });
     });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      resolve({ code: -1, output: `Spawn error: ${err.message}` });
+    });
   });
 }
 

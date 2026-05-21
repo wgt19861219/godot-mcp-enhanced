@@ -1,10 +1,6 @@
 // src/core/EditorToolExecutor.ts
 import type { EditorConnection } from './EditorConnection.js';
-
-export interface ToolResult {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-}
+import type { ToolResult } from '../types.js';
 
 export class EditorToolExecutor {
   private syncActive = false;

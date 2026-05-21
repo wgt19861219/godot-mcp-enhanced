@@ -20,14 +20,20 @@ export function normalizeNodePath(input: string): string {
   return trimmed.startsWith('/') ? trimmed : '/' + trimmed;
 }
 
+// Escapes a string for embedding in a GDScript string literal.
+// % → %% prevents GDScript string formatting from interpreting % as a placeholder.
+// Note: do NOT apply gdEscape to already-escaped output (e.g. gdEscape(gdEscape(x)))
+// as %% would become %%%% (harmless but unnecessary double-escaping).
 export function gdEscape(s: string): string {
   return s
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .replace(/\\/g, '\\\\')
     .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t')
     .replace(/"/g, '\\"')
     .replace(/\0/g, '')
+    .replace(/%/g, '%%')
     .replace(/\$/g, '\\$')
     .replace(/'/g, "\\'");
 }

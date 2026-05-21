@@ -1,5 +1,9 @@
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 const WINDOWS_SEARCH_DIRS = [
   'C:\\Program Files\\Godot',
@@ -50,10 +54,10 @@ export async function findGodot(): Promise<string> {
     tried.push(`GODOT_PATH=${process.env.GODOT_PATH}`);
   }
 
-  // 2. Try `godot` on PATH via a quick spawn
+  // 2. Try `godot` on PATH via a quick async spawn
   try {
-    const { execSync } = await import('child_process');
-    const out = execSync('godot --version', { encoding: 'utf-8', timeout: 5000 }).trim();
+    const { stdout } = await execFileAsync('godot', ['--version'], { encoding: 'utf-8', timeout: 5000 });
+    const out = stdout.trim();
     if (out.includes('Godot')) {
       godotPath = 'godot';
       return godotPath;

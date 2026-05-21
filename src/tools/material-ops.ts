@@ -396,6 +396,7 @@ func _initialize():
 export function genShaderWriteScript(
   nodePath: string, materialIndex: number, code: string
 ): string {
+  const jsonCode = gdEscape(JSON.stringify(code));
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
@@ -418,7 +419,13 @@ func _initialize():
 \t\t_mcp_done()
 \t\treturn
 \tmat.shader = mat.shader.duplicate()
-\tmat.shader.code = "${gdEscape(code)}"
+\tvar _code_json: String = "${jsonCode}"
+\tvar _parsed: Variant = JSON.parse_string(_code_json)
+\tif _parsed == null:
+\t\t_mcp_output("error", "Failed to parse shader code JSON")
+\t\t_mcp_done()
+\t\treturn
+\tmat.shader.code = _parsed
 \tawait process_frame
 \tvar compile_ok = mat.shader != null and mat.shader.get_rid().is_valid()
 \tvar errors = []
@@ -465,6 +472,7 @@ func _initialize():
 }
 
 export function genShaderSaveFileScript(filePath: string, code: string): string {
+  const jsonCode = gdEscape(JSON.stringify(code));
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
@@ -491,6 +499,7 @@ export function genShaderApplyTemplateScript(
     throw new Error(`Invalid template: ${templateName}`);
   }
   const code = template.code;
+  const jsonCode = gdEscape(JSON.stringify(code));
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
@@ -513,7 +522,13 @@ func _initialize():
 \t\t_mcp_done()
 \t\treturn
 \tmat.shader = mat.shader.duplicate()
-\tmat.shader.code = "${gdEscape(code)}"
+\tvar _code_json: String = "${jsonCode}"
+\tvar _parsed: Variant = JSON.parse_string(_code_json)
+\tif _parsed == null:
+\t\t_mcp_output("error", "Failed to parse shader code JSON")
+\t\t_mcp_done()
+\t\treturn
+\tmat.shader.code = _parsed
 \tawait process_frame
 \tvar compile_ok = mat.shader != null and mat.shader.get_rid().is_valid()
 \tvar errors = []

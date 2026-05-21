@@ -18,7 +18,13 @@ export const validatePath = resolvePath;
 
 export function resolveWithinRoot(root: string, userPath: string): string {
   const base = resolvePath(root);
-  const normalizedPath = userPath.replace(/\\/g, '/');
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(userPath);
+  } catch {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
+  const normalizedPath = decoded.replace(/\\/g, '/');
   const resolved = resolve(base, normalizedPath);
   const rel = relative(base, resolved);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
@@ -72,7 +78,8 @@ export async function checkVersionMismatch(projectPath: string, godotBin: string
 
 // ─── Shared: parseConfigValue ────────────────────────────────────────────────
 
-export function parseConfigValue(raw: string): unknown {
+export function parseConfigValue(raw: string, depth = 0): unknown {
+  if (depth > 8) return raw;
   if (raw.startsWith('"') && raw.endsWith('"')) return raw.slice(1, -1);
   if (raw === 'true') return true;
   if (raw === 'false') return false;
@@ -80,7 +87,9 @@ export function parseConfigValue(raw: string): unknown {
   const num = Number(raw);
   if (!isNaN(num) && raw !== '') return num;
   if (raw.startsWith('[') && raw.endsWith(']')) {
-    return raw.slice(1, -1).split(',').map(s => parseConfigValue(s.trim())).filter(s => s !== '');
+    const inner = raw.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(',').map(s => parseConfigValue(s.trim(), depth + 1)).filter(s => s !== '');
   }
   return raw;
 }

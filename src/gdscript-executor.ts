@@ -55,15 +55,23 @@ const MARKER_ERROR = '___MCP_ERROR___';
 // ─── Temp file helpers ──────────────────────────────────────────────────────
 
 const BASE_TMP_DIR = join(tmpdir(), 'godot-mcp-exec');
-mkdirSync(BASE_TMP_DIR, { recursive: true });
+let baseDirReady = false;
+
+function ensureBaseDir(): void {
+  if (baseDirReady) return;
+  mkdirSync(BASE_TMP_DIR, { recursive: true });
+  baseDirReady = true;
+}
 
 /** Create an isolated session directory for one execution */
 function createSessionDir(): string {
+  ensureBaseDir();
   return mkdtempSync(join(BASE_TMP_DIR, `${TMP_PREFIX}`));
 }
 
 /** Background cleanup: remove session dirs older than 1 hour */
 function cleanupOldSessions(): void {
+  if (!baseDirReady) return;
   const maxAge = 60 * 60 * 1000;
   const now = Date.now();
   try {

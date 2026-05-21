@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath, resolveWithinRoot } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
+import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -329,17 +329,6 @@ export function getToolDefinitions(): Tool[] {
   ];
 }
 
-// ─── GDScript JSON Escape ───────────────────────────────────────────────────
-
-function gdJsonEscape(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '')
-    .replace(/\t/g, '\\t');
-}
-
 // ─── Tool Handler ───────────────────────────────────────────────────────────
 
 export async function handleTool(
@@ -382,7 +371,7 @@ export async function handleTool(
         // Path safety: validate the generated file name resolves within project
         const fileName = generateRecordingFileName();
         resolveWithinRoot(projectPath, `recordings/${fileName}`);
-        const escapedJson = gdJsonEscape(eventsJson);
+        const escapedJson = gdEscape(eventsJson);
         script = genRecordingSaveScript(fileName, escapedJson);
         break;
       }
@@ -416,7 +405,7 @@ export async function handleTool(
           return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, 'recording_play requires Game Bridge (load_autoloads=true). Input injection is not available in headless mode.');
         }
         const speed = typeof args.speed === 'number' && args.speed > 0 ? args.speed : 1.0;
-        const escapedJson = gdJsonEscape(eventsJson);
+        const escapedJson = gdEscape(eventsJson);
         script = genRecordingPlayScript(escapedJson, speed);
         break;
       }

@@ -21,9 +21,10 @@ export const TOOL_NAMES = [
 // ─── GDScript Generators: Node3D ───────────────────────────────────────────
 
 export function genCollisionOverlayScript(parentPath: string, colorOverride?: string): string {
-  const colorInit = colorOverride
-    ? `var base_color = Color(${colorOverride})`
-    : `var base_color = null`;
+  let colorInit = 'var base_color = null';
+  if (colorOverride) {
+    colorInit = `var base_color = Color(${colorOverride})`;
+  }
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
@@ -210,11 +211,16 @@ export async function handleTool(
     switch (name) {
       case 'collision_overlay': {
         const parentPath = normalizeNodePath((args.parent_path as string) || 'root');
-        const colorOverride = args.color_override as string | undefined;
-        if (colorOverride && !/^\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+(?:\s*,\s*[\d.]+\s*)?$/.test(colorOverride)) {
-          return opsErrorResult('INVALID_TYPE', 'color_override must be comma-separated numbers (e.g. "1,0,0,0.5")');
+        const rawColor = args.color_override as string | undefined;
+        let safeColor: string | undefined;
+        if (rawColor) {
+          const parts = rawColor.split(',').map(p => p.trim());
+          if (parts.length < 3 || parts.length > 4 || !parts.every(p => /^[\d.]+$/.test(p) && isFinite(Number(p)))) {
+            return opsErrorResult('INVALID_TYPE', 'color_override must be 3-4 comma-separated finite numbers (e.g. "1,0,0,0.5")');
+          }
+          safeColor = parts.map(p => String(Number(p))).join(', ');
         }
-        script = genCollisionOverlayScript(parentPath, colorOverride);
+        script = genCollisionOverlayScript(parentPath, safeColor);
         break;
       }
       case 'node_create_3d': {

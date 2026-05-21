@@ -306,11 +306,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       } else if (name === 'save_scene') {
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         if (args.new_path) {
-          const np = String(args.new_path);
-          if (np.includes('/../') || np.includes('/..') || np.includes('\\')) {
+          try {
+            const np = normalizeUserProjectPath(String(args.new_path));
+            resolveWithinRoot(p, np);
+            params.new_path = np;
+          } catch {
             return opsErrorResult('INVALID_PATH', 'new_path contains path traversal');
           }
-          params.new_path = np;
         }
       } else if (name === 'load_sprite') {
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);

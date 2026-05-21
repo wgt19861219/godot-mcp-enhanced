@@ -101,7 +101,7 @@ export function getToolDefinitions(): Tool[] {
           script_path: { type: 'string', description: 'Absolute path to the .gd file' },
           content: { type: 'string', description: 'GDScript content to write' },
         },
-        required: ['script_path', 'content'],
+        required: ['project_path', 'script_path', 'content'],
       },
     },
     {
@@ -150,7 +150,7 @@ export function getToolDefinitions(): Tool[] {
             required: ['search', 'replace'],
           },
         },
-        required: ['script_path', 'start_line', 'end_line', 'new_content'],
+        required: ['project_path', 'script_path', 'start_line', 'end_line', 'new_content'],
       },
     },
     {

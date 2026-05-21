@@ -149,6 +149,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         ctx.setRunningProcess(null);
       });
 
+      proc.on('error', (err) => {
+        ctx.setRunningProcess(null);
+        appendOutput([`Spawn error: ${err.message}`]);
+      });
+
       ctx.setRunningProcess(proc);
 
       // Auto-stop after timeout
@@ -258,6 +263,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
         proc.on('close', () => {
           resolve({ content: [{ type: 'text', text: out.trim() }] });
+        });
+        proc.on('error', (err) => {
+          resolve({ content: [{ type: 'text', text: `Error: ${err.message}` }] });
         });
       });
     }
