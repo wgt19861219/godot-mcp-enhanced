@@ -9,7 +9,7 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, rmSync, readdirSync, statSync, mkdtempSync } from 'fs';
+import { writeFileSync, mkdirSync, rmSync, readdirSync, lstatSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
@@ -78,7 +78,8 @@ function cleanupOldSessions(): void {
     for (const entry of readdirSync(BASE_TMP_DIR)) {
       if (!entry.startsWith(TMP_PREFIX)) continue;
       const dirPath = join(BASE_TMP_DIR, entry);
-      const stat = statSync(dirPath);
+      const stat = lstatSync(dirPath);
+      if (stat.isSymbolicLink()) continue;
       if (stat.isDirectory() && now - stat.mtimeMs > maxAge) {
         rmSync(dirPath, { recursive: true, force: true });
       }

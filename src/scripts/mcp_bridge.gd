@@ -88,12 +88,12 @@ func _start_server() -> void:
 	_crypto = Crypto.new()
 	_secret = _generate_secret()
 	_server = TCPServer.new()
-	var err := _server.listen(PORT)
+	var err := _server.listen(PORT, "127.0.0.1")
 	if err != OK:
 		push_warning("[MCP Bridge] Failed to listen on port %d: %d" % [PORT, err])
 		_server = null
 		return
-	print("[MCP Bridge] Listening on port %d " % PORT)
+	print("[MCP Bridge] Listening on 127.0.0.1:%d" % PORT)
 	_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
 	var f := FileAccess.open(_secret_file, FileAccess.WRITE)
 	if f:

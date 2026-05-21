@@ -23,8 +23,10 @@ interface BridgeResponse {
 
 let _nextRequestId = 1;
 let _permWarned = false;
+let _cachedSecret: string | null = null;
 
 function readBridgeSecret(): string | null {
+  if (_cachedSecret !== null) return _cachedSecret;
   const secretPath = join(tmpdir(), `mcp_bridge_${BRIDGE_PORT}.secret`);
   try {
     // Tighten permissions: owner-only read (0o600 on Unix; no-op on Windows)
@@ -39,7 +41,10 @@ function readBridgeSecret(): string | null {
       _permWarned = true;
       console.error(`[SECURITY] Bridge secret file ${secretPath} is world-readable. Attempted chmod 0600.`);
     }
-    return readFileSync(secretPath, 'utf-8').trim();
+    _cachedSecret = readFileSync(secretPath, 'utf-8').trim();
+    // Delete secret file immediately after first read to minimize exposure window
+    try { unlinkSync(secretPath); } catch { /* best effort */ }
+    return _cachedSecret;
   } catch {
     return null;
   }

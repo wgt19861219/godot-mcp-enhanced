@@ -23,3 +23,8 @@ export interface ToolContext {
 export function textResult(s: string): ToolResult {
   return { content: [{ type: 'text', text: s }] };
 }
+
+// Helper to create an error result (signals failure to MCP clients)
+export function errorResult(message: string): ToolResult {
+  return { content: [{ type: 'text', text: message }], isError: true };
+}

@@ -1,5 +1,5 @@
 import type { ExecuteGdscriptResult } from '../gdscript-executor.js';
-import { textResult } from '../types.js';
+import { textResult, errorResult } from '../types.js';
 import type { ToolResult } from '../types.js';
 
 export const MARKER_RESULT = '___MCP_RESULT___';
@@ -179,7 +179,7 @@ export function opsError(errorCode: string, message: string) {
 }
 
 export function opsErrorResult(errorCode: string, message: string): ToolResult {
-  return textResult(JSON.stringify(opsError(errorCode, message)));
+  return errorResult(JSON.stringify(opsError(errorCode, message)));
 }
 
 export function parseGdscriptResult(
