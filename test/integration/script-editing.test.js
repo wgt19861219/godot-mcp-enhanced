@@ -73,6 +73,8 @@ describe('Level B: Script editing', async () => {
   });
 
   // 用例 15: edit_script — 不存在的文件应返回错误
+  // TODO: script.ts should use errorResult() for file-not-found instead of textResult(),
+  // so isError would be set and tests could assert on it directly.
   itIfGodot('edit non-existent script returns error', async () => {
     const result = await script.handleTool('edit_script', {
       project_path: dirRef.path,

@@ -92,7 +92,20 @@ describe('Level B: Project management', async () => {
     }
   });
 
-  // 用例 20: validate_scripts with Godot — 需要 Godot headless
+  // 用例 20: validate_scripts with non-existent path doesn't crash
+  itIfGodot('validate scripts with non-existent path', async () => {
+    const result = await validation.handleTool('validate_scripts', {
+      project_path: dirRef.path,
+      scripts: ['scripts/DOES_NOT_EXIST.gd'],
+    }, ctx);
+    assert.ok(!result.isError);
+    const parsed = JSON.parse(result.content[0].text);
+    // Godot silently skips missing files — verify tool doesn't crash
+    assert.ok(typeof parsed.validated === 'number',
+      'Should return valid structured result');
+  });
+
+  // 用例 21: validate_scripts with Godot — 需要 Godot headless
   itIfGodot('validate scripts on valid project', async () => {
     const result = await validation.handleTool('validate_scripts', {
       project_path: dirRef.path,

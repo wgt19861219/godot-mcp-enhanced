@@ -151,6 +151,8 @@ describe('Level B: Scene operations', async () => {
   });
 
   // --- 用例 11: read non-existent scene returns error ---
+  // TODO: read_scene should use errorResult() for file-not-found instead of textResult(),
+  // so isError would be set and tests could assert on it directly.
   itIfGodot('read non-existent scene returns error', async () => {
     const result = await scene.handleTool('read_scene', {
       project_path: dirRef.path,
