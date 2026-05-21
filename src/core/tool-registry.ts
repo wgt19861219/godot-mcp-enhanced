@@ -46,3 +46,14 @@ export const LITE_TOOLS = new Set([
   'execute_gdscript', 'get_godot_version',
   'run_and_verify', 'confirm_and_execute',
 ]);
+
+// ─── L1 Quick Verify eligible tools ─────────────────────────────────────────
+
+export const VERIFY_ELIGIBLE_TOOLS = new Set([
+  'add_node', 'edit_node', 'write_script', 'edit_script',
+  'load_sprite', 'ui_build_layout',
+]);
+
+export function isVerifyEligible(name: string): boolean {
+  return VERIFY_ELIGIBLE_TOOLS.has(name);
+}
