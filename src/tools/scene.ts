@@ -668,7 +668,7 @@ func _initialize():
 \tvar node_name = node.name
 \tif parent:
 \t\tvar child_owner = node.owner
-\t\tremove_child(node)
+\t\tparent.remove_child(node)
 \t\tnode.queue_free()
 \t\t_mcp_output("removed", {"node": "${gdEscape(nodePath)}", "name": str(node_name)})
 \telse:

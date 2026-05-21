@@ -538,7 +538,7 @@ func _is_safe_value(val) -> bool:
 
 
 func _sanitize_res_path(path: String) -> String:
-	if path.find(" ") != -1:
+	if path.find(char(0)) != -1:
 		return "res://"
 	var full = path if path.begins_with("res://") else "res://" + path
 	var parts = full.substr(6).split("/")
