@@ -304,6 +304,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timeout = (args.timeout as number) || DEFAULT_TIMEOUT;
         const response = await sendToBridge(method, params, timeout);
         if (response.error) {
+          // Clear cached secret on auth failure so next call re-reads from disk
+          if (response.error.code === 403 || String(response.error.message).toLowerCase().includes('auth')) {
+            _cachedSecret = null;
+          }
           return textResult(`Bridge error (${response.error.code}): ${response.error.message}`);
         }
         return textResult(JSON.stringify(response.result, null, 2));
