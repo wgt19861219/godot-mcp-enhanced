@@ -7,7 +7,7 @@ import { textResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { forceKillTree } from '../core/process-state.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, parseGdscriptResult } from './shared.js';
+import { SCENE_TREE_HEADER, parseGdscriptResult, wrapAssertionCode } from './shared.js';
 import { gdEscape } from './shared.js';
 import { batchValidateScripts, type BatchValidateResult } from './validation.js';
 
@@ -26,6 +26,25 @@ export function getToolDefinitions(): Tool[] {
           verify: { type: 'boolean', description: 'Also run project validation after execution (default: false)', default: false },
           timeout: { type: 'number', description: 'Timeout per step in seconds (default: 30)', default: 30 },
           load_autoloads: { type: 'boolean', description: 'Load Autoload context (default: true)', default: true },
+          acceptance: {
+            type: 'object',
+            description: 'Optional acceptance criteria to verify after execution',
+            properties: {
+              assertions: {
+                type: 'array',
+                description: 'Array of assertions to run after code execution',
+                items: {
+                  type: 'object',
+                  properties: {
+                    description: { type: 'string', description: 'Human-readable assertion description' },
+                    gdscript: { type: 'string', description: 'GDScript code using _mcp_output("assert_N", value) to output results' },
+                    expect: { type: 'string', description: 'Expected output value (string comparison)' },
+                  },
+                  required: ['description', 'gdscript'],
+                },
+              },
+            },
+          },
         },
         required: ['project_path', 'code'],
       },
@@ -117,6 +136,44 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       if (verify) {
         result.step2_verify = await runVerification(godot, projectPath);
+      }
+
+      // ── Acceptance assertions ──
+      const acceptance = args.acceptance as Record<string, unknown> | undefined;
+      if (acceptance) {
+        const assertionList = (acceptance.assertions as Array<Record<string, string>>) ?? [];
+        if (assertionList.length > 0) {
+          const assertionResults: Array<Record<string, unknown>> = [];
+          const allAssertCode = assertionList.map((a, i) => {
+            return `# --- assertion ${i}: ${a.description} ---\n${a.gdscript}`;
+          }).join('\n');
+
+          const wrappedCode = wrapAssertionCode(allAssertCode, 'acceptance');
+          const assertResult = await executeGdscript({
+            godotPath: godot, projectPath, code: wrappedCode, timeout, loadAutoloads,
+          });
+
+          if (!assertResult.compile_success) {
+            result.acceptance = { passed: false, error: assertResult.compile_error };
+          } else if (!assertResult.run_success) {
+            result.acceptance = { passed: false, error: assertResult.run_error };
+          } else {
+            const assertOutputs: Record<string, unknown> = {};
+            for (const entry of assertResult.outputs) {
+              try { assertOutputs[entry.key] = JSON.parse(entry.value); } catch { assertOutputs[entry.key] = entry.value; }
+            }
+            for (let i = 0; i < assertionList.length; i++) {
+              const a = assertionList[i];
+              const actual = String(assertOutputs[`assert_${i}`] ?? assertOutputs['assert_result'] ?? '');
+              const passed = a.expect ? actual === a.expect : true;
+              assertionResults.push({ description: a.description, passed, actual, expected: a.expect });
+            }
+            result.acceptance = {
+              passed: assertionResults.every(r => r.passed),
+              results: assertionResults,
+            };
+          }
+        }
       }
 
       return textResult(JSON.stringify(result, null, 2));

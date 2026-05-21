@@ -1,6 +1,7 @@
 import type { ExecuteGdscriptResult } from '../gdscript-executor.js';
 import { textResult, errorResult } from '../types.js';
 import type { ToolResult } from '../types.js';
+import { isVerifyEligible } from '../core/tool-registry.js';
 
 export const MARKER_RESULT = '___MCP_RESULT___';
 
@@ -226,12 +227,6 @@ export interface QuickVerifyResult {
 }
 
 /** L1 verify entry point. Returns null when verify !== true (skip verification). */
-const QUICK_VERIFY_TOOLS = new Set([
-  'add_node', 'edit_node', 'write_script', 'edit_script',
-  'load_sprite', 'ui_build_layout',
-]);
-
-/** L1 verify entry point. Returns null when verify !== true (skip verification). */
 // async: reserved for future GDScript execution — callers should always await
 export async function quickVerify(
   toolName: string,
@@ -239,12 +234,12 @@ export async function quickVerify(
 ): Promise<QuickVerifyResult | null> {
   if (args.verify !== true) return null;
 
-    if (!QUICK_VERIFY_TOOLS.has(toolName)) {
+  if (!isVerifyEligible(toolName)) {
     return { passed: false, checks: [], error: `No quickVerify handler for tool: ${toolName}` };
   }
 
-  // Placeholder — actual GDScript verification per-tool in subsequent tasks
-  return { passed: true, checks: [{ name: 'placeholder', passed: true, detail: 'no actual verification performed yet' }] };
+  // Not yet implemented — returns explicit signal so callers know verification was not performed
+  return { passed: true, checks: [{ name: 'not_implemented', passed: true, detail: 'L1 quickVerify not yet implemented for this tool' }] };
 }
 
 /** Shared assertion wrapper — called by both dev_loop.acceptance and delivery.ts assertions */

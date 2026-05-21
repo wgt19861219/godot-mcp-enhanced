@@ -2,15 +2,15 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { validatePath } from '../helpers.js';
+import { validatePath, resolveWithinRoot } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
+import { batchValidateScripts } from './validation.js';
 import { SCENE_TREE_HEADER, gdEscape, wrapAssertionCode } from './shared.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const BYTES_PER_MB = 1048576;
 const MAX_ASSERTIONS = 10;
 const PERF_TIMEOUT_S = 20;
 const ASSERTION_TIMEOUT_S = 15;
@@ -179,11 +179,28 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
   const scope = args.scope;
   const checks = (args.checks as Record<string, unknown>) ?? {};
 
+  // Validate sub-paths stay within project root
+  let resolvedScenePath: string | undefined;
+  let resolvedScriptPath: string | undefined;
+  if (typeof args.scene_path === 'string' && args.scene_path) {
+    try {
+      resolvedScenePath = resolveWithinRoot(projectPath, args.scene_path);
+    } catch {
+      return textResult(JSON.stringify({ passed: false, error: `scene_path traversal detected: ${args.scene_path}` }));
+    }
+  }
+  if (typeof args.script_path === 'string' && args.script_path) {
+    try {
+      resolvedScriptPath = resolveWithinRoot(projectPath, args.script_path);
+    } catch {
+      return textResult(JSON.stringify({ passed: false, error: `script_path traversal detected: ${args.script_path}` }));
+    }
+  }
+
   const sceneTree = checks.scene_tree !== false;
   const scriptHealth = checks.script_health !== false;
   const perfCheck = checks.performance !== false;
   const assertions = (checks.assertions as Array<Record<string, string>>) ?? [];
-
   const report: Record<string, unknown> = {};
   const dimensionResults: Array<{ dim: string; passed: boolean }> = [];
 
@@ -192,18 +209,16 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     let scenePaths: string[] = [];
 
     if (scope === 'scene') {
-      const sp = args.scene_path as string;
-      if (!sp) {
+      if (!resolvedScenePath) {
         report.scene_tree = { passed: false, issues: [{ severity: 'error', location: '', message: 'scene_path required for scope=scene' }] };
       } else {
-        scenePaths = [sp];
+        scenePaths = [resolvedScenePath];
       }
     } else if (scope === 'script') {
-      const sp = args.script_path as string;
-      if (!sp) {
+      if (!resolvedScriptPath) {
         report.scene_tree = { passed: false, issues: [{ severity: 'error', location: '', message: 'script_path required for scope=script' }] };
       } else {
-        scenePaths = findAssociatedScenes(projectPath, sp);
+        scenePaths = findAssociatedScenes(projectPath, resolvedScriptPath);
       }
     } else {
       // scope=full: collect all .tscn
@@ -243,14 +258,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     let scriptPaths: string[] = [];
 
     if (scope === 'script') {
-      const sp = args.script_path as string;
-      if (sp) scriptPaths = [sp];
-    } else if (scope === 'scene') {
-      const scenePath = args.scene_path as string;
-      if (scenePath) {
-        const fullPath = join(projectPath, scenePath);
-        if (existsSync(fullPath)) {
-          const content = safeReadFile(fullPath);
+      if (resolvedScriptPath) scriptPaths = [resolvedScriptPath];
+      if (resolvedScenePath) {
+        if (existsSync(resolvedScenePath)) {
+          const content = safeReadFile(resolvedScenePath);
           if (content) {
             const scriptRegex = /path="(res:\/\/[^"]+\.gd)"/g;
             let m: RegExpExecArray | null;
@@ -300,6 +311,27 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             message: `Resource not found: res://${m[1]} (referenced by preload/load)`,
           });
         }
+      }
+    }
+
+    // GDScript syntax validation via Godot headless parser
+    const existingScripts = scriptPaths.filter(sp => existsSync(join(projectPath, sp)));
+    if (existingScripts.length > 0 && existingScripts.length <= 200) {
+      try {
+        const godot = await ctx.findGodot();
+        const fullPaths = existingScripts.map(sp => join(projectPath, sp));
+        const validateResults = await batchValidateScripts(godot, projectPath, fullPaths, 30000);
+        for (const r of validateResults) {
+          for (const err of r.errors) {
+            issues.push({
+              severity: 'error',
+              location: r.file,
+              message: `Syntax error: ${err}`,
+            });
+          }
+        }
+      } catch {
+        issues.push({ severity: 'warning', location: '(script validation)', message: 'GDScript syntax validation unavailable' });
       }
     }
 
@@ -360,33 +392,51 @@ func _initialize():
       dimensionResults.push({ dim: 'assertions', passed: false });
     } else {
       const godot = await ctx.findGodot();
+      // Build combined assertion code with indexed outputs for reliable matching
       const assertionResults: Array<Record<string, unknown>> = [];
+      const combinedCode = assertions.map((a, i) =>
+        `# --- assertion ${i}: ${a.description ?? 'unnamed'} ---\n${a.gdscript}`,
+      ).join('\n');
 
-      for (const a of assertions) {
-        const desc = a.description ?? 'unnamed assertion';
-        const expected = a.expect;
-        try {
-          const wrappedCode = wrapAssertionCode(a.gdscript, desc);
-          const assertResult = await executeGdscript({
-            godotPath: godot, projectPath, code: wrappedCode, timeout: ASSERTION_TIMEOUT_S, loadAutoloads: false,
-          });
+      try {
+        const wrappedCode = wrapAssertionCode(combinedCode, 'verify_delivery assertions');
+        const assertResult = await executeGdscript({
+          godotPath: godot, projectPath, code: wrappedCode, timeout: ASSERTION_TIMEOUT_S, loadAutoloads: false,
+        });
 
-          if (!assertResult.compile_success) {
-            assertionResults.push({ description: desc, passed: false, error: assertResult.compile_error });
-          } else if (!assertResult.run_success) {
-            assertionResults.push({ description: desc, passed: false, error: assertResult.run_error });
-          } else {
-            let actual = '';
-            for (const entry of assertResult.outputs) {
-              if (entry.key === 'assert_result') actual = entry.value;
+        if (!assertResult.compile_success) {
+          for (const a of assertions) {
+            assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: assertResult.compile_error });
+          }
+        } else if (!assertResult.run_success) {
+          for (const a of assertions) {
+            assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: assertResult.run_error });
+          }
+        } else {
+          // Collect outputs keyed by assert_N and assert_result
+          const assertOutputs: Record<string, string> = {};
+          for (const entry of assertResult.outputs) {
+            if (entry.key.startsWith('assert_')) {
+              assertOutputs[entry.key] = entry.value;
             }
+          }
+
+          for (let i = 0; i < assertions.length; i++) {
+            const a = assertions[i];
+            const desc = a.description ?? 'unnamed assertion';
+            const expected = a.expect;
+            // Match assert_N first, fall back to assert_result for single-assertion compat
+            const actual = String(assertOutputs[`assert_${i}`] ?? assertOutputs['assert_result'] ?? '');
             const passed = expected ? actual === expected : true;
             assertionResults.push({ description: desc, passed, actual, expected });
           }
-        } catch (err) {
-          assertionResults.push({ description: desc, passed: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      } catch (err) {
+        for (const a of assertions) {
+          assertionResults.push({ description: a.description ?? 'unnamed assertion', passed: false, error: err instanceof Error ? err.message : String(err) });
         }
       }
+
 
       const allPassed = assertionResults.every(r => r.passed);
       report.assertions = { passed: allPassed, results: assertionResults };
