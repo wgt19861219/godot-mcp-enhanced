@@ -8,6 +8,15 @@ import { SCENE_TREE_HEADER, gdEscape, wrapAssertionCode } from './shared.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const BYTES_PER_MB = 1048576;
+const MAX_ASSERTIONS = 10;
+const PERF_TIMEOUT_S = 20;
+const ASSERTION_TIMEOUT_S = 15;
+const ORPHAN_WARNING_THRESHOLD = 100;
+const SKIP_DIRS = new Set(['.godot', '.import', 'addons']);
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Issue {
@@ -15,6 +24,18 @@ interface Issue {
   location: string;
   message: string;
   suggestion?: string;
+}
+
+function hasErrors(issues: Issue[]): boolean {
+  return issues.some(i => i.severity === 'error');
+}
+
+function safeReadFile(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
 }
 
 // ─── Tool Definition ────────────────────────────────────────────────────────
@@ -76,10 +97,13 @@ export function checkSceneIntegrity(projectPath: string, scenePath: string): { p
     return { passed: false, issues: [{ severity: 'error', location: scenePath, message: `Scene file not found: ${scenePath}` }] };
   }
 
-  const content = readFileSync(fullPath, 'utf-8');
+  const content = safeReadFile(fullPath);
+  if (content === null) {
+    return { passed: false, issues: [{ severity: 'error', location: scenePath, message: `Cannot read scene file: ${scenePath}` }] };
+  }
 
-  // Check ext_resource references
-  const extRegex = /^\[ext_resource[^]*path="res:\/\/([^"]+)"/gm;
+  // Check ext_resource references (match within single [ext_resource ...] entry)
+  const extRegex = /^\[ext_resource[^\]]*path="res:\/\/([^"]+)"/gm;
   let match: RegExpExecArray | null;
   while ((match = extRegex.exec(content)) !== null) {
     const refPath = match[1];
@@ -111,7 +135,7 @@ export function checkSceneIntegrity(projectPath: string, scenePath: string): { p
     }
   }
 
-  return { passed: issues.filter(i => i.severity === 'error').length === 0, issues };
+  return { passed: !hasErrors(issues), issues };
 }
 
 export function findAssociatedScenes(projectPath: string, scriptPath: string): string[] {
@@ -122,12 +146,12 @@ export function findAssociatedScenes(projectPath: string, scriptPath: string): s
     try {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.isDirectory()) {
-          if (entry.name !== '.godot' && entry.name !== '.import') {
+          if (!SKIP_DIRS.has(entry.name)) {
             scanDir(join(dir, entry.name), `${relPrefix}${entry.name}/`);
           }
         } else if (entry.name.endsWith('.tscn')) {
-          const content = readFileSync(join(dir, entry.name), 'utf-8');
-          if (content.includes(`"${scriptResPath}"`)) {
+          const content = safeReadFile(join(dir, entry.name));
+          if (content && content.includes(`"${scriptResPath}"`)) {
             scenes.push(`${relPrefix}${entry.name}`);
           }
         }
@@ -144,8 +168,15 @@ export function findAssociatedScenes(projectPath: string, scriptPath: string): s
 export async function handleTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | null> {
   if (name !== 'verify_delivery') return null;
 
-  const projectPath = validatePath(args.project_path as string);
-  const scope = args.scope as string;
+  if (typeof args.project_path !== 'string') {
+    return textResult(JSON.stringify({ passed: false, error: 'project_path must be a string' }));
+  }
+  if (typeof args.scope !== 'string' || !['scene', 'script', 'full'].includes(args.scope)) {
+    return textResult(JSON.stringify({ passed: false, error: 'scope must be one of: scene, script, full' }));
+  }
+
+  const projectPath = validatePath(args.project_path);
+  const scope = args.scope;
   const checks = (args.checks as Record<string, unknown>) ?? {};
 
   const sceneTree = checks.scene_tree !== false;
@@ -180,7 +211,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const result: string[] = [];
         try {
           for (const e of readdirSync(dir, { withFileTypes: true })) {
-            if (e.isDirectory() && e.name !== '.godot' && e.name !== '.import') {
+            if (e.isDirectory() && !SKIP_DIRS.has(e.name)) {
               result.push(...collectScenes(join(dir, e.name), `${prefix}${e.name}/`));
             } else if (e.name.endsWith('.tscn')) {
               result.push(`${prefix}${e.name}`);
@@ -198,7 +229,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const result = checkSceneIntegrity(projectPath, sp);
         allIssues.push(...result.issues);
       }
-      const passed = allIssues.filter(i => i.severity === 'error').length === 0;
+      const passed = !hasErrors(allIssues);
       report.scene_tree = { passed, issues: allIssues };
       dimensionResults.push({ dim: 'scene_tree', passed });
     } else {
@@ -219,11 +250,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (scenePath) {
         const fullPath = join(projectPath, scenePath);
         if (existsSync(fullPath)) {
-          const content = readFileSync(fullPath, 'utf-8');
-          const scriptRegex = /path="(res:\/\/[^"]+\.gd)"/g;
-          let m: RegExpExecArray | null;
-          while ((m = scriptRegex.exec(content)) !== null) {
-            scriptPaths.push(m[1].replace('res://', ''));
+          const content = safeReadFile(fullPath);
+          if (content) {
+            const scriptRegex = /path="(res:\/\/[^"]+\.gd)"/g;
+            let m: RegExpExecArray | null;
+            while ((m = scriptRegex.exec(content)) !== null) {
+              scriptPaths.push(m[1].replace('res://', ''));
+            }
           }
         }
       }
@@ -232,7 +265,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const result: string[] = [];
         try {
           for (const e of readdirSync(dir, { withFileTypes: true })) {
-            if (e.isDirectory() && e.name !== '.godot' && e.name !== '.import' && e.name !== 'addons') {
+            if (e.isDirectory() && !SKIP_DIRS.has(e.name)) {
               result.push(...collectScripts(join(dir, e.name), `${prefix}${e.name}/`));
             } else if (e.name.endsWith('.gd')) {
               result.push(`${prefix}${e.name}`);
@@ -255,7 +288,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     for (const sp of scriptPaths) {
       const fullPath = join(projectPath, sp);
       if (!existsSync(fullPath)) continue;
-      const content = readFileSync(fullPath, 'utf-8');
+      const content = safeReadFile(fullPath);
+      if (!content) continue;
       const preloadRegex = /(?:preload|load)\("res:\/\/([^"]+)"\)/g;
       let m: RegExpExecArray | null;
       while ((m = preloadRegex.exec(content)) !== null) {
@@ -269,7 +303,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
     }
 
-    const passed = issues.filter(i => i.severity === 'error').length === 0;
+    const passed = !hasErrors(issues);
     report.script_health = { passed, issues };
     dimensionResults.push({ dim: 'script_health', passed });
   }
@@ -289,7 +323,7 @@ func _initialize():
 \t_mcp_done()
 `;
     const perfResult = await executeGdscript({
-      godotPath: godot, projectPath, code: perfScript, timeout: 20, loadAutoloads: false,
+      godotPath: godot, projectPath, code: perfScript, timeout: PERF_TIMEOUT_S, loadAutoloads: false,
     });
 
     const perfIssues: Issue[] = [];
@@ -302,7 +336,7 @@ func _initialize():
         }
       }
       const orphans = (perfData.orphan_node_count as number) ?? 0;
-      if (orphans > 100) {
+      if (orphans > ORPHAN_WARNING_THRESHOLD) {
         perfIssues.push({
           severity: 'warning',
           location: '(project-wide)',
@@ -314,14 +348,14 @@ func _initialize():
       perfIssues.push({ severity: 'warning', location: '(project-wide)', message: 'Performance snapshot unavailable' });
     }
 
-    const perfPassed = perfIssues.filter(i => i.severity === 'error').length === 0;
+    const perfPassed = !hasErrors(perfIssues);
     report.performance = { passed: perfPassed, issues: perfIssues, metrics: perfData };
     dimensionResults.push({ dim: 'performance', passed: perfPassed });
   }
 
   // ── Dimension 4: Custom behavior assertions ──
   if (assertions.length > 0) {
-    if (assertions.length > 10) {
+    if (assertions.length > MAX_ASSERTIONS) {
       report.assertions = { passed: false, results: [], error: 'Too many assertions (max 10)' };
       dimensionResults.push({ dim: 'assertions', passed: false });
     } else {
@@ -334,7 +368,7 @@ func _initialize():
         try {
           const wrappedCode = wrapAssertionCode(a.gdscript, desc);
           const assertResult = await executeGdscript({
-            godotPath: godot, projectPath, code: wrappedCode, timeout: 15, loadAutoloads: false,
+            godotPath: godot, projectPath, code: wrappedCode, timeout: ASSERTION_TIMEOUT_S, loadAutoloads: false,
           });
 
           if (!assertResult.compile_success) {
