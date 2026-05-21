@@ -212,3 +212,77 @@ export function parseGdscriptResult(
 
   return textResult(JSON.stringify(opsSuccess(data, [...paramWarnings, ...warnings])));
 }
+
+// ─── L1 Quick Verify Infrastructure ────────────────────────────────────────
+
+export interface QuickVerifyResult {
+  passed: boolean;
+  checks: Array<{
+    name: string;
+    passed: boolean;
+    detail?: string;
+  }>;
+  error?: string;
+}
+
+/** L1 verify entry point. Returns null when verify !== true (skip verification). */
+export async function quickVerify(
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<QuickVerifyResult | null> {
+  if (args.verify !== true) return null;
+
+  const supportedTools = new Set([
+    'add_node', 'edit_node', 'write_script', 'edit_script',
+    'load_sprite', 'ui_build_layout',
+  ]);
+
+  if (!supportedTools.has(toolName)) {
+    return { passed: false, checks: [], error: `No quickVerify handler for tool: ${toolName}` };
+  }
+
+  // Actual GDScript verification will be implemented per-tool in subsequent tasks
+  return { passed: true, checks: [{ name: 'placeholder', passed: true }] };
+}
+
+/** Shared assertion wrapper — called by both dev_loop.acceptance and delivery.ts assertions */
+export function wrapAssertionCode(assertionCode: string, description: string): string {
+  const escapedDesc = gdEscape(description);
+  return `${SCENE_TREE_HEADER}
+
+func _initialize():
+\t_mcp_load_main_scene()
+\tvar _desc = "${escapedDesc}"
+\t# --- user assertion code ---
+\t${assertionCode.split('\n').join('\n\t')}
+\t# --- end user code ---
+\t_mcp_done()
+`;
+}
+
+/** L1 template: check whether a node exists */
+export function genCheckNodeExists(nodePath: string): string {
+  const escaped = gdEscape(nodePath);
+  return `var _n = _mcp_get_node("${escaped}")
+if _n != null:
+\t_mcp_output("node_exists", JSON.stringify({"path": "${escaped}", "exists": true, "type": _n.get_class()}))
+else:
+\t_mcp_output("node_exists", JSON.stringify({"path": "${escaped}", "exists": false, "type": ""}))`;
+}
+
+/** L1 template: batch-read property values */
+export function genCheckProperties(nodePath: string, props: Record<string, unknown>): string {
+  const escaped = gdEscape(nodePath);
+  const lines: string[] = [];
+  lines.push(`var _n = _mcp_get_node("${escaped}")`);
+  lines.push('if _n == null:');
+  lines.push(`\t_mcp_output("props", JSON.stringify({"error": "node not found: ${escaped}"}))`);
+  lines.push('else:');
+  lines.push('\tvar _props = {}');
+  for (const [key, expected] of Object.entries(props)) {
+    const ek = gdEscape(key);
+    lines.push(`\t_props["${ek}"] = {"actual": str(_n.get("${ek}")), "expected": str(${gdEscape(JSON.stringify(expected))})}`);
+  }
+  lines.push('\t_mcp_output("props", JSON.stringify(_props))');
+  return lines.join('\n');
+}
