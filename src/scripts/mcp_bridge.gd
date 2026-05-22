@@ -111,6 +111,8 @@ func _server_take_connection() -> StreamPeerTCP:
 	return _server.accept()
 
 
+# DUPLICATE: Keep in sync with addons/godot_mcp_server/websocket_server.gd:_constant_time_compare
+# Cannot share because editor plugin and game autoload have separate script contexts.
 func _constant_time_compare(a: String, b: String) -> bool:
 	var max_len := maxi(a.length(), b.length())
 	var result := 0

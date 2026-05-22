@@ -2,6 +2,9 @@ extends Node
 
 const BASE_PORT := 9090
 const MAX_PORT := 9094
+const MAX_AUTH_FAILS := 5
+const LOCKOUT_SECONDS := 30.0
+const _LOCKOUT_KEY := "localhost"  # All connections are localhost; single global rate limit
 
 var _server: TCPServer
 var _peers: Array[WebSocketPeer] = []
@@ -13,6 +16,8 @@ var _plugin: EditorPlugin
 var _secret: String = ""
 var _secret_file: String = ""
 var _authenticated_peers: Dictionary = {}  # peer_id (int) -> true
+var _auth_fail_count: Dictionary = {}
+var _auth_locked_until: Dictionary = {}
 var _crypto: Crypto
 
 func setup(plugin: EditorPlugin) -> void:
@@ -145,13 +150,28 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Server auth not configured; connection rejected"}}))
 			peer.close()
 			return
+		# Check lockout
+		if _auth_locked_until.has(_LOCKOUT_KEY):
+			var locked_until: float = _auth_locked_until[_LOCKOUT_KEY]
+			if Time.get_ticks_msec() / 1000.0 < locked_until:
+				peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}))
+				peer.close()
+				return
+			else:
+				_auth_locked_until.erase(_LOCKOUT_KEY)
+				_auth_fail_count[_LOCKOUT_KEY] = 0
 		var provided: String = str(parsed.get("params", {}).get("secret", ""))
 		if _constant_time_compare(provided, _secret):
 			_authenticated_peers[pid] = true
+			_auth_fail_count.erase(_LOCKOUT_KEY)
 			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"authenticated": true}}))
 			print("[MCP] Peer %d authenticated" % pid)
 			_send_session_sync(peer)
 		else:
+			var fails: int = int(_auth_fail_count.get(_LOCKOUT_KEY, 0)) + 1
+			_auth_fail_count[_LOCKOUT_KEY] = fails
+			if fails >= MAX_AUTH_FAILS:
+				_auth_locked_until[_LOCKOUT_KEY] = Time.get_ticks_msec() / 1000.0 + LOCKOUT_SECONDS
 			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "Authentication failed"}}))
 			peer.close()
 		return
@@ -218,6 +238,8 @@ func _update_panel(text: String) -> void:
 func _get_panel() -> Node:
 	return get_node_or_null("../../../../../MCP")
 
+# DUPLICATE: Keep in sync with src/scripts/mcp_bridge.gd:_constant_time_compare
+# Cannot share because editor plugin and game autoload have separate script contexts.
 func _constant_time_compare(a: String, b: String) -> bool:
 	var max_len := maxi(a.length(), b.length())
 	var result := 0
@@ -237,4 +259,6 @@ func _exit_tree() -> void:
 	for peer in _peers: peer.close()
 	_peers.clear()
 	_authenticated_peers.clear()
+	_auth_fail_count.clear()
+	_auth_locked_until.clear()
 	_delete_secret_file()
