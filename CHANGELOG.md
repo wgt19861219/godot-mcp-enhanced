@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-05-22
+
+### Security
+
+- **C1**: EditorConnection 消息大小限制从 `raw.length`（字符数）改为 `Buffer.byteLength(raw, 'utf8')`（字节数），修复多字节字符绕过 1MB 限制。
+- **C2**: TCP Bridge 添加 `MAX_MESSAGE_SIZE`（1MB）缓冲区限制，超限时断连对端，与 WebSocket 服务端对称。
+- **C3**: `_cmd_wait_for_property` 添加属性屏蔽检查，防止读取被屏蔽的属性。
+- **C4**: 提取 `_is_blocked_property()` 统一函数，检查所有点分路径段而非仅首段。
+- **M1**: `_is_blocked_property` 补充 `theme_override` 前缀屏蔽。
+- **I2**: 点分段遍历中增加下划线前缀检查。
+
 ## [0.11.0] - 2026-05-22
 
 ### Added
