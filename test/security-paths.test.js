@@ -1,6 +1,8 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolveWithinRoot } from '../build/helpers.js';
 import { sanitizeResPath, gdEscape } from '../build/tools/shared.js';
 
@@ -65,12 +67,25 @@ describe('sanitizeResPath', () => {
   it('accepts res:// root path', () => {
     assert.equal(sanitizeResPath('res://', 'path'), 'res://');
   });
+
+  it('blocks suffix traversal (res://scenes/..)', () => {
+    assert.throws(
+      () => sanitizeResPath('res://scenes/..', 'path'),
+      /path traversal/,
+    );
+  });
 });
 
 // ─── resolveWithinRoot iterative decoding ──────────────────────────────────────
 
 describe('resolveWithinRoot iterative decoding', () => {
-  const root = resolve('test/fixtures'); // any valid dir
+  let root;
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), 'mcp-security-test-'));
+  });
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
 
   it('blocks double-encoded traversal (%252e%252e)', () => {
     // %252e%252e → %2e%2e → .. → escapes root
@@ -137,5 +152,14 @@ describe('gdEscape edge cases', () => {
 
   it('removes null bytes', () => {
     assert.equal(gdEscape('a\0b'), 'ab');
+  });
+
+  it('escapes single quote', () => {
+    assert.equal(gdEscape("it's"), "it\\'s");
+  });
+
+  it('escapes unicode escape sequence (\\uXXXX)', () => {
+    // A → step3: \\u0041 → step11: \\A (backslash escaped then \u pattern escaped)
+    assert.equal(gdEscape('\\u0041'), '\\\\\\u0041');
   });
 });
