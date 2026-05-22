@@ -123,7 +123,7 @@ export class EditorConnection {
     this.ws.on('message', (data: WebSocket.Data) => {
       try {
         const raw = typeof data === 'string' ? data : data.toString();
-        if (raw.length > MAX_INBOUND_MESSAGE_SIZE) {
+        if (Buffer.byteLength(raw, 'utf8') > MAX_INBOUND_MESSAGE_SIZE) {
           console.warn('[MCP Editor] Inbound message exceeds size limit, discarding');
           return;
         }

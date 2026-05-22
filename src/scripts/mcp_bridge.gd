@@ -9,6 +9,7 @@ const PORT := 9081
 const MAX_AUTH_FAILS := 5
 const LOCKOUT_SECONDS := 30.0
 const _LOCKOUT_KEY := "localhost"
+const MAX_MESSAGE_SIZE := 1048576  # 1MB
 
 var _server: TCPServer = null
 var _peers: Array[StreamPeerTCP] = []
@@ -73,6 +74,10 @@ func _process(_delta: float) -> void:
 					var key := "buf_" + str(pid)
 					var existing: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
 					var combined: PackedByteArray = existing + raw_data
+					if combined.size() > MAX_MESSAGE_SIZE:
+						push_warning("[MCP Bridge] Peer %d buffer exceeded %d bytes, disconnecting" % [pid, MAX_MESSAGE_SIZE])
+						p.disconnect_from_host()
+						continue
 					_peer_buffers[key] = combined
 					_process_buffer_bytes(p, pid)
 
@@ -365,10 +370,8 @@ func _cmd_set_node_property(params: Dictionary) -> Variant:
 	var node := get_node_or_null(path)
 	if node == null:
 		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
-	if prop.begins_with("_") or prop in BLOCKED_PROPERTIES:
+	if _is_blocked_property(prop):
 		return {"error": {"code": -2, "message": "Blocked property: %s" % prop}}
-	if "." in prop and prop.split(".")[0] in BLOCKED_PROPERTIES:
-		return {"error": {"code": -2, "message": "Blocked nested property: %s" % prop}}
 	if not _is_safe_value(value):
 		return {"error": {"code": -3, "message": "Value type not allowed: %s" % value.get_class()}}
 	node.set(prop, value)
@@ -414,6 +417,20 @@ func _is_safe_value(val: Variant) -> bool:
 	if val is Script or val is Resource or val is Callable or val is Signal:
 		return false
 	return true
+
+
+func _is_blocked_property(prop: String) -> bool:
+	if prop.begins_with("_"):
+		return true
+	if prop.begins_with("theme_override"):
+		return true
+	if prop in BLOCKED_PROPERTIES:
+		return true
+	if "." in prop:
+		for segment in prop.split("."):
+			if segment.begins_with("_") or segment in BLOCKED_PROPERTIES:
+				return true
+	return false
 
 
 # ─── Input simulation ──────────────────────────────────────────────────────
@@ -501,6 +518,8 @@ func _cmd_wait_for_property(params: Dictionary) -> Variant:
 	var node := get_node_or_null(path)
 	if node == null:
 		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
+	if _is_blocked_property(prop):
+		return {"error": {"code": -2, "message": "Blocked property: %s" % prop}}
 	var current: Variant = node.get(prop)
 	var match_result: bool = str(current) == str(expected)
 	return {"match": match_result, "property": prop, "current": _jsonify(current), "expected": _jsonify(expected)}
