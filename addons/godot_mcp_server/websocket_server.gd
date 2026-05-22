@@ -5,6 +5,8 @@ const MAX_PORT := 9094
 const MAX_AUTH_FAILS := 5
 const LOCKOUT_SECONDS := 30.0
 const _LOCKOUT_KEY := "localhost"  # All connections are localhost; single global rate limit
+const MAX_PEERS := 5
+const MAX_MESSAGE_SIZE := 1048576  # 1MB
 
 var _server: TCPServer
 var _peers: Array[WebSocketPeer] = []
@@ -108,7 +110,14 @@ func _process(delta: float) -> void:
 
 	if _server.is_connection_available():
 		var tcp_peer = _server.take_connection()
+
+		if _peers.size() >= MAX_PEERS:
+			tcp_peer.disconnect()
+			push_warning("[MCP] Connection rejected: max peers reached (%d)" % MAX_PEERS)
+			return
+
 		var ws_peer = WebSocketPeer.new()
+		ws_peer.set_inbound_buffer_size(MAX_MESSAGE_SIZE)
 		ws_peer.accept_stream(tcp_peer)
 		_peers.append(ws_peer)
 		print("[MCP] Client connected (total: %d)" % _peers.size())

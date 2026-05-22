@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 
 // Auth uses a dedicated id outside the normal requestId sequence to avoid conflicts
 const AUTH_REQUEST_ID = -1;
+const MAX_INBOUND_MESSAGE_SIZE = 1048576; // 1MB
 
 interface EditorConnectionOptions {
   port: number;
@@ -121,7 +122,12 @@ export class EditorConnection {
     if (!this.ws) return;
     this.ws.on('message', (data: WebSocket.Data) => {
       try {
-        const msg = JSON.parse(data.toString());
+        const raw = typeof data === 'string' ? data : data.toString();
+        if (raw.length > MAX_INBOUND_MESSAGE_SIZE) {
+          console.warn('[MCP Editor] Inbound message exceeds size limit, discarding');
+          return;
+        }
+        const msg = JSON.parse(raw);
         if (msg.id != null && this.pending.has(msg.id)) {
           const pending = this.pending.get(msg.id)!;
           clearTimeout(pending.timer);
