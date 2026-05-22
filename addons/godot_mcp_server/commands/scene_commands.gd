@@ -4,6 +4,8 @@ func handle_open_scene(params: Dictionary) -> Dictionary:
 	var path: String = params.get("scene_path", "")
 	if path.is_empty():
 		return {"error": {"code": -32004, "message": "scene_path is required"}}
+	if not path.begins_with("res://"):
+		return {"error": {"code": -32004, "message": "scene_path must start with res://"}}
 	var ei = Engine.get_singleton("EditorInterface") as EditorInterface
 	ei.open_scene_from_path(path)
 	return {"result": {"status": "opened", "path": path}}
@@ -22,6 +24,8 @@ func handle_instance_scene(params: Dictionary) -> Dictionary:
 
 	if scene_path.is_empty() or instance_path.is_empty():
 		return {"error": {"code": -32004, "message": "scene_path and instance_path required"}}
+	if not instance_path.begins_with("res://"):
+		return {"error": {"code": -32004, "message": "instance_path must start with res://"}}
 	if scene_path == instance_path:
 		return {"error": {"code": -32004, "message": "CIRCULAR_REFERENCE"}}
 

@@ -54,7 +54,11 @@ export function normalizeUserProjectPath(input: string): string {
 }
 
 export function allowOutsideProjectPaths(): boolean {
-  return process.env.ALLOW_OUTSIDE_PROJECT_PATHS === 'true';
+  const enabled = process.env.ALLOW_OUTSIDE_PROJECT_PATHS === 'true';
+  if (enabled) {
+    console.error('[SECURITY] ALLOW_OUTSIDE_PROJECT_PATHS is enabled — path sandbox disabled');
+  }
+  return enabled;
 }
 
 // ─── Shared: checkVersionMismatch ────────────────────────────────────────────
@@ -125,9 +129,13 @@ export function parseConfigValue(raw: string, depth = 0): unknown {
 
 // ─── Shared: parseGodotConfig ────────────────────────────────────────────────
 
-export function parseGodotConfig(content: string): Record<string, unknown> {
+export interface GodotConfig {
+  [section: string]: string | number | boolean | null | unknown[] | GodotConfig;
+}
+
+export function parseGodotConfig(content: string): GodotConfig {
   const lines = content.split('\n');
-  const sectioned: Record<string, unknown> = {};
+  const sectioned = {} as GodotConfig;
   let currentSection = '';
 
   for (const line of lines) {

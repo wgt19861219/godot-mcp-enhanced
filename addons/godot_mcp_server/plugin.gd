@@ -16,13 +16,19 @@ func _enter_tree() -> void:
 
 func _exit_tree() -> void:
 	if websocket_server:
+		websocket_server.set_process(false)
 		var handler = websocket_server.get_node_or_null("command_handler")
 		if handler and handler.has_method("cleanup"):
 			handler.cleanup()
+		var sync_node = websocket_server.get_node_or_null("command_handler/sync_commands")
+		if sync_node and sync_node.has_method("cleanup"):
+			sync_node.cleanup()
 		websocket_server.queue_free()
+		websocket_server = null
 	if status_panel:
 		remove_control_from_bottom_panel(status_panel)
 		status_panel.queue_free()
+		status_panel = null
 
 func get_plugin() -> EditorPlugin:
 	return self

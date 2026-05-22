@@ -11,6 +11,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import type { ChildProcess } from 'child_process';
 import type { ToolResult, ToolContext } from './types.js';
+import { waitForEditorSecret } from './core/editor-auth.js';
 import {
   listResources as listMcpResources,
   listResourceTemplates as listMcpResourceTemplates,
@@ -92,6 +93,7 @@ async function dispatchTool(
     }
   }
   for (const mod of toolModules) {
+    if (mod === targetMod) continue; // already tried above
     const result = await mod.handleTool(toolName, args, ctx);
     if (result !== null) {
       const duration = Date.now() - startTime;
@@ -199,7 +201,7 @@ export class GodotServer {
         for (const [key, value] of Object.entries(rawArgs)) {
           const snake = key.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase());
           args[snake] = value;
-          args[key] = value;
+          if (snake !== key) args[key] = value;
         }
       }
       try {
@@ -212,15 +214,7 @@ export class GodotServer {
           };
         }
 
-        // Editor mode: forward to plugin
-        if (this.connectionMode === 'editor' && this.editorExecutor) {
-          const editorResult = await this.editorExecutor.execute(name, args);
-          const duration = Date.now() - startTime;
-          (editorResult.content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: `_duration_ms: ${duration}` });
-          return editorResult;
-        }
-
-        // P1.1: Confirmation Token guard
+        // P1.1: Confirmation Token guard (applies to both editor and headless modes)
         if (name === 'confirm_and_execute') {
           const token = args.token as string;
           if (!token || typeof token !== 'string') {
@@ -239,6 +233,12 @@ export class GodotServer {
             };
           }
           // Re-dispatch with original tool name and args
+          if (this.connectionMode === 'editor' && this.editorExecutor) {
+            const editorResult = await this.editorExecutor.execute(pending.toolName, pending.args);
+            const duration = Date.now() - startTime;
+            (editorResult.content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: `_duration_ms: ${duration}` });
+            return editorResult;
+          }
           return dispatchTool(pending.toolName, pending.args, ctx, startTime);
         }
 
@@ -259,6 +259,14 @@ export class GodotServer {
         }
 
         // Dispatch to the appropriate module handler
+        // Editor mode: forward to plugin (after guard + confirmation checks)
+        if (this.connectionMode === 'editor' && this.editorExecutor) {
+          const editorResult = await this.editorExecutor.execute(name, args);
+          const duration = Date.now() - startTime;
+          (editorResult.content as Array<{ type: 'text'; text: string }>).push({ type: 'text', text: `_duration_ms: ${duration}` });
+          return editorResult;
+        }
+
         return dispatchTool(name, args, ctx, startTime);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -307,7 +315,15 @@ export class GodotServer {
 
     if (this.connectionMode === 'editor') {
       const port = parseInt(process.env.GODOT_EDITOR_PORT ?? '9090', 10);
-      this.editorConn = new EditorConnection({ port, reconnect: true });
+      const projectPath = this.detectProjectPath();
+      let secret: string | undefined;
+      if (projectPath) {
+        secret = (await waitForEditorSecret(projectPath, 5000)) ?? undefined;
+        if (!secret) {
+          console.error('[AUTH] No editor secret found — plugin may not be running');
+        }
+      }
+      this.editorConn = new EditorConnection({ port, reconnect: true, secret });
       try {
         await this.editorConn.connect();
         this.editorExecutor = new EditorToolExecutor(this.editorConn);

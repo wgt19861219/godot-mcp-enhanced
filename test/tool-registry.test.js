@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   registerTools,
+  clearRegistry,
   isReadOnly,
   isLongRunning,
   getReadOnlyTools,
@@ -12,6 +13,7 @@ import { VERIFY_ELIGIBLE_TOOLS, isVerifyEligible } from '../build/core/tool-regi
 
 describe('tool-registry', () => {
   it('registers tools with tags', () => {
+    clearRegistry();
     registerTools([
       { name: 'read_scene', readonly: true, long_running: false },
       { name: 'add_node', readonly: false, long_running: false },
@@ -53,6 +55,7 @@ describe('tool-registry', () => {
   });
 
   it('getAllToolNames returns all registered names', () => {
+    clearRegistry();
     registerTools([
       { name: 'a', readonly: true, long_running: false },
       { name: 'b', readonly: false, long_running: false },

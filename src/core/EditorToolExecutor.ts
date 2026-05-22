@@ -14,6 +14,11 @@ export class EditorToolExecutor {
       this.syncActive = false;
       this.treeChangeBuffer = [];
     };
+    this.conn.onReconnect = () => {
+      if (this.syncActive) {
+        this.conn.onNotification('scene_tree_changed', this.handleTreeChange);
+      }
+    };
   }
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {

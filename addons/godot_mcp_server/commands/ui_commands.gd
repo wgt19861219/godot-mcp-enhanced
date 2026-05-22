@@ -2,6 +2,10 @@ extends Node
 
 var _plugin: EditorPlugin
 
+const BLOCKED_PROPS: Array = ["script", "owner", "name", "parent", "children", "tree", "meta", "process_mode", "process_priority",
+	"process_input", "process_unhandled_input", "process_unhandled_key_input",
+	"process_internal", "physics_process_mode", "input_event", "ready"]
+
 func setup(plugin: EditorPlugin) -> void:
 	_plugin = plugin
 
@@ -30,6 +34,10 @@ func handle_ui_create_control(params: Dictionary, request_id: int) -> Dictionary
 	var properties = params.get("properties")
 	if properties != null and properties is Dictionary:
 		for key in properties:
+			if key.begins_with("_") or key in BLOCKED_PROPS:
+				continue
+			if not key is String:
+				continue
 			node.set(key, properties[key])
 
 	parent_node.add_child(node)
@@ -251,6 +259,10 @@ func handle_ui_container_add(params: Dictionary, request_id: int) -> Dictionary:
 	var child_properties = params.get("child_properties")
 	if child_properties != null and child_properties is Dictionary:
 		for key in child_properties:
+			if key.begins_with("_") or key in BLOCKED_PROPS:
+				continue
+			if not key is String:
+				continue
 			child.set(key, child_properties[key])
 
 	container.add_child(child)

@@ -36,6 +36,10 @@ export function killProcess(proc: ChildProcess): Promise<void> {
       clearTimeout(timer);
       done();
     });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      done();
+    });
 
     forceKillTree(proc);
   });

@@ -198,10 +198,7 @@ func handle_animation_blend(params: Dictionary) -> Dictionary:
 	var speed_val = float(speed) if speed != null else 1.0
 
 	var ap: AnimationPlayer = player
-	ap.play(anim_name, -1.0, speed_val, false)
-	# Use custom_blend for the blend transition
-	if float(blend_time) >= 0.0:
-		ap.seek(ap.current_animation_position)
+	ap.play(anim_name, float(blend_time), speed_val, false)
 
 	return {"result": {"animation": anim_name, "blend_time": float(blend_time), "speed": speed_val, "status": "blending"}}
 

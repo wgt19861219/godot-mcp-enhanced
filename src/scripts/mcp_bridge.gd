@@ -63,14 +63,17 @@ func _process(_delta: float) -> void:
 			to_remove.append(i)
 			continue
 		if p.get_available_bytes() > 0:
-			var raw_data: PackedByteArray = p.get_data()
-			if raw_data.size() > 0:
-				var pid := p.get_instance_id()
-				var key := "buf_" + str(pid)
-				var existing: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
-				var combined: PackedByteArray = existing + raw_data
-				_peer_buffers[key] = combined
-				_process_buffer_bytes(p, pid)
+			var byte_count := p.get_available_bytes()
+			var result := p.get_data(byte_count)
+			if result[0] == OK:
+				var raw_data: PackedByteArray = result[1]
+				if raw_data.size() > 0:
+					var pid := p.get_instance_id()
+					var key := "buf_" + str(pid)
+					var existing: PackedByteArray = _peer_buffers.get(key, PackedByteArray()) as PackedByteArray
+					var combined: PackedByteArray = existing + raw_data
+					_peer_buffers[key] = combined
+					_process_buffer_bytes(p, pid)
 
 	# Remove disconnected peers (reverse order to preserve indices)
 	for idx in range(to_remove.size() - 1, -1, -1):
@@ -106,6 +109,14 @@ func _server_take_connection() -> StreamPeerTCP:
 		return _server.take_connection()
 	return _server.accept()
 
+
+func _constant_time_compare(a: String, b: String) -> bool:
+	if a.length() != b.length():
+		return false
+	var result := 0
+	for i in range(a.length()):
+		result = result | (ord(a[i]) ^ ord(b[i]))
+	return result == 0
 
 func _generate_secret() -> String:
 	var chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -169,27 +180,27 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> void:
 			peer.disconnect_from_host()
 			break
 		if not _authenticated_peers.has(pid):
-			var peer_ip: String = peer.get_connected_host()
-			if _auth_locked_until.has(peer_ip):
-				var locked_until: float = _auth_locked_until[peer_ip]
+			
+			if _auth_locked_until.has(pid):
+				var locked_until: float = _auth_locked_until[pid]
 				if Time.get_ticks_msec() / 1000.0 < locked_until:
 					peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "\n")
 					peer.disconnect_from_host()
 					continue
 				else:
-					_auth_locked_until.erase(peer_ip)
-					_auth_fail_count[peer_ip] = 0
+					_auth_locked_until.erase(pid)
+					_auth_fail_count[pid] = 0
 			var parsed: Variant = JSON.parse_string(line)
-			if parsed is Dictionary and parsed.get("method") == "auth" and str(parsed.get("secret")) == _secret:
+			if parsed is Dictionary and parsed.get("method") == "auth" and _constant_time_compare(str(parsed.get("secret")), _secret):
 				_authenticated_peers[pid] = true
-				_auth_fail_count.erase(peer_ip)
+				_auth_fail_count.erase(pid)
 				peer.put_utf8_string(JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n")
 				continue
 			else:
-				var fails: int = int(_auth_fail_count.get(peer_ip, 0)) + 1
-				_auth_fail_count[peer_ip] = fails
+				var fails: int = int(_auth_fail_count.get(pid, 0)) + 1
+				_auth_fail_count[pid] = fails
 				if fails >= MAX_AUTH_FAILS:
-					_auth_locked_until[peer_ip] = Time.get_ticks_msec() / 1000.0 + LOCKOUT_SECONDS
+					_auth_locked_until[pid] = Time.get_ticks_msec() / 1000.0 + LOCKOUT_SECONDS
 				peer.put_utf8_string(JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n")
 				continue
 		var response := _handle_message(line)

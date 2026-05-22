@@ -9,10 +9,14 @@ export interface ToolMeta {
 const registry = new Map<string, ToolMeta>();
 
 export function registerTools(tools: ToolMeta[]): void {
-  registry.clear();
   for (const t of tools) {
     registry.set(t.name, t);
   }
+}
+
+/** Clear all registered tools (test-only). */
+export function clearRegistry(): void {
+  registry.clear();
 }
 
 export function isReadOnly(name: string): boolean {

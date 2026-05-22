@@ -1,5 +1,5 @@
 import { createConnection } from 'net';
-import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync, chmodSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync, chmodSync, statSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -254,7 +254,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           config += `\n[autoload]\n${autoloadEntry}\n`;
         }
 
-        writeFileSync(configPath, config, 'utf-8');
+        // Atomic write: write to temp file then rename
+        const tmpPath = configPath + '.mcp-tmp';
+        writeFileSync(tmpPath, config, 'utf-8');
+        renameSync(tmpPath, configPath);
         return textResult(JSON.stringify({
           success: true,
           message: `MCP Bridge installed. Autoload registered on port ${port}.`,
@@ -277,7 +280,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         }
 
         const lines = config.split('\n').filter(line => !line.startsWith(AUTOLOAD_KEY + '='));
-        writeFileSync(configPath, lines.join('\n'), 'utf-8');
+        const tmpPath = configPath + '.mcp-tmp';
+        writeFileSync(tmpPath, lines.join('\n'), 'utf-8');
+        renameSync(tmpPath, configPath);
 
         const scriptPath = join(projectPath, BRIDGE_SCRIPT_NAME);
         if (existsSync(scriptPath)) {

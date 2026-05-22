@@ -5,8 +5,11 @@ import {
 } from '../build/guard.js';
 
 describe('GUARDED_TOOLS', () => {
-  it('includes only remove_node', () => {
+  it('includes remove_node', () => {
     assert.ok(GUARDED_TOOLS.has('remove_node'));
+  });
+  it('includes execute_gdscript (arbitrary code execution)', () => {
+    assert.ok(GUARDED_TOOLS.has('execute_gdscript'));
   });
   it('does NOT include write_script (unblocked for usability)', () => {
     assert.ok(!GUARDED_TOOLS.has('write_script'));
@@ -14,20 +17,17 @@ describe('GUARDED_TOOLS', () => {
   it('does NOT include edit_script (auto-validate handles safety)', () => {
     assert.ok(!GUARDED_TOOLS.has('edit_script'));
   });
-  it('does NOT include execute_gdscript (unblocked for usability)', () => {
-    assert.ok(!GUARDED_TOOLS.has('execute_gdscript'));
-  });
 });
 
 describe('requiresConfirmation', () => {
   it('returns true for remove_node', () => {
     assert.strictEqual(requiresConfirmation('remove_node'), true);
   });
+  it('returns true for execute_gdscript (arbitrary code execution)', () => {
+    assert.strictEqual(requiresConfirmation('execute_gdscript'), true);
+  });
   it('returns false for write_script (unblocked)', () => {
     assert.strictEqual(requiresConfirmation('write_script'), false);
-  });
-  it('returns false for execute_gdscript (unblocked)', () => {
-    assert.strictEqual(requiresConfirmation('execute_gdscript'), false);
   });
   it('returns false for non-guarded tools', () => {
     assert.strictEqual(requiresConfirmation('read_scene'), false);

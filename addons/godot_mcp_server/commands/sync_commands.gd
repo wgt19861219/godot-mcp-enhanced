@@ -49,6 +49,10 @@ func _cache_paths_recursive(node: Node, depth: int = 0) -> void:
 
 
 func _on_node_added(node: Node) -> void:
+	# 仅跟踪当前编辑场景内的节点变更
+	var edited_root = _get_edited_scene_root()
+	if edited_root != null and not edited_root.is_ancestor_of(node) and node != edited_root:
+		return
 	var path = str(node.get_path())
 	_node_paths[node.get_instance_id()] = {
 		"path": path,
@@ -63,6 +67,9 @@ func _on_node_added(node: Node) -> void:
 
 
 func _on_node_removed(node: Node) -> void:
+	var edited_root = _get_edited_scene_root()
+	if edited_root != null and not edited_root.is_ancestor_of(node) and node != edited_root:
+		return
 	var id = node.get_instance_id()
 	var cached = _node_paths.get(id, {})
 	var path = cached.get("path", "<removed>") if cached is Dictionary else "<removed>"
@@ -79,6 +86,19 @@ func _on_node_removed(node: Node) -> void:
 func cleanup() -> void:
 	if _syncing:
 		stop_sync()
+
+
+func _get_edited_scene_root() -> Node:
+	if _command_handler and _command_handler.has_method("get_plugin"):
+		var plugin = _command_handler.get_plugin()
+		if plugin:
+			var ei = plugin.get_editor_interface()
+			if ei:
+				return ei.get_edited_scene_root()
+	var ml = Engine.get_main_loop()
+	if ml and ml is SceneTree and ml.root and ml.root.get_child_count() > 0:
+		return ml.root.get_child(0)
+	return null
 
 
 func _serialize_tree(node: Node, depth: int, max_depth: int) -> Dictionary:

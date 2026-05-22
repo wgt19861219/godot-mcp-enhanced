@@ -41,7 +41,10 @@ function findInDirectory(dir: string): string | null {
 }
 
 export async function findGodot(): Promise<string> {
-  if (godotPath) return godotPath;
+  if (godotPath) {
+    if (godotPath === 'godot' || existsSync(godotPath)) return godotPath;
+    godotPath = null; // cached path no longer valid
+  }
 
   const tried: string[] = [];
 

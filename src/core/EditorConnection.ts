@@ -1,6 +1,9 @@
 // src/core/EditorConnection.ts
 import WebSocket from 'ws';
 
+// Auth uses a dedicated id outside the normal requestId sequence to avoid conflicts
+const AUTH_REQUEST_ID = -1;
+
 interface EditorConnectionOptions {
   port: number;
   host?: string;
@@ -9,6 +12,7 @@ interface EditorConnectionOptions {
   maxReconnectInterval?: number;
   connectTimeout?: number;
   requestTimeout?: number;
+  secret?: string;
 }
 
 interface PendingRequest {
@@ -25,8 +29,10 @@ export class EditorConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connected = false;
   private reconnectEnabled = true;
+  private connectAttempt = false;
 
   public onDisconnect: (() => void) | null = null;
+  public onReconnect: (() => void) | null = null;
 
   private readonly host: string;
   private readonly shouldReconnect: boolean;
@@ -35,6 +41,8 @@ export class EditorConnection {
   private readonly connectTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private reconnectAttempt = 0;
+  private readonly editorSecret: string | null;
+  private authenticated = false;
 
   constructor(private readonly options: EditorConnectionOptions) {
     this.host = options.host ?? '127.0.0.1';
@@ -44,23 +52,43 @@ export class EditorConnection {
     this.maxReconnectMs = options.maxReconnectInterval ?? 60000;
     this.connectTimeoutMs = options.connectTimeout ?? 10000;
     this.requestTimeoutMs = options.requestTimeout ?? 30000;
+    this.editorSecret = options.secret ?? null;
   }
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       const url = `ws://${this.host}:${this.options.port}`;
+      this.connectAttempt = true;
       const timer = setTimeout(() => {
-        reject(new Error(`Connection timeout to ${url}`));
+        ws.removeAllListeners();
         ws.terminate();
+        reject(new Error(`Connection timeout to ${url}`));
       }, this.connectTimeoutMs);
 
       const ws = new WebSocket(url);
-      ws.on('open', () => {
+      ws.on('open', async () => {
         clearTimeout(timer);
         this.ws = ws;
         this.connected = true;
-        this.reconnectAttempt = 0;
+        this.connectAttempt = false;
         this.setupMessageHandler();
+        if (this.editorSecret) {
+          try {
+            await this.performAuth();
+          } catch (authErr) {
+            this.connected = false;
+            this.ws = null;
+            ws.removeAllListeners();
+            ws.terminate();
+            reject(authErr);
+            return;
+          }
+        }
+        const isReconnect = this.reconnectAttempt > 0;
+        this.reconnectAttempt = 0;
+        if (isReconnect) {
+          this.onReconnect?.();
+        }
         resolve();
       });
 
@@ -78,9 +106,11 @@ export class EditorConnection {
           pending.reject(new Error('Connection lost'));
         }
         this.pending.clear();
-        this.notificationHandlers.clear();
+        // Don't clear notificationHandlers — they need to survive reconnect
+        const wasConnected = !this.connectAttempt;
         this.onDisconnect?.();
-        if (this.reconnectEnabled) this.scheduleReconnect();
+        if (wasConnected && this.reconnectEnabled) this.scheduleReconnect();
+        this.connectAttempt = false;
       });
     });
   }
@@ -168,6 +198,47 @@ export class EditorConnection {
     return this.request('operation_end', {});
   }
 
+  private performAuth(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || !this.editorSecret) {
+        reject(new Error('Cannot authenticate: not connected or no secret'));
+        return;
+      }
+      const authTimeout = setTimeout(() => {
+        this.pending.delete(AUTH_REQUEST_ID);
+        reject(new Error('Auth handshake timeout'));
+        this.ws?.close();
+      }, 10000);
+
+      // Use id=0 for auth (matches plugin expectation)
+      this.pending.set(AUTH_REQUEST_ID, {
+        resolve: (result: unknown) => {
+          clearTimeout(authTimeout);
+          this.authenticated = true;
+          resolve();
+        },
+        reject: (err: Error) => {
+          clearTimeout(authTimeout);
+          reject(err);
+        },
+        timer: authTimeout,
+      });
+
+      try {
+        this.ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id: AUTH_REQUEST_ID,
+          method: 'auth',
+          params: { secret: this.editorSecret },
+        }));
+      } catch (e) {
+        clearTimeout(authTimeout);
+        this.pending.delete(AUTH_REQUEST_ID);
+        reject(new Error(`Auth send failed: ${(e as Error).message}`));
+      }
+    });
+  }
+
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
     const delay = Math.min(
@@ -199,6 +270,7 @@ export class EditorConnection {
       this.ws = null;
     }
     this.connected = false;
+    this.authenticated = false;
     for (const [, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new Error('Disconnected'));

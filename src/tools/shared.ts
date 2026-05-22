@@ -60,7 +60,8 @@ export function gdEscape(s: string): string {
     .replace(/\0/g, '')
     .replace(/%/g, '%%')
     .replace(/\$/g, '\\$')
-    .replace(/'/g, "\\'");
+    .replace(/'/g, "\\'")
+    .replace(/\\u(?=[0-9a-fA-F]{4})/g, '\\\\u');
 }
 
 export function validateVector3(v: unknown): { x: number; y: number; z: number } {

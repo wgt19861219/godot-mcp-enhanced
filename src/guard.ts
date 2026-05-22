@@ -11,8 +11,19 @@ const TOKEN_TTL_MS = 180_000; // 3 minutes
 const MAX_TOKENS = 100;
 const pendingTokens = new Map<string, PendingToken>();
 
+// 后台定期清理过期 token（每 60 秒）
+const _cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, pending] of pendingTokens) {
+    if (now - pending.createdAt > TOKEN_TTL_MS) pendingTokens.delete(key);
+  }
+}, 60_000);
+// 允许进程正常退出（不阻塞事件循环）
+if (_cleanupTimer.unref) _cleanupTimer.unref();
+
 export const GUARDED_TOOLS = new Set([
   'remove_node',
+  'execute_gdscript',
 ]);
 
 export function requiresConfirmation(toolName: string): boolean {
