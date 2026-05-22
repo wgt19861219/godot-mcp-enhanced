@@ -1,22 +1,42 @@
 // src/core/editor-auth.ts
-import { readFileSync, chmodSync, statSync } from 'fs';
+import { readFileSync, writeFileSync, chmodSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
+import { execSync } from 'child_process';
 
 const SECRET_FILE_NAME = 'mcp_editor.key';
 let _permWarned = false;
+
+/** On Windows, use icacls to restrict file to current user only. */
+function restrictFileWindows(filePath: string): void {
+  try {
+    execSync(`icacls "${filePath}" /inheritance:r /grant:r "%USERNAME%:R"`, { stdio: 'ignore' });
+  } catch { /* best effort */ }
+}
+
+/** Check and tighten file permissions. Returns true if permissions are acceptable. */
+function checkFilePermissions(filePath: string): boolean {
+  if (process.platform === 'win32') {
+    // On Windows, apply ACL restriction proactively
+    restrictFileWindows(filePath);
+    return true;
+  }
+  try { chmodSync(filePath, 0o600); } catch { /* best effort */ }
+  const stat = statSync(filePath);
+  if ((stat.mode & 0o007) !== 0) {
+    if (!_permWarned) {
+      _permWarned = true;
+      console.error(`[SECURITY] Editor secret ${filePath} is world-readable. Attempted chmod 0600.`);
+    }
+    return false;
+  }
+  return true;
+}
 
 /** Read the editor secret from {project}/.godot/mcp_editor.key. Returns null if not found. */
 export function readEditorSecret(projectPath: string): string | null {
   const secretPath = join(projectPath, '.godot', SECRET_FILE_NAME);
   try {
-    if (process.platform !== 'win32') {
-      try { chmodSync(secretPath, 0o600); } catch { /* best effort */ }
-    }
-    const stat = statSync(secretPath);
-    if (!_permWarned && process.platform !== 'win32' && (stat.mode & 0o007) !== 0) {
-      _permWarned = true;
-      console.error(`[SECURITY] Editor secret ${secretPath} is world-readable. Attempted chmod 0600.`);
-    }
+    if (existsSync(secretPath)) checkFilePermissions(secretPath);
     return readFileSync(secretPath, 'utf-8').trim();
   } catch {
     return null;

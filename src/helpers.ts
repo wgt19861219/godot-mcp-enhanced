@@ -1,5 +1,5 @@
 import { isAbsolute, resolve, dirname, relative, sep } from 'path';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -16,8 +16,23 @@ export function resolvePath(p: string): string {
 /** Validate and resolve a project root path. Delegates to resolvePath; use resolveWithinRoot for sub-path traversal protection. */
 export const validatePath = resolvePath;
 
+/** Validate that a path is a valid Godot project root (contains project.godot). Throws if not found. */
+export function validateProjectRoot(p: string): string {
+  const resolved = resolvePath(p);
+  if (!existsSync(join(resolved, 'project.godot'))) {
+    throw new Error(`Not a valid Godot project (no project.godot found): ${resolved}`);
+  }
+  return resolved;
+}
+
+/** Safely resolve real path — falls back to resolve() when path doesn't exist. */
+function safeRealPath(p: string): string {
+  try { return realpathSync(p); } catch { return resolvePath(p); }
+}
+
 export function resolveWithinRoot(root: string, userPath: string): string {
-  const base = resolvePath(root);
+  // Resolve real root path (handles symlinks and junction points)
+  const base = safeRealPath(resolvePath(root));
   // Decode iteratively to defeat double-encoding
   let decoded = userPath;
   let prev = '';
@@ -33,11 +48,13 @@ export function resolveWithinRoot(root: string, userPath: string): string {
   }
   const normalizedPath = decoded.replace(/\\/g, '/');
   const resolved = resolve(base, normalizedPath);
-  const rel = relative(base, resolved);
+  // Resolve real path for the target (handles symlinks and junction points)
+  const realResolved = safeRealPath(resolved);
+  const rel = relative(base, realResolved);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Path traversal detected: ${userPath}`);
   }
-  return resolved;
+  return realResolved;
 }
 
 export function ensureDir(p: string): void {
@@ -53,12 +70,29 @@ export function normalizeUserProjectPath(input: string): string {
   return trimmed;
 }
 
+/** Parse ALLOWED_PROJECT_PATHS env var (semicolon-separated whitelist). Returns empty array if not set. */
+export function getAllowedProjectPaths(): string[] {
+  const env = process.env.ALLOWED_PROJECT_PATHS;
+  if (!env) return [];
+  return env.split(';').filter(Boolean).map(p => resolvePath(p));
+}
+
 export function allowOutsideProjectPaths(): boolean {
-  const enabled = process.env.ALLOW_OUTSIDE_PROJECT_PATHS === 'true';
-  if (enabled) {
-    console.error('[SECURITY] ALLOW_OUTSIDE_PROJECT_PATHS is enabled — path sandbox disabled');
+  // Deprecated: ALLOW_OUTSIDE_PROJECT_PATHS — use ALLOWED_PROJECT_PATHS whitelist instead
+  if (process.env.ALLOW_OUTSIDE_PROJECT_PATHS === 'true') {
+    console.error('[SECURITY] [DEPRECATED] ALLOW_OUTSIDE_PROJECT_PATHS is enabled — migrate to ALLOWED_PROJECT_PATHS whitelist');
+    return true;
   }
-  return enabled;
+  return false;
+}
+
+/** Check if a requested path is within the ALLOWED_PROJECT_PATHS whitelist (or unrestricted if no whitelist set). */
+export function isPathInAllowedRoots(requestedPath: string): boolean {
+  if (allowOutsideProjectPaths()) return true;
+  const allowed = getAllowedProjectPaths();
+  if (allowed.length === 0) return true; // No whitelist = unrestricted (existing behavior)
+  const resolved = resolvePath(requestedPath);
+  return allowed.some(p => resolved === p || resolved.startsWith(p + sep));
 }
 
 // ─── Shared: checkVersionMismatch ────────────────────────────────────────────

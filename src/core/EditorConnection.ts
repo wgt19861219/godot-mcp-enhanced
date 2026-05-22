@@ -71,6 +71,8 @@ export class EditorConnection {
         this.ws = ws;
         this.connected = true;
         this.connectAttempt = false;
+        // C-3: Reset reconnectEnabled on successful connection
+        this.reconnectEnabled = this.shouldReconnect;
         this.setupMessageHandler();
         if (this.editorSecret) {
           try {

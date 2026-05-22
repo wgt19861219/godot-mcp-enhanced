@@ -340,7 +340,7 @@ function injectHelpers(code: string): string {
 
 // ─── Output parsing ─────────────────────────────────────────────────────────
 
-function parseMcpMarkers(raw: string): {
+export function parseMcpMarkers(raw: string): {
   parsed: { success: boolean; outputs?: OutputEntry[]; error?: string } | null;
   logLines: string[];
 } {

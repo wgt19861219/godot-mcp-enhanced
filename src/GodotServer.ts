@@ -49,6 +49,9 @@ import * as editorSync from './tools/editor-sync.js';
 import * as animationTrack from './tools/animation-track.js';
 import * as delivery from './tools/delivery.js';
 import { requiresConfirmation, createPendingToken, consumeToken } from './guard.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pkgVersion = require('../package.json').version;
 import { registerTools, LITE_TOOLS } from './core/tool-registry.js';
 import { ReadOnlyGuard } from './core/ReadOnlyGuard.js';
 import { EditorConnection } from './core/EditorConnection.js';
@@ -84,24 +87,16 @@ async function dispatchTool(
   toolName: string, args: Record<string, unknown>, ctx: ToolContext, startTime: number
 ): Promise<ToolResult> {
   const targetMod = toolModuleMap.get(toolName);
-  if (targetMod) {
-    const result = await targetMod.handleTool(toolName, args, ctx);
-    if (result !== null) {
-      const duration = Date.now() - startTime;
-      result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
-      return result;
-    }
+  if (!targetMod) {
+    return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };
   }
-  for (const mod of toolModules) {
-    if (mod === targetMod) continue; // already tried above
-    const result = await mod.handleTool(toolName, args, ctx);
-    if (result !== null) {
-      const duration = Date.now() - startTime;
-      result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
-      return result;
-    }
+  const result = await targetMod.handleTool(toolName, args, ctx);
+  if (result !== null) {
+    const duration = Date.now() - startTime;
+    result.content.push({ type: 'text', text: `_duration_ms: ${duration}` });
+    return result;
   }
-  return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };
+  return { content: [{ type: 'text', text: `Tool "${toolName}" registered but handler returned null` }] };
 }
 
 const DEBUG = process.env.DEBUG === 'true';
@@ -138,7 +133,7 @@ export class GodotServer {
     this.connectionMode = options.connectionMode ?? 'headless';
     this.noFallback = options.noFallback ?? false;
     this.server = new Server(
-      { name: 'godot-mcp-enhanced', version: '0.10.0' },
+      { name: 'godot-mcp-enhanced', version: pkgVersion },
       { capabilities: { tools: {}, resources: {} } }
     );
     this.setupHandlers();
@@ -224,6 +219,13 @@ export class GodotServer {
           if (!pending) {
             return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }] };
           }
+          // S-1: Build operation summary for user visibility
+          const summaryArgs = { ...pending.args };
+          // Redact potentially large code payloads
+          if (typeof summaryArgs.code === 'string' && summaryArgs.code.length > 200) {
+            summaryArgs.code = summaryArgs.code.substring(0, 200) + '... [truncated]';
+          }
+          log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
           // Re-check ReadOnlyGuard for the confirmed tool
           const guardResult = this.readOnlyGuard.check(pending.toolName);
           if (guardResult.blocked) {

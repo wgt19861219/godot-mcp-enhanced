@@ -3,7 +3,7 @@
 // Exposes Godot project context via MCP Resources protocol so AI clients
 // can discover and read project information without explicit tool calls.
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { resolve, join, extname, sep } from 'path';
 import { parseTscnSummary } from './tscn-parser.js';
 import { parseConfigValue } from './helpers.js';
@@ -52,9 +52,15 @@ const BINARY_EXTENSIONS = new Set([
 
 const MAX_RESOURCES = 200;
 
+/** Safely resolve real path — falls back to resolve() when path doesn't exist. */
+function safeRealPath(p: string): string {
+  try { return realpathSync(p); } catch { return resolve(p); }
+}
+
 function isSafePath(projectPath: string, filePath: string): boolean {
-  const resolved = resolve(projectPath, filePath);
-  const normalizedRoot = resolve(projectPath);
+  // Resolve real paths to defeat symlinks and junction points
+  const resolved = safeRealPath(resolve(projectPath, filePath));
+  const normalizedRoot = safeRealPath(resolve(projectPath));
   // Windows: case-insensitive comparison
   const cmpResolved = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
   const cmpRoot = process.platform === 'win32' ? normalizedRoot.toLowerCase() : normalizedRoot;

@@ -28,6 +28,16 @@ export function getCachedGodotPath(): string | null {
   return godotPath;
 }
 
+/** Validate a candidate binary by running --version and checking for Godot signature. */
+async function validateGodotBinary(candidatePath: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync(candidatePath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
+    return stdout.trim().toLowerCase().includes('godot') || /^\d+\.\d+/.test(stdout.trim());
+  } catch {
+    return false;
+  }
+}
+
 function findInDirectory(dir: string): string | null {
   if (!existsSync(dir)) return null;
   try {
@@ -48,20 +58,24 @@ export async function findGodot(): Promise<string> {
 
   const tried: string[] = [];
 
-  // 1. Environment variable
+  // 1. Environment variable — validate the binary
   if (process.env.GODOT_PATH) {
     if (existsSync(process.env.GODOT_PATH)) {
-      godotPath = process.env.GODOT_PATH;
-      return godotPath;
+      if (await validateGodotBinary(process.env.GODOT_PATH)) {
+        godotPath = process.env.GODOT_PATH;
+        return godotPath;
+      }
+      tried.push(`GODOT_PATH=${process.env.GODOT_PATH} (failed validation)`);
+    } else {
+      tried.push(`GODOT_PATH=${process.env.GODOT_PATH} (not found)`);
     }
-    tried.push(`GODOT_PATH=${process.env.GODOT_PATH}`);
   }
 
   // 2. Try `godot` on PATH via a quick async spawn
   try {
     const { stdout } = await execFileAsync('godot', ['--version'], { encoding: 'utf-8', timeout: 5000 });
     const out = stdout.trim();
-    if (out.includes('Godot')) {
+    if (out.includes('Godot') || /^\d+\.\d+/.test(out)) {
       godotPath = 'godot';
       return godotPath;
     }

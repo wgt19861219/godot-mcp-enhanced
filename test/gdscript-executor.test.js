@@ -1,30 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { parseMcpMarkers } from '../build/gdscript-executor.js';
 
-// Test marker parsing logic inline (parseMcpMarkers is not exported)
+// C-2 fix: import actual function instead of inline copy
+
 const MARKER_RESULT = '___MCP_RESULT___';
 const MARKER_ERROR = '___MCP_ERROR___';
-
-function parseMcpMarkers(raw) {
-  const lines = raw.split('\n');
-  const logLines = [];
-  let parsed = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith(MARKER_RESULT)) {
-      try { parsed = JSON.parse(trimmed.substring(MARKER_RESULT.length)); }
-      catch { parsed = { success: false, error: 'Failed to parse result JSON' }; }
-    } else if (trimmed.startsWith(MARKER_ERROR)) {
-      try { parsed = JSON.parse(trimmed.substring(MARKER_ERROR.length)); }
-      catch { parsed = { success: false, error: 'Failed to parse error JSON' }; }
-    } else {
-      logLines.push(trimmed);
-    }
-  }
-
-  return { parsed, logLines };
-}
 
 describe('parseMcpMarkers', () => {
   it('parses result marker with outputs', () => {

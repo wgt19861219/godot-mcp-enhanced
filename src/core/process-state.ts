@@ -96,3 +96,11 @@ export function getProjectDir(): string {
 export function setProjectDir(d: string): void {
   _projectDir = d;
 }
+
+/** Reset all module-level state — for test isolation. */
+export function resetState(): void {
+  _runningProcess = null;
+  _outputBuffer = [];
+  _processStartTime = 0;
+  _projectDir = '';
+}

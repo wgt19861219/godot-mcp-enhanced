@@ -24,11 +24,14 @@ if (_cleanupTimer.unref) _cleanupTimer.unref();
 export const GUARDED_TOOLS = new Set([
   'remove_node',
   'execute_gdscript',
+  'project_replace',
 ]);
 
 export function requiresConfirmation(toolName: string): boolean {
   return GUARDED_TOOLS.has(toolName);
 }
+
+let _oldestKey: string | null = null;
 
 export function createPendingToken(toolName: string, args: Record<string, unknown>): string {
   const now = Date.now();
@@ -36,12 +39,17 @@ export function createPendingToken(toolName: string, args: Record<string, unknow
   for (const [key, pending] of pendingTokens) {
     if (now - pending.createdAt > TOKEN_TTL_MS) pendingTokens.delete(key);
   }
-  // 超限时移除最旧的
+  // 超限时移除最旧的（O(1) tracked key instead of full scan）
   if (pendingTokens.size >= MAX_TOKENS) {
-    const oldest = [...pendingTokens.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)[0];
-    if (oldest) pendingTokens.delete(oldest[0]);
+    if (_oldestKey && pendingTokens.has(_oldestKey)) {
+      pendingTokens.delete(_oldestKey);
+    } else {
+      const first = pendingTokens.keys().next().value;
+      if (first) pendingTokens.delete(first);
+    }
   }
   const token = randomBytes(18).toString('base64url');
+  if (pendingTokens.size === 0) _oldestKey = token;
   pendingTokens.set(token, { token, toolName, args, createdAt: now });
   return token;
 }

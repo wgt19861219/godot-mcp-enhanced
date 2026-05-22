@@ -24,26 +24,38 @@ interface BridgeResponse {
 let _nextRequestId = 1;
 let _permWarned = false;
 let _cachedSecret: string | null = null;
+let _cachedSecretPath: string | null = null;
+
+/** Find the bridge secret file — prefer project .godot dir, fallback to tmpdir. */
+function findBridgeSecretPath(): string {
+  if (_cachedSecretPath) return _cachedSecretPath;
+  // Prefer project-local path (more secure than tmpdir)
+  const projectDir = process.env.GODOT_BRIDGE_PROJECT_DIR;
+  if (projectDir) {
+    _cachedSecretPath = join(projectDir, '.godot', `mcp_bridge_${BRIDGE_PORT}.secret`);
+    return _cachedSecretPath;
+  }
+  // Fallback to tmpdir (legacy behavior)
+  _cachedSecretPath = join(tmpdir(), `mcp_bridge_${BRIDGE_PORT}.secret`);
+  return _cachedSecretPath;
+}
 
 function readBridgeSecret(): string | null {
   if (_cachedSecret !== null) return _cachedSecret;
-  const secretPath = join(tmpdir(), `mcp_bridge_${BRIDGE_PORT}.secret`);
+  const secretPath = findBridgeSecretPath();
   try {
-    // Tighten permissions: owner-only read (0o600 on Unix; no-op on Windows)
+    // Tighten permissions: owner-only read
     if (process.platform !== 'win32') {
       try {
         chmodSync(secretPath, 0o600);
       } catch { /* best effort */ }
     }
     const stat = statSync(secretPath);
-    // On Unix, warn once if file is world-readable
     if (!_permWarned && process.platform !== 'win32' && (stat.mode & 0o007) !== 0) {
       _permWarned = true;
       console.error(`[SECURITY] Bridge secret file ${secretPath} is world-readable. Attempted chmod 0600.`);
     }
     _cachedSecret = readFileSync(secretPath, 'utf-8').trim();
-    // Keep secret file on disk — bridge owns lifecycle and deletes on _stop_server()
-    // Previously deleted here which broke multi-instance scenarios
     return _cachedSecret;
   } catch {
     return null;
