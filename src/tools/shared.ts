@@ -64,6 +64,13 @@ export function gdEscape(s: string): string {
     .replace(/\\[uU](?=[0-9a-fA-F]{4})/g, '\\\\u');
 }
 
+/** Validates that a string is a safe GDScript identifier (class name, type name, etc.). */
+export function validateIdentifier(name: string, label: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+    throw new Error(`${label} "${name}" is not a valid GDScript identifier`);
+  }
+}
+
 // 标准 camelCase→snake_case（nodeType→node_type）。连续大写会逐字插入下划线（HTTPClient→h_t_t_p_client），但 Godot 属性无此模式。
 export function toSnakeCase(key: string): string {
   return key.replace(/[A-Z]/g, (ch, idx) => (idx > 0 ? '_' : '') + ch.toLowerCase());

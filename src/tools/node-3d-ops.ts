@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape, normalizeNodePath, validateVector3, TYPE_WHITELIST } from './shared.js';
+import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape, normalizeNodePath, validateVector3, TYPE_WHITELIST, validateIdentifier } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -229,6 +229,8 @@ export async function handleTool(
         if (!TYPE_WHITELIST.includes(nodeType as typeof TYPE_WHITELIST[number])) {
           return opsErrorResult('INVALID_TYPE', `Node type "${nodeType}" not in whitelist. Allowed: ${TYPE_WHITELIST.join(', ')}`);
         }
+        validateIdentifier(nodeType, 'node_type');
+        validateIdentifier(nodeName, 'node_name');
         const parentPath = normalizeNodePath((args.parent as string) || 'root');
         const position = args.position ? validateVector3(args.position) : undefined;
         const rotation = args.rotation ? validateVector3(args.rotation) : undefined;

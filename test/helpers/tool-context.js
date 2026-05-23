@@ -1,7 +1,7 @@
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { parseGodotConfig } from '../../build/helpers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,5 +33,15 @@ export function createTempProject(files) {
     writeFileSync(fullPath, content, 'utf-8');
   }
   return dir;
+}
+
+/** Register cleanup callback (call at describe top level) */
+export function registerCleanup(dirRef) {
+  afterEach(() => {
+    if (dirRef.path) {
+      try { rmSync(dirRef.path, { recursive: true, force: true }); } catch {}
+      dirRef.path = null;
+    }
+  });
 }
 

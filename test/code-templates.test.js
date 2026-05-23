@@ -67,6 +67,38 @@ describe('renderTemplate', () => {
   it('无占位符的字符串原样返回', () => {
     assert.equal(renderTemplate('extends Node3D', {}), 'extends Node3D');
   });
+
+  it('rejects template variable values with special characters (injection prevention)', () => {
+    assert.throws(
+      () => renderTemplate('var x = {{val}}', { val: 'OS.execute("rm", ["-rf"])' }),
+      /disallowed characters/,
+    );
+  });
+
+  it('rejects template variable values with semicolons', () => {
+    assert.throws(
+      () => renderTemplate('var x = {{val}}', { val: '1; pass' }),
+      /disallowed characters/,
+    );
+  });
+
+  it('accepts template variable values with safe GDScript literals', () => {
+    assert.equal(
+      renderTemplate('var x = {{val}}', { val: 'Vector3(1.0, 2.0, 3.0)' }),
+      'var x = Vector3(1.0, 2.0, 3.0)',
+    );
+  });
+
+  it('accepts template variable values with numbers and operators', () => {
+    assert.equal(
+      renderTemplate('speed = {{spd}}', { spd: '300.0' }),
+      'speed = 300.0',
+    );
+    assert.equal(
+      renderTemplate('offset = {{off}}', { off: '-10 + 5 * 2' }),
+      'offset = -10 + 5 * 2',
+    );
+  });
 });
 
 // ─── 3. CharacterBody2D 模板 (T008) ──────────────────────────────────────────

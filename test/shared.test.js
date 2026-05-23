@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   MARKER_RESULT, SCENE_TREE_HEADER, NON_PERSIST,
   opsSuccess, opsError, opsErrorResult, parseGdscriptResult,
+  validateIdentifier,
 } from '../build/tools/shared.js';
 
 describe('shared constants', () => {
@@ -94,5 +95,29 @@ describe('parseGdscriptResult', () => {
     }, ['param_warn']);
     const parsed = JSON.parse(r.content[0].text);
     assert.deepStrictEqual(parsed.warnings, ['param_warn', 'clamped']);
+  });
+});
+
+describe('validateIdentifier', () => {
+  it('accepts valid GDScript identifiers', () => {
+    assert.doesNotThrow(() => validateIdentifier('Node3D', 'test'));
+    assert.doesNotThrow(() => validateIdentifier('Camera3D', 'test'));
+    assert.doesNotThrow(() => validateIdentifier('_private', 'test'));
+    assert.doesNotThrow(() => validateIdentifier('StandardMaterial3D', 'test'));
+  });
+  it('rejects identifiers starting with a digit', () => {
+    assert.throws(() => validateIdentifier('3DNode', 'test'), /not a valid GDScript identifier/);
+  });
+  it('rejects identifiers with special characters', () => {
+    assert.throws(() => validateIdentifier('Node;rm -rf', 'test'), /not a valid GDScript identifier/);
+  });
+  it('rejects identifiers with spaces', () => {
+    assert.throws(() => validateIdentifier('My Node', 'test'), /not a valid GDScript identifier/);
+  });
+  it('rejects empty string', () => {
+    assert.throws(() => validateIdentifier('', 'test'), /not a valid GDScript identifier/);
+  });
+  it('rejects identifiers with dots', () => {
+    assert.throws(() => validateIdentifier('Node3D.new()', 'test'), /not a valid GDScript identifier/);
   });
 });

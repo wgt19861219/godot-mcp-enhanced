@@ -612,7 +612,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'execute_gdscript': {
       const projectPath = validatePath(args.project_path as string);
       const code = args.code as string;
-      const timeout = (args.timeout as number) || 30;
+      const timeout = Math.min(Math.max(1, Number(args.timeout) || 30), 300);
       const loadAutoloads = (args.load_autoloads as boolean) || false;
       const godot = await ctx.findGodot();
 

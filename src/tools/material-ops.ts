@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { normalizeNodePath, gdEscape, sanitizeResPath } from './shared.js';
+import { normalizeNodePath, gdEscape, sanitizeResPath, validateIdentifier } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -704,6 +704,7 @@ export async function handleTool(
             if (!ALLOWED_MATERIAL_TYPES.includes(materialType as typeof ALLOWED_MATERIAL_TYPES[number])) {
               return opsErrorResult('INVALID_MATERIAL_TYPE', `material_type must be one of: ${ALLOWED_MATERIAL_TYPES.join(', ')}`);
             }
+            validateIdentifier(materialType, 'material_type');
             const shaderPath = args.shader_path as string | undefined;
             if (shaderPath) {
               try { sanitizeResPath(shaderPath, 'shader_path'); } catch {
