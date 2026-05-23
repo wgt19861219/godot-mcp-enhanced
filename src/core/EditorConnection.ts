@@ -60,6 +60,14 @@ export class EditorConnection {
   }
 
   async connect(): Promise<void> {
+    // C-06: Clean up stale WebSocket before creating new one
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+        this.ws.terminate();
+      }
+      this.ws = null;
+    }
     return new Promise((resolve, reject) => {
       const url = `ws://${this.host}:${this.options.port}`;
       this.connectAttempt = true;

@@ -110,14 +110,18 @@ export function genIkSetScript(nodePath: string, props: Record<string, unknown>)
 
   for (const [key, val] of Object.entries(props)) {
     if (key === 'active') {
+      if (val !== true && val !== false) throw new Error('active must be boolean');
       lines.push(`\tik_node.active = ${val}`);
     } else if (key === 'influence') {
-      lines.push(`\tik_node.influence = ${val}`);
+      const inf = Number(val);
+      if (!Number.isFinite(inf)) throw new Error('influence must be a finite number');
+      lines.push(`\tik_node.influence = ${inf}`);
     } else if (key === 'bone_name') {
       lines.push(`\tik_node.bone_name = "${gdEscape(String(val))}"`);
     } else if (key === 'target_nodepath') {
       lines.push(`\tik_node.target_nodepath = NodePath("${gdEscape(String(val))}")`);
     } else if (key === 'use_magnet') {
+      if (val !== true && val !== false) throw new Error('use_magnet must be boolean');
       lines.push(`\tik_node.use_magnet = ${val}`);
     } else if (key === 'magnet_position') {
       const mp = val as { x: number; y: number; z: number };

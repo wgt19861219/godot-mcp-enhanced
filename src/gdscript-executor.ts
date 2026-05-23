@@ -238,10 +238,7 @@ func _mcp_output(key: String, value: Variant) -> void:
 \t_mcp_outputs.append({"key": key, "value": str(value)})
 ${classBody}
 func _initialize():
-\tvar _mcp_success: bool = true
-\tvar _mcp_error: String = ""
 \t_mcp_load_main_scene()${initBody}
-\tif _mcp_success:
 \t\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 \t\tif Engine.get_main_loop() == self:
 \t\t\tquit(0)
@@ -479,7 +476,16 @@ export async function executeGdscript(
 
     const proc = spawn(godotPath, godotArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '',
+        USERPROFILE: process.env.USERPROFILE ?? '',
+        LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
+        APPDATA: process.env.APPDATA ?? '',
+        TEMP: process.env.TEMP ?? '',
+        TMP: process.env.TMP ?? '',
+        GODOT: process.env.GODOT ?? '',
+      },
     });
 
     proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
@@ -597,7 +603,7 @@ function extractCompileError(raw: string): string {
  * The scene runs the user's script from _ready().
  */
 function createAutoloadLoaderScene(loaderScriptPath: string): string {
-  const loaderPathRes = loaderScriptPath.replace(/\\/g, '/');
+  const loaderPathRes = loaderScriptPath.replace(/\\/g, '/').replace(/"/g, '\\"');
   return `[gd_scene load_steps=2 format=3]
 
 [ext_resource type="Script" path="${loaderPathRes}" id="1"]
@@ -612,7 +618,7 @@ script = ExtResource("1")
  * In _ready(), all autoloads are available. It then loads and runs the user script.
  */
 function createAutoloadLoaderScript(userScriptPath: string): string {
-  const pathRes = userScriptPath.replace(/\\/g, '/');
+  const pathRes = userScriptPath.replace(/\\/g, '/').replace(/"/g, '\\"');
   return `extends Node
 
 func _ready() -> void:
