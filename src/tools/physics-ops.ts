@@ -48,7 +48,7 @@ export function genRaycastScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar space_state = get_root().get_viewport().get_world_3d().direct_space_state
+\tvar space_state = root.get_world_3d().direct_space_state
 \tvar query = PhysicsRayQueryParameters3D.create(Vector3(${from.x}, ${from.y}, ${from.z}), Vector3(${to.x}, ${to.y}, ${to.z}))${maskLine}${excludeBlock}
 \tvar result = space_state.intersect_ray(query)
 \tif result.is_empty():
@@ -189,7 +189,7 @@ export function genQuerySpatialScript(
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar world = get_root().get_viewport().get_world_3d()
+\tvar world = root.get_world_3d()
 \tif world == null:
 \t\t_mcp_output("error", "No World3D available (scene may not be loaded)")
 \t\t_mcp_done()

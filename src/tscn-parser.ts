@@ -419,15 +419,24 @@ export function parseTscn(content: string): ParsedScene {
     }
   }
 
+  let rootNode: ParsedNode | undefined;
   for (const node of result.nodes) {
     node.children = [];
     const uniquePath = node.parent ? `${node.parent}/${node.name}` : node.name;
     nodeMap.set(uniquePath, node);
+    if (!node.parent) {
+      rootNode = node;
+    }
   }
 
   for (const node of result.nodes) {
     if (node.parent) {
-      const parent = nodeMap.get(node.parent);
+      let parent: ParsedNode | undefined;
+      if (node.parent === '.') {
+        parent = rootNode;
+      } else {
+        parent = nodeMap.get(node.parent);
+      }
       if (parent) {
         parent.children.push(node);
       }

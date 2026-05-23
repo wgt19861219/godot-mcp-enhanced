@@ -53,7 +53,7 @@ describe('genRaycastScript', () => {
     assert.ok(script.includes('PhysicsRayQueryParameters3D.create'));
     assert.ok(script.includes('Vector3(0, 0, 0)'));
     assert.ok(script.includes('Vector3(10, 0, 0)'));
-    assert.ok(script.includes('get_root().get_viewport()'));
+    assert.ok(script.includes('root.get_world_3d()'));
   });
   it('includes collision_mask when provided', () => {
     const script = genRaycastScript({x:0,y:0,z:0}, {x:10,y:0,z:0}, 0b111);

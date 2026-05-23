@@ -23,6 +23,8 @@ texture = ExtResource("1")
     assert.strictEqual(result.nodes[0].type, 'CharacterBody2D');
     assert.strictEqual(result.nodes[1].name, 'Sprite');
     assert.strictEqual(result.nodes[1].type, 'Sprite2D');
+    assert.strictEqual(result.nodes[0].children.length, 1);
+    assert.strictEqual(result.nodes[0].children[0].name, 'Sprite');
   });
 
   it('parses root node without parent', () => {
