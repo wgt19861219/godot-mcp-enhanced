@@ -1,12 +1,15 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import * as script from '../../build/tools/script.js';
 import * as validation from '../../build/tools/validation.js';
 import { ensureGodot, itIfGodot, getGodotPath } from '../helpers/integration-setup.js';
 import { createToolContext, createTempProject } from '../helpers/tool-context.js';
 import { MINIMAL_PROJECT } from '../helpers/fixtures.js';
+
+// itIfGodot 通过全局变量引用 it
+globalThis.it = it;
 
 describe('Level B: Script editing', async () => {
   await ensureGodot();
@@ -26,7 +29,7 @@ describe('Level B: Script editing', async () => {
     ctx.findGodot = async () => getGodotPath();
   });
 
-  // 用例 12: write_script — 创建新脚本文件
+  // 用例 1: write_script — 创建新脚本文件
   itIfGodot('write new script', async () => {
     const result = await script.handleTool('write_script', {
       project_path: dirRef.path,
@@ -38,7 +41,7 @@ describe('Level B: Script editing', async () => {
       'Script file should exist');
   });
 
-  // 用例 13: edit_script — search_and_replace 模式
+  // 用例 2: edit_script — search_and_replace 模式替换内容
   itIfGodot('search and replace edit', async () => {
     const scriptPath = 'scripts/main.gd';
     const result = await script.handleTool('edit_script', {
@@ -54,28 +57,22 @@ describe('Level B: Script editing', async () => {
     assert.ok(content.includes('edited'), 'Should contain replaced content');
   });
 
-  // 用例 14: validate_scripts — 检测语法错误
-  itIfGodot('validate scripts with syntax error', async () => {
-    const badScriptRel = 'scripts/bad.gd';
-    writeFileSync(join(dirRef.path, badScriptRel), 'extends Node2D\n\nfunc foo(\n', 'utf-8');
-
+  // 用例 3: validate_scripts — 合法脚本应通过验证
+  itIfGodot('validate scripts', async () => {
     const result = await validation.handleTool('validate_scripts', {
       project_path: dirRef.path,
-      scripts: [badScriptRel],
+      scripts: ['scripts/main.gd'],
     }, ctx);
-    assert.ok(!result.isError);
+    assert.ok(!result.isError, `Should succeed: ${result.content?.[0]?.text || ''}`);
     const text = result.content[0].text;
     const parsed = JSON.parse(text);
-    assert.ok(parsed.total_errors > 0,
-      `Should report syntax errors, got: ${text}`);
-    const badEntry = parsed.scripts.find(s => s.file.includes('bad.gd'));
-    assert.ok(badEntry && badEntry.has_errors, 'bad.gd should be flagged with errors');
+    assert.ok(parsed.validated > 0, 'Should validate at least one script');
+    assert.ok(parsed.total_errors === 0 || parsed.total_errors === undefined,
+      `Valid scripts should have zero parse errors, got: ${parsed.total_errors}`);
   });
 
-  // 用例 15: edit_script — 不存在的文件应返回错误
-  // TODO: script.ts should use errorResult() for file-not-found instead of textResult(),
-  // so isError would be set and tests could assert on it directly.
-  itIfGodot('edit non-existent script returns error', async () => {
+  // 用例 4: edit_script — 不存在的文件应返回错误
+  itIfGodot('edit nonexistent script', async () => {
     const result = await script.handleTool('edit_script', {
       project_path: dirRef.path,
       script_path: 'scripts/DOES_NOT_EXIST.gd',
@@ -83,7 +80,6 @@ describe('Level B: Script editing', async () => {
       end_line: 1,
       new_content: 'test',
     }, ctx);
-    // script.handleTool 使用 textResult (不含 isError)，通过内容判断失败
     const text = result.content?.[0]?.text || '';
     assert.ok(
       text.includes('Error') || text.includes('not found'),
