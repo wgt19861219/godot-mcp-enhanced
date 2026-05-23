@@ -9,7 +9,7 @@ import { parseTscn, parseTscnSummary } from '../tscn-parser.js';
 import { findInstanceNode, detachInstance, nodePathToNameAndParent } from '../tscn-editor.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult, sanitizeResPath } from './shared.js';
-import { normalizeNodePath, gdEscape } from './shared.js';
+import { normalizeNodePath, gdEscape, toSnakeCase } from './shared.js';
 import { forceKillTree } from '../core/process-state.js';
 
 const TOOL_NAMES = [
@@ -621,10 +621,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       // Build GDScript property setter lines
       let propLines = '';
       for (const [key, value] of Object.entries(properties)) {
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+        const gdKey = toSnakeCase(key);
+        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(gdKey)) {
           return textResult(`Error: Invalid property name: "${key}"`);
         }
-        propLines += `\n\t${gdScriptSetLine(key, value)}`;
+        propLines += `\n\t${gdScriptSetLine(gdKey, value)}`;
       }
 
       const script = `${SCENE_TREE_HEADER}
@@ -800,9 +801,10 @@ async function handleInstanceScene(args: Record<string, unknown>, ctx: ToolConte
 
   let propLines = '';
   for (const [key, value] of safeProps) {
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) continue;
+    const gdKey = toSnakeCase(key);
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(gdKey)) continue;
     try {
-      const line = gdScriptSetLine(key, value, '_inst');
+      const line = gdScriptSetLine(gdKey, value, '_inst');
       if (!line.startsWith('# skipped')) {
         propLines += `\n\t${line}`;
       }
@@ -873,12 +875,13 @@ async function handleSetInstanceProperty(args: Record<string, unknown>, ctx: Too
   const p = validatePath(args.project_path as string);
   const scenePath = resolveWithinRoot(p, normalizeUserProjectPath(args.scene_path as string));
   const nodePath = normalizeNodePath(args.node_path as string);
-  const propName = String(args.property);
+  const rawPropName = String(args.property);
+  const propName = toSnakeCase(rawPropName);
   const propValue = args.value;
 
   // 属性名安全检查
   if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(propName)) {
-    return opsErrorResult('INVALID_PARAM', `Invalid property name: "${propName}"`);
+    return opsErrorResult('INVALID_PARAM', `Invalid property name: "${rawPropName}"`);
   }
   if (BLOCKED_PROPS.has(propName)) {
     return opsErrorResult('BLOCKED_PROP', `Property "${propName}" is not allowed`);

@@ -64,6 +64,11 @@ export function gdEscape(s: string): string {
     .replace(/\\[uU](?=[0-9a-fA-F]{4})/g, '\\\\u');
 }
 
+// 标准 camelCase→snake_case（nodeType→node_type）。连续大写会逐字插入下划线（HTTPClient→h_t_t_p_client），但 Godot 属性无此模式。
+export function toSnakeCase(key: string): string {
+  return key.replace(/[A-Z]/g, (ch, idx) => (idx > 0 ? '_' : '') + ch.toLowerCase());
+}
+
 export function validateVector3(v: unknown): { x: number; y: number; z: number } {
   if (typeof v !== 'object' || v === null) throw new Error('Vector3 must be an object with x, y, z number fields');
   const obj = v as Record<string, unknown>;

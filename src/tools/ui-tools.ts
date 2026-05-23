@@ -492,13 +492,14 @@ ${drawLines || '\t\tpass'}
 // ─── ui_build_layout ─────────────────────────────────────────────────────────
 
 export interface FlexLayout {
-  direction: 'row' | 'column' | 'row-reverse' | 'column-reverse';
+  direction: 'row' | 'column' | 'row-reverse' | 'column-reverse' | 'grid';
   justify?: 'flex-start' | 'center' | 'flex-end' | 'space-between' | 'space-around' | 'space-evenly';
   align?: 'stretch' | 'flex-start' | 'center' | 'flex-end';
   wrap?: 'nowrap' | 'wrap';
   gap?: number;
   row_gap?: number;
   padding?: number | [number, number, number, number];
+  columns?: number;
 }
 
 export interface FlexChild {
@@ -549,7 +550,7 @@ function validateUiNodeSpec(spec: UiNodeSpec, depth: number, warnings: string[] 
   }
 }
 
-const VALID_DIRECTIONS = ['row', 'column', 'row-reverse', 'column-reverse'] as const;
+const VALID_DIRECTIONS = ['row', 'column', 'row-reverse', 'column-reverse', 'grid'] as const;
 const VALID_JUSTIFY = ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'] as const;
 const VALID_ALIGN = ['stretch', 'flex-start', 'center', 'flex-end'] as const;
 const VALID_WRAP = ['nowrap', 'wrap'] as const;
@@ -615,7 +616,11 @@ function resolveFlexContainer(layout: FlexLayout): {
   containerType: string;
   isReverse: boolean;
   isWrap: boolean;
+  isGrid: boolean;
 } {
+  if (layout.direction === 'grid') {
+    return { containerType: 'GridContainer', isReverse: false, isWrap: false, isGrid: true };
+  }
   const isReverse = layout.direction === 'row-reverse' || layout.direction === 'column-reverse';
   const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
   const isWrap = layout.wrap === 'wrap';
@@ -627,13 +632,34 @@ function resolveFlexContainer(layout: FlexLayout): {
     containerType = isRow ? 'HBoxContainer' : 'VBoxContainer';
   }
 
-  return { containerType, isReverse, isWrap };
+  return { containerType, isReverse, isWrap, isGrid: false };
 }
 
 function genFlexContainerProps(layout: FlexLayout, indent: string, warnings: string[] = []): string {
-  const { isWrap } = resolveFlexContainer(layout);
+  const { isWrap, isGrid } = resolveFlexContainer(layout);
   const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
   let lines = '';
+
+  if (isGrid) {
+    if (layout.columns !== undefined && layout.columns > 0) {
+      lines += `\n${indent}node.columns = ${Math.floor(layout.columns)}`;
+    }
+    if (layout.gap !== undefined) {
+      lines += `\n${indent}node.add_theme_constant_override("h_separation", ${layout.gap})`;
+      const vSep = layout.row_gap ?? layout.gap;
+      lines += `\n${indent}node.add_theme_constant_override("v_separation", ${vSep})`;
+    }
+    if (layout.padding !== undefined) {
+      const p = typeof layout.padding === 'number'
+        ? [layout.padding, layout.padding, layout.padding, layout.padding]
+        : layout.padding;
+      lines += `\n${indent}node.add_theme_constant_override("margin_top", ${p[0]})`;
+      lines += `\n${indent}node.add_theme_constant_override("margin_right", ${p[1]})`;
+      lines += `\n${indent}node.add_theme_constant_override("margin_bottom", ${p[2]})`;
+      lines += `\n${indent}node.add_theme_constant_override("margin_left", ${p[3]})`;
+    }
+    return lines;
+  }
 
   if (layout.justify) {
     if (isWrap) {
@@ -765,8 +791,13 @@ ${indent}node.owner = ${ownerVar}`;
 
 function uiNodeToGdWithLayout(spec: UiNodeSpec, parentVar: string, ownerVar: string, indent: string, warnings: string[], nextId: () => number): string {
   const layout = spec.layout!;
-  const { containerType, isReverse, isWrap } = resolveFlexContainer(layout);
+  const { containerType, isReverse, isWrap, isGrid } = resolveFlexContainer(layout);
   const isRow = layout.direction === 'row' || layout.direction === 'row-reverse';
+
+  if (isGrid && layout.justify) warnings.push('layout.justify is ignored for grid direction');
+  if (isGrid && layout.align) warnings.push('layout.align is ignored for grid direction');
+  if (isGrid && layout.wrap) warnings.push('layout.wrap is ignored for grid direction');
+  if (isGrid && (layout.columns === undefined || layout.columns <= 0)) warnings.push('Grid layout without columns: GridContainer will auto-fill columns');
 
   let lines = `${indent}node = ClassDB.instantiate("${gdEscape(containerType)}")
 ${indent}if node == null:
@@ -1271,12 +1302,13 @@ export function getToolDefinitions(): Tool[] {
                 type: 'object',
                 description: 'CSS Flexbox 布局描述（存在时覆盖 type 字段）',
                 properties: {
-                  direction: { type: 'string', enum: ['row', 'column', 'row-reverse', 'column-reverse'], description: '主轴方向' },
+                  direction: { type: 'string', enum: ['row', 'column', 'row-reverse', 'column-reverse', 'grid'], description: '主轴方向' },
                   justify: { type: 'string', enum: ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'], description: '主轴对齐' },
                   align: { type: 'string', enum: ['stretch', 'flex-start', 'center', 'flex-end'], description: '交叉轴对齐' },
                   wrap: { type: 'string', enum: ['nowrap', 'wrap'], description: '换行模式' },
                   gap: { type: 'number', description: '主轴间距' },
                   row_gap: { type: 'number', description: '换行时行间距（仅 wrap 模式）' },
+                  columns: { type: 'number', description: 'Grid 列数（仅 grid 方向）' },
                   padding: {
                     description: '内边距：数字或 [上, 右, 下, 左]',
                     oneOf: [

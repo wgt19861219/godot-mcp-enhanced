@@ -82,6 +82,7 @@ function isInCommentOrString(line: string, matchIndex: number): boolean {
 interface FunctionInfo {
   name: string;
   body: string;
+  bodyLines: string[];
   startLine: number;
   endLine: number;
 }
@@ -113,6 +114,7 @@ function extractFunctions(code: string): FunctionInfo[] {
     functions.push({
       name: funcName,
       body: bodyLines.join('\n'),
+      bodyLines,
       startLine,
       endLine: startLine + bodyLines.length,
     });
@@ -344,7 +346,26 @@ function lintCallOrder(
       }
       case "L015": {
         if (func.name === '_process' || func.name === '_physics_process') {
-          if (/\.look_at\s*\(/.test(body) && /RigidBody3D|RigidBody2D/.test(body)) {
+          let hasLookAt = false;
+          let hasRigidBody = false;
+          for (const line of func.bodyLines) {
+            const stripped = line.trimStart();
+            if (stripped.startsWith('#')) continue;
+            for (let pos = 0; pos < line.length; ) {
+              const laMatch = line.indexOf('look_at', pos);
+              const rbMatch = line.indexOf('RigidBody', pos);
+              if (laMatch === -1 && rbMatch === -1) break;
+              if (laMatch !== -1 && laMatch < (rbMatch === -1 ? Infinity : rbMatch)) {
+                if (!isInCommentOrString(line, laMatch)) hasLookAt = true;
+                pos = laMatch + 1;
+              } else {
+                if (!isInCommentOrString(line, rbMatch!)) hasRigidBody = true;
+                pos = rbMatch! + 1;
+              }
+            }
+            if (hasLookAt && hasRigidBody) break;
+          }
+          if (hasLookAt && hasRigidBody) {
             errors.push({ rule: rule.id, severity: rule.severity, line: func.startLine,
               message: rule.message, suggestion: rule.suggestion, confirmed: true });
           }

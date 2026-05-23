@@ -13,6 +13,7 @@ interface EditorConnectionOptions {
   maxReconnectInterval?: number;
   connectTimeout?: number;
   requestTimeout?: number;
+  maxReconnectAttempts?: number;
   secret?: string;
 }
 
@@ -42,6 +43,7 @@ export class EditorConnection {
   private readonly connectTimeoutMs: number;
   private readonly requestTimeoutMs: number;
   private reconnectAttempt = 0;
+  private readonly maxReconnectAttempts: number;
   private readonly editorSecret: string | null;
   private authenticated = false;
 
@@ -53,6 +55,7 @@ export class EditorConnection {
     this.maxReconnectMs = options.maxReconnectInterval ?? 60000;
     this.connectTimeoutMs = options.connectTimeout ?? 10000;
     this.requestTimeoutMs = options.requestTimeout ?? 30000;
+    this.maxReconnectAttempts = options.maxReconnectAttempts ?? 20;
     this.editorSecret = options.secret ?? null;
   }
 
@@ -155,7 +158,7 @@ export class EditorConnection {
         reject(new Error('Not connected'));
         return;
       }
-      const id = ++this.requestId;
+      const id = (this.requestId = (this.requestId + 1) % Number.MAX_SAFE_INTEGER) || 1;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request timeout: ${method}`));
@@ -249,6 +252,12 @@ export class EditorConnection {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    if (this.reconnectAttempt >= this.maxReconnectAttempts) {
+      console.error(`[EditorConnection] Max reconnect attempts (${this.maxReconnectAttempts}) reached, giving up`);
+      this.reconnectEnabled = false;
+      this.onDisconnect?.();
+      return;
+    }
     const delay = Math.min(
       this.reconnectBaseMs * Math.pow(2, this.reconnectAttempt),
       this.maxReconnectMs,

@@ -216,7 +216,7 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 		_heartbeat.reset_activity(peer.get_instance_id())
 		return
 
-	_request_counter += 1
+	_request_counter = (_request_counter + 1) % 1000000
 	var response = _command_handler.handle(parsed.get("method", ""), parsed.get("params", {}), _request_counter)
 	var reply = {"jsonrpc": "2.0", "id": parsed.get("id")}
 	if response.has("error"):
