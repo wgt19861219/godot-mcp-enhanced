@@ -52,6 +52,11 @@ const TMP_PREFIX = 'godot-mcp-exec-';
 const MARKER_RESULT = '___MCP_RESULT___';
 const MARKER_ERROR = '___MCP_ERROR___';
 
+/** Generate a random per-execution marker prefix to prevent forgery. */
+function generateMarker(): string {
+  return `__MCP_${randomUUID().replace(/-/g, '').substring(0, 16)}__`;
+}
+
 // ─── Temp file helpers ──────────────────────────────────────────────────────
 
 const BASE_TMP_DIR = join(tmpdir(), 'godot-mcp-exec');
@@ -340,7 +345,7 @@ function injectHelpers(code: string): string {
 
 // ─── Output parsing ─────────────────────────────────────────────────────────
 
-export function parseMcpMarkers(raw: string): {
+export function parseMcpMarkers(raw: string, resultMarker = MARKER_RESULT, errorMarker = MARKER_ERROR): {
   parsed: { success: boolean; outputs?: OutputEntry[]; error?: string } | null;
   logLines: string[];
 } {
@@ -350,15 +355,15 @@ export function parseMcpMarkers(raw: string): {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith(MARKER_RESULT)) {
+    if (trimmed.startsWith(resultMarker)) {
       try {
-        parsed = JSON.parse(trimmed.substring(MARKER_RESULT.length));
+        parsed = JSON.parse(trimmed.substring(resultMarker.length));
       } catch {
         parsed = { success: false, error: 'Failed to parse result JSON: ' + trimmed };
       }
-    } else if (trimmed.startsWith(MARKER_ERROR)) {
+    } else if (trimmed.startsWith(errorMarker)) {
       try {
-        parsed = JSON.parse(trimmed.substring(MARKER_ERROR.length));
+        parsed = JSON.parse(trimmed.substring(errorMarker.length));
       } catch {
         parsed = { success: false, error: 'Failed to parse error JSON: ' + trimmed };
       }
@@ -378,6 +383,12 @@ export async function executeGdscript(
   const { godotPath, projectPath, code, timeout = 30 } = options;
   let loadAutoloads = options.loadAutoloads ?? false;
   const startTime = Date.now();
+
+  // C-01: Generate random per-execution markers to prevent user code forgery
+  const rndResult = generateMarker();
+  const rndError = generateMarker();
+  const randomizeMarkers = (s: string) =>
+    s.replaceAll(MARKER_RESULT, rndResult).replaceAll(MARKER_ERROR, rndError);
 
   // Prepare script content
   // Routing logic:
@@ -414,7 +425,7 @@ export async function executeGdscript(
   const tempFiles: string[] = [];
   let tempFile: string;
   try {
-    tempFile = writeTempScript(scriptContent, sessionDir);
+    tempFile = writeTempScript(randomizeMarkers(scriptContent), sessionDir);
     tempFiles.push(tempFile);
   } catch (err) {
     return {
@@ -487,7 +498,7 @@ export async function executeGdscript(
 
       const rawOutput = stdout + stderr;
       const duration = Date.now() - startTime;
-      const { parsed, logLines } = parseMcpMarkers(rawOutput);
+      const { parsed, logLines } = parseMcpMarkers(rawOutput, rndResult, rndError);
       const analysis = analyzeOutput(logLines);
 
       if (parsed) {

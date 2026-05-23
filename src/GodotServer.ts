@@ -17,7 +17,7 @@ import {
   listResourceTemplates as listMcpResourceTemplates,
   readResource as readMcpResource,
 } from './resources.js';
-import { parseGodotConfig } from './helpers.js';
+import { parseGodotConfig, isPathInAllowedRoots } from './helpers.js';
 
 // ─── Import modular tool handlers ───────────────────────────────────────────
 import * as runtime from './tools/runtime.js';
@@ -88,6 +88,10 @@ registerTools(allMeta);
 async function dispatchTool(
   toolName: string, args: Record<string, unknown>, ctx: ToolContext, startTime: number
 ): Promise<ToolResult> {
+  // C-03: Validate project_path against whitelist
+  if (typeof args.project_path === 'string' && !isPathInAllowedRoots(args.project_path)) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Path not in ALLOWED_PROJECT_PATHS: ${args.project_path}` } }) }], isError: true };
+  }
   const targetMod = toolModuleMap.get(toolName);
   if (!targetMod) {
     return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };

@@ -55,6 +55,9 @@ export function getRunningProcess(): ChildProcess | null {
 }
 
 export function setRunningProcess(proc: ChildProcess | null): void {
+  if (_runningProcess && !_runningProcess.killed && proc !== _runningProcess) {
+    forceKillTree(_runningProcess);
+  }
   _runningProcess = proc;
   if (!proc) {
     _outputBuffer = [];

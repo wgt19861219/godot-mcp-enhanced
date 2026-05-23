@@ -200,22 +200,22 @@ export function parseGodotConfig(content: string): GodotConfig {
 const MCP_MARKER_RESULT = '___MCP_RESULT___';
 const MCP_MARKER_ERROR = '___MCP_ERROR___';
 
-export function parseMcpScriptOutput(rawOutput: string, exitCode: number | null): unknown {
+export function parseMcpScriptOutput(rawOutput: string, exitCode: number | null, resultMarker = MCP_MARKER_RESULT, errorMarker = MCP_MARKER_ERROR): unknown {
   const lines = rawOutput.split('\n');
   const logLines: string[] = [];
   let parsed: unknown = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith(MCP_MARKER_RESULT)) {
+    if (trimmed.startsWith(resultMarker)) {
       try {
-        parsed = JSON.parse(trimmed.substring(MCP_MARKER_RESULT.length));
+        parsed = JSON.parse(trimmed.substring(resultMarker.length));
       } catch {
         parsed = { success: false, error: 'Failed to parse result JSON', raw: trimmed };
       }
-    } else if (trimmed.startsWith(MCP_MARKER_ERROR)) {
+    } else if (trimmed.startsWith(errorMarker)) {
       try {
-        parsed = JSON.parse(trimmed.substring(MCP_MARKER_ERROR.length));
+        parsed = JSON.parse(trimmed.substring(errorMarker.length));
       } catch {
         parsed = { success: false, error: 'Failed to parse error JSON', raw: trimmed };
       }
