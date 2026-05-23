@@ -277,7 +277,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           const suggestions = new Set<string>();
           for (const issue of allIssues) {
             const suggestion = getTemplateSuggestion(issue.rule);
-            if (suggestion) suggestions.add(`  (${issue.rule}) → use list_templates to find a fix`);
+            if (suggestion) {
+              const preview = suggestion.split('\n').slice(0, 3).join('\n');
+              suggestions.add(`  (${issue.rule}) → 建议:\n    ${preview}\n    ... (完整模板见 list_templates)`);
+            }
           }
           if (suggestions.size > 0) {
             templateHint = '\n\nTemplate suggestions:\n' + [...suggestions].join('\n');

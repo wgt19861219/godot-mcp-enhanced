@@ -22,6 +22,8 @@ export interface CodeTemplate {
   generate: (params: Record<string, string>) => string;
   verifiedGodotVersion: string;
   lastVerified: string;
+  tags?: string[];
+  appliesTo?: string[];
 }
 
 // ─── Templates ──────────────────────────────────────────────────────────────
@@ -365,15 +367,11 @@ export function loadUserTemplates(projectPath: string): CodeTemplate[] {
         description: validated.description ?? '',
         relatedRules: [],
         params: validated.variables ?? [],
-        generate: (p) => {
-          let code = validated.code;
-          for (const [key, value] of Object.entries(p)) {
-            code = code.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-          }
-          return code;
-        },
+        generate: (p) => renderTemplate(validated.code, p),
         verifiedGodotVersion: validated.godotVersion ?? '4.2',
         lastVerified: new Date().toISOString().split('T')[0],
+        tags: validated.tags ?? [],
+        appliesTo: validated.appliesTo ?? [],
       });
     } catch (err) {
       console.warn(`[template] Failed to load ${file}: ${err instanceof Error ? err.message : err}`);
@@ -455,8 +453,16 @@ export async function handleTool(
     const tag = args.tag as string | undefined;
     const appliesTo = args.applies_to as string | undefined;
     let filtered = templates;
-    if (tag) filtered = filtered.filter(t => t.description.toLowerCase().includes(tag.toLowerCase()));
-    if (appliesTo) filtered = filtered.filter(t => t.description.toLowerCase().includes(appliesTo.toLowerCase()));
+    if (tag) filtered = filtered.filter(t => {
+      const tags = t.tags ?? [];
+      return tags.some(tg => tg.toLowerCase().includes(tag.toLowerCase()))
+        || t.description.toLowerCase().includes(tag.toLowerCase());
+    });
+    if (appliesTo) filtered = filtered.filter(t => {
+      const applies = t.appliesTo ?? [];
+      return applies.some(a => a.toLowerCase().includes(appliesTo.toLowerCase()))
+        || t.description.toLowerCase().includes(appliesTo.toLowerCase());
+    });
 
     const lines = filtered.map(t =>
       `- **${t.id}**: ${t.name} — ${t.description} (params: ${t.params.map(p => p.name).join(', ') || 'none'})`
