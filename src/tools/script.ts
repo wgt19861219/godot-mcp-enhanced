@@ -8,6 +8,7 @@ import { executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
 import { lintGDScript, formatLintResults } from './gdscript-lint.js';
 import { getTemplateSuggestion } from './code-templates.js';
+import { validateTimeout } from './shared.js';
 
 function detectDuplicateLines(lines: string[]): string[] {
   const warnings: string[] = [];
@@ -612,7 +613,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'execute_gdscript': {
       const projectPath = validatePath(args.project_path as string);
       const code = args.code as string;
-      const timeout = Math.min(Math.max(1, Number(args.timeout) || 30), 300);
+      const timeout = validateTimeout(args.timeout);
       const loadAutoloads = (args.load_autoloads as boolean) || false;
       const godot = await ctx.findGodot();
 

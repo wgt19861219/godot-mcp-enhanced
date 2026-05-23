@@ -4,6 +4,7 @@ import {
   MARKER_RESULT, SCENE_TREE_HEADER, NON_PERSIST,
   opsSuccess, opsError, opsErrorResult, parseGdscriptResult,
   validateIdentifier,
+  validateTimeout,
 } from '../build/tools/shared.js';
 
 describe('shared constants', () => {
@@ -127,5 +128,25 @@ describe('validateIdentifier', () => {
   it('accepts names exactly 64 characters', () => {
     const maxName = 'a'.repeat(64);
     assert.doesNotThrow(() => validateIdentifier(maxName, 'test'));
+  });
+});
+
+describe('validateTimeout', () => {
+  it('clamps timeout to [5, 120] range', () => {
+    assert.strictEqual(validateTimeout(0), 5);
+    assert.strictEqual(validateTimeout(200), 120);
+    assert.strictEqual(validateTimeout(30), 30);
+  });
+  it('returns default for undefined', () => {
+    assert.strictEqual(validateTimeout(undefined), 30);
+  });
+  it('returns default for null', () => {
+    assert.strictEqual(validateTimeout(null), 30);
+  });
+  it('returns default for NaN string', () => {
+    assert.strictEqual(validateTimeout('abc'), 30);
+  });
+  it('rounds fractional values', () => {
+    assert.strictEqual(validateTimeout(10.7), 11);
   });
 });

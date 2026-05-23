@@ -64,6 +64,14 @@ export function gdEscape(s: string): string {
     .replace(/\\[uU](?=[0-9a-fA-F]{4})/g, '\\\\u');
 }
 
+/** Clamps a timeout value (seconds) to [min, max], defaulting on invalid input. */
+export function validateTimeout(value: unknown, min = 5, max = 120, defaultVal = 30): number {
+  if (value === undefined || value === null) return defaultVal;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return defaultVal;
+  return Math.min(max, Math.max(min, Math.round(num)));
+}
+
 /** Validates that a string is a safe GDScript identifier (class name, type name, etc.). */
 export function validateIdentifier(name: string, label: string): void {
   if (name.length > 64) {
