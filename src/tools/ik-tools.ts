@@ -64,7 +64,9 @@ func _initialize():
 \t\t_mcp_done()
 \t\treturn
 \tparent_node.add_child(ik_node)
-\tik_node.owner = root
+\tvar _root_node = _mcp_get_root()
+\tif _root_node != null:
+\t\tik_node.owner = _root_node
 \t_mcp_output("created", true)
 \t_mcp_output("path", str(ik_node.get_path()))
 \t_mcp_output("type", "${type}")
