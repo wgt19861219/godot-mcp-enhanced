@@ -309,6 +309,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       case 'game_query':
       case 'game_input':
       case 'game_wait': {
+        // Ensure bridge secret lookup finds .godot/ before tmpdir
+        if (ctx.projectDir && !process.env.GODOT_BRIDGE_PROJECT_DIR) {
+          process.env.GODOT_BRIDGE_PROJECT_DIR = ctx.projectDir;
+          _cachedSecretPath = null;
+        }
         const methodSets: Record<string, Set<string>> = {
           game_query: QUERY_METHODS,
           game_input: INPUT_METHODS,

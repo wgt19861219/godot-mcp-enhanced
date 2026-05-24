@@ -10,6 +10,9 @@ const MAX_AUTH_FAILS := 5
 const LOCKOUT_SECONDS := 30.0
 const _LOCKOUT_KEY := "localhost"
 const MAX_MESSAGE_SIZE := 1048576  # 1MB
+const MAX_PEERS := 5
+const PROTOCOL_VERSION := "1.0"
+const INACTIVITY_TIMEOUT := 60.0
 
 var _server: TCPServer = null
 var _peers: Array[StreamPeerTCP] = []
@@ -20,6 +23,7 @@ var _auth_locked_until: Dictionary = {}
 var _secret: String = ""
 var _secret_file: String = ""
 var _crypto: Crypto = null
+var _peer_last_activity: Dictionary = {}
 
 const BLOCKED_PROPERTIES := [
 	"script", "owner", "process_mode", "process_priority", "process_input",
@@ -55,8 +59,13 @@ func _process(_delta: float) -> void:
 	# Accept new connections (Godot 4.6 renamed accept() to take_connection())
 	var peer: StreamPeerTCP = _server_take_connection()
 	if peer != null:
-		_peers.append(peer)
-		_peer_buffers[peer.get_instance_id()] = ""
+		if _peers.size() >= MAX_PEERS:
+			push_warning("[MCP Bridge] Max peers (%d) reached, rejecting connection" % MAX_PEERS)
+			peer.disconnect_from_host()
+		else:
+			_peers.append(peer)
+			_peer_last_activity[peer.get_instance_id()] = Time.get_ticks_msec() / 1000.0
+			_peer_buffers["buf_" + str(peer.get_instance_id())] = PackedByteArray()
 
 	# Process each peer
 	var to_remove: Array[int] = []
@@ -66,6 +75,15 @@ func _process(_delta: float) -> void:
 		if p.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 			to_remove.append(i)
 			continue
+		# Idle timeout check
+		var pid_act := p.get_instance_id()
+		if _peer_last_activity.has(pid_act):
+			var elapsed := Time.get_ticks_msec() / 1000.0 - _peer_last_activity[pid_act]
+			if elapsed > INACTIVITY_TIMEOUT:
+				push_warning("[MCP Bridge] Peer %d idle for %.0fs, disconnecting" % [pid_act, elapsed])
+				p.disconnect_from_host()
+				continue
+		_peer_last_activity[pid_act] = Time.get_ticks_msec() / 1000.0
 		if p.get_available_bytes() > 0:
 			var byte_count := p.get_available_bytes()
 			var result := p.get_data(byte_count)
@@ -89,6 +107,7 @@ func _process(_delta: float) -> void:
 		var pid := _peers[i].get_instance_id()
 		_peer_buffers.erase("buf_" + str(pid))
 		_authenticated_peers.erase(pid)
+		_peer_last_activity.erase(pid)
 		# Auth fail/lockout counts persist across reconnects (all connections are localhost)
 		_peers.remove_at(i)
 
@@ -105,11 +124,29 @@ func _start_server() -> void:
 		_server = null
 		return
 	print("[MCP Bridge] Listening on 127.0.0.1:%d" % PORT)
-	_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
-	var f := FileAccess.open(_secret_file, FileAccess.WRITE)
-	if f:
-		f.store_string(_secret)
-		f.close()
+	# Prefer .godot/ in project dir, fallback to tmpdir
+	var proj_dir := _get_project_dir()
+	if proj_dir != "":
+		var godot_dir := proj_dir + "/.godot"
+		if not DirAccess.dir_exists_absolute(godot_dir):
+			DirAccess.make_dir_recursive_absolute(godot_dir)
+		_secret_file = godot_dir + "/mcp_bridge_%d.secret" % PORT
+		var f := FileAccess.open(_secret_file, FileAccess.WRITE)
+		if f:
+			f.store_string(_secret)
+			f.close()
+		else:
+			_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
+			var f2 := FileAccess.open(_secret_file, FileAccess.WRITE)
+			if f2:
+				f2.store_string(_secret)
+				f2.close()
+	else:
+		_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
+		var f := FileAccess.open(_secret_file, FileAccess.WRITE)
+		if f:
+			f.store_string(_secret)
+			f.close()
 
 ## Compat: Godot 4.6 renamed TCPServer.accept() to take_connection()
 func _server_take_connection() -> StreamPeerTCP:
@@ -159,6 +196,13 @@ func _generate_secret() -> String:
 		push_error("[MCP Bridge] Failed to generate 32-char secret, using truncated value")
 	return result
 
+func _get_project_dir() -> String:
+	var res_root: String = ProjectSettings.globalize_path("res://")
+	if res_root != "":
+		return res_root.rstrip("/")
+	return ""
+
+
 
 func _stop_server() -> void:
 	for p in _peers:
@@ -166,6 +210,7 @@ func _stop_server() -> void:
 			p.disconnect_from_host()
 	_peers.clear()
 	_authenticated_peers.clear()
+	_peer_last_activity.clear()
 	_auth_fail_count.clear()
 	_auth_locked_until.clear()
 	if _server:
@@ -275,6 +320,10 @@ func _handle_message(raw: String) -> String:
 		_:
 			error = {"code": -32601, "message": "Method not found: %s" % method}
 
+	# Promote command-level errors to top-level so TS client sees them
+	if error.is_empty() and result is Dictionary and result.has("error"):
+		error = result["error"]
+		result = null
 	if error.is_empty():
 		return JSON.stringify({"id": id, "result": result})
 	else:
@@ -287,7 +336,7 @@ func _cmd_ping() -> Dictionary:
 	var scene_path := ""
 	if get_tree().current_scene:
 		scene_path = get_tree().current_scene.scene_file_path
-	return {"pong": true, "scene": scene_path, "fps": Engine.get_frames_per_second()}
+	return {"pong": true, "version": PROTOCOL_VERSION, "scene": scene_path, "fps": Engine.get_frames_per_second()}
 
 
 func _cmd_get_tree(params: Dictionary) -> Variant:
@@ -337,6 +386,8 @@ func _cmd_find_nodes(params: Dictionary) -> Dictionary:
 		if pattern != "" and not node.name.match(pattern):
 			continue
 		if type_filter != "" and not node.is_class(type_filter):
+			continue
+		if group != "" and not node.is_in_group(group):
 			continue
 		results.append(_node_info(node))
 		if results.size() >= 100:
