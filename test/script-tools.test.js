@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import { getToolDefinitions } from '../build/tools/script.js';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────
@@ -8,7 +7,7 @@ describe('script-tools getToolDefinitions', () => {
   const defs = getToolDefinitions();
 
   it('returns 7 tool definitions', () => {
-    assert.strictEqual(defs.length, 7);
+    expect(defs.length).toBe(7);
   });
 
   const expected = [
@@ -18,15 +17,15 @@ describe('script-tools getToolDefinitions', () => {
   ];
   for (const name of expected) {
     it(`includes ${name}`, () => {
-      assert.ok(defs.some(d => d.name === name), `missing: ${name}`);
+      expect(defs.some(d => d.name === name)).toBeTruthy();
     });
   }
 
   it('every tool has description and inputSchema', () => {
     for (const d of defs) {
-      assert.ok(d.description, `${d.name} missing description`);
-      assert.ok(d.inputSchema, `${d.name} missing inputSchema`);
-      assert.strictEqual(d.inputSchema.type, 'object');
+      expect(d.description).toBeTruthy();
+      expect(d.inputSchema).toBeTruthy();
+      expect(d.inputSchema.type).toBe('object');
     }
   });
 });
@@ -39,23 +38,23 @@ describe('script-tools edit_script schema', () => {
 
   it('has search_and_replace optional property', () => {
     const sr = editDef.inputSchema.properties.search_and_replace;
-    assert.ok(sr, 'missing search_and_replace property');
-    assert.strictEqual(sr.type, 'object');
-    assert.ok(sr.properties.search, 'missing search field');
-    assert.ok(sr.properties.replace, 'missing replace field');
+    expect(sr).toBeTruthy();
+    expect(sr.type).toBe('object');
+    expect(sr.properties.search).toBeTruthy();
+    expect(sr.properties.replace).toBeTruthy();
   });
 
   it('has auto_validate with default true', () => {
     const av = editDef.inputSchema.properties.auto_validate;
-    assert.ok(av, 'missing auto_validate property');
-    assert.strictEqual(av.default, true);
+    expect(av).toBeTruthy();
+    expect(av.default).toBe(true);
   });
 
   it('has indent_mode with raw and smart options', () => {
     const im = editDef.inputSchema.properties.indent_mode;
-    assert.ok(im, 'missing indent_mode property');
-    assert.ok(im.enum.includes('raw'));
-    assert.ok(im.enum.includes('smart'));
+    expect(im).toBeTruthy();
+    expect(im.enum.includes('raw')).toBeTruthy();
+    expect(im.enum.includes('smart')).toBeTruthy();
   });
 });
 
@@ -66,15 +65,15 @@ describe('script-tools lint integration', () => {
     const { lintGDScript } = await import('../build/tools/gdscript-lint.js');
     const code = 'extends RigidBody3D\n\nfunc _ready():\n\tvar body = RigidBody3D.new()\n\tbody.bounce = 0.5\n';
     const result = lintGDScript(code);
-    assert.ok(result.errors.length > 0, 'should detect deprecated bounce property');
-    assert.strictEqual(result.errors[0].rule, 'L002');
+    expect(result.errors.length > 0).toBeTruthy();
+    expect(result.errors[0].rule).toBe('L002');
   });
 
   it('lintGDScript passes code without deprecated patterns', async () => {
     const { lintGDScript } = await import('../build/tools/gdscript-lint.js');
     const code = 'extends Node\n\nfunc _ready():\n\tpass\n';
     const result = lintGDScript(code);
-    assert.strictEqual(result.errors.length + result.warnings.length, 0);
+    expect(result.errors.length + result.warnings.length).toBe(0);
   });
 });
 
@@ -86,13 +85,13 @@ describe('script-tools project_replace schema', () => {
 
   it('has dry_run with default false', () => {
     const dr = prDef.inputSchema.properties.dry_run;
-    assert.ok(dr, 'missing dry_run property');
-    assert.strictEqual(dr.default, false);
+    expect(dr).toBeTruthy();
+    expect(dr.default).toBe(false);
   });
 
   it('has extensions with default .gd', () => {
     const ext = prDef.inputSchema.properties.extensions;
-    assert.ok(ext, 'missing extensions property');
-    assert.deepStrictEqual(ext.default, ['.gd']);
+    expect(ext).toBeTruthy();
+    expect(ext.default).toEqual(['.gd']);
   });
 });

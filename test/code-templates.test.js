@@ -1,5 +1,4 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -14,28 +13,28 @@ import {
 
 describe('内置模板', () => {
   it('至少有 10 个模板', () => {
-    assert.ok(TEMPLATES.length >= 10, `实际只有 ${TEMPLATES.length} 个模板`);
+    expect(TEMPLATES.length >= 10).toBeTruthy();
   });
 
   it('每个模板包含 id / name / description / generate 函数', () => {
     for (const tpl of TEMPLATES) {
-      assert.ok(tpl.id, `模板缺少 id`);
-      assert.ok(tpl.name, `模板 ${tpl.id} 缺少 name`);
-      assert.ok(tpl.description, `模板 ${tpl.id} 缺少 description`);
-      assert.equal(typeof tpl.generate, 'function', `模板 ${tpl.id} 缺少 generate 函数`);
+      expect(tpl.id).toBeTruthy();
+      expect(tpl.name).toBeTruthy();
+      expect(tpl.description).toBeTruthy();
+      expect(typeof tpl.generate).toBe('function');
     }
   });
 
   it('每个模板 id 唯一', () => {
     const ids = TEMPLATES.map(t => t.id);
     const unique = new Set(ids);
-    assert.equal(ids.length, unique.size, `存在重复 id: ${ids.filter((id, i) => ids.indexOf(id) !== i)}`);
+    expect(ids.length).toBe(unique.size);
   });
 
   it('每个模板 generate({}) 返回非空字符串', () => {
     for (const tpl of TEMPLATES) {
       const code = tpl.generate({});
-      assert.ok(typeof code === 'string' && code.length > 0, `模板 ${tpl.id} generate({}) 返回空`);
+      expect(typeof code === 'string' && code.length > 0).toBeTruthy();
     }
   });
 });
@@ -44,60 +43,36 @@ describe('内置模板', () => {
 
 describe('renderTemplate', () => {
   it('替换单个变量', () => {
-    assert.equal(
-      renderTemplate('var speed = {{speed}}', { speed: '300' }),
-      'var speed = 300',
-    );
+    expect(renderTemplate('var speed = {{speed}}', { speed: '300' })).toBe('var speed = 300');
   });
 
   it('未替换的占位符保持不变', () => {
-    assert.equal(
-      renderTemplate('var x = {{x}}, y = {{y}}', { x: '1' }),
-      'var x = 1, y = {{y}}',
-    );
+    expect(renderTemplate('var x = {{x}}, y = {{y}}', { x: '1' })).toBe('var x = 1, y = {{y}}');
   });
 
   it('多次出现全部替换', () => {
-    assert.equal(
-      renderTemplate('{{v}} + {{v}} = {{result}}', { v: '2', result: '4' }),
-      '2 + 2 = 4',
-    );
+    expect(renderTemplate('{{v}} + {{v}} = {{result}}', { v: '2', result: '4' })).toBe('2 + 2 = 4');
   });
 
   it('无占位符的字符串原样返回', () => {
-    assert.equal(renderTemplate('extends Node3D', {}), 'extends Node3D');
+    expect(renderTemplate('extends Node3D', {})).toBe('extends Node3D');
   });
 
   it('rejects template variable values with special characters (injection prevention)', () => {
-    assert.throws(
-      () => renderTemplate('var x = {{val}}', { val: 'OS.execute("rm", ["-rf"])' }),
-      /disallowed characters/,
-    );
+    expect(() => renderTemplate('var x = {{val}}', { val: 'OS.execute("rm", ["-rf"])' })).toThrow(/disallowed characters/);
   });
 
   it('rejects template variable values with semicolons', () => {
-    assert.throws(
-      () => renderTemplate('var x = {{val}}', { val: '1; pass' }),
-      /disallowed characters/,
-    );
+    expect(() => renderTemplate('var x = {{val}}', { val: '1; pass' })).toThrow(/disallowed characters/);
   });
 
   it('accepts template variable values with safe GDScript literals', () => {
-    assert.equal(
-      renderTemplate('var x = {{val}}', { val: 'Vector3(1.0, 2.0, 3.0)' }),
-      'var x = Vector3(1.0, 2.0, 3.0)',
-    );
+    expect(renderTemplate('var x = {{val}}', { val: 'Vector3(1.0, 2.0, 3.0)' })).toBe('var x = Vector3(1.0, 2.0, 3.0)');
   });
 
   it('accepts template variable values with numbers and operators', () => {
-    assert.equal(
-      renderTemplate('speed = {{spd}}', { spd: '300.0' }),
-      'speed = 300.0',
-    );
-    assert.equal(
-      renderTemplate('offset = {{off}}', { off: '-10 + 5 * 2' }),
-      'offset = -10 + 5 * 2',
-    );
+    expect(renderTemplate('speed = {{spd}}', { spd: '300.0' })).toBe('speed = 300.0');
+    expect(renderTemplate('offset = {{off}}', { off: '-10 + 5 * 2' })).toBe('offset = -10 + 5 * 2');
   });
 });
 
@@ -105,24 +80,24 @@ describe('renderTemplate', () => {
 
 describe('T008 CharacterBody2D 模板', () => {
   const tpl = TEMPLATES.find(t => t.id === 'T008');
-  assert.ok(tpl, '找不到 T008');
+  expect(tpl).toBeTruthy();
 
   it('generate 包含 extends CharacterBody2D', () => {
-    assert.ok(tpl.generate({}).includes('extends CharacterBody2D'));
+    expect(tpl.generate({}).includes('extends CharacterBody2D')).toBeTruthy();
   });
 
   it('generate 包含 move_and_slide', () => {
-    assert.ok(tpl.generate({}).includes('move_and_slide'));
+    expect(tpl.generate({}).includes('move_and_slide')).toBeTruthy();
   });
 
   it('自定义参数 speed 生效', () => {
     const code = tpl.generate({ speed: '500.0' });
-    assert.ok(code.includes('500.0'), `应包含自定义 speed 值 500.0，实际: ${code}`);
+    expect(code.includes('500.0')).toBeTruthy();
   });
 
   it('自定义参数 jump_velocity 生效', () => {
     const code = tpl.generate({ jump_velocity: '-600.0' });
-    assert.ok(code.includes('-600.0'), `应包含自定义 jump_velocity 值 -600.0，实际: ${code}`);
+    expect(code.includes('-600.0')).toBeTruthy();
   });
 });
 
@@ -130,29 +105,29 @@ describe('T008 CharacterBody2D 模板', () => {
 
 describe('T010 StateMachine 模板', () => {
   const tpl = TEMPLATES.find(t => t.id === 'T010');
-  assert.ok(tpl, '找不到 T010');
+  expect(tpl).toBeTruthy();
 
   it('generate 包含 enum State', () => {
-    assert.ok(tpl.generate({}).includes('enum State'));
+    expect(tpl.generate({}).includes('enum State')).toBeTruthy();
   });
 
   it('generate 包含 match current_state', () => {
-    assert.ok(tpl.generate({}).includes('match current_state'));
+    expect(tpl.generate({}).includes('match current_state')).toBeTruthy();
   });
 
   it('默认状态列表包含 IDLE, RUN, JUMP', () => {
     const code = tpl.generate({});
-    assert.ok(code.includes('IDLE'), '默认应包含 IDLE');
-    assert.ok(code.includes('RUN'), '默认应包含 RUN');
-    assert.ok(code.includes('JUMP'), '默认应包含 JUMP');
+    expect(code.includes('IDLE')).toBeTruthy();
+    expect(code.includes('RUN')).toBeTruthy();
+    expect(code.includes('JUMP')).toBeTruthy();
   });
 
   it('自定义状态列表生效', () => {
     const code = tpl.generate({ states: 'PATROL,CHASE,RETREAT' });
-    assert.ok(code.includes('PATROL'), '自定义应包含 PATROL');
-    assert.ok(code.includes('CHASE'), '自定义应包含 CHASE');
-    assert.ok(code.includes('RETREAT'), '自定义应包含 RETREAT');
-    assert.ok(!code.includes('IDLE'), '自定义后不应包含 IDLE');
+    expect(code.includes('PATROL')).toBeTruthy();
+    expect(code.includes('CHASE')).toBeTruthy();
+    expect(code.includes('RETREAT')).toBeTruthy();
+    expect(code.includes('IDLE')).toBeFalsy();
   });
 });
 
@@ -161,18 +136,18 @@ describe('T010 StateMachine 模板', () => {
 describe('getTemplateSuggestion', () => {
   it('L001 返回包含 Camera3D 的代码', () => {
     const suggestion = getTemplateSuggestion('L001');
-    assert.ok(suggestion, 'L001 应返回非 null');
-    assert.ok(suggestion.includes('Camera3D'), `建议代码应包含 Camera3D`);
+    expect(suggestion).toBeTruthy();
+    expect(suggestion.includes('Camera3D')).toBeTruthy();
   });
 
   it('L999 返回 null（未知规则）', () => {
-    assert.equal(getTemplateSuggestion('L999'), null);
+    expect(getTemplateSuggestion('L999')).toBe(null);
   });
 
   it('L002 返回包含 PhysicsMaterial 的代码', () => {
     const suggestion = getTemplateSuggestion('L002');
-    assert.ok(suggestion, 'L002 应返回非 null');
-    assert.ok(suggestion.includes('PhysicsMaterial'));
+    expect(suggestion).toBeTruthy();
+    expect(suggestion.includes('PhysicsMaterial')).toBeTruthy();
   });
 });
 
@@ -196,7 +171,7 @@ describe('用户模板加载', () => {
 
   it('不存在 .mcp-templates/ 目录时返回空数组', () => {
     const result = loadUserTemplates(tmpDir);
-    assert.deepEqual(result, []);
+    expect(result).toEqual([]);
   });
 
   it('有效 JSON 模板正确加载且 generate 可替换变量', () => {
@@ -216,11 +191,11 @@ describe('用户模板加载', () => {
     writeFileSync(join(tplDir, 'custom.json'), JSON.stringify(userTemplate), 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 1);
-    assert.equal(result[0].id, 'user-001');
+    expect(result.length).toBe(1);
+    expect(result[0].id).toBe('user-001');
 
     const code = result[0].generate({ name: 'health', value: '100' });
-    assert.equal(code, 'var health := 100');
+    expect(code).toBe('var health := 100');
   });
 
   it('无效 JSON 文件被跳过，不崩溃', () => {
@@ -230,7 +205,7 @@ describe('用户模板加载', () => {
     writeFileSync(join(tplDir, 'broken.json'), '这不是合法 JSON!!!', 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 0);
+    expect(result.length).toBe(0);
   });
 
   it('缺少必填字段的 JSON 被跳过', () => {
@@ -244,7 +219,7 @@ describe('用户模板加载', () => {
     }), 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 0);
+    expect(result.length).toBe(0);
   });
 
   it('getAllTemplates 合并内置 + 用户模板', () => {
@@ -261,14 +236,14 @@ describe('用户模板加载', () => {
 
     const all = getAllTemplates(tmpDir);
     // 内置模板 + 1 个用户模板
-    assert.ok(all.length > TEMPLATES.length, `总数应大于内置 ${TEMPLATES.length}，实际: ${all.length}`);
-    assert.ok(all.some(t => t.id === 'user-merge'), '应包含用户模板 user-merge');
-    assert.ok(all.some(t => t.id === 'T001'), '应保留内置模板 T001');
+    expect(all.length > TEMPLATES.length).toBeTruthy();
+    expect(all.some(t => t.id === 'user-merge')).toBeTruthy();
+    expect(all.some(t => t.id === 'T001')).toBeTruthy();
   });
 
   it('getAllTemplates 无 projectPath 时只返回内置模板', () => {
     const all = getAllTemplates();
-    assert.equal(all.length, TEMPLATES.length);
+    expect(all.length).toBe(TEMPLATES.length);
   });
 
   it('用户模板覆盖同名内置模板', () => {
@@ -285,8 +260,8 @@ describe('用户模板加载', () => {
 
     const all = getAllTemplates(tmpDir);
     const t001 = all.find(t => t.id === 'T001');
-    assert.ok(t001, 'T001 应存在');
-    assert.equal(t001.name, '覆盖 T001');
+    expect(t001).toBeTruthy();
+    expect(t001.name).toBe('覆盖 T001');
   });
 
   it('variables 为非数组时模板被跳过', () => {
@@ -302,7 +277,7 @@ describe('用户模板加载', () => {
     }), 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 0, 'variables 为字符串时应被跳过');
+    expect(result.length).toBe(0);
   });
 
   it('tags 为非数组时模板被跳过', () => {
@@ -318,7 +293,7 @@ describe('用户模板加载', () => {
     }), 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 0, 'tags 为数字时应被跳过');
+    expect(result.length).toBe(0);
   });
 
   it('appliesTo 为非数组时模板被跳过', () => {
@@ -334,6 +309,6 @@ describe('用户模板加载', () => {
     }), 'utf-8');
 
     const result = loadUserTemplates(tmpDir);
-    assert.equal(result.length, 0, 'appliesTo 为字符串时应被跳过');
+    expect(result.length).toBe(0);
   });
 });

@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import { getToolDefinitions } from '../build/tools/game-bridge.js';
 
 describe('game-bridge tool definitions', () => {
@@ -7,33 +6,33 @@ describe('game-bridge tool definitions', () => {
   const names = tools.map(t => t.name);
 
   it('has 5 tools', () => {
-    assert.strictEqual(tools.length, 5);
+    expect(tools.length).toBe(5);
   });
 
   it('includes game_bridge_install', () => {
-    assert.ok(names.includes('game_bridge_install'));
+    expect(names.includes('game_bridge_install')).toBeTruthy();
   });
 
   it('includes game_bridge_uninstall', () => {
-    assert.ok(names.includes('game_bridge_uninstall'));
+    expect(names.includes('game_bridge_uninstall')).toBeTruthy();
   });
 
   it('includes game_query', () => {
-    assert.ok(names.includes('game_query'));
+    expect(names.includes('game_query')).toBeTruthy();
   });
 
   it('includes game_input', () => {
-    assert.ok(names.includes('game_input'));
+    expect(names.includes('game_input')).toBeTruthy();
   });
 
   it('includes game_wait', () => {
-    assert.ok(names.includes('game_wait'));
+    expect(names.includes('game_wait')).toBeTruthy();
   });
 
   it('all tools have required inputSchema', () => {
     for (const tool of tools) {
-      assert.ok(tool.inputSchema, `${tool.name} missing inputSchema`);
-      assert.ok(tool.inputSchema.properties, `${tool.name} missing properties`);
+      expect(tool.inputSchema).toBeTruthy();
+      expect(tool.inputSchema.properties).toBeTruthy();
     }
   });
 });

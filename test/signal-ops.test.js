@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import {
   TOOL_NAMES,
   getToolDefinitions,
@@ -13,19 +12,19 @@ import {
 
 describe('TOOL_NAMES', () => {
   it('contains exactly 4 signal tool names', () => {
-    assert.strictEqual(TOOL_NAMES.length, 4);
+    expect(TOOL_NAMES.length).toBe(4);
   });
   it('includes signal_connect', () => {
-    assert.ok(TOOL_NAMES.includes('signal_connect'));
+    expect(TOOL_NAMES.includes('signal_connect')).toBeTruthy();
   });
   it('includes signal_disconnect', () => {
-    assert.ok(TOOL_NAMES.includes('signal_disconnect'));
+    expect(TOOL_NAMES.includes('signal_disconnect')).toBeTruthy();
   });
   it('includes signal_emit', () => {
-    assert.ok(TOOL_NAMES.includes('signal_emit'));
+    expect(TOOL_NAMES.includes('signal_emit')).toBeTruthy();
   });
   it('includes signal_list', () => {
-    assert.ok(TOOL_NAMES.includes('signal_list'));
+    expect(TOOL_NAMES.includes('signal_list')).toBeTruthy();
   });
 });
 
@@ -34,13 +33,13 @@ describe('TOOL_NAMES', () => {
 describe('genSignalConnectScript', () => {
   it('generates GDScript with connect call', () => {
     const script = genSignalConnectScript('/root/Player', 'hit', '/root/UI', 'on_hit');
-    assert.ok(script.includes('source.connect("hit"'));
-    assert.ok(script.includes('Callable(target, "on_hit")'));
-    assert.ok(script.includes('_mcp_get_node'));
+    expect(script.includes('source.connect("hit"')).toBeTruthy();
+    expect(script.includes('Callable(target, "on_hit")')).toBeTruthy();
+    expect(script.includes('_mcp_get_node')).toBeTruthy();
   });
   it('includes flags when provided', () => {
     const script = genSignalConnectScript('/root/A', 'sig', '/root/B', 'fn', 4);
-    assert.ok(script.includes('4)'));
+    expect(script.includes('4)')).toBeTruthy();
   });
 });
 
@@ -49,9 +48,9 @@ describe('genSignalConnectScript', () => {
 describe('genSignalDisconnectScript', () => {
   it('generates GDScript with disconnect call', () => {
     const script = genSignalDisconnectScript('/root/Player', 'hit', '/root/UI', 'on_hit');
-    assert.ok(script.includes('source.disconnect("hit"'));
-    assert.ok(script.includes('Callable(target, "on_hit")'));
-    assert.ok(script.includes('_mcp_output("disconnected"'));
+    expect(script.includes('source.disconnect("hit"')).toBeTruthy();
+    expect(script.includes('Callable(target, "on_hit")')).toBeTruthy();
+    expect(script.includes('_mcp_output("disconnected"')).toBeTruthy();
   });
 });
 
@@ -60,27 +59,27 @@ describe('genSignalDisconnectScript', () => {
 describe('genSignalEmitScript', () => {
   it('generates GDScript with emit_signal call (no args)', () => {
     const script = genSignalEmitScript('/root/Player', 'died');
-    assert.ok(script.includes('source.emit_signal("died")'));
-    assert.ok(script.includes('_mcp_output("emitted"'));
+    expect(script.includes('source.emit_signal("died")')).toBeTruthy();
+    expect(script.includes('_mcp_output("emitted"')).toBeTruthy();
   });
   it('serializes string args', () => {
     const script = genSignalEmitScript('/root/Player', 'msg', ['hello']);
-    assert.ok(script.includes('"hello"'));
+    expect(script.includes('"hello"')).toBeTruthy();
   });
   it('serializes number args', () => {
     const script = genSignalEmitScript('/root/Player', 'damage', [42]);
-    assert.ok(script.includes('42'));
+    expect(script.includes('42')).toBeTruthy();
   });
   it('serializes boolean args', () => {
     const script = genSignalEmitScript('/root/Player', 'toggle', [true]);
-    assert.ok(script.includes('true'));
+    expect(script.includes('true')).toBeTruthy();
   });
   it('serializes null args', () => {
     const script = genSignalEmitScript('/root/Player', 'reset', [null]);
-    assert.ok(script.includes('null'));
+    expect(script.includes('null')).toBeTruthy();
   });
   it('throws on unsupported arg types', () => {
-    assert.throws(() => genSignalEmitScript('/root/A', 'sig', [{}]), /basic types/);
+    expect(() => genSignalEmitScript('/root/A', 'sig', [{}])).toThrow(/basic types/);
   });
 });
 
@@ -89,9 +88,9 @@ describe('genSignalEmitScript', () => {
 describe('genSignalListScript', () => {
   it('generates GDScript with get_signal_list call', () => {
     const script = genSignalListScript('/root/Player');
-    assert.ok(script.includes('node.get_signal_list()'));
-    assert.ok(script.includes('_mcp_output("signals"'));
-    assert.ok(script.includes('_mcp_get_node'));
+    expect(script.includes('node.get_signal_list()')).toBeTruthy();
+    expect(script.includes('_mcp_output("signals"')).toBeTruthy();
+    expect(script.includes('_mcp_get_node')).toBeTruthy();
   });
 });
 
@@ -100,20 +99,20 @@ describe('genSignalListScript', () => {
 describe('getToolDefinitions', () => {
   it('returns 4 tool definitions', () => {
     const defs = getToolDefinitions();
-    assert.strictEqual(defs.length, 4);
+    expect(defs.length).toBe(4);
   });
   it('each definition has a name from TOOL_NAMES', () => {
     const defs = getToolDefinitions();
     const names = defs.map(d => d.name);
     for (const tn of TOOL_NAMES) {
-      assert.ok(names.includes(tn), `missing tool definition for ${tn}`);
+      expect(names.includes(tn)).toBeTruthy();
     }
   });
   it('each definition has inputSchema with required fields', () => {
     const defs = getToolDefinitions();
     for (const def of defs) {
-      assert.ok(def.inputSchema, `${def.name} missing inputSchema`);
-      assert.ok(def.inputSchema.required, `${def.name} missing required fields`);
+      expect(def.inputSchema).toBeTruthy();
+      expect(def.inputSchema.required).toBeTruthy();
     }
   });
 });

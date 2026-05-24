@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import {
   normalizeNodePath, gdEscape, validateVector3,
   TYPE_WHITELIST,
@@ -8,99 +7,99 @@ import { genNavQueryScript } from '../build/tools/navigation.js';
 
 describe('normalizeNodePath', () => {
   it('prepends / if missing', () => {
-    assert.strictEqual(normalizeNodePath('root/Player'), '/root/Player');
+    expect(normalizeNodePath('root/Player')).toBe('/root/Player');
   });
   it('keeps /root/... unchanged', () => {
-    assert.strictEqual(normalizeNodePath('/root/Player'), '/root/Player');
+    expect(normalizeNodePath('/root/Player')).toBe('/root/Player');
   });
   it('rejects empty string', () => {
-    assert.throws(() => normalizeNodePath(''), { message: /empty/ });
+    expect(() => normalizeNodePath('')).toThrow(/empty/);
   });
   it('rejects whitespace-only', () => {
-    assert.throws(() => normalizeNodePath('   '), { message: /empty/ });
+    expect(() => normalizeNodePath('   ')).toThrow(/empty/);
   });
   it('rejects res:// paths', () => {
-    assert.throws(() => normalizeNodePath('res://scenes/main.tscn'), { message: /scene tree path/ });
+    expect(() => normalizeNodePath('res://scenes/main.tscn')).toThrow(/scene tree path/);
   });
   it('trims whitespace', () => {
-    assert.strictEqual(normalizeNodePath('  /root/Player  '), '/root/Player');
+    expect(normalizeNodePath('  /root/Player  ')).toBe('/root/Player');
   });
 });
 
 describe('gdEscape', () => {
   it('escapes double quotes', () => {
-    assert.strictEqual(gdEscape('say "hello"'), 'say \\"hello\\"');
+    expect(gdEscape('say "hello"')).toBe('say \\"hello\\"');
   });
   it('escapes backslashes', () => {
-    assert.strictEqual(gdEscape('path\\to\\file'), 'path\\\\to\\\\file');
+    expect(gdEscape('path\\to\\file')).toBe('path\\\\to\\\\file');
   });
   it('escapes newlines', () => {
-    assert.strictEqual(gdEscape('line1\nline2'), 'line1\\nline2');
+    expect(gdEscape('line1\nline2')).toBe('line1\\nline2');
   });
   it('escapes CRLF', () => {
-    assert.strictEqual(gdEscape('a\r\nb'), 'a\\nb');
+    expect(gdEscape('a\r\nb')).toBe('a\\nb');
   });
   it('removes null bytes', () => {
-    assert.strictEqual(gdEscape('a\0b'), 'ab');
+    expect(gdEscape('a\0b')).toBe('ab');
   });
   it('preserves unicode', () => {
-    assert.strictEqual(gdEscape('你好世界'), '你好世界');
+    expect(gdEscape('你好世界')).toBe('你好世界');
   });
   it('handles empty string', () => {
-    assert.strictEqual(gdEscape(''), '');
+    expect(gdEscape('')).toBe('');
   });
 });
 
 describe('validateVector3', () => {
   it('accepts valid {x,y,z}', () => {
-    assert.deepStrictEqual(validateVector3({ x: 1, y: 2, z: 3 }), { x: 1, y: 2, z: 3 });
+    expect(validateVector3({ x: 1, y: 2, z: 3 })).toEqual({ x: 1, y: 2, z: 3 });
   });
   it('accepts zero values', () => {
-    assert.deepStrictEqual(validateVector3({ x: 0, y: 0, z: 0 }), { x: 0, y: 0, z: 0 });
+    expect(validateVector3({ x: 0, y: 0, z: 0 })).toEqual({ x: 0, y: 0, z: 0 });
   });
   it('accepts negative values', () => {
-    assert.deepStrictEqual(validateVector3({ x: -1, y: -2.5, z: -3 }), { x: -1, y: -2.5, z: -3 });
+    expect(validateVector3({ x: -1, y: -2.5, z: -3 })).toEqual({ x: -1, y: -2.5, z: -3 });
   });
   it('rejects missing field', () => {
-    assert.throws(() => validateVector3({ x: 1, y: 2 }), { message: /finite number/ });
+    expect(() => validateVector3({ x: 1, y: 2 })).toThrow(/finite number/);
   });
   it('rejects non-number value', () => {
-    assert.throws(() => validateVector3({ x: '1', y: 2, z: 3 }), { message: /finite number/ });
+    expect(() => validateVector3({ x: '1', y: 2, z: 3 })).toThrow(/finite number/);
   });
   it('rejects null', () => {
-    assert.throws(() => validateVector3(null), { message: /object/ });
+    expect(() => validateVector3(null)).toThrow(/object/);
   });
   it('rejects NaN', () => {
-    assert.throws(() => validateVector3({ x: NaN, y: 0, z: 0 }), { message: /finite number/ });
+    expect(() => validateVector3({ x: NaN, y: 0, z: 0 })).toThrow(/finite number/);
   });
   it('rejects Infinity', () => {
-    assert.throws(() => validateVector3({ x: 0, y: Infinity, z: 0 }), { message: /finite number/ });
+    expect(() => validateVector3({ x: 0, y: Infinity, z: 0 })).toThrow(/finite number/);
   });
 });
 
 describe('TYPE_WHITELIST', () => {
-  it('contains Node3D', () => { assert.ok(TYPE_WHITELIST.includes('Node3D')); });
-  it('contains MeshInstance3D', () => { assert.ok(TYPE_WHITELIST.includes('MeshInstance3D')); });
-  it('contains Camera3D', () => { assert.ok(TYPE_WHITELIST.includes('Camera3D')); });
-  it('contains RigidBody3D', () => { assert.ok(TYPE_WHITELIST.includes('RigidBody3D')); });
-  it('does NOT contain Node', () => { assert.ok(!TYPE_WHITELIST.includes('Node')); });
+  it('contains Node3D', () => { expect(TYPE_WHITELIST.includes('Node3D')).toBeTruthy(); });
+  it('contains MeshInstance3D', () => { expect(TYPE_WHITELIST.includes('MeshInstance3D')).toBeTruthy(); });
+  it('contains Camera3D', () => { expect(TYPE_WHITELIST.includes('Camera3D')).toBeTruthy(); });
+  it('contains RigidBody3D', () => { expect(TYPE_WHITELIST.includes('RigidBody3D')).toBeTruthy(); });
+  it('does NOT contain Node', () => { expect(TYPE_WHITELIST.includes('Node')).toBeFalsy(); });
 });
 
 describe('genNavQueryScript', () => {
   it('contains NavigationServer3D.map_get_path', () => {
     const script = genNavQueryScript({x:0,y:0,z:0}, {x:10,y:0,z:10});
-    assert.ok(script.includes('NavigationServer3D.map_get_path'));
-    assert.ok(script.includes('Vector3(0, 0, 0)'));
-    assert.ok(script.includes('Vector3(10, 0, 10)'));
+    expect(script.includes('NavigationServer3D.map_get_path')).toBeTruthy();
+    expect(script.includes('Vector3(0, 0, 0)')).toBeTruthy();
+    expect(script.includes('Vector3(10, 0, 10)')).toBeTruthy();
   });
   it('includes region lookup when provided', () => {
     const script = genNavQueryScript({x:0,y:0,z:0}, {x:10,y:0,z:10}, '/root/NavRegion');
-    assert.ok(script.includes('NavigationRegion3D'));
-    assert.ok(script.includes('/root/NavRegion'));
+    expect(script.includes('NavigationRegion3D')).toBeTruthy();
+    expect(script.includes('/root/NavRegion')).toBeTruthy();
   });
   it('includes fallback maps logic', () => {
     const script = genNavQueryScript({x:0,y:0,z:0}, {x:10,y:0,z:10});
-    assert.ok(script.includes('get_maps'));
-    assert.ok(script.includes('warning'));
+    expect(script.includes('get_maps')).toBeTruthy();
+    expect(script.includes('warning')).toBeTruthy();
   });
 });

@@ -1,5 +1,4 @@
-import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect } from 'vitest';
 import {
   TOOL_NAMES,
   getToolDefinitions,
@@ -16,11 +15,11 @@ import {
 
 describe('TOOL_NAMES', () => {
   it('contains exactly 5 recording tool names', () => {
-    assert.strictEqual(TOOL_NAMES.length, 5);
+    expect(TOOL_NAMES.length).toBe(5);
   });
   for (const name of ['recording_start', 'recording_stop', 'recording_save', 'recording_load', 'recording_play']) {
     it(`includes ${name}`, () => {
-      assert.ok(TOOL_NAMES.includes(name));
+      expect(TOOL_NAMES.includes(name)).toBeTruthy();
     });
   }
 });
@@ -29,59 +28,35 @@ describe('TOOL_NAMES', () => {
 
 describe('sanitizeRecordingFileName', () => {
   it('accepts valid recording file names', () => {
-    assert.strictEqual(
-      sanitizeRecordingFileName('recording_20260516_120000.json'),
-      'recording_20260516_120000.json'
-    );
+    expect(sanitizeRecordingFileName('recording_20260516_120000.json')).toBe('recording_20260516_120000.json');
   });
 
   it('accepts recording names with dashes and underscores', () => {
-    assert.strictEqual(
-      sanitizeRecordingFileName('recording_test-session_01.json'),
-      'recording_test-session_01.json'
-    );
+    expect(sanitizeRecordingFileName('recording_test-session_01.json')).toBe('recording_test-session_01.json');
   });
 
   it('rejects path traversal with ..', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('recording_..json'),
-      /path traversal/
-    );
+    expect(() => sanitizeRecordingFileName('recording_..json')).toThrow(/path traversal/);
   });
 
   it('rejects forward slash', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('recording_foo/bar.json'),
-      /path traversal/
-    );
+    expect(() => sanitizeRecordingFileName('recording_foo/bar.json')).toThrow(/path traversal/);
   });
 
   it('rejects backslash', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('recording_foo\\bar.json'),
-      /path traversal/
-    );
+    expect(() => sanitizeRecordingFileName('recording_foo\\bar.json')).toThrow(/path traversal/);
   });
 
   it('rejects names not matching recording_*.json pattern', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('evil.json'),
-      /must match/
-    );
+    expect(() => sanitizeRecordingFileName('evil.json')).toThrow(/must match/);
   });
 
   it('rejects names with double dot embedded', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('../recording_test.json'),
-      /path traversal/
-    );
+    expect(() => sanitizeRecordingFileName('../recording_test.json')).toThrow(/path traversal/);
   });
 
   it('rejects names with spaces', () => {
-    assert.throws(
-      () => sanitizeRecordingFileName('recording_has space.json'),
-      /must match/
-    );
+    expect(() => sanitizeRecordingFileName('recording_has space.json')).toThrow(/must match/);
   });
 });
 
@@ -90,18 +65,18 @@ describe('sanitizeRecordingFileName', () => {
 describe('generateRecordingFileName', () => {
   it('generates a name matching recording_*.json', () => {
     const name = generateRecordingFileName();
-    assert.ok(/^recording_[\w-]+\.json$/.test(name), `Generated name "${name}" does not match pattern`);
+    expect(/^recording_[\w-]+\.json$/.test(name)).toBeTruthy();
   });
 
   it('includes timestamp-like portion', () => {
     const name = generateRecordingFileName();
     // Format: recording_YYYYMMDD_HHMMSS.json
-    assert.ok(/recording_\d{8}_\d{6}\.json/.test(name), `Name "${name}" missing timestamp portion`);
+    expect(/recording_\d{8}_\d{6}\.json/.test(name)).toBeTruthy();
   });
 
   it('passes sanitizeRecordingFileName', () => {
     const name = generateRecordingFileName();
-    assert.doesNotThrow(() => sanitizeRecordingFileName(name));
+    expect(() => sanitizeRecordingFileName(name)).not.toThrow();
   });
 });
 
@@ -110,17 +85,17 @@ describe('generateRecordingFileName', () => {
 describe('genRecordingStartScript', () => {
   it('generates GDScript with recording state', () => {
     const script = genRecordingStartScript();
-    assert.ok(script.includes('_mcp_recording = true'));
-    assert.ok(script.includes('_mcp_recorded_events'));
-    assert.ok(script.includes('_mcp_output("recording_started"'));
-    assert.ok(script.includes('extends SceneTree'));
+    expect(script.includes('_mcp_recording = true')).toBeTruthy();
+    expect(script.includes('_mcp_recorded_events')).toBeTruthy();
+    expect(script.includes('_mcp_output("recording_started"')).toBeTruthy();
+    expect(script.includes('extends SceneTree')).toBeTruthy();
   });
 
   it('includes input event handlers for key and mouse', () => {
     const script = genRecordingStartScript();
-    assert.ok(script.includes('InputEventKey'));
-    assert.ok(script.includes('InputEventMouseButton'));
-    assert.ok(script.includes('InputEventMouseMotion'));
+    expect(script.includes('InputEventKey')).toBeTruthy();
+    expect(script.includes('InputEventMouseButton')).toBeTruthy();
+    expect(script.includes('InputEventMouseMotion')).toBeTruthy();
   });
 });
 
@@ -129,10 +104,10 @@ describe('genRecordingStartScript', () => {
 describe('genRecordingStopScript', () => {
   it('generates GDScript that outputs recording data', () => {
     const script = genRecordingStopScript();
-    assert.ok(script.includes('_mcp_output("recording_stopped"'));
-    assert.ok(script.includes('"version"'));
-    assert.ok(script.includes('"events"'));
-    assert.ok(script.includes('extends SceneTree'));
+    expect(script.includes('_mcp_output("recording_stopped"')).toBeTruthy();
+    expect(script.includes('"version"')).toBeTruthy();
+    expect(script.includes('"events"')).toBeTruthy();
+    expect(script.includes('extends SceneTree')).toBeTruthy();
   });
 });
 
@@ -141,19 +116,19 @@ describe('genRecordingStopScript', () => {
 describe('genRecordingSaveScript', () => {
   it('generates GDScript that writes to res://recordings/', () => {
     const script = genRecordingSaveScript('recording_test.json', '{"version":1,"events":[]}');
-    assert.ok(script.includes('res://recordings/recording_test.json'));
-    assert.ok(script.includes('FileAccess.WRITE'));
-    assert.ok(script.includes('_mcp_output("saved"'));
+    expect(script.includes('res://recordings/recording_test.json')).toBeTruthy();
+    expect(script.includes('FileAccess.WRITE')).toBeTruthy();
+    expect(script.includes('_mcp_output("saved"')).toBeTruthy();
   });
 
   it('creates recordings directory if missing', () => {
     const script = genRecordingSaveScript('recording_test.json', '{}');
-    assert.ok(script.includes('make_dir("recordings")'));
+    expect(script.includes('make_dir("recordings")')).toBeTruthy();
   });
 
   it('escapes JSON content for GDScript string', () => {
     const script = genRecordingSaveScript('recording_test.json', '{"key": "val\\ue"}');
-    assert.ok(script.includes('store_string'));
+    expect(script.includes('store_string')).toBeTruthy();
   });
 });
 
@@ -162,14 +137,14 @@ describe('genRecordingSaveScript', () => {
 describe('genRecordingLoadScript', () => {
   it('generates GDScript that reads from res://recordings/', () => {
     const script = genRecordingLoadScript('recording_test.json');
-    assert.ok(script.includes('res://recordings/recording_test.json'));
-    assert.ok(script.includes('FileAccess.READ'));
-    assert.ok(script.includes('_mcp_output("recording"'));
+    expect(script.includes('res://recordings/recording_test.json')).toBeTruthy();
+    expect(script.includes('FileAccess.READ')).toBeTruthy();
+    expect(script.includes('_mcp_output("recording"')).toBeTruthy();
   });
 
   it('handles file not found', () => {
     const script = genRecordingLoadScript('recording_missing.json');
-    assert.ok(script.includes('File not found'));
+    expect(script.includes('File not found')).toBeTruthy();
   });
 });
 
@@ -187,20 +162,20 @@ describe('genRecordingPlayScript', () => {
 
   it('generates GDScript with playback logic', () => {
     const script = genRecordingPlayScript(sampleEvents.replace(/"/g, '\\"'), 1.0);
-    assert.ok(script.includes('Input.parse_input_event'));
-    assert.ok(script.includes('InputEventKey'));
-    assert.ok(script.includes('InputEventMouseButton'));
+    expect(script.includes('Input.parse_input_event')).toBeTruthy();
+    expect(script.includes('InputEventKey')).toBeTruthy();
+    expect(script.includes('InputEventMouseButton')).toBeTruthy();
   });
 
   it('includes speed factor', () => {
     const script = genRecordingPlayScript(sampleEvents.replace(/"/g, '\\"'), 2.0);
-    assert.ok(script.includes('_mcp_play_speed = 2.0'));
+    expect(script.includes('_mcp_play_speed = 2.0')).toBeTruthy();
   });
 
   it('handles empty events gracefully', () => {
     const emptyEvents = JSON.stringify({ version: 1, duration_ms: 0, events: [] });
     const script = genRecordingPlayScript(emptyEvents.replace(/"/g, '\\"'), 1.0);
-    assert.ok(script.includes('playback_complete'));
+    expect(script.includes('playback_complete')).toBeTruthy();
   });
 });
 
@@ -209,47 +184,47 @@ describe('genRecordingPlayScript', () => {
 describe('getToolDefinitions', () => {
   it('returns 5 tool definitions', () => {
     const defs = getToolDefinitions();
-    assert.strictEqual(defs.length, 5);
+    expect(defs.length).toBe(5);
   });
 
   it('each definition has a name from TOOL_NAMES', () => {
     const defs = getToolDefinitions();
     const names = defs.map(d => d.name);
     for (const tn of TOOL_NAMES) {
-      assert.ok(names.includes(tn), `missing tool definition for ${tn}`);
+      expect(names.includes(tn)).toBeTruthy();
     }
   });
 
   it('each definition has inputSchema with required fields', () => {
     const defs = getToolDefinitions();
     for (const def of defs) {
-      assert.ok(def.inputSchema, `${def.name} missing inputSchema`);
-      assert.ok(def.inputSchema.required, `${def.name} missing required fields`);
+      expect(def.inputSchema).toBeTruthy();
+      expect(def.inputSchema.required).toBeTruthy();
     }
   });
 
   it('recording_start requires project_path', () => {
     const defs = getToolDefinitions();
     const start = defs.find(d => d.name === 'recording_start');
-    assert.ok(start.inputSchema.required.includes('project_path'));
+    expect(start.inputSchema.required.includes('project_path')).toBeTruthy();
   });
 
   it('recording_save requires events_json', () => {
     const defs = getToolDefinitions();
     const save = defs.find(d => d.name === 'recording_save');
-    assert.ok(save.inputSchema.required.includes('events_json'));
+    expect(save.inputSchema.required.includes('events_json')).toBeTruthy();
   });
 
   it('recording_load requires file_name', () => {
     const defs = getToolDefinitions();
     const load = defs.find(d => d.name === 'recording_load');
-    assert.ok(load.inputSchema.required.includes('file_name'));
+    expect(load.inputSchema.required.includes('file_name')).toBeTruthy();
   });
 
   it('recording_play has optional speed parameter', () => {
     const defs = getToolDefinitions();
     const play = defs.find(d => d.name === 'recording_play');
-    assert.ok(play.inputSchema.properties.speed);
-    assert.ok(!play.inputSchema.required.includes('speed'));
+    expect(play.inputSchema.properties.speed).toBeTruthy();
+    expect(play.inputSchema.required.includes('speed')).toBeFalsy();
   });
 });
