@@ -140,7 +140,8 @@ async function handleTestAssert(args: Record<string, unknown>, godot: string, pr
 
   const script = `${SCENE_TREE_HEADER}
 
-func _init():
+func _initialize():
+\t_mcp_load_main_scene()
 \tvar _root = _mcp_get_root()
 \tif _root == null:
 \t\t_mcp_output("error", "Scene root not available")
@@ -212,7 +213,8 @@ async function handleTestStress(args: Record<string, unknown>, godot: string, pr
 
   const script = `${SCENE_TREE_HEADER}
 
-func _init():
+func _initialize():
+\t_mcp_load_main_scene()
 \tvar _root = _mcp_get_root()
 \tif _root == null:
 \t\t_mcp_output("error", "Scene root not available")

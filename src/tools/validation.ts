@@ -195,7 +195,7 @@ export async function batchValidateScripts(
   const validatorCode = [
     'extends SceneTree',
     '',
-    'func _init():',
+    'func _initialize():',
     '\tvar tmp_path: String = "' + gdSafePath + '"',
     '\tvar f := FileAccess.open(tmp_path, FileAccess.READ)',
     '\tif f == null:',
