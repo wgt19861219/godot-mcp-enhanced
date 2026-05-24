@@ -1,0 +1,30 @@
+# Godot Asset Library - 只导出插件资产
+# https://docs.godotengine.org/en/latest/community/asset_library/submitting_to_assetlib.html
+
+# 默认排除所有文件
+/* export-ignore
+
+# 包含插件核心目录
+!/addons/ -export-ignore
+!/addons/** -export-ignore
+!/icon.png -export-ignore
+!/README.md -export-ignore
+!/README.en.md -export-ignore
+!/CHANGELOG.md -export-ignore
+
+# 排除开发文件
+/node_modules/ export-ignore
+/src/ export-ignore
+/test/ export-ignore
+/build/ export-ignore
+/coverage/ export-ignore
+/docs/ export-ignore
+/data/ export-ignore
+/scenes/ export-ignore
+/scripts/ export-ignore
+*.ts export-ignore
+*.zip export-ignore
+tsconfig.json export-ignore
+package.json export-ignore
+package-lock.json export-ignore
+vitest.config.ts export-ignore
