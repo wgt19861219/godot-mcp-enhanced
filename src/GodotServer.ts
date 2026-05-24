@@ -201,7 +201,6 @@ export class GodotServer {
         for (const [key, value] of Object.entries(rawArgs)) {
           const snake = key.replace(/[A-Z]/g, (m) => '_' + m.toLowerCase());
           args[snake] = value;
-          if (snake !== key) args[key] = value;
         }
       }
       try {
@@ -226,10 +225,6 @@ export class GodotServer {
           }
           // S-1: Build operation summary for user visibility
           const summaryArgs = { ...pending.args };
-          // Redact potentially large code payloads
-          if (typeof summaryArgs.code === 'string' && summaryArgs.code.length > 200) {
-            summaryArgs.code = summaryArgs.code.substring(0, 200) + '... [truncated]';
-          }
           log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
           // Re-check ReadOnlyGuard for the confirmed tool
           const guardResult = this.readOnlyGuard.check(pending.toolName);
