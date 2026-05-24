@@ -82,6 +82,7 @@ func _process(_delta: float) -> void:
 			if elapsed > INACTIVITY_TIMEOUT:
 				push_warning("[MCP Bridge] Peer %d idle for %.0fs, disconnecting" % [pid_act, elapsed])
 				p.disconnect_from_host()
+				to_remove.append(i)
 				continue
 		_peer_last_activity[pid_act] = Time.get_ticks_msec() / 1000.0
 		if p.get_available_bytes() > 0:
@@ -97,6 +98,7 @@ func _process(_delta: float) -> void:
 					if combined.size() > MAX_MESSAGE_SIZE:
 						push_warning("[MCP Bridge] Peer %d buffer exceeded %d bytes, disconnecting" % [pid, MAX_MESSAGE_SIZE])
 						p.disconnect_from_host()
+						to_remove.append(i)
 						continue
 					_peer_buffers[key] = combined
 					_process_buffer_bytes(p, pid)
@@ -124,29 +126,16 @@ func _start_server() -> void:
 		_server = null
 		return
 	print("[MCP Bridge] Listening on 127.0.0.1:%d" % PORT)
-	# Prefer .godot/ in project dir, fallback to tmpdir
 	var proj_dir := _get_project_dir()
 	if proj_dir != "":
 		var godot_dir := proj_dir + "/.godot"
 		if not DirAccess.dir_exists_absolute(godot_dir):
 			DirAccess.make_dir_recursive_absolute(godot_dir)
 		_secret_file = godot_dir + "/mcp_bridge_%d.secret" % PORT
-		var f := FileAccess.open(_secret_file, FileAccess.WRITE)
-		if f:
-			f.store_string(_secret)
-			f.close()
-		else:
-			_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
-			var f2 := FileAccess.open(_secret_file, FileAccess.WRITE)
-			if f2:
-				f2.store_string(_secret)
-				f2.close()
-	else:
-		_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
-		var f := FileAccess.open(_secret_file, FileAccess.WRITE)
-		if f:
-			f.store_string(_secret)
-			f.close()
+		if _write_secret_to_file(_secret_file):
+			return
+	_secret_file = OS.get_temp_dir().path_join("mcp_bridge_%d.secret" % PORT)
+	_write_secret_to_file(_secret_file)
 
 ## Compat: Godot 4.6 renamed TCPServer.accept() to take_connection()
 func _server_take_connection() -> StreamPeerTCP:
@@ -202,6 +191,15 @@ func _get_project_dir() -> String:
 		return res_root.rstrip("/")
 	return ""
 
+
+
+func _write_secret_to_file(path: String) -> bool:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f:
+		f.store_string(_secret)
+		f.close()
+		return true
+	return false
 
 
 func _stop_server() -> void:
