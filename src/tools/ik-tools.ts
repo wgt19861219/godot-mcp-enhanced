@@ -81,10 +81,11 @@ func _initialize():
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
 \t\treturn
-\t_mcp_output("type", ik_node.get_class())
+\tvar ik_class = ik_node.get_class()
+\t_mcp_output("type", ik_class)
 \t_mcp_output("active", ik_node.active)
 \t_mcp_output("influence", ik_node.influence)
-\tif "bone_name" in ik_node:
+\tif ik_class == "TwoBoneIK3D":
 \t\t_mcp_output("bone_name", str(ik_node.bone_name))
 \t\t_mcp_output("target_nodepath", str(ik_node.target_nodepath))
 \t\t_mcp_output("use_magnet", ik_node.use_magnet)
@@ -110,18 +111,14 @@ export function genIkSetScript(nodePath: string, props: Record<string, unknown>)
 
   for (const [key, val] of Object.entries(props)) {
     if (key === 'active') {
-      if (val !== true && val !== false) throw new Error('active must be boolean');
       lines.push(`\tik_node.active = ${val}`);
     } else if (key === 'influence') {
-      const inf = Number(val);
-      if (!Number.isFinite(inf)) throw new Error('influence must be a finite number');
-      lines.push(`\tik_node.influence = ${inf}`);
+      lines.push(`\tik_node.influence = ${Number(val)}`);
     } else if (key === 'bone_name') {
       lines.push(`\tik_node.bone_name = "${gdEscape(String(val))}"`);
     } else if (key === 'target_nodepath') {
       lines.push(`\tik_node.target_nodepath = NodePath("${gdEscape(String(val))}")`);
     } else if (key === 'use_magnet') {
-      if (val !== true && val !== false) throw new Error('use_magnet must be boolean');
       lines.push(`\tik_node.use_magnet = ${val}`);
     } else if (key === 'magnet_position') {
       const mp = val as { x: number; y: number; z: number };

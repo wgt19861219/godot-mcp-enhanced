@@ -31,25 +31,25 @@ export function requiresConfirmation(toolName: string): boolean {
   return GUARDED_TOOLS.has(toolName);
 }
 
-let _oldestKey: string | null = null;
-
 export function createPendingToken(toolName: string, args: Record<string, unknown>): string {
   const now = Date.now();
   // 清理过期 token
   for (const [key, pending] of pendingTokens) {
     if (now - pending.createdAt > TOKEN_TTL_MS) pendingTokens.delete(key);
   }
-  // 超限时移除最旧的（O(1) tracked key instead of full scan）
+  // 超限时移除最旧的（遍历 100 条 < 1μs，逻辑清晰可靠）
   if (pendingTokens.size >= MAX_TOKENS) {
-    if (_oldestKey && pendingTokens.has(_oldestKey)) {
-      pendingTokens.delete(_oldestKey);
-    } else {
-      const first = pendingTokens.keys().next().value;
-      if (first) pendingTokens.delete(first);
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, pending] of pendingTokens) {
+      if (pending.createdAt < oldestTime) {
+        oldestTime = pending.createdAt;
+        oldestKey = key;
+      }
     }
+    if (oldestKey) pendingTokens.delete(oldestKey);
   }
   const token = randomBytes(18).toString('base64url');
-  if (pendingTokens.size === 0) _oldestKey = token;
   pendingTokens.set(token, { token, toolName, args, createdAt: now });
   return token;
 }

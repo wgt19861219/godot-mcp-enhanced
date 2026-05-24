@@ -73,7 +73,7 @@ export function validateTimeout(value: unknown, min = 5, max = 120, defaultVal =
 }
 
 /** Validates that a string is a safe GDScript identifier (class name, type name, etc.). */
-export function validateIdentifier(name: string, label: string): void {
+export function validateIdentifier(name: string, label = 'Identifier'): void {
   if (name.length > 64) {
     throw new Error(`${label} "${name.slice(0, 20)}..." must be 1-64 characters (got ${name.length})`);
   }
