@@ -152,7 +152,7 @@ export function parseConfigValue(raw: string, depth = 0): unknown {
   if (raw === 'false') return false;
   if (raw === 'null') return null;
   const num = Number(raw);
-  if (!isNaN(num) && raw !== '') return num;
+  if (!isNaN(num) && raw.trim() !== '') return num;
   if (raw.startsWith('[') && raw.endsWith(']')) {
     const inner = raw.slice(1, -1).trim();
     if (!inner) return [];
