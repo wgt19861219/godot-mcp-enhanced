@@ -632,8 +632,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const p = validatePath(args.project_path as string);
       const search = args.search as string;
       const replace = (args.replace as string) ?? '';
-      const extensions: string[] = (args.extensions as string[]) || ['.gd'];
-      const excludeDirs: string[] = (args.exclude_dirs as string[]) || ['.godot', '.import', 'addons', 'tools'];
+      const ALLOWED_EXTENSIONS = new Set(['.gd', '.tscn', '.tres', '.gdshader', '.cfg', '.txt', '.md', '.json', '.xml', '.yaml', '.yml', '.toml', '.csv']);
+      const HARDCODED_EXCLUDE = new Set(['.git', 'node_modules']);
+      const rawExtensions: string[] = (args.extensions as string[]) || ['.gd'];
+      const extensions = rawExtensions.filter(ext => ALLOWED_EXTENSIONS.has(ext));
+      if (extensions.length === 0) {
+        return textResult(`Error: No allowed extensions. Allowed: ${[...ALLOWED_EXTENSIONS].join(', ')}`);
+      }
+      const userExcludeDirs: string[] = (args.exclude_dirs as string[]) || ['.godot', '.import', 'addons', 'tools'];
+      const excludeDirs = [...new Set([...userExcludeDirs, ...HARDCODED_EXCLUDE])];
       const dryRun = args.dry_run === true;
 
       if (!search) {

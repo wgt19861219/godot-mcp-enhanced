@@ -25,9 +25,19 @@ export function validateProjectRoot(p: string): string {
   return resolved;
 }
 
-/** Safely resolve real path — falls back to resolve() when path doesn't exist. */
-function safeRealPath(p: string): string {
-  try { return realpathSync(p); } catch { return resolvePath(p); }
+/** Safely resolve real path — falls back to resolve() when path doesn't exist, with traversal check. */
+function safeRealPath(p: string, base?: string): string {
+  try { return realpathSync(p); } catch {
+    const resolved = resolvePath(p);
+    // If a base is provided, verify the resolved path doesn't escape it
+    if (base) {
+      const rel = relative(base, resolved);
+      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw new Error(`Path traversal detected in fallback resolution: ${p}`);
+      }
+    }
+    return resolved;
+  }
 }
 
 export function resolveWithinRoot(root: string, userPath: string): string {
@@ -46,10 +56,15 @@ export function resolveWithinRoot(root: string, userPath: string): string {
     }
     iterations++;
   }
+  // Reject paths containing ".." before resolution
   const normalizedPath = decoded.replace(/\\/g, '/');
+  if (normalizedPath.includes('..')) {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
   const resolved = resolve(base, normalizedPath);
   // Resolve real path for the target (handles symlinks and junction points)
-  const realResolved = safeRealPath(resolved);
+  // Pass base so the fallback resolution can also check for traversal
+  const realResolved = safeRealPath(resolved, base);
   const rel = relative(base, realResolved);
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Path traversal detected: ${userPath}`);

@@ -113,7 +113,10 @@ function parseValue(raw: string, maxDepth: number = 50): unknown {
 
 /**
  * Split a string by commas at the top level (respecting nesting and strings).
+ * Limits output to MAX_ELEMENTS to prevent O(n^2) ReDoS.
  */
+const MAX_SPLIT_ELEMENTS = 10000;
+
 function splitTopLevel(input: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -121,6 +124,7 @@ function splitTopLevel(input: string): string[] {
   let inString = false;
 
   for (let i = 0; i < input.length; i++) {
+    if (parts.length >= MAX_SPLIT_ELEMENTS) break;
     const ch = input[i];
     if (inString) {
       current += ch;
@@ -150,7 +154,7 @@ function splitTopLevel(input: string): string[] {
       }
     }
   }
-  if (current.trim()) parts.push(current.trim());
+  if (current.trim() && parts.length < MAX_SPLIT_ELEMENTS) parts.push(current.trim());
   return parts;
 }
 

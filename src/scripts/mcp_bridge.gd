@@ -355,10 +355,11 @@ func _cmd_get_tree(params: Dictionary) -> Variant:
 	var scene_path := ""
 	if get_tree().current_scene:
 		scene_path = get_tree().current_scene.scene_file_path
-	return {"tree": [_serialize_node(root_node, max_depth, 0)], "scene": scene_path}
+	var counter := [0]
+	return {"tree": [_serialize_node(root_node, max_depth, 0, counter)], "scene": scene_path}
 
 
-func _serialize_node(node: Node, max_depth: int, depth: int, counter: Array = [0], max_nodes: int = 2000) -> Dictionary:
+func _serialize_node(node: Node, max_depth: int, depth: int, counter: Array, max_nodes: int = 2000) -> Dictionary:
 	if counter[0] >= max_nodes:
 		return _node_info(node)
 	counter[0] += 1

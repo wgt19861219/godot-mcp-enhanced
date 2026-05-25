@@ -153,7 +153,7 @@ npm install
         "edit_node", "remove_node", "batch_add_nodes",
         "read_script", "write_script", "edit_script",
         "generate_test", "create_test_scene", "project_replace",
-        "execute_gdscript", "query_scene_tree", "inspect_node",
+        "query_scene_tree", "inspect_node",
         "validate_project", "import_resources",
         "run_and_verify", "analyze_error", "validate_scripts",
         "signal_connect", "signal_disconnect", "signal_emit", "signal_list",

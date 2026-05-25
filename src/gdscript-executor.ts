@@ -479,6 +479,9 @@ export async function executeGdscript(
     let stdout = '';
     let stderr = '';
 
+    const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB output limit
+    let outputExceeded = false;
+
     const proc = spawn(godotPath, godotArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -493,8 +496,24 @@ export async function executeGdscript(
       },
     });
 
-    proc.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+    proc.stdout?.on('data', (d: Buffer) => {
+      if (outputExceeded) return;
+      stdout += d.toString();
+      if (Buffer.byteLength(stdout, 'utf-8') > MAX_OUTPUT_BYTES) {
+        outputExceeded = true;
+        stdout += '\n[OUTPUT TRUNCATED: exceeded 10MB limit]';
+        forceKillTree(proc);
+      }
+    });
+    proc.stderr?.on('data', (d: Buffer) => {
+      if (outputExceeded) return;
+      stderr += d.toString();
+      if (Buffer.byteLength(stderr, 'utf-8') > MAX_OUTPUT_BYTES) {
+        outputExceeded = true;
+        stderr += '\n[OUTPUT TRUNCATED: exceeded 10MB limit]';
+        forceKillTree(proc);
+      }
+    });
 
     const timer = setTimeout(() => {
       if (!proc.killed) {

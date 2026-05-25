@@ -6,21 +6,43 @@ import { execFileSync } from 'child_process';
 const SECRET_FILE_NAME = 'mcp_editor.key';
 let _permWarned = false;
 
-/** On Windows, use icacls to restrict file to current user only. */
-function restrictFileWindows(filePath: string): void {
+/** On Windows, use icacls to restrict file to current user only. Returns true if ACL was applied successfully. */
+function restrictFileWindows(filePath: string): boolean {
   try {
     const username = process.env.USERNAME;
-    if (!username) return;
+    if (!username) return false;
+    // Validate username format (letters, digits, hyphens, underscores, backslash for domain)
+    if (!/^[A-Za-z0-9_\-\\]+$/.test(username)) {
+      if (!_permWarned) {
+        _permWarned = true;
+        console.error(`[SECURITY] Cannot set ACL: USERNAME "${username}" contains unexpected characters.`);
+      }
+      return false;
+    }
     execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:R`], { stdio: 'ignore' });
-  } catch { /* best effort */ }
+    // Verify the ACL was applied by reading it back
+    const output = execFileSync('icacls', [filePath], { encoding: 'utf-8' });
+    if (!output.includes(username)) {
+      if (!_permWarned) {
+        _permWarned = true;
+        console.error(`[SECURITY] ACL verification failed for ${filePath}: ${output.trim()}`);
+      }
+      return false;
+    }
+    return true;
+  } catch {
+    if (!_permWarned) {
+      _permWarned = true;
+      console.error(`[SECURITY] Failed to set Windows ACL on ${filePath}`);
+    }
+    return false;
+  }
 }
 
 /** Check and tighten file permissions. Returns true if permissions are acceptable. */
 function checkFilePermissions(filePath: string): boolean {
   if (process.platform === 'win32') {
-    // On Windows, apply ACL restriction proactively
-    restrictFileWindows(filePath);
-    return true;
+    return restrictFileWindows(filePath);
   }
   try { chmodSync(filePath, 0o600); } catch { /* best effort */ }
   const stat = statSync(filePath);

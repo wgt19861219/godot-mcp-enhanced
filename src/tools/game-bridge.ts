@@ -2,6 +2,7 @@ import { createConnection, Socket } from 'net';
 import { readFileSync, writeFileSync, existsSync, copyFileSync, unlinkSync, chmodSync, statSync, renameSync } from 'fs';
 import { join, dirname } from 'path';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
@@ -53,7 +54,14 @@ function readBridgeSecret(): string | null {
   const secretPath = findBridgeSecretPath();
   try {
     // Tighten permissions: owner-only read
-    if (process.platform !== 'win32') {
+    if (process.platform === 'win32') {
+      try {
+        const username = process.env.USERNAME;
+        if (username && /^[A-Za-z0-9_\-\\]+$/.test(username)) {
+          execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:R`], { stdio: 'ignore' });
+        }
+      } catch { /* best effort */ }
+    } else {
       try {
         chmodSync(secretPath, 0o600);
       } catch { /* best effort */ }
@@ -177,6 +185,7 @@ function sendToBridge(method: string, params: Record<string, unknown> = {}, time
           if (!line) continue;
           try {
             const resp = JSON.parse(line) as BridgeResponse;
+            if (resp.id != null && resp.id !== id) continue;
             sock.removeListener('data', onData);
             // If bridge returns auth error, invalidate cached secret
             if (resp.error?.code === -32001 || resp.error?.code === -32002) {

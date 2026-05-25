@@ -299,6 +299,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         params.root_node_type = args.root_node_type || 'Node2D';
       } else if (name === 'add_node') {
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);
+        const safeId = /^[A-Za-z0-9_]+$/;
+        if (!safeId.test(String(args.node_type ?? ''))) {
+          return textResult(`Error: node_type contains invalid characters: "${args.node_type}"`);
+        }
+        if (!safeId.test(String(args.node_name ?? ''))) {
+          return textResult(`Error: node_name contains invalid characters: "${args.node_name}"`);
+        }
         params.node_type = args.node_type;
         params.node_name = args.node_name;
         params.parent_node_path = args.parent_node_path || 'root';
@@ -562,6 +569,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       if (!nodes || !Array.isArray(nodes) || nodes.length === 0) {
         return textResult('Error: "nodes" must be a non-empty array of node definitions.');
+      }
+
+      // Input validation for each node
+      const safeId = /^[A-Za-z0-9_]+$/;
+      const MAX_BATCH_NODES = 100;
+      if (nodes.length > MAX_BATCH_NODES) {
+        return textResult(`Error: Too many nodes (${nodes.length}). Maximum: ${MAX_BATCH_NODES}`);
+      }
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        if (!n.node_type || !safeId.test(String(n.node_type))) {
+          return textResult(`Error: nodes[${i}].node_type contains invalid characters: "${n.node_type}"`);
+        }
+        if (!n.node_name || !safeId.test(String(n.node_name))) {
+          return textResult(`Error: nodes[${i}].node_name contains invalid characters: "${n.node_name}"`);
+        }
       }
 
       const godot = await ctx.findGodot();
