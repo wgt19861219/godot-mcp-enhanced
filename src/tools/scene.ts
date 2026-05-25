@@ -299,11 +299,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         params.root_node_type = args.root_node_type || 'Node2D';
       } else if (name === 'add_node') {
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);
-        const safeId = /^[A-Za-z0-9_]+$/;
-        if (!safeId.test(String(args.node_type ?? ''))) {
+        const safeType = /^[A-Za-z0-9_]+$/;
+        const unsafeName = /[\[\]\"\/:\\]/;
+        if (!safeType.test(String(args.node_type ?? ''))) {
           return textResult(`Error: node_type contains invalid characters: "${args.node_type}"`);
         }
-        if (!safeId.test(String(args.node_name ?? ''))) {
+        if (!String(args.node_name ?? '') || unsafeName.test(String(args.node_name))) {
           return textResult(`Error: node_name contains invalid characters: "${args.node_name}"`);
         }
         params.node_type = args.node_type;
@@ -379,8 +380,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const scriptContent = args.script_content as string | undefined;
 
       // 输入验证: 防止 .tscn 模板注入
-      const safeId = /^[A-Za-z0-9_]+$/;
-      if (!safeId.test(rootNodeType)) {
+      const safeType = /^[A-Za-z0-9_]+$/;
+      const unsafeName = /[\[\]\"\/:\\]/;
+      if (!safeType.test(rootNodeType)) {
         return textResult(`Error: root_node_type contains invalid characters: "${rootNodeType}"`);
       }
 
@@ -390,7 +392,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const baseName = sceneRelPath.split('/').pop()!.replace(/\.tscn$/i, '');
         rootNodeName = baseName ? baseName.split('_').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('') : 'Root';
       }
-      if (!safeId.test(rootNodeName)) {
+      if (!rootNodeName || unsafeName.test(rootNodeName)) {
         return textResult(`Error: root_node_name contains invalid characters: "${rootNodeName}"`);
       }
 
@@ -572,17 +574,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       // Input validation for each node
-      const safeId = /^[A-Za-z0-9_]+$/;
+      const safeType = /^[A-Za-z0-9_]+$/;
+      const unsafeName = /[\[\]\"\/:\\]/;
       const MAX_BATCH_NODES = 100;
       if (nodes.length > MAX_BATCH_NODES) {
         return textResult(`Error: Too many nodes (${nodes.length}). Maximum: ${MAX_BATCH_NODES}`);
       }
       for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
-        if (!n.node_type || !safeId.test(String(n.node_type))) {
+        if (!n.node_type || !safeType.test(String(n.node_type))) {
           return textResult(`Error: nodes[${i}].node_type contains invalid characters: "${n.node_type}"`);
         }
-        if (!n.node_name || !safeId.test(String(n.node_name))) {
+        if (!n.node_name || unsafeName.test(String(n.node_name))) {
           return textResult(`Error: nodes[${i}].node_name contains invalid characters: "${n.node_name}"`);
         }
       }
