@@ -13,6 +13,7 @@ func _enter_tree() -> void:
 	var panel_scene = preload("ui/status_panel.tscn")
 	status_panel = panel_scene.instantiate()
 	add_control_to_bottom_panel(status_panel, "MCP")
+	websocket_server.set_panel(status_panel)
 
 func _exit_tree() -> void:
 	if websocket_server:
@@ -20,9 +21,6 @@ func _exit_tree() -> void:
 		var handler = websocket_server.get_node_or_null("command_handler")
 		if handler and handler.has_method("cleanup"):
 			handler.cleanup()
-		var sync_node = websocket_server.get_node_or_null("command_handler/sync_commands")
-		if sync_node and sync_node.has_method("cleanup"):
-			sync_node.cleanup()
 		websocket_server.queue_free()
 		websocket_server = null
 	if status_panel:

@@ -392,8 +392,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const baseName = sceneRelPath.split('/').pop()!.replace(/\.tscn$/i, '');
         rootNodeName = baseName ? baseName.split('_').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('') : 'Root';
       }
-      if (!rootNodeName || unsafeName.test(rootNodeName)) {
-        return textResult(`Error: root_node_name contains invalid characters: "${rootNodeName}"`);
+      if (!rootNodeName || !/^[A-Za-z0-9_]+$/.test(rootNodeName)) {
+        return textResult(`Error: root_node_name must match /^[A-Za-z0-9_]+$/, got: "${rootNodeName}"`);
       }
 
       const sceneAbsPath = resolveWithinRoot(p, sceneRelPath);

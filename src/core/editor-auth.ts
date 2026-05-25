@@ -19,10 +19,12 @@ function restrictFileWindows(filePath: string): boolean {
       }
       return false;
     }
-    execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:R`], { stdio: 'ignore' });
+    // Extract simple username from DOMAIN\user format to avoid icacls backslash misinterpretation
+    const effectiveUser = username.includes('\\') ? username.split('\\').pop()! : username;
+    execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${effectiveUser}:R`], { stdio: 'ignore' });
     // Verify the ACL was applied by reading it back
     const output = execFileSync('icacls', [filePath], { encoding: 'utf-8' });
-    if (!output.includes(username)) {
+    if (!output.includes(effectiveUser)) {
       if (!_permWarned) {
         _permWarned = true;
         console.error(`[SECURITY] ACL verification failed for ${filePath}: ${output.trim()}`);

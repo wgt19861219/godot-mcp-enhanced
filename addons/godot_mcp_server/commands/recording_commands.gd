@@ -10,6 +10,37 @@ var _record_start_time: int = 0
 func setup(plugin: EditorPlugin) -> void:
 	_plugin = plugin
 
+func _input(event: InputEvent) -> void:
+	if not _recording:
+		return
+	if event is InputEventKey:
+		var entry: Dictionary = {
+			"type": "key",
+			"keycode": event.keycode,
+			"pressed": event.pressed,
+			"shift": event.shift_pressed,
+			"ctrl": event.ctrl_pressed,
+			"alt": event.alt_pressed,
+			"time_offset": Time.get_ticks_msec() - _record_start_time
+		}
+		_recorded_events.append(entry)
+	elif event is InputEventMouseButton:
+		var entry: Dictionary = {
+			"type": "mouse_click",
+			"position": [event.position.x, event.position.y],
+			"button": event.button_index,
+			"pressed": event.pressed,
+			"time_offset": Time.get_ticks_msec() - _record_start_time
+		}
+		_recorded_events.append(entry)
+	elif event is InputEventMouseMotion:
+		var entry: Dictionary = {
+			"type": "mouse_move",
+			"position": [event.position.x, event.position.y],
+			"time_offset": Time.get_ticks_msec() - _record_start_time
+		}
+		_recorded_events.append(entry)
+
 # ─── recording_start ────────────────────────────────────────────────────────
 
 func handle_recording_start(params: Dictionary) -> Dictionary:

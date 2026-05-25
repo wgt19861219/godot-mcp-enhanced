@@ -167,7 +167,14 @@ export class EditorConnection {
         reject(new Error('Not connected'));
         return;
       }
-      const id = (this.requestId = (this.requestId + 1) % Number.MAX_SAFE_INTEGER) || 1;
+      // Increment and wrap, skipping IDs that are already pending
+      let candidate = (this.requestId + 1) % Number.MAX_SAFE_INTEGER;
+      if (candidate === 0) candidate = 1;
+      while (this.pending.has(candidate)) {
+        candidate = (candidate + 1) % Number.MAX_SAFE_INTEGER;
+        if (candidate === 0) candidate = 1;
+      }
+      const id = this.requestId = candidate;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Request timeout: ${method}`));
@@ -224,7 +231,10 @@ export class EditorConnection {
         reject(new Error('Cannot authenticate: not connected or no secret'));
         return;
       }
+      let settled = false;
       const authTimeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         this.pending.delete(AUTH_REQUEST_ID);
         this.connectAttempt = true; // Prevent close handler from scheduling reconnect
         reject(new Error('Auth handshake timeout'));
@@ -234,11 +244,15 @@ export class EditorConnection {
       // Use id=0 for auth (matches plugin expectation)
       this.pending.set(AUTH_REQUEST_ID, {
         resolve: (result: unknown) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(authTimeout);
           this.authenticated = true;
           resolve();
         },
         reject: (err: Error) => {
+          if (settled) return;
+          settled = true;
           clearTimeout(authTimeout);
           reject(err);
         },

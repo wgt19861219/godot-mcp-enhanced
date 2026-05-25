@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { normalizeNodePath, gdEscape } from './shared.js';
+import { normalizeNodePath, gdEscape, validateIdentifier } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -199,6 +199,8 @@ export async function handleTool(
         const flags = args.flags as number | undefined;
         if (flags !== undefined && typeof flags !== 'number') return opsErrorResult('INVALID_SIGNAL', 'flags must be a number');
         if (!signalName || !methodName) return opsErrorResult('INVALID_SIGNAL', 'signal_name and method_name are required');
+        try { validateIdentifier(signalName, 'signal_name'); } catch (e) { return opsErrorResult('INVALID_SIGNAL', (e as Error).message); }
+        try { validateIdentifier(methodName, 'method_name'); } catch (e) { return opsErrorResult('INVALID_SIGNAL', (e as Error).message); }
         script = genSignalConnectScript(sourcePath, signalName, targetPath, methodName, flags);
         break;
       }
@@ -208,6 +210,8 @@ export async function handleTool(
         const targetPath = normalizeNodePath(args.target_path as string);
         const methodName = args.method_name as string;
         if (!signalName || !methodName) return opsErrorResult('INVALID_SIGNAL', 'signal_name and method_name are required');
+        try { validateIdentifier(signalName, 'signal_name'); } catch (e) { return opsErrorResult('INVALID_SIGNAL', (e as Error).message); }
+        try { validateIdentifier(methodName, 'method_name'); } catch (e) { return opsErrorResult('INVALID_SIGNAL', (e as Error).message); }
         script = genSignalDisconnectScript(sourcePath, signalName, targetPath, methodName);
         break;
       }

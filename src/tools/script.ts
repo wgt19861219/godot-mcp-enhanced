@@ -8,6 +8,7 @@ import { executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
 import { lintGDScript, formatLintResults } from './gdscript-lint.js';
 import { getTemplateSuggestion } from './code-templates.js';
+import { gdEscape } from './shared.js';
 import { validateTimeout } from './shared.js';
 
 function detectDuplicateLines(lines: string[]): string[] {
@@ -545,7 +546,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       let testCode = 'extends GutTest\n\n';
       testCode += `var ${testTarget}  # Instance under test\n\n`;
       testCode += 'func before_each():\n';
-      testCode += `\t${testTarget} = load("${scriptResPath}").new()\n\n`;
+      testCode += `\t${testTarget} = load("${gdEscape(scriptResPath)}").new()\n\n`;
       testCode += 'func after_each():\n';
       testCode += `\tif is_instance_valid(${testTarget}):\n`;
       testCode += `\t\t${testTarget}.free()\n\n`;

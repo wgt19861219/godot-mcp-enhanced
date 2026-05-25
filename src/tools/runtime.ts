@@ -108,7 +108,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
       }
       const godot = await ctx.findGodot();
-      spawn(godot, ['--editor', '--path', p], { detached: true, stdio: 'ignore' }).unref();
+      const child = spawn(godot, ['--editor', '--path', p], { detached: true, stdio: 'ignore' });
+      child.on('error', (err) => {
+        console.error(`[runtime] Failed to launch editor: ${err.message}`);
+      });
+      child.unref();
       return textResult(`Launched Godot editor for project: ${p}`);
     }
 

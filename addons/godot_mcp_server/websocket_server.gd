@@ -16,6 +16,7 @@ var _command_handler: Node
 var _current_port: int = 0
 var _request_counter: int = 0
 var _plugin: EditorPlugin
+var _panel: Control = null
 var _secret: String = ""
 var _secret_file: String = ""
 var _authenticated_peers: Dictionary = {}  # peer_id (int) -> true
@@ -25,6 +26,9 @@ var _crypto: Crypto
 
 func setup(plugin: EditorPlugin) -> void:
 	_plugin = plugin
+
+func set_panel(panel: Control) -> void:
+	_panel = panel
 
 func _ready() -> void:
 	_crypto = Crypto.new()
@@ -253,7 +257,9 @@ func _update_panel(text: String) -> void:
 	if panel: panel.update_status(text)
 
 func _get_panel() -> Node:
-	return get_node_or_null("../../../../../MCP")
+	if _panel and is_instance_valid(_panel):
+		return _panel
+	return null
 
 # DUPLICATE: Keep in sync with src/scripts/mcp_bridge.gd:_constant_time_compare
 # Cannot share because editor plugin and game autoload have separate script contexts.

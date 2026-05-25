@@ -127,7 +127,7 @@ function isFullClass(code: string): boolean {
  * Splits user code into declarations (class-level) and statements (inside _initialize).
  * This allows func/var/const definitions to work correctly at class scope.
  */
-function wrapSnippet(code: string): string {
+function wrapSnippet(code: string, resultMarker = MARKER_RESULT): string {
   const lines = code.split('\n');
   const declarationLines: string[] = [];
   const statementLines: string[] = [];
@@ -244,7 +244,7 @@ func _mcp_output(key: String, value: Variant) -> void:
 ${classBody}
 func _initialize():
 \t_mcp_load_main_scene()${initBody}
-\t\tprint("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
+\t\tprint("${resultMarker}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 \t\tif Engine.get_main_loop() == self:
 \t\t\tquit(0)
 `;
@@ -254,7 +254,7 @@ func _initialize():
  * Wrap a snippet as `extends Node` for autoload mode.
  * The loader scene instantiates this via .new(), so it must be a Node subclass.
  */
-function wrapSnippetAsNode(code: string): string {
+function wrapSnippetAsNode(code: string, resultMarker = MARKER_RESULT): string {
   const lines = code.split('\n');
   const declarationLines: string[] = [];
   const statementLines: string[] = [];
@@ -316,7 +316,7 @@ func _mcp_output(key: String, value: Variant) -> void:
 \t_mcp_outputs.append({"key": key, "value": str(value)})
 ${safeBody}
 func _initialize() -> void:${initBody}${userInitCall}
-	print("${MARKER_RESULT}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
+	print("${resultMarker}" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
 	get_tree().quit(0)
 `;
 }
@@ -389,8 +389,6 @@ export async function executeGdscript(
   // C-01: Generate random per-execution markers to prevent user code forgery
   const rndResult = generateMarker();
   const rndError = generateMarker();
-  const randomizeMarkers = (s: string) =>
-    s.replaceAll(MARKER_RESULT, rndResult).replaceAll(MARKER_ERROR, rndError);
 
   // Prepare script content
   // Routing logic:
@@ -411,12 +409,12 @@ export async function executeGdscript(
     } else {
       // Full class extending Node/etc. without autoloads → strip extends, wrap as SceneTree
       const strippedCode = code.replace(/^\s*extends\s+\S+.*\n?/m, '');
-      scriptContent = wrapSnippet(strippedCode);
+      scriptContent = wrapSnippet(strippedCode, rndResult);
     }
   } else if (loadAutoloads) {
-    scriptContent = wrapSnippetAsNode(code);
+    scriptContent = wrapSnippetAsNode(code, rndResult);
   } else {
-    scriptContent = wrapSnippet(code);
+    scriptContent = wrapSnippet(code, rndResult);
   }
 
   // Create isolated session directory
@@ -427,7 +425,7 @@ export async function executeGdscript(
   const tempFiles: string[] = [];
   let tempFile: string;
   try {
-    tempFile = writeTempScript(randomizeMarkers(scriptContent), sessionDir);
+    tempFile = writeTempScript(scriptContent, sessionDir);
     tempFiles.push(tempFile);
   } catch (err) {
     return {
@@ -449,7 +447,7 @@ export async function executeGdscript(
     // Autoload mode: create a loader scene that initializes all autoloads first
     try {
       // Write loader script first to get its absolute path
-      const loaderScriptPath = writeSessionFile(randomizeMarkers(createAutoloadLoaderScript(tempFile)), '.gd', sessionDir);
+      const loaderScriptPath = writeSessionFile(createAutoloadLoaderScript(tempFile), '.gd', sessionDir);
       tempFiles.push(loaderScriptPath);
       // Create scene referencing loader script by absolute path (not res://)
       const loaderScene = createAutoloadLoaderScene(loaderScriptPath);

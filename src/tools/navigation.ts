@@ -476,6 +476,10 @@ export async function handleTool(
               paramWarnings.push(`Param "${key}" must be a finite number, skipped`);
               continue;
             }
+            if (value < 0) {
+              paramWarnings.push(`Param "${key}" must be >= 0, got ${value}, skipped`);
+              continue;
+            }
           }
           filteredParams[key] = value;
         }

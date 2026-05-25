@@ -550,6 +550,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             const treeScript = join(scriptsDir, 'query_scene_tree.gd');
             if (existsSync(treeScript)) {
               const treeResult = await new Promise<string>((resolve) => {
+                let settled = false;
                 let out = '';
                 const proc = spawn(godot, [
                   '--headless', '--path', projectPath,
@@ -558,8 +559,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                 ], { stdio: ['pipe', 'pipe', 'pipe'] });
                 proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
                 proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
-                proc.on('close', () => resolve(out));
-                setTimeout(() => { if (!proc.killed) forceKillTree(proc); resolve(''); }, 30000);
+                proc.on('close', () => { if (!settled) { settled = true; resolve(out); } });
+                setTimeout(() => { if (!settled) { settled = true; if (!proc.killed) forceKillTree(proc); resolve(''); } }, 30000);
               });
               if (treeResult) {
                 (analysis as ExtendedAnalysisResult).scene_tree = parseMcpScriptOutput(treeResult, 0);

@@ -2,7 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
-import { normalizeNodePath, gdEscape } from './shared.js';
+import { normalizeNodePath, gdEscape, validateIdentifier } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
 import { ANIM_ERROR_CODES, LOOP_MODES, TRACK_TYPES, ensureNumber, valueToGd, argsToGd, animErrorMapper } from './animation-shared.js';
 
@@ -412,6 +412,7 @@ func _initialize():
 }
 
 function genAddKeyframe(nodePath: string, animName: string, trackIdx: number, time: number, value?: unknown, transition?: number, methodName?: string, args?: unknown[]): string {
+  if (methodName) validateIdentifier(methodName, 'method_name');
   const transStr = transition ?? 1.0;
   const valueStr = value !== undefined ? valueToGd(value) : 'null';
   const rotValueStr = value !== undefined && Array.isArray(value) && value.length === 3

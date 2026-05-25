@@ -60,8 +60,7 @@ export function gdEscape(s: string): string {
     .replace(/\0/g, '')
     .replace(/%/g, '%%')
     .replace(/\$/g, '\\$')
-    .replace(/'/g, "\\'")
-    .replace(/\\[uU](?=[0-9a-fA-F]{4})/g, '\\\\u');
+    .replace(/'/g, "\\'");
 }
 
 /** Clamps a timeout value (seconds) to [min, max], defaulting on invalid input. */

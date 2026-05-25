@@ -298,7 +298,7 @@ func _initialize():
 \t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")
 \t\t_mcp_done()
 \t\treturn
-\tvar mat = ${gdEscape(materialType)}.new()${shaderLine}
+\tvar mat = ${materialType}.new()${shaderLine}
 \tnode.material = mat
 \t_mcp_output("created", {"material_type": "${gdEscape(materialType)}", "node": "${gdEscape(nodePath)}"})
 \t_mcp_done()

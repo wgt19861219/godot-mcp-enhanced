@@ -423,12 +423,20 @@ export function readResource(uri: string, projectPath: string | undefined): McpR
   }
 
   const rawPath = uri.substring('godot://'.length);
-  // URL decode for safety
+  // Iterative URL decode to defeat double-encoding (consistent with resolveWithinRoot)
   let path: string;
   try {
-    path = decodeURIComponent(rawPath);
+    let decoded = rawPath;
+    let prev = '';
+    let iterations = 0;
+    while (decoded !== prev && iterations < 5) {
+      prev = decoded;
+      decoded = decodeURIComponent(decoded);
+      iterations++;
+    }
+    path = decoded;
   } catch {
-    path = rawPath;
+    return { uri, mimeType: 'text/plain', text: `ERROR: Invalid encoded path: ${rawPath}` };
   }
 
   const slashIdx = path.indexOf('/');
