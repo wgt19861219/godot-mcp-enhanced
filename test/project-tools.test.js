@@ -26,7 +26,13 @@ function createMockCtx() {
     projectDir: '/fake/project',
     setProjectDir: vi.fn(),
     parseGodotConfig: vi.fn(() => ({
-      application: { name: 'TestProject', run_main_scene: 'res://main.tscn' },
+      application: {
+        name: 'TestProject',
+        'config/name': 'TestProject',
+        'run/main_scene': 'res://scenes/main.tscn',
+        'config/features': 'PackedStringArray("4.6")',
+      },
+      rendering: { 'renderer/rendering_method': 'forward_plus' },
     })),
   };
 }
@@ -45,6 +51,11 @@ function makeGodotProject(dir) {
     '',
     'config/name="TestGame"',
     'run/main_scene="res://scenes/main.tscn"',
+    'config/features=PackedStringArray("4.6")',
+    '',
+    '[rendering]',
+    '',
+    'renderer/rendering_method="forward_plus"',
     '',
   ].join('\n');
   writeFileSync(join(dir, 'project.godot'), projectGodot, 'utf-8');
@@ -354,7 +365,7 @@ describe('project-tools handleTool — setup_project_rules', () => {
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.actions).toBeDefined();
-    expect(parsed.actions.length).toBe(2);
+    expect(parsed.actions.length).toBe(3);
 
     // Verify settings.json
     const settingsPath = join(dir, '.claude', 'settings.json');
@@ -367,8 +378,9 @@ describe('project-tools handleTool — setup_project_rules', () => {
     const claudeMdPath = join(dir, 'CLAUDE.md');
     expect(existsSync(claudeMdPath)).toBe(true);
     const claudeMd = readFileSync(claudeMdPath, 'utf-8');
-    expect(claudeMd).toContain('Godot MCP Rules');
-    expect(claudeMd).toContain('validate_scripts');
+    expect(claudeMd).toContain('## 引擎版本');
+    expect(claudeMd).toContain('## MCP 规则映射');
+    expect(claudeMd).toContain('.claude/rules/godot-mcp.md');
   });
 
   it('skips hooks when hooks=false', async () => {
@@ -381,8 +393,9 @@ describe('project-tools handleTool — setup_project_rules', () => {
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.actions).toBeDefined();
-    expect(parsed.actions.length).toBe(1);
-    expect(parsed.actions[0]).toContain('CLAUDE.md');
+    expect(parsed.actions.length).toBe(2);
+    expect(parsed.actions.some(a => a.includes('CLAUDE.md'))).toBe(true);
+    expect(parsed.actions.some(a => a.includes('rules'))).toBe(true);
     expect(existsSync(join(dir, '.claude', 'settings.json'))).toBe(false);
   });
 
@@ -413,7 +426,7 @@ describe('project-tools handleTool — setup_project_rules', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.actions).toBeDefined();
     expect(parsed.actions.length).toBe(2);
-    expect(parsed.actions.every(a => a.includes('skipped'))).toBe(true);
+    expect(parsed.actions.every(a => a.includes('skipped') || a.includes('will not overwrite'))).toBe(true);
   });
 
   it('merges hooks into existing settings.json', async () => {
@@ -448,7 +461,8 @@ describe('project-tools handleTool — setup_project_rules', () => {
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.actions).toBeDefined();
-    expect(parsed.actions.every(a => !a.includes('skipped'))).toBe(true);
+    // hooks and CLAUDE.md should be updated (not skipped), rules file is preserved
+    expect(parsed.actions.some(a => a.includes('updated') || a.includes('created'))).toBe(true);
 
     // Verify settings.json still has valid structure with hook
     const settings = JSON.parse(readFileSync(join(dir, '.claude', 'settings.json'), 'utf-8'));
@@ -457,8 +471,59 @@ describe('project-tools handleTool — setup_project_rules', () => {
 
     // Verify CLAUDE.md still has rules section
     const claudeMd = readFileSync(join(dir, 'CLAUDE.md'), 'utf-8');
-    expect(claudeMd).toContain('## Godot MCP Rules');
-    expect(claudeMd).toContain('validate_scripts');
+    expect(claudeMd).toContain('## 引擎版本');
+    expect(claudeMd).toContain('## MCP 规则映射');
+  });
+
+  it('creates .claude/rules/godot-mcp.md', async () => {
+    const ctx = createMockCtx();
+    await handleTool('setup_project_rules', { project_path: dir }, ctx);
+
+    const rulesPath = join(dir, '.claude', 'rules', 'godot-mcp.md');
+    expect(existsSync(rulesPath)).toBe(true);
+    const rules = readFileSync(rulesPath, 'utf-8');
+    expect(rules).toContain('validate_scripts');
+    expect(rules).toContain('verify_delivery');
+  });
+
+  it('does not overwrite existing godot-mcp.md', async () => {
+    const ctx = createMockCtx();
+    mkdirSync(join(dir, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(dir, '.claude', 'rules', 'godot-mcp.md'), 'my custom rules', 'utf-8');
+
+    await handleTool('setup_project_rules', { project_path: dir, force: true }, ctx);
+
+    const rules = readFileSync(join(dir, '.claude', 'rules', 'godot-mcp.md'), 'utf-8');
+    expect(rules).toBe('my custom rules');
+  });
+
+  it('merges user sections to after MCP sections', async () => {
+    const ctx = createMockCtx();
+    writeFileSync(join(dir, 'CLAUDE.md'), '# TestGame\n## 我的规范\n- my rule\n', 'utf-8');
+
+    await handleTool('setup_project_rules', { project_path: dir, hooks: false }, ctx);
+
+    const claudeMd = readFileSync(join(dir, 'CLAUDE.md'), 'utf-8');
+    expect(claudeMd).toContain('## 我的规范');
+    expect(claudeMd).toContain('my rule');
+    expect(claudeMd).toContain('## 引擎版本');
+    // User section after MCP sections
+    const lastMcp = claudeMd.lastIndexOf('## MCP 规则映射');
+    const user = claudeMd.indexOf('## 我的规范');
+    expect(user).toBeGreaterThan(lastMcp);
+  });
+
+  it('replaces old Godot MCP Rules format', async () => {
+    const ctx = createMockCtx();
+    writeFileSync(join(dir, 'CLAUDE.md'),
+      '# TestGame\n## Godot MCP Rules\n- old rule\n', 'utf-8');
+
+    await handleTool('setup_project_rules', { project_path: dir, hooks: false }, ctx);
+
+    const claudeMd = readFileSync(join(dir, 'CLAUDE.md'), 'utf-8');
+    expect(claudeMd).not.toContain('## Godot MCP Rules');
+    expect(claudeMd).not.toContain('old rule');
+    expect(claudeMd).toContain('## 引擎版本');
   });
 
   it('setup_project_rules is non-readonly', () => {
