@@ -496,6 +496,8 @@ describe('project-tools handleTool — setup_project_rules', () => {
     expect(rules).toContain('粒子');
     expect(rules).toContain('材质与着色器');
     expect(rules).toContain('IK 与 3D');
+    expect(rules).toContain('运行时管理');
+    expect(rules).toContain('截图与调试');
     expect(rules).toContain('游戏桥接');
   });
 

@@ -71,7 +71,16 @@ export const GODOT_MCP_RULES = `# Godot MCP 开发规则
 
 ## IK 与 3D
 - 运行时操作，不持久化
-- TwoBoneIK3D 需要 bone_name 参数
+- TwoBoneIK3D 推荐指定 bone_name 参数
+
+## 运行时管理
+- run_project 有超时设置，长时间运行需调整
+- launch_editor 启动编辑器 GUI，stop_project 终止运行中的进程
+- dev_loop 可执行任意 GDScript 代码
+
+## 截图与调试
+- capture_screenshot 为实验性功能（headless 模式下渲染受限）
+- profiler 用于性能分析（snapshot/start/stop/get_data）
 
 ## 游戏桥接
 - 需先安装 bridge 并启动游戏
@@ -258,13 +267,7 @@ export function buildLayerNames(config: GodotConfig | null): string | null {
 }
 
 export function buildMcpMapping(): string {
-  const rows = [
-    ['脚本/场景/信号', '.claude/rules/godot-mcp.md'],
-    ['动画/音频/UI/TileMap', '.claude/rules/godot-mcp.md'],
-    ['物理/导航/粒子/材质', '.claude/rules/godot-mcp.md'],
-    ['IK/3D/桥接/发版', '.claude/rules/godot-mcp.md'],
-  ];
-  return '| 领域 | rules 文件 |\n|------|-----------|\n' + rows.map(([d, f]) => `| ${d} | ${f} |`).join('\n');
+  return '| 领域 | rules 文件 |\n|------|-----------|\n| 全部工具规则 | .claude/rules/godot-mcp.md |';
 }
 
 // ─── Merge Engine ─────────────────────────────────────────────────────────

@@ -247,14 +247,7 @@ describe('claudemd-builder — input/physics/layers/mcp', () => {
     it('always returns mapping table', () => {
       const result = buildMcpMapping();
       expect(result).toContain('.claude/rules/godot-mcp.md');
-    });
-
-    it('lists all tool domains', () => {
-      const result = buildMcpMapping();
-      expect(result).toContain('脚本/场景/信号');
-      expect(result).toContain('动画/音频/UI/TileMap');
-      expect(result).toContain('物理/导航/粒子/材质');
-      expect(result).toContain('IK/3D/桥接/发版');
+      expect(result).toContain('全部工具规则');
     });
   });
 });
