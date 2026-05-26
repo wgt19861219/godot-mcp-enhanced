@@ -109,6 +109,20 @@ cd godot-mcp-enhanced
 npm install
 ```
 
+## 首次使用
+
+连接 Godot 项目后，建议立即运行以下工具一键配置项目规则：
+
+```
+setup_project_rules(project_path="你的项目路径")
+```
+
+这会自动生成：
+- **`.claude/settings.json`**：PostToolUse hook，每次编辑 `.gd` 文件后自动提醒 AI 运行 `validate_scripts` 验证语法
+- **`CLAUDE.md`**：项目级规则，包含 GDScript 验证规则和发版门禁（`verify_delivery` 检查）
+
+如果已有配置想更新，使用 `force=true` 覆盖。如只需其中一项，用 `hooks=false` 或 `claude_md=false` 跳过。
+
 ## 配置
 
 ### Cursor
@@ -148,7 +162,7 @@ npm install
         "launch_editor", "run_project", "stop_project",
         "get_debug_output", "capture_screenshot", "analyze_screenshot", "run_tests",
         "get_godot_version", "list_projects", "get_project_info",
-        "list_files", "read_project_config", "create_project",
+        "list_files", "read_project_config", "create_project", "setup_project_rules",
         "read_scene", "create_scene", "add_node", "save_scene", "load_sprite",
         "edit_node", "remove_node", "batch_add_nodes",
         "read_script", "write_script", "edit_script",
@@ -236,6 +250,7 @@ npm install
 | `list_files` | 列出文件（支持扩展名/子目录过滤） |
 | `read_project_config` | 解析 project.godot 为结构化 JSON |
 | `create_project` | 创建完整 Godot 项目结构 |
+| `setup_project_rules` | 一键配置项目规则（hooks + CLAUDE.md），建议首次使用时运行 |
 | `validate_project` | 检查缺失资源、无效脚本引用、孤立 .import 文件 |
 | `import_resources` | 扫描目录批量生成 .import 文件（图片/音频/字体/3D模型） |
 

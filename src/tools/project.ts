@@ -333,9 +333,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (existing.includes('## Godot MCP Rules') && !force) {
             actions.push('CLAUDE.md: skipped (rules already present, use force=true to overwrite)');
           } else if (existing.includes('## Godot MCP Rules') && force) {
-            const rulesBlock = rules.join('\n') + '\n';
-            const updated = existing.replace(/## Godot MCP Rules\n(?:(?!^## ).*\n?)*/, rulesBlock);
-            writeAtomic(claudeMdPath, updated);
+            const lines = existing.split('\n');
+            const startIdx = lines.findIndex(l => l.trim() === '## Godot MCP Rules');
+            let endIdx = lines.length;
+            for (let i = startIdx + 1; i < lines.length; i++) {
+              if (/^## /.test(lines[i])) { endIdx = i; break; }
+            }
+            const newBlock = rules.slice(1).join('\n');
+            lines.splice(startIdx, endIdx - startIdx, newBlock);
+            writeAtomic(claudeMdPath, lines.join('\n') + '\n');
             actions.push('CLAUDE.md: updated rules (force)');
           } else {
             writeAtomic(claudeMdPath, existing + rules.join('\n') + '\n');
