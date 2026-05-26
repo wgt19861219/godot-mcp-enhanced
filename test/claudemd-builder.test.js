@@ -1,9 +1,14 @@
 // test/claudemd-builder.test.js
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   buildEngineVersion,
   buildRenderer,
   buildMainScene,
+  buildKeyPaths,
+  buildAutoloads,
 } from '../build/tools/claudemd-builder.js';
 
 describe('claudemd-builder — simple builders', () => {
@@ -62,6 +67,87 @@ describe('claudemd-builder — simple builders', () => {
 
     it('returns null when config is null', () => {
       expect(buildMainScene(null)).toBeNull();
+    });
+  });
+});
+
+describe('claudemd-builder — keyPaths & autoloads', () => {
+  let tempDir;
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe('buildKeyPaths', () => {
+    it('lists existing known directories', () => {
+      tempDir = mkdtempSync(join(tmpdir(), 'godot-kp-'));
+      mkdirSync(join(tempDir, 'scenes'));
+      mkdirSync(join(tempDir, 'scripts'));
+      mkdirSync(join(tempDir, 'assets'));
+      mkdirSync(join(tempDir, 'unknown_dir'));
+
+      const result = buildKeyPaths(tempDir);
+      expect(result).toContain('scenes/');
+      expect(result).toContain('scripts/');
+      expect(result).toContain('assets/');
+      expect(result).not.toContain('unknown_dir');
+    });
+
+    it('returns null when no known directories exist', () => {
+      tempDir = mkdtempSync(join(tmpdir(), 'godot-kp-'));
+      expect(buildKeyPaths(tempDir)).toBeNull();
+    });
+
+    it('includes addons when present', () => {
+      tempDir = mkdtempSync(join(tmpdir(), 'godot-kp-'));
+      mkdirSync(join(tempDir, 'addons'));
+      mkdirSync(join(tempDir, 'scripts'));
+
+      const result = buildKeyPaths(tempDir);
+      expect(result).toContain('addons/');
+      expect(result).toContain('scripts/');
+    });
+
+    it('uses └── for last entry', () => {
+      tempDir = mkdtempSync(join(tmpdir(), 'godot-kp-'));
+      mkdirSync(join(tempDir, 'scripts'));
+
+      const result = buildKeyPaths(tempDir);
+      expect(result).toContain('└──');
+      expect(result).not.toContain('├──');
+    });
+  });
+
+  describe('buildAutoloads', () => {
+    it('builds table from autoload config', () => {
+      const config = {
+        autoload: {
+          GlobalManager: '*res://core/global.gd',
+          GameManager: 'res://core/game_manager.gd',
+        },
+      };
+      const result = buildAutoloads(config);
+      expect(result).toContain('| GlobalManager |');
+      expect(result).toContain('| GameManager |');
+      expect(result).toContain('res://core/global.gd');
+    });
+
+    it('truncates paths over 40 chars', () => {
+      const config = {
+        autoload: {
+          LongName: 'res://very/long/path/that/exceeds/forty/characters/in/total/manager.gd',
+        },
+      };
+      const result = buildAutoloads(config);
+      expect(result).toContain('…');
+    });
+
+    it('returns null when no autoload section', () => {
+      expect(buildAutoloads({})).toBeNull();
+    });
+
+    it('returns null when config is null', () => {
+      expect(buildAutoloads(null)).toBeNull();
     });
   });
 });

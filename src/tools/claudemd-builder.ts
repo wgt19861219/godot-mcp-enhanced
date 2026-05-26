@@ -79,3 +79,49 @@ export function buildMainScene(config: GodotConfig | null): string | null {
   if (!scene || typeof scene !== 'string') return null;
   return `- ${scene}`;
 }
+
+// ─── KeyPaths & Autoloads builders ────────────────────────────────────────
+
+const KNOWN_DIRS: Array<{ name: string; label: string }> = [
+  { name: 'scenes', label: '场景文件' },
+  { name: 'scripts', label: 'GDScript 脚本' },
+  { name: 'assets', label: '资源文件' },
+  { name: 'addons', label: '插件' },
+  { name: 'shaders', label: '着色器' },
+  { name: 'resources', label: '资源定义' },
+  { name: 'sounds', label: '音效' },
+  { name: 'music', label: '音乐' },
+  { name: 'data', label: '数据文件' },
+];
+
+export function buildKeyPaths(projectDir: string): string | null {
+  const existing: string[] = [];
+  for (const { name, label } of KNOWN_DIRS) {
+    try {
+      if (readdirSync(join(projectDir, name))) {
+        existing.push(`├── ${name}/ — ${label}`);
+      }
+    } catch { /* not found */ }
+  }
+  if (existing.length === 0) return null;
+  // Fix last prefix: ├── → └──
+  existing[existing.length - 1] = existing[existing.length - 1].replace('├──', '└──');
+  return existing.join('\n');
+}
+
+export function buildAutoloads(config: GodotConfig | null): string | null {
+  if (!config) return null;
+  const autoload = config.autoload as Record<string, unknown> | undefined;
+  if (!autoload) return null;
+
+  const entries = Object.entries(autoload);
+  if (entries.length === 0) return null;
+
+  const rows = entries.map(([name, rawPath]) => {
+    const path = typeof rawPath === 'string' ? rawPath.replace(/^\*/, '') : String(rawPath);
+    const display = path.length > 40 ? path.slice(0, 37) + '…' : path;
+    return `| ${name} | ${display} |`;
+  });
+
+  return '| 名称 | 路径 |\n|------|------|\n' + rows.join('\n');
+}
