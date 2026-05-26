@@ -20,17 +20,66 @@ export const SECTION_ORDER: string[] = [
 // godot-mcp.md 固定模板内容
 export const GODOT_MCP_RULES = `# Godot MCP 开发规则
 
-## 脚本编辑
+## 通用原则
+- 标注"运行时操作"的工具仅影响当前进程，如需持久化请编辑 .tscn/.gd 文件
+- 运行时工具的结果不会跨进程保留
+
+## 脚本开发
 - edit_script / write_script 后必须立即调用 validate_scripts 验证
 - 验证失败时回滚修改
+- project_replace 先用 dry_run=true 预览变更
+
+## 场景管理
+- 修改 .tscn 后用 read_scene 验证结构完整性
+- 节点路径变更后检查所有 signal 连接是否失效
+- remove_node 为破坏性操作，确认后再执行
+
+## 信号系统
+- signal_emit 仅支持基本类型（string/number/bool/null）
+- 节点重命名/删除后检查关联信号连接
+
+## 动画系统
+- animation / animation_track / animtree 操作为运行时操作
+- 动画名称须在 AnimationPlayer 中已存在
+
+## 音频
+- 运行时操作，不持久化
+- 音量单位 dB（-80 到 24）
+
+## UI
+- 运行时操作，不持久化
+- 复杂布局优先用 ui_build_layout
+
+## TileMap
+- 运行时操作，不持久化
+- 坐标为 Vector2i 格式
+
+## 物理
+- diagnose_physics 有副作用（使用 move_and_collide test_only）
+
+## 导航
+- nav_bake_mesh 为长耗时操作
+- 运行时操作，不持久化
+
+## 粒子
+- 运行时操作，不持久化
+- 推荐用 particles_create 的 preset 参数
+
+## 材质与着色器
+- shader_edit write 模式替换整个着色器
+- 运行时操作，不持久化
+
+## IK 与 3D
+- 运行时操作，不持久化
+- TwoBoneIK3D 需要 bone_name 参数
+
+## 游戏桥接
+- 需先安装 bridge 并启动游戏
+- game_write 可修改运行时状态，谨慎使用
 
 ## 发版门禁
 - 提交版本号变更前必须运行 verify_delivery(scope="full")
 - 所有维度必须无错误
-
-## 场景操作
-- 修改 .tscn 后用 read_scene 验证结构完整性
-- 节点路径变更后检查所有 signal 连接是否失效
 
 ## GDScript 规范
 - 使用静态类型（var x: int = 0）
@@ -209,7 +258,13 @@ export function buildLayerNames(config: GodotConfig | null): string | null {
 }
 
 export function buildMcpMapping(): string {
-  return '| 领域 | rules 文件 |\n|------|-----------|\n| 脚本开发 | .claude/rules/godot-mcp.md |';
+  const rows = [
+    ['脚本/场景/信号', '.claude/rules/godot-mcp.md'],
+    ['动画/音频/UI/TileMap', '.claude/rules/godot-mcp.md'],
+    ['物理/导航/粒子/材质', '.claude/rules/godot-mcp.md'],
+    ['IK/3D/桥接/发版', '.claude/rules/godot-mcp.md'],
+  ];
+  return '| 领域 | rules 文件 |\n|------|-----------|\n' + rows.map(([d, f]) => `| ${d} | ${f} |`).join('\n');
 }
 
 // ─── Merge Engine ─────────────────────────────────────────────────────────

@@ -484,6 +484,19 @@ describe('project-tools handleTool — setup_project_rules', () => {
     const rules = readFileSync(rulesPath, 'utf-8');
     expect(rules).toContain('validate_scripts');
     expect(rules).toContain('verify_delivery');
+    // Expanded tool domain rules
+    expect(rules).toContain('场景管理');
+    expect(rules).toContain('信号系统');
+    expect(rules).toContain('动画系统');
+    expect(rules).toContain('音频');
+    expect(rules).toContain('UI');
+    expect(rules).toContain('TileMap');
+    expect(rules).toContain('物理');
+    expect(rules).toContain('导航');
+    expect(rules).toContain('粒子');
+    expect(rules).toContain('材质与着色器');
+    expect(rules).toContain('IK 与 3D');
+    expect(rules).toContain('游戏桥接');
   });
 
   it('does not overwrite existing godot-mcp.md', async () => {
