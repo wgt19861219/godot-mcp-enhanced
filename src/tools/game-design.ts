@@ -267,7 +267,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolContext, ToolResult } from "../types.js";
-import { validatePath } from "../helpers.js";
+import { validatePath, resolveWithinRoot } from "../helpers.js";
 
 export function getToolDefinitions(): Tool[] {
   return [
@@ -321,9 +321,17 @@ export async function handleTool(
   switch (name) {
     case "validate_gdd": {
       const projectPath = validatePath(args.project_path as string);
-      const gddPath = args.gdd_path as string;
-      const fullPath = join(projectPath, gddPath);
-      const content = readFileSync(fullPath, "utf-8");
+      const fullPath = resolveWithinRoot(projectPath, args.gdd_path as string);
+      let content: string;
+      try {
+        content = readFileSync(fullPath, "utf-8");
+      } catch (err) {
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify({ passed: false, error: `Failed to read GDD file: ${(err as Error).message}` }) },
+          ],
+        };
+      }
       const result = validateGDD(content);
       return {
         content: [

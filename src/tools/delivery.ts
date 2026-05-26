@@ -470,7 +470,7 @@ func _initialize():
     let gddFilesScanned = 0;
 
     for (const gddDir of gddDirs) {
-      const fullDir = join(projectPath, gddDir);
+      const fullDir = resolveWithinRoot(projectPath, gddDir);
       if (!existsSync(fullDir)) {
         gddIssues.push({
           severity: 'warning',
