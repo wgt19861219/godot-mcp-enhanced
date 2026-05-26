@@ -3,6 +3,9 @@ import {
   validateGDD,
   GDD_REQUIRED_SECTIONS,
   GDD_SECTION_HINTS,
+  getToolDefinitions,
+  handleTool,
+  TOOL_META,
 } from "../build/tools/game-design.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -125,5 +128,37 @@ The system should work correctly and players should enjoy using it.`;
     );
     expect(acWarnings.length).toBeGreaterThanOrEqual(1);
     expect(acWarnings.some(w => w.message.includes("bullet list") || w.message.includes("testable"))).toBe(true);
+  });
+});
+
+// ─── MCP Tool Registration Tests ──────────────────────────────────────────────
+
+describe("Game Design MCP Tool Registration", () => {
+  it("should register validate_gdd tool", () => {
+    const tools = getToolDefinitions();
+    const validateGddTool = tools.find((t) => t.name === "validate_gdd");
+
+    expect(validateGddTool).toBeTruthy();
+    expect(validateGddTool.inputSchema.required).toContain("project_path");
+    expect(validateGddTool.inputSchema.required).toContain("gdd_path");
+  });
+
+  it("should register chain_verify tool", () => {
+    const tools = getToolDefinitions();
+    const chainVerifyTool = tools.find((t) => t.name === "chain_verify");
+
+    expect(chainVerifyTool).toBeTruthy();
+    expect(chainVerifyTool.inputSchema.required).toContain("verdict");
+    expect(chainVerifyTool.inputSchema.required).toContain("context");
+  });
+
+  it("should have correct TOOL_META", () => {
+    expect(TOOL_META.validate_gdd).toEqual({ readonly: true, long_running: false });
+    expect(TOOL_META.chain_verify).toEqual({ readonly: true, long_running: false });
+  });
+
+  it("handleTool should return null for unknown tool", async () => {
+    const result = await handleTool("unknown_tool_xyz", {}, {});
+    expect(result).toBeNull();
   });
 });

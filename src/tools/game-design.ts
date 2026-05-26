@@ -195,3 +195,158 @@ export function validateGDD(markdown: string): GDDValidationResult {
 
   return { passed, sections_found, sections_missing, issues };
 }
+
+// ─── Chain-of-Verification Self-Challenge Engine ──────────────────────────────
+
+export interface CoVResult {
+  original_verdict: string;
+  questions: string[];
+  confidence: number;
+  recommendation: string;
+}
+
+const COV_QUESTION_TEMPLATES = [
+  "What if the analysis {reason} — could the verdict '{verdict}' be based on incomplete context from '{context}'?",
+  "Could there be hidden assumptions in the verdict '{verdict}' that might not hold given the context '{context}'?",
+  "Might this verdict overlook edge cases or boundary conditions that '{context}' does not explicitly address?",
+  "Is it possible that '{context}' contains misleading signals that led to the verdict '{verdict}'?",
+  "What if the evidence in '{context}' is wrong or outdated — would the verdict '{verdict}' still be valid?",
+] as const;
+
+const WEAK_SIGNALS_CONTEXT = ["skipped", "only checked", "partial"] as const;
+const WEAK_SIGNALS_VERDICT = ["concerns", "fail"] as const;
+
+export function chainOfVerification(verdict: string, context: string): CoVResult {
+  // 1. Generate exactly 5 challenge questions
+  const reason = "missed critical interactions between subsystems";
+  const questions = COV_QUESTION_TEMPLATES.map((tpl) =>
+    tpl
+      .replace(/\{verdict\}/g, verdict)
+      .replace(/\{context\}/g, context)
+      .replace(/\{reason\}/g, reason),
+  );
+
+  // 2. Calculate confidence
+  let confidence = 0.9;
+
+  const contextLower = context.toLowerCase();
+  const verdictLower = verdict.toLowerCase();
+
+  for (const signal of WEAK_SIGNALS_CONTEXT) {
+    if (contextLower.includes(signal)) confidence -= 0.15;
+  }
+  for (const signal of WEAK_SIGNALS_VERDICT) {
+    if (verdictLower.includes(signal)) confidence -= 0.15;
+  }
+  if (context.length < 30) confidence -= 0.15;
+
+  // 3. Clamp to [0.1, 1.0]
+  confidence = Math.max(0.1, Math.min(1.0, confidence));
+
+  // 4. Recommendation
+  let recommendation: string;
+  if (confidence < 0.7) {
+    recommendation = "Low confidence — recommend manual review before proceeding";
+  } else if (confidence < 0.9) {
+    recommendation = "Moderate confidence — verify key concerns manually";
+  } else {
+    recommendation = "High confidence — verdict is well-supported by evidence";
+  }
+
+  return {
+    original_verdict: verdict,
+    questions,
+    confidence,
+    recommendation,
+  };
+}
+
+// ─── MCP Tool Registration ────────────────────────────────────────────────────
+
+import { readFileSync } from "fs";
+import { join } from "path";
+import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolContext, ToolResult } from "../types.js";
+import { validatePath } from "../helpers.js";
+
+export function getToolDefinitions(): Tool[] {
+  return [
+    {
+      name: "validate_gdd",
+      description:
+        "Validate a Game Design Document (GDD) markdown file against required sections and quality rules.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          project_path: {
+            type: "string",
+            description: "Path to the Godot project directory",
+          },
+          gdd_path: {
+            type: "string",
+            description:
+              "Path to the GDD markdown file, relative to project root",
+          },
+        },
+        required: ["project_path", "gdd_path"],
+      },
+    },
+    {
+      name: "chain_verify",
+      description:
+        "Run Chain-of-Verification self-challenge on a verdict to assess confidence and generate challenge questions.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          verdict: {
+            type: "string",
+            description: "The verdict or conclusion to challenge",
+          },
+          context: {
+            type: "string",
+            description: "The supporting context or evidence for the verdict",
+          },
+        },
+        required: ["verdict", "context"],
+      },
+    },
+  ];
+}
+
+export async function handleTool(
+  name: string,
+  args: Record<string, unknown>,
+  _ctx: ToolContext,
+): Promise<ToolResult | null> {
+  switch (name) {
+    case "validate_gdd": {
+      const projectPath = validatePath(args.project_path as string);
+      const gddPath = args.gdd_path as string;
+      const fullPath = join(projectPath, gddPath);
+      const content = readFileSync(fullPath, "utf-8");
+      const result = validateGDD(content);
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+    case "chain_verify": {
+      const verdict = args.verdict as string;
+      const context = args.context as string;
+      const result = chainOfVerification(verdict, context);
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean }> = {
+  validate_gdd: { readonly: true, long_running: false },
+  chain_verify: { readonly: true, long_running: false },
+};
