@@ -13,6 +13,7 @@ import {
   buildPhysics,
   buildLayerNames,
   buildMcpMapping,
+  mergeSections,
 } from '../build/tools/claudemd-builder.js';
 
 describe('claudemd-builder — simple builders', () => {
@@ -247,5 +248,88 @@ describe('claudemd-builder — input/physics/layers/mcp', () => {
       const result = buildMcpMapping();
       expect(result).toContain('.claude/rules/godot-mcp.md');
     });
+  });
+});
+
+describe('claudemd-builder — mergeSections', () => {
+  it('appends MCP sections to title-only file', () => {
+    const existing = '# My Game\n\nSome intro text.\n';
+    const sections = [
+      ['## 引擎版本', '- Godot 4.6'],
+      ['## MCP 规则映射', '| 领域 | 文件 |\n|------|------|'],
+    ];
+    const result = mergeSections(existing, sections);
+    expect(result).toContain('# My Game');
+    expect(result).toContain('## 引擎版本');
+    expect(result).toContain('- Godot 4.6');
+    expect(result).toContain('## MCP 规则映射');
+    expect(result).toContain('Some intro text.');
+    // MCP sections come before user text
+    const mcpIdx = result.indexOf('## 引擎版本');
+    const userIdx = result.indexOf('Some intro text');
+    expect(mcpIdx).toBeLessThan(userIdx);
+  });
+
+  it('replaces old Godot MCP Rules with new sections', () => {
+    const existing = '# My Game\n## Godot MCP Rules\n- old rule\n';
+    const sections = [
+      ['## 引擎版本', '- Godot 4.6'],
+      ['## MCP 规则映射', '| 领域 | 文件 |\n|------|------|'],
+    ];
+    const result = mergeSections(existing, sections);
+    expect(result).not.toContain('## Godot MCP Rules');
+    expect(result).not.toContain('old rule');
+    expect(result).toContain('## 引擎版本');
+    expect(result).toContain('## MCP 规则映射');
+  });
+
+  it('preserves user sections after MCP sections', () => {
+    const existing = '# My Game\n## 我的规范\n- my rule\n## 引擎版本\n- Godot 4.5\n';
+    const sections = [
+      ['## 引擎版本', '- Godot 4.6'],
+      ['## MCP 规则映射', '| 领域 | 文件 |'],
+    ];
+    const result = mergeSections(existing, sections);
+    expect(result).toContain('## 我的规范');
+    expect(result).toContain('my rule');
+    expect(result).toContain('- Godot 4.6');
+    expect(result).not.toContain('- Godot 4.5');
+    // User section comes after all MCP sections
+    const lastMcp = result.lastIndexOf('## MCP 规则映射');
+    const user = result.indexOf('## 我的规范');
+    expect(user).toBeGreaterThan(lastMcp);
+  });
+
+  it('handles file with no ## headers', () => {
+    const existing = '# My Game\nJust some text here\n';
+    const sections = [['## 引擎版本', '- Godot 4.6']];
+    const result = mergeSections(existing, sections);
+    expect(result).toContain('## 引擎版本');
+    expect(result).toContain('Just some text here');
+  });
+
+  it('handles duplicate MCP section headers', () => {
+    const existing = '# My Game\n## 引擎版本\n- old1\n## 引擎版本\n- old2\n';
+    const sections = [['## 引擎版本', '- Godot 4.6']];
+    const result = mergeSections(existing, sections);
+    expect(result).toContain('- Godot 4.6');
+    expect(result).not.toContain('- old1');
+    expect(result).not.toContain('- old2');
+    // Only one ## 引擎版本
+    expect(result.split('## 引擎版本').length).toBe(2);
+  });
+
+  it('normalizes whitespace in headers', () => {
+    const existing = '# My Game\n##  引擎版本 \n- old\n';
+    const sections = [['## 引擎版本', '- Godot 4.6']];
+    const result = mergeSections(existing, sections);
+    expect(result).toContain('- Godot 4.6');
+    expect(result).not.toContain('- old');
+  });
+
+  it('handles empty file', () => {
+    const sections = [['## 引擎版本', '- Godot 4.6']];
+    const result = mergeSections('', sections);
+    expect(result).toContain('## 引擎版本');
   });
 });
