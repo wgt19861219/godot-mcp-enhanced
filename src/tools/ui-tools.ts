@@ -407,6 +407,14 @@ function drawOpToGd(op: DrawOp): string {
     if (!v.every(el => typeof el === 'number')) throw new Error(`${op.kind}: expected all elements to be numbers`);
     return v as number[];
   };
+  const validatePointArray = (v: unknown, kind: string): number[][] => {
+    if (!Array.isArray(v) || v.length < 1) throw new Error(`${kind}: expected non-empty array of points`);
+    for (const p of v) {
+      if (!Array.isArray(p) || p.length < 2 || !p.every(el => typeof el === 'number'))
+        throw new Error(`${kind}: each point must be an array of >= 2 numbers`);
+    }
+    return v as number[][];
+  };
 
   switch (op.kind) {
     case 'rect': {
@@ -435,8 +443,7 @@ function drawOpToGd(op: DrawOp): string {
       return `\tdraw_arc(Vector2(${ctr[0]}, ${ctr[1]}), ${r}, ${sa}, ${ea}, ${pointCount}, ${col(op.color)}${w != null ? `, ${w}` : ''})`;
     }
     case 'polygon': {
-      const pts = numArr(op.points, 1) as unknown as number[][];
-      if (!pts.every(p => Array.isArray(p) && p.length >= 2)) throw new Error('polygon: each point must have >= 2 elements');
+      const pts = validatePointArray(op.points, 'polygon');
       const packedPts = pts.map(p => `Vector2(${p[0]}, ${p[1]})`).join(', ');
       const filled = op.filled !== false;
       if (filled) {
@@ -446,8 +453,7 @@ function drawOpToGd(op: DrawOp): string {
       return `\tdraw_polyline(PackedVector2Array([${packedPts}]), ${col(op.color)}${w != null ? `, ${w}` : ''})`;
     }
     case 'polyline': {
-      const pts = numArr(op.points, 1) as unknown as number[][];
-      if (!pts.every(p => Array.isArray(p) && p.length >= 2)) throw new Error('polyline: each point must have >= 2 elements');
+      const pts = validatePointArray(op.points, 'polyline');
       const packedPts = pts.map(p => `Vector2(${p[0]}, ${p[1]})`).join(', ');
       const w = op.width as number | undefined;
       return `\tdraw_polyline(PackedVector2Array([${packedPts}]), ${col(op.color)}${w != null ? `, ${w}` : ''})`;

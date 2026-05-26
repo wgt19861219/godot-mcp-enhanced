@@ -127,8 +127,9 @@ describe('gdEscape edge cases', () => {
     expect(gdEscape("it's")).toBe("it\\'s");
   });
 
-  it('escapes unicode escape sequence (\\uXXXX)', () => {
-    // A → step3: \\u0041 → step11: \\A (backslash escaped then \u pattern escaped)
-    expect(gdEscape('\\u0041')).toBe('\\\\\\u0041');
+  it('passes through \\uXXXX unchanged (GDScript does not interpret \\u escapes)', () => {
+    // GDScript has no \uXXXX escape sequences, so A is literal text.
+    // The backslash is still escaped by the general \\ rule.
+    expect(gdEscape('\\u0041')).toBe('\\\\u0041');
   });
 });
