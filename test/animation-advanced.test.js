@@ -3,7 +3,7 @@ import {
   TOOL_NAMES as ANIM_TOOL_NAMES,
   getToolDefinitions as getAnimDefs,
   genAnimationBlend,
-} from '../build/tools/animation-ops.js';
+} from '../src/tools/animation-ops.js';
 import {
   TOOL_NAMES as TRACK_TOOL_NAMES,
   getToolDefinitions as getTrackDefs,
@@ -13,13 +13,13 @@ import {
   genAnimationKeyframeRemove,
   genAnimationKeyframeUpdate,
   genAnimationCurve,
-} from '../build/tools/animation-track.js';
+} from '../src/tools/animation-track.js';
 import {
   TOOL_NAMES as ANIMTREE_TOOL_NAMES,
   getToolDefinitions as getAnimtreeDefs,
   genStateSetPosition,
   genStateSetBlend,
-} from '../build/tools/animtree.js';
+} from '../src/tools/animtree.js';
 
 // ─── animation-ops TOOL_NAMES ────────────────────────────────────────────
 

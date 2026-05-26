@@ -121,7 +121,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               scan(join(dir, entry.name), depth + 1);
             }
           }
-        } catch { /* permission error */ }
+        } catch (err) { console.debug('[project] scan directory:', err); }
       }
 
       scan(searchDir, 0);
@@ -149,7 +149,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               stats[ext] = (stats[ext] || 0) + 1;
             }
           }
-        } catch { /* skip */ }
+        } catch (err) { console.debug('[project] count files:', err); }
       }
       countFiles(p, 0);
 
@@ -181,7 +181,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               }
             }
           }
-        } catch { /* skip */ }
+        } catch (err) { console.debug('[project] list files scan:', err); }
       }
       scan(target);
 
@@ -447,7 +447,7 @@ function writeAtomic(filePath: string, content: string): void {
   try {
     renameSync(tmp, filePath);
   } catch (e) {
-    try { unlinkSync(tmp); } catch { /* best effort */ }
+    try { unlinkSync(tmp); } catch (err) { console.debug('[project] cleanup temp file:', err); }
     throw e;
   }
 }

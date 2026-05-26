@@ -7,7 +7,7 @@ import {
   renderTemplate,
   getAllTemplates,
   loadUserTemplates,
-} from '../build/tools/code-templates.js';
+} from '../src/tools/code-templates.js';
 
 // ─── 1. 内置模板 ─────────────────────────────────────────────────────────────
 

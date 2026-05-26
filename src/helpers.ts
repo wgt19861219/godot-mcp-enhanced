@@ -105,7 +105,10 @@ export function allowOutsideProjectPaths(): boolean {
 export function isPathInAllowedRoots(requestedPath: string): boolean {
   if (allowOutsideProjectPaths()) return true;
   const allowed = getAllowedProjectPaths();
-  if (allowed.length === 0) return true; // No whitelist = unrestricted (existing behavior)
+  if (allowed.length === 0) {
+    console.warn('[SECURITY] ALLOWED_PROJECT_PATHS is not set — all paths are allowed (unrestricted mode). Set ALLOWED_PROJECT_PATHS to limit access.');
+    return true; // No whitelist = unrestricted (existing behavior)
+  }
   const resolved = resolvePath(requestedPath);
   return allowed.some(p => resolved === p || resolved.startsWith(p + sep));
 }

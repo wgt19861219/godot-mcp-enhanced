@@ -6,7 +6,7 @@ import {
   genTilemapReadScript, genTilemapSetCellScript, genTilemapEraseCellScript,
   genTilemapFillRectScript, genTilemapClearScript, genTilemapCopyScript,
   genTilemapPasteScript, genTilemapSetTransformScript,
-} from '../build/tools/tilemap-ops.js';
+} from '../src/tools/tilemap-ops.js';
 
 describe('TILEMAP_ERROR_CODES', () => {
   it('has TILEMAP_NOT_FOUND', () => { expect('TILEMAP_NOT_FOUND' in TILEMAP_ERROR_CODES).toBeTruthy(); });

@@ -25,6 +25,7 @@ export interface BridgeResponse {
 let _nextRequestId = 1;
 let _permWarned = false;
 let _cachedSecret: string | null = null;
+let _projectDir: string | null = null;
 let _cachedSecretPath: string | null = null;
 let _cachedSecretAt: number = 0;
 const SECRET_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -38,9 +39,8 @@ let _socketBuffer = '';
 function findBridgeSecretPath(): string {
   if (_cachedSecretPath) return _cachedSecretPath;
   // Prefer project-local path (more secure than tmpdir)
-  const projectDir = process.env.GODOT_BRIDGE_PROJECT_DIR;
-  if (projectDir) {
-    _cachedSecretPath = join(projectDir, '.godot', `mcp_bridge_${BRIDGE_PORT}.secret`);
+  if (_projectDir) {
+    _cachedSecretPath = join(_projectDir, '.godot', `mcp_bridge_${BRIDGE_PORT}.secret`);
     return _cachedSecretPath;
   }
   // Fallback to tmpdir (legacy behavior)
@@ -60,11 +60,11 @@ function readBridgeSecret(): string | null {
         if (username && /^[A-Za-z0-9_\-\\]+$/.test(username)) {
           execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:R`], { stdio: 'ignore' });
         }
-      } catch { /* best effort */ }
+      } catch (err) { console.debug('[bridge] restrict Windows file permissions:', err); }
     } else {
       try {
         chmodSync(secretPath, 0o600);
-      } catch { /* best effort */ }
+      } catch (err) { console.debug('[bridge] chmod secret file:', err); }
     }
     const stat = statSync(secretPath);
     if (!_permWarned && process.platform !== 'win32' && (stat.mode & 0o007) !== 0) {
@@ -74,14 +74,15 @@ function readBridgeSecret(): string | null {
     _cachedSecret = readFileSync(secretPath, 'utf-8').trim();
     _cachedSecretAt = Date.now();
     return _cachedSecret;
-  } catch {
+  } catch (err) {
+    console.debug('[bridge] read bridge secret:', err);
     return null;
   }
 }
 
 function _invalidateSocket(): void {
   if (_socket) {
-    try { _socket.destroy(); } catch { /* ignore */ }
+    try { _socket.destroy(); } catch (err) { console.debug('[bridge] destroy socket:', err); }
     _socket = null;
   }
   _socketAuthenticated = false;
@@ -166,10 +167,11 @@ function _ensureConnection(timeout: number): Promise<Socket> {
 
 /** Set the project directory for bridge secret lookup. Invalidates all cached bridge state. */
 export function setBridgeProjectDir(projectDir: string): void {
-  if (process.env.GODOT_BRIDGE_PROJECT_DIR === projectDir) return;
-  process.env.GODOT_BRIDGE_PROJECT_DIR = projectDir;
+  if (_projectDir === projectDir) return;
+  _projectDir = projectDir;
   _cachedSecretPath = null;
   _cachedSecret = null;
+  _invalidateSocket();
 }
 
 export function sendToBridge(method: string, params: Record<string, unknown> = {}, timeout = DEFAULT_TIMEOUT): Promise<BridgeResponse> {

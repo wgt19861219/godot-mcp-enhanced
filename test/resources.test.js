@@ -7,7 +7,7 @@ import {
   listResources,
   listResourceTemplates,
   readResource,
-} from '../build/resources.js';
+} from '../src/resources.js';
 
 describe('resources', () => {
   let tmpDir;

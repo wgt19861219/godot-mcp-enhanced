@@ -752,6 +752,10 @@ function gdScriptSetLine(key: string, value: unknown, varName = 'node'): string 
   // Object format: {x,y} → Vector2, {x,y,z} → Vector3, {r,g,b,a} → Color
   if (typeof value === 'object' && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.some(k => !['x', 'y', 'z', 'r', 'g', 'b', 'a'].includes(k))) {
+      throw new Error(`Property "${key}" has unexpected object keys: ${keys.filter(k => !['x', 'y', 'z', 'r', 'g', 'b', 'a'].includes(k)).join(', ')}. Allowed: {x,y}, {x,y,z}, {r,g,b,a}.`);
+    }
     if (typeof obj.x === 'number' && typeof obj.y === 'number') {
       if (!Number.isFinite(obj.x as number) || !Number.isFinite(obj.y as number)) return `# skipped ${key}: non-finite number in object`;
       if (typeof obj.z === 'number') {
@@ -1025,7 +1029,7 @@ function handleDetachInstance(args: Record<string, unknown>): ToolResult {
     renameSync(tmpPath, sceneAbsPath);
   } catch (e: unknown) {
     // Cleanup temp file on failure
-    try { unlinkSync(tmpPath); } catch { /* best effort */ }
+    try { unlinkSync(tmpPath); } catch (e) { console.debug('[scene] cleanup temp file:', e); }
     return textResult(`Error writing scene: ${(e as Error).message}`);
   }
 

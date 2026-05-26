@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 import fc from 'fast-check';
-import { lintGDScript } from '../build/tools/gdscript-lint.js';
+import { lintGDScript } from '../src/tools/gdscript-lint.js';
 
 describe('GDScript Lint', () => {
   it('returns empty results for clean code', () => {

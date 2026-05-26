@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { captureScreenshot } from '../build/screenshot.js';
+import { captureScreenshot } from '../src/screenshot.js';
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 // captureScreenshot internally spawns a Godot process, so we only verify the

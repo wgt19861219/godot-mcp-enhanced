@@ -2,8 +2,8 @@ import { expect } from 'vitest';
 import {
   normalizeNodePath, gdEscape, validateVector3,
   TYPE_WHITELIST,
-} from '../build/tools/shared.js';
-import { genNavQueryScript } from '../build/tools/navigation.js';
+} from '../src/tools/shared.js';
+import { genNavQueryScript } from '../src/tools/navigation.js';
 
 describe('normalizeNodePath', () => {
   it('prepends / if missing', () => {

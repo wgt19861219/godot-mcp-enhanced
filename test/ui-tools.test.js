@@ -13,7 +13,7 @@ import {
   genThemeCreateScript,
   genThemeSetPropertyScript,
   colorToGd,
-} from '../build/tools/ui-tools.js';
+} from '../src/tools/ui-tools.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

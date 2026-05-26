@@ -46,6 +46,11 @@ export function killProcess(proc: ChildProcess): Promise<void> {
   });
 }
 
+// ─── Module-level mutable state ─────────────────────────────────────────────
+// Intentional design: module-scoped "singleton" state accessed exclusively
+// through the getter/setter functions below. This avoids class instantiation
+// overhead while still providing encapsulation — consumers never touch these
+// variables directly. Use resetState() for test isolation.
 let _runningProcess: ChildProcess | null = null;
 let _outputBuffer: string[] = [];
 let _processStartTime = 0;

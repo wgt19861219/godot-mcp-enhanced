@@ -26,26 +26,26 @@ vi.mock('@modelcontextprotocol/sdk/types.js', () => ({
 }));
 
 // ─── Mock editor auth (avoids real network/file access) ─────────────────────
-vi.mock('../build/core/editor-auth.js', () => ({
+vi.mock('../src/core/editor-auth.js', () => ({
   waitForEditorSecret: vi.fn().mockResolvedValue(null),
 }));
 
 // ─── Mock EditorConnection and EditorToolExecutor ───────────────────────────
-vi.mock('../build/core/EditorConnection.js', () => ({
+vi.mock('../src/core/EditorConnection.js', () => ({
   EditorConnection: vi.fn().mockImplementation(() => ({
     connect: vi.fn().mockRejectedValue(new Error('no editor')),
     disconnect: vi.fn(),
   })),
 }));
 
-vi.mock('../build/core/EditorToolExecutor.js', () => ({
+vi.mock('../src/core/EditorToolExecutor.js', () => ({
   EditorToolExecutor: vi.fn().mockImplementation(() => ({
     execute: vi.fn(),
   })),
 }));
 
 // ─── Mock process-state to avoid real process management ────────────────────
-vi.mock('../build/core/process-state.js', () => ({
+vi.mock('../src/core/process-state.js', () => ({
   getRunningProcess: vi.fn().mockReturnValue(null),
   setRunningProcess: vi.fn(),
   getOutputBuffer: vi.fn().mockReturnValue([]),
@@ -58,7 +58,7 @@ vi.mock('../build/core/process-state.js', () => ({
 }));
 
 // ─── Import SUT (after mocks) ────────────────────────────────────────────────
-import { GodotServer, clearGodotPathCache, getCachedGodotPath } from '../build/GodotServer.js';
+import { GodotServer, clearGodotPathCache, getCachedGodotPath } from '../src/GodotServer.js';
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 

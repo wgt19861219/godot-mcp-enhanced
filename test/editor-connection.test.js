@@ -1,5 +1,5 @@
 import { expect, vi } from 'vitest';
-import { EditorConnection } from '../build/core/EditorConnection.js';
+import { EditorConnection } from '../src/core/EditorConnection.js';
 import { WebSocketServer } from 'ws';
 
 describe('EditorConnection', () => {
@@ -76,7 +76,7 @@ describe('EditorConnection', () => {
     conn.disconnect();
   });
 
-  it('does not reconnect on auth timeout (C-01)', async () => {
+  it('does not reconnect on auth timeout (C-01)', { timeout: 15_000 }, async () => {
     // Server accepts connection but never replies to auth
     wss.on('connection', (ws) => {
       // intentionally ignore auth messages — simulate timeout

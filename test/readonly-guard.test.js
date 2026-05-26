@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
-import { ReadOnlyGuard } from '../build/core/ReadOnlyGuard.js';
-import { registerTools } from '../build/core/tool-registry.js';
+import { ReadOnlyGuard } from '../src/core/ReadOnlyGuard.js';
+import { registerTools } from '../src/core/tool-registry.js';
 
 describe('ReadOnlyGuard', () => {
   beforeEach(() => {

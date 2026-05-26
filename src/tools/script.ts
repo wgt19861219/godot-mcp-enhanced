@@ -1,5 +1,5 @@
 import { join, basename } from 'path';
-import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, statSync } from 'fs';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
@@ -103,6 +103,7 @@ export function getToolDefinitions(): Tool[] {
           project_path: { type: 'string', description: 'Path to Godot project directory' },
           script_path: { type: 'string', description: 'Absolute path to the .gd file' },
           content: { type: 'string', description: 'GDScript content to write' },
+          overwrite: { type: 'boolean', description: 'Overwrite if exists (default: true)', default: true },
         },
         required: ['project_path', 'script_path', 'content'],
       },
@@ -264,6 +265,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const scriptPath = args.script_path as string;
       const sp = resolveWithinRoot(validatePath(args.project_path as string), scriptPath);
       const content = args.content as string;
+      const overwrite = args.overwrite !== false; // default true
+
+      if (existsSync(sp) && !overwrite) {
+        return textResult(`Error: File already exists: ${sp}. Set overwrite=true to replace it.`);
+      }
 
       ensureDir(sp);
       writeFileSync(sp, content, 'utf-8');
@@ -518,10 +524,14 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       const publicMethods: string[] = [];
+      const voidMethods = new Set<string>();
       for (const line of srcLines) {
-        const funcMatch = line.match(/^func\s+(\w+)\s*\(/);
+        const funcMatch = line.match(/^func\s+(\w+)\s*\((?:[^)]*)\)\s*(?:->\s*(\w+))?\s*:/);
         if (funcMatch && !funcMatch[1].startsWith('_')) {
           publicMethods.push(funcMatch[1]);
+          if (funcMatch[2] === 'void') {
+            voidMethods.add(funcMatch[1]);
+          }
         }
       }
 
@@ -553,8 +563,14 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       for (const method of publicMethods) {
         testCode += `func test_${method}():\n`;
-        testCode += `\tvar result = ${testTarget}.${method}()\n`;
-        testCode += `\tassert_not_null(result, "${method} should return a value")\n\n`;
+        if (voidMethods.has(method)) {
+          testCode += `\t# void method — no return value to assert\n`;
+          testCode += `\t${testTarget}.${method}()\n`;
+          testCode += `\tpass # TODO: verify side effects\n\n`;
+        } else {
+          testCode += `\tvar result = ${testTarget}.${method}()\n`;
+          testCode += `\tassert_not_null(result, "${method} should return a value")\n\n`;
+        }
       }
 
       const outputTestPath = join(projectPath, 'test', 'scripts', `test_${basename(scriptPath)}`);
@@ -670,7 +686,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               matchedFiles.push(full);
             }
           }
-        } catch { /* skip */ }
+        } catch (err) { console.debug('[script] scan dir for files:', err); }
       }
       scanDir(p, 0);
       if (matchedFiles.length >= MAX_FILES) {
@@ -681,9 +697,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       const changedFiles: string[] = [];
       const unchangedFiles: string[] = [];
+      const skippedLarge: string[] = [];
       let totalReplacements = 0;
+      const MAX_FILE_SIZE = 1_000_000; // 1MB
 
       for (const filePath of matchedFiles) {
+        try {
+          const fileSize = statSync(filePath).size;
+          if (fileSize > MAX_FILE_SIZE) {
+            skippedLarge.push(relOf(filePath));
+            continue;
+          }
+        } catch (e) { console.debug(`[script] stat failed for ${filePath}:`, e); continue; }
         const content = readFileSync(filePath, 'utf-8');
         const hasCRLF = content.includes('\r\n');
         const normalized = content.replace(/\r\n/g, '\n');
@@ -714,6 +739,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         `Scanned: ${matchedFiles.length} files`,
         `Changed: ${changedFiles.length} files (${totalReplacements} replacements)`,
         unchangedFiles.length > 0 ? `Unchanged: ${unchangedFiles.length} files` : '',
+        skippedLarge.length > 0 ? `Skipped (>${MAX_FILE_SIZE / 1_000_000}MB): ${skippedLarge.length} files` : '',
       ].filter(Boolean).join('\n');
 
       const details = changedFiles.length > 0

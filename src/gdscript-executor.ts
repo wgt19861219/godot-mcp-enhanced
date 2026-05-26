@@ -14,8 +14,8 @@
  */
 
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync, rmSync, readdirSync, lstatSync, mkdtempSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, rmSync, readdirSync, lstatSync, mkdtempSync, existsSync } from 'fs';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
@@ -95,7 +95,7 @@ function cleanupOldSessions(): void {
         rmSync(dirPath, { recursive: true, force: true });
       }
     }
-  } catch { /* ignore cleanup errors */ }
+  } catch (err) { console.debug('[executor] cleanup stale dirs:', err); }
 }
 
 function writeTempScript(code: string, sessionDir: string): string {
@@ -387,6 +387,20 @@ export async function executeGdscript(
   let loadAutoloads = options.loadAutoloads ?? false;
   const startTime = Date.now();
 
+  // Hard kill switch: set ALLOW_EXECUTE_GDSCRIPT=false to disable GDScript execution
+  if (process.env.ALLOW_EXECUTE_GDSCRIPT === 'false') {
+    return { success: false, compile_success: false, compile_error: 'GDScript execution is disabled (ALLOW_EXECUTE_GDSCRIPT=false)', errors: [], run_success: false, run_error: '', outputs: [], raw_output: '', duration_ms: 0 };
+  }
+
+  // Validate godotPath exists and looks like a Godot binary
+  if (!existsSync(godotPath)) {
+    return { success: false, compile_success: false, compile_error: `Godot binary not found: ${godotPath}`, errors: [], run_success: false, run_error: '', outputs: [], raw_output: '', duration_ms: 0 };
+  }
+  const binName = basename(godotPath).toLowerCase();
+  if (!binName.includes('godot')) {
+    return { success: false, compile_success: false, compile_error: `Binary does not appear to be Godot: ${basename(godotPath)}`, errors: [], run_success: false, run_error: '', outputs: [], raw_output: '', duration_ms: 0 };
+  }
+
   // C-01: Generate random per-execution markers to prevent user code forgery
   const rndResult = generateMarker();
   const rndError = generateMarker();
@@ -461,7 +475,7 @@ export async function executeGdscript(
       tempFiles.push(loaderScenePath);
       godotArgs.push('--scene', loaderScenePath);
     } catch (err) {
-      try { rmSync(sessionDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(sessionDir, { recursive: true, force: true }); } catch (e) { console.debug('[executor] cleanup session on error:', e); }
       return {
         success: false,
         compile_success: false,
@@ -519,7 +533,7 @@ export async function executeGdscript(
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
       // Cleanup session directory
-      try { rmSync(sessionDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(sessionDir, { recursive: true, force: true }); } catch (e) { console.debug('[executor] cleanup session on close:', e); }
 
       const rawOutput = stdout + stderr;
       const duration = Date.now() - startTime;
@@ -582,7 +596,7 @@ export async function executeGdscript(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      try { rmSync(sessionDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try { rmSync(sessionDir, { recursive: true, force: true }); } catch (e) { console.debug('[executor] cleanup session on proc error:', e); }
 
       resolve({
         success: false,

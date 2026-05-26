@@ -1,7 +1,7 @@
 import { expect } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getToolDefinitions } from '../build/tools/scene.js';
+import { getToolDefinitions } from '../src/tools/scene.js';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────
 
@@ -69,7 +69,7 @@ describe('scene-tools read_scene (tscn parsing)', () => {
   });
 
   it('parseTscn resolves the written file correctly', async () => {
-    const { parseTscn } = await import('../build/tscn-parser.js');
+    const { parseTscn } = await import('../src/tscn-parser.js');
     const content = readFileSync(sceneFile, 'utf-8');
     const parsed = parseTscn(content);
 

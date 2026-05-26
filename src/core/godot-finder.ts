@@ -46,7 +46,7 @@ function findInDirectory(dir: string): string | null {
         return join(dir, entry);
       }
     }
-  } catch { /* permission denied */ }
+  } catch (err) { console.debug('[godot-finder] scanning directory:', err); }
   return null;
 }
 

@@ -159,7 +159,7 @@ export function buildKeyPaths(projectDir: string): string | null {
       if (existsSync(join(projectDir, name))) {
         existing.push(`├── ${name}/ — ${label}`);
       }
-    } catch { /* not found */ }
+    } catch (err) { console.debug('[claudemd] checking known dirs:', err); }
   }
   if (existing.length === 0) return null;
   // Fix last prefix: ├── → └──

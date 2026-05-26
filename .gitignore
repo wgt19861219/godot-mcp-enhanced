@@ -1,6 +1,8 @@
 node_modules/
 build/
+coverage/
 *.js.map
+*.tgz
 .DS_Store
 Thumbs.db
 .env

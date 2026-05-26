@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock executor
-vi.mock('../build/gdscript-executor.js', () => ({
+vi.mock('../src/gdscript-executor.js', () => ({
   executeGdscript: vi.fn(async () => ({
     success: true, compile_success: true, compile_error: '',
     errors: [], run_success: true, run_error: '',
@@ -10,7 +10,7 @@ vi.mock('../build/gdscript-executor.js', () => ({
   })),
 }));
 
-import { getToolDefinitions, handleTool, TOOL_META } from '../build/tools/test-framework.js';
+import { getToolDefinitions, handleTool, TOOL_META } from '../src/tools/test-framework.js';
 
 describe('test-framework tools', () => {
   const mockCtx = {
@@ -46,7 +46,7 @@ describe('test-framework tools', () => {
   });
 
   it('handleTool for test_assert with node_exists', async () => {
-    const { executeGdscript } = await import('../build/gdscript-executor.js');
+    const { executeGdscript } = await import('../src/gdscript-executor.js');
     executeGdscript.mockResolvedValueOnce({
       success: true,
       compile_success: true,
@@ -96,7 +96,7 @@ describe('test-framework tools', () => {
   });
 
   it('handleTool for test_stress', async () => {
-    const { executeGdscript } = await import('../build/gdscript-executor.js');
+    const { executeGdscript } = await import('../src/gdscript-executor.js');
     executeGdscript.mockResolvedValueOnce({
       success: true, compile_success: true, compile_error: '',
       errors: [], run_success: true, run_error: '',

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { readEditorSecret, waitForEditorSecret } from '../build/core/editor-auth.js';
+import { readEditorSecret, waitForEditorSecret } from '../src/core/editor-auth.js';
 
 let tempDir = null;
 

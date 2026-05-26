@@ -21,7 +21,7 @@ import {
   killProcess,
   isProcessBusy,
   setProcessBusy,
-} from '../build/core/process-state.js';
+} from '../src/core/process-state.js';
 
 function makeMockProc({ killed = false, pid = 12345 } = {}) {
   const listeners = {};

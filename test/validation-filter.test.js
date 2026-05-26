@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 import fc from 'fast-check';
-import { isErrorFalsePositive, KNOWN_BASE_METHODS } from '../build/tools/validation.js';
+import { isErrorFalsePositive, KNOWN_BASE_METHODS } from '../src/tools/validation.js';
 
 // ─── Helper: build a realistic Godot headless parser error line ──────────────
 function parseError(message) {

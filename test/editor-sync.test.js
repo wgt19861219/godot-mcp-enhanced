@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import {
   getToolDefinitions,
   TOOL_META,
-} from '../build/tools/editor-sync.js';
+} from '../src/tools/editor-sync.js';
 
 describe('editor-sync tools', () => {
   describe('getToolDefinitions', () => {

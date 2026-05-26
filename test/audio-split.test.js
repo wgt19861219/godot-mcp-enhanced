@@ -6,7 +6,7 @@ import {
   genAudioStopScript,
   genAudioSetParamScript,
   genAudioQueryScript,
-} from '../build/tools/audio-ops.js';
+} from '../src/tools/audio-ops.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

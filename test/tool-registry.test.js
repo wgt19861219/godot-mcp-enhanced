@@ -7,8 +7,8 @@ import {
   getReadOnlyTools,
   getWriteTools,
   getAllToolNames,
-} from '../build/core/tool-registry.js';
-import { VERIFY_ELIGIBLE_TOOLS, isVerifyEligible } from '../build/core/tool-registry.js';
+} from '../src/core/tool-registry.js';
+import { VERIFY_ELIGIBLE_TOOLS, isVerifyEligible } from '../src/core/tool-registry.js';
 
 describe('tool-registry', () => {
   it('registers tools with tags', () => {

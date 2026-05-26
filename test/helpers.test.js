@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import { resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
-import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue } from '../build/helpers.js';
+import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue } from '../src/helpers.js';
 
 describe('validatePath', () => {
   it('resolves relative paths to absolute', () => {

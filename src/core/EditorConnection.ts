@@ -157,7 +157,7 @@ export class EditorConnection {
             }
           }
         }
-      } catch { /* non-JSON or malformed — silently skip */ }
+      } catch (err) { console.debug('[editor-conn] parse WebSocket message:', err); }
     });
   }
 

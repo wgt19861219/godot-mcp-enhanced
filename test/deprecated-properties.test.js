@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DEPRECATED_PROPERTIES } from '../build/tools/deprecated-properties.js';
+import { DEPRECATED_PROPERTIES } from '../src/tools/deprecated-properties.js';
 
 describe('DEPRECATED_PROPERTIES', () => {
   it('is non-empty object', () => {

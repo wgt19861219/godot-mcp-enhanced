@@ -3,11 +3,11 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from '../build/tools/screenshot.js';
+} from '../src/tools/screenshot.js';
 
 // ─── Mock screenshot module ────────────────────────────────────────────────
 
-vi.mock('../build/screenshot.js', async (importOriginal) => {
+vi.mock('../src/screenshot.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,

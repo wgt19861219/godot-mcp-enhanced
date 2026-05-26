@@ -14,7 +14,7 @@ import {
   buildLayerNames,
   buildMcpMapping,
   mergeSections,
-} from '../build/tools/claudemd-builder.js';
+} from '../src/tools/claudemd-builder.js';
 
 describe('claudemd-builder — simple builders', () => {
   describe('buildEngineVersion', () => {

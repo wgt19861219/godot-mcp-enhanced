@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import { parseMcpMarkers } from '../build/gdscript-executor.js';
+import { parseMcpMarkers } from '../src/gdscript-executor.js';
 
 // C-2 fix: import actual function instead of inline copy
 

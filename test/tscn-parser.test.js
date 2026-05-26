@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 import fc from 'fast-check';
-import { parseTscn, parseTscnSummary } from '../build/tscn-parser.js';
+import { parseTscn, parseTscnSummary } from '../src/tscn-parser.js';
 
 function toSerializable(result) {
   if (result.nodeMap instanceof Map) {

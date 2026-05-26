@@ -210,12 +210,12 @@ func add_node(params):
 	if parent_path == "root" or parent_path == scene_root.name:
 		parent = scene_root
 	elif parent_path.begins_with("root/"):
-		parent = scene_root.get_node(parent_path.substr(5))
+		parent = scene_root.get_node_or_null(parent_path.substr(5))
 		if not parent:
 			log_error("Parent node not found: " + parent_path)
 			cleanup_and_quit([scene_root], 1)
 	else:
-		parent = scene_root.get_node(parent_path)
+		parent = scene_root.get_node_or_null(parent_path)
 		if not parent:
 			log_error("Parent node not found: " + parent_path)
 			cleanup_and_quit([scene_root], 1)
@@ -279,13 +279,13 @@ func batch_add_nodes(params):
 		if parent_path == "root" or parent_path == scene_root.name:
 			parent = scene_root
 		elif parent_path.begins_with("root/"):
-			parent = scene_root.get_node(parent_path.substr(5))
+			parent = scene_root.get_node_or_null(parent_path.substr(5))
 			if not parent:
 				log_error("Parent node not found: " + parent_path + " for node: " + node_def.node_name)
 				failed_count += 1
 				continue
 		else:
-			parent = scene_root.get_node(parent_path)
+			parent = scene_root.get_node_or_null(parent_path)
 			if not parent:
 				log_error("Parent node not found: " + parent_path + " for node: " + node_def.node_name)
 				failed_count += 1
@@ -351,7 +351,7 @@ func load_sprite(params):
 	if node_path == "":
 		sprite_node = scene_root
 	else:
-		sprite_node = scene_root.get_node(node_path)
+		sprite_node = scene_root.get_node_or_null(node_path)
 
 	if not sprite_node:
 		log_error("Node not found: " + params.node_path)
@@ -544,7 +544,7 @@ func _sanitize_res_path(path: String) -> String:
 	var parts = full.substr(6).split("/")
 	var normalized = []
 	for part in parts:
-		if part == ".." or part == ".":
+		if part.begins_with("."):
 			continue
 		if not part.is_empty():
 			normalized.append(part)

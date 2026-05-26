@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import * as scene from '../build/tools/scene.js';
+import * as scene from '../src/tools/scene.js';
 
 describe('instance_scene tool definition', () => {
   it('should be registered (handleTool returns non-null for instance_scene)', async () => {

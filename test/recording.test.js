@@ -9,7 +9,7 @@ import {
   genRecordingSaveScript,
   genRecordingLoadScript,
   genRecordingPlayScript,
-} from '../build/tools/recording.js';
+} from '../src/tools/recording.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

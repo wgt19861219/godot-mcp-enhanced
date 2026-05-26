@@ -6,7 +6,7 @@ import {
   genSignalDisconnectScript,
   genSignalEmitScript,
   genSignalListScript,
-} from '../build/tools/signal-ops.js';
+} from '../src/tools/signal-ops.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

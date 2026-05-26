@@ -5,11 +5,11 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from '../build/tools/validation.js';
+} from '../src/tools/validation.js';
 
 // ─── Mock executor ──────────────────────────────────────────────────────────
 
-vi.mock('../build/gdscript-executor.js', () => ({
+vi.mock('../src/gdscript-executor.js', () => ({
   executeGdscript: vi.fn(async () => ({
     success: true,
     compile_success: true,

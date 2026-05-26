@@ -4,7 +4,7 @@ import {
   TOOL_META,
   handleTool,
   genNavQueryScript,
-} from '../build/tools/navigation.js';
+} from '../src/tools/navigation.js';
 
 const fakeCtx = { findGodot: async () => '/fake/godot' };
 

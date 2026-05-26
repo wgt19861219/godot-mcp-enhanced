@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import { parseTscn } from '../build/tscn-parser.js';
+import { parseTscn } from '../src/tscn-parser.js';
 
 describe('tscn-parser instance_of', () => {
   it('should resolve instance_of path from ext_resources', () => {

@@ -50,6 +50,26 @@ export interface ParsedScene {
   nodeMap: Map<string, ParsedNode>;
 }
 
+/**
+ * Extract balanced parenthesis content from a typed constructor like "Type(...)".
+ * Handles one level of nested parentheses.
+ * Returns the inner content string, or null if the format doesn't match.
+ */
+function extractBalancedParenContent(input: string, typeName: string): string | null {
+  const prefix = typeName + '(';
+  if (!input.startsWith(prefix) || !input.endsWith(')')) return null;
+  // Start from the opening '(' at end of prefix; depth=1 on first iteration
+  let depth = 0;
+  for (let i = prefix.length - 1; i < input.length; i++) {
+    if (input[i] === '(') depth++;
+    else if (input[i] === ')') depth--;
+    if (depth === 0 && i === input.length - 1) {
+      return input.slice(prefix.length, i);
+    }
+  }
+  return null;
+}
+
 function parseValue(raw: string, maxDepth: number = 50): unknown {
   const trimmed = raw.trim();
 
@@ -89,17 +109,26 @@ function parseValue(raw: string, maxDepth: number = 50): unknown {
   const npMatch = trimmed.match(/^NodePath\("(.*)"\)$/);
   if (npMatch) return { __type: 'NodePath', value: npMatch[1] };
 
-  // Color(r, g, b, a)
-  const colorMatch = trimmed.match(/^Color\(([^)]+)\)$/);
-  if (colorMatch) return { __type: 'Color', value: colorMatch[1] };
+  // Color(r, g, b, a) — handle nested parentheses
+  const colorMatch = trimmed.match(/^Color\(/);
+  if (colorMatch) {
+    const inner = extractBalancedParenContent(trimmed, 'Color');
+    if (inner !== null) return { __type: 'Color', value: inner };
+  }
 
-  // Vector2(x, y)
-  const v2Match = trimmed.match(/^Vector2\(([^)]+)\)$/);
-  if (v2Match) return { __type: 'Vector2', value: v2Match[1] };
+  // Vector2(x, y) — handle nested parentheses
+  const v2Match = trimmed.match(/^Vector2\(/);
+  if (v2Match) {
+    const inner = extractBalancedParenContent(trimmed, 'Vector2');
+    if (inner !== null) return { __type: 'Vector2', value: inner };
+  }
 
-  // Vector3(x, y, z)
-  const v3Match = trimmed.match(/^Vector3\(([^)]+)\)$/);
-  if (v3Match) return { __type: 'Vector3', value: v3Match[1] };
+  // Vector3(x, y, z) — handle nested parentheses
+  const v3Match = trimmed.match(/^Vector3\(/);
+  if (v3Match) {
+    const inner = extractBalancedParenContent(trimmed, 'Vector3');
+    if (inner !== null) return { __type: 'Vector3', value: inner };
+  }
 
   // Number (int or float)
   if (trimmed !== '') {

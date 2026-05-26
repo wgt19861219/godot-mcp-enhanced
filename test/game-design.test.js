@@ -6,7 +6,7 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from "../build/tools/game-design.js";
+} from "../src/tools/game-design.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

@@ -228,10 +228,10 @@ export class GodotServer {
           const summaryArgs = { ...pending.args };
           log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
           // Re-check ReadOnlyGuard for the confirmed tool
-          const guardResult = this.readOnlyGuard.check(pending.toolName);
-          if (guardResult.blocked) {
+          const confirmedToolGuardResult = this.readOnlyGuard.check(pending.toolName);
+          if (confirmedToolGuardResult.blocked) {
             return {
-              content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: guardResult.errorCode, message: guardResult.message } }) }],
+              content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: confirmedToolGuardResult.errorCode, message: confirmedToolGuardResult.message } }) }],
               isError: true,
             };
           }

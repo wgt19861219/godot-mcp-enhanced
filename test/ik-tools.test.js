@@ -6,7 +6,7 @@ import {
   genIkGetScript,
   genIkSetScript,
   genListBonesScript,
-} from '../build/tools/ik-tools.js';
+} from '../src/tools/ik-tools.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

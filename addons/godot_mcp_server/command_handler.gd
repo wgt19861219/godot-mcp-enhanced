@@ -72,6 +72,30 @@ func cleanup() -> void:
 	if _ui_commands:
 		_ui_commands.queue_free()
 		_ui_commands = null
+	if _scene_commands:
+		_scene_commands.queue_free()
+		_scene_commands = null
+	if _node_commands:
+		_node_commands.queue_free()
+		_node_commands = null
+	if _test_commands:
+		_test_commands.queue_free()
+		_test_commands = null
+	if _export_commands:
+		_export_commands.queue_free()
+		_export_commands = null
+	if _particle_commands:
+		_particle_commands.queue_free()
+		_particle_commands = null
+	if _nav_commands:
+		_nav_commands.queue_free()
+		_nav_commands = null
+	if _animtree_commands:
+		_animtree_commands.queue_free()
+		_animtree_commands = null
+	if _undo_manager:
+		_undo_manager.queue_free()
+		_undo_manager = null
 
 func handle(method: String, params: Dictionary, request_id: int) -> Dictionary:
 	match method:

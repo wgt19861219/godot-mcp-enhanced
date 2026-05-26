@@ -4,7 +4,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { captureScreenshot } from '../screenshot.js';
-import { validatePath, resolveWithinRoot, normalizeUserProjectPath, allowOutsideProjectPaths } from '../helpers.js';
+import { validatePath, resolveWithinRoot, normalizeUserProjectPath, allowOutsideProjectPaths, isPathInAllowedRoots } from '../helpers.js';
 
 const TOOL_NAMES = ['capture_screenshot', 'analyze_screenshot'] as const;
 
@@ -57,7 +57,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const normalizedOutput = normalizeUserProjectPath(outputPathRaw ?? '');
       const outputPath = outputPathRaw?.trim()
         ? (allowOutsideProjectPaths()
-            ? validatePath(outputPathRaw)
+            ? (() => {
+                const p = validatePath(outputPathRaw);
+                if (!isPathInAllowedRoots(p)) {
+                  throw new Error(`Output path is outside allowed project roots: ${p}`);
+                }
+                return p;
+              })()
             : resolveWithinRoot(projectPath, normalizedOutput))
         : join(projectPath, 'screenshot.png');
       const frameDelay = (args.frame_delay as number) || 15;

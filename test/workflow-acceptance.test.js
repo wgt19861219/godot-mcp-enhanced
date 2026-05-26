@@ -3,7 +3,7 @@ import { expect } from 'vitest';
 
 describe('dev_loop acceptance parameter', () => {
   it('dev_loop definition includes acceptance parameter', async () => {
-    const mod = await import('../build/tools/workflow.js');
+    const mod = await import('../src/tools/workflow.js');
     const tools = mod.getToolDefinitions();
     const devLoop = tools.find(t => t.name === 'dev_loop');
     expect(devLoop).toBeTruthy();
@@ -12,7 +12,7 @@ describe('dev_loop acceptance parameter', () => {
   });
 
   it('acceptance has assertions array with required fields', async () => {
-    const mod = await import('../build/tools/workflow.js');
+    const mod = await import('../src/tools/workflow.js');
     const tools = mod.getToolDefinitions();
     const devLoop = tools.find(t => t.name === 'dev_loop');
     const acceptanceProps = devLoop.inputSchema.properties.acceptance.properties;
@@ -26,7 +26,7 @@ describe('dev_loop acceptance parameter', () => {
   });
 
   it('acceptance does not expose max_retries (removed until implemented)', async () => {
-    const mod = await import('../build/tools/workflow.js');
+    const mod = await import('../src/tools/workflow.js');
     const tools = mod.getToolDefinitions();
     const devLoop = tools.find(t => t.name === 'dev_loop');
     const acceptanceProps = devLoop.inputSchema.properties.acceptance.properties;

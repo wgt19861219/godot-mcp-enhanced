@@ -15,39 +15,27 @@ func create_action(request_id: int, do_methods: Array, undo_methods: Array) -> v
 	undo_redo.commit_action()
 
 
+func _add_method(undo_redo: UndoRedo, mode: String, target: Object, method: String, args: Array) -> void:
+	if mode == "do":
+		match args.size():
+			0: undo_redo.add_do_method(target, method)
+			1: undo_redo.add_do_method(target, method, args[0])
+			2: undo_redo.add_do_method(target, method, args[0], args[1])
+			3: undo_redo.add_do_method(target, method, args[0], args[1], args[2])
+			4: undo_redo.add_do_method(target, method, args[0], args[1], args[2], args[3])
+			_:  undo_redo.add_do_method(Callable(target, method).bindv(args))
+	else:
+		match args.size():
+			0: undo_redo.add_undo_method(target, method)
+			1: undo_redo.add_undo_method(target, method, args[0])
+			2: undo_redo.add_undo_method(target, method, args[0], args[1])
+			3: undo_redo.add_undo_method(target, method, args[0], args[1], args[2])
+			4: undo_redo.add_undo_method(target, method, args[0], args[1], args[2], args[3])
+			_:  undo_redo.add_undo_method(Callable(target, method).bindv(args))
+
+
 func _add_method_call(undo_redo: UndoRedo, mode: String, m: Dictionary) -> void:
 	var args: Array = m.get("args", [])
 	var target: Object = m.target
 	var method: String = m.method
-	match args.size():
-		0:
-			if mode == "do":
-				undo_redo.add_do_method(target, method)
-			else:
-				undo_redo.add_undo_method(target, method)
-		1:
-			if mode == "do":
-				undo_redo.add_do_method(target, method, args[0])
-			else:
-				undo_redo.add_undo_method(target, method, args[0])
-		2:
-			if mode == "do":
-				undo_redo.add_do_method(target, method, args[0], args[1])
-			else:
-				undo_redo.add_undo_method(target, method, args[0], args[1])
-		3:
-			if mode == "do":
-				undo_redo.add_do_method(target, method, args[0], args[1], args[2])
-			else:
-				undo_redo.add_undo_method(target, method, args[0], args[1], args[2])
-		4:
-			if mode == "do":
-				undo_redo.add_do_method(target, method, args[0], args[1], args[2], args[3])
-			else:
-				undo_redo.add_undo_method(target, method, args[0], args[1], args[2], args[3])
-		_:
-			var callable := Callable(target, method).bindv(args)
-			if mode == "do":
-				undo_redo.add_do_method(callable)
-			else:
-				undo_redo.add_undo_method(callable)
+	_add_method(undo_redo, mode, target, method, args)

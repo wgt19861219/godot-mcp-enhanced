@@ -17,14 +17,14 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(),
 }));
 
-vi.mock('../build/core/process-state.js', () => ({
+vi.mock('../src/core/process-state.js', () => ({
   appendOutput: vi.fn(),
   clearOutputBuffer: vi.fn(),
   killProcess: vi.fn(async () => {}),
   setProcessBusy: vi.fn(),
 }));
 
-vi.mock('../build/helpers.js', () => ({
+vi.mock('../src/helpers.js', () => ({
   validatePath: vi.fn(p => p),
   checkVersionMismatch: vi.fn(async () => null),
 }));
@@ -41,9 +41,9 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from '../build/tools/runtime.js';
+} from '../src/tools/runtime.js';
 import { spawn } from 'child_process';
-import { killProcess, clearOutputBuffer } from '../build/core/process-state.js';
+import { killProcess, clearOutputBuffer } from '../src/core/process-state.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

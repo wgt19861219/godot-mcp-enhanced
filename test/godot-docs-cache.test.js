@@ -3,7 +3,7 @@ import { writeFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { initDocs, clearApiCache, searchClasses, getDocsVersion } from '../build/godot-docs.js';
+import { initDocs, clearApiCache, searchClasses, getDocsVersion } from '../src/godot-docs.js';
 
 function makeApiJson(classCount = 1) {
   const classes = [];

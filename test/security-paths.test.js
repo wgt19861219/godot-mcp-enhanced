@@ -2,8 +2,8 @@ import { expect } from 'vitest';
 import { resolve, join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolveWithinRoot } from '../build/helpers.js';
-import { sanitizeResPath, gdEscape } from '../build/tools/shared.js';
+import { resolveWithinRoot } from '../src/helpers.js';
+import { sanitizeResPath, gdEscape } from '../src/tools/shared.js';
 
 // ─── sanitizeResPath ──────────────────────────────────────────────────────────
 

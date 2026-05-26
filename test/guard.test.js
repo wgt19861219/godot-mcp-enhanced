@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import fc from 'fast-check';
 import {
   requiresConfirmation, createPendingToken, consumeToken, pendingCount, GUARDED_TOOLS,
-} from '../build/guard.js';
+} from '../src/guard.js';
 
 describe('GUARDED_TOOLS', () => {
   it('includes remove_node', () => {

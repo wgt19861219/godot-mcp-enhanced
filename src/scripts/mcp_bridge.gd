@@ -153,11 +153,11 @@ func _server_take_connection() -> StreamPeerTCP:
 # DUPLICATE: Keep in sync with addons/godot_mcp_server/websocket_server.gd:_constant_time_compare
 # Cannot share because editor plugin and game autoload have separate script contexts.
 func _constant_time_compare(a: String, b: String) -> bool:
-	var max_len := maxi(a.length(), b.length())
+	# When lengths differ, result=1 ensures false; loop only maintains constant-time execution.
 	var result := 0
 	if a.length() != b.length():
 		result = 1
-	for i in range(max_len):
+	for i in range(b.length()):
 		var ca := ord(a[i]) if i < a.length() else 0
 		var cb := ord(b[i]) if i < b.length() else 0
 		result = result | (ca ^ cb)
@@ -243,6 +243,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 		if line == "" and line_bytes.size() > 0:
 			push_warning("[MCP Bridge] Invalid UTF-8 in message from peer %d, disconnecting" % pid)
 			peer.disconnect_from_host()
+			_peer_buffers[key] = raw
 			return true
 		if not _authenticated_peers.has(pid):
 			
@@ -251,6 +252,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 				if Time.get_ticks_msec() / 1000.0 < locked_until:
 					peer.put_data((JSON.stringify({"id": null, "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}) + "\n").to_utf8_buffer())
 					peer.disconnect_from_host()
+					_peer_buffers[key] = raw
 					return true
 				else:
 					_auth_locked_until.erase(_LOCKOUT_KEY)
@@ -272,6 +274,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 					_auth_locked_until[_LOCKOUT_KEY] = Time.get_ticks_msec() / 1000.0 + lockout_time
 				peer.put_data((JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n").to_utf8_buffer())
 				peer.disconnect_from_host()
+				_peer_buffers[key] = raw
 				return true
 		var response := _handle_message(line)
 		peer.put_data((response + "\n").to_utf8_buffer())

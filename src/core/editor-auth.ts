@@ -44,9 +44,10 @@ function restrictFileWindows(filePath: string): boolean {
 /** Check and tighten file permissions. Returns true if permissions are acceptable. */
 function checkFilePermissions(filePath: string): boolean {
   if (process.platform === 'win32') {
+    // Windows: restrictFileWindows applies ACL restrictions; always returns true.
     return restrictFileWindows(filePath);
   }
-  try { chmodSync(filePath, 0o600); } catch { /* best effort */ }
+  try { chmodSync(filePath, 0o600); } catch (err) { console.debug('[editor-auth] chmod secret:', err); }
   const stat = statSync(filePath);
   if ((stat.mode & 0o007) !== 0) {
     if (!_permWarned) {
@@ -62,7 +63,12 @@ function checkFilePermissions(filePath: string): boolean {
 export function readEditorSecret(projectPath: string): string | null {
   const secretPath = join(projectPath, '.godot', SECRET_FILE_NAME);
   try {
-    if (existsSync(secretPath)) checkFilePermissions(secretPath);
+    if (existsSync(secretPath)) {
+      if (!checkFilePermissions(secretPath)) {
+        console.error(`[SECURITY] Refusing to read editor secret with insecure permissions: ${secretPath}`);
+        return null;
+      }
+    }
     return readFileSync(secretPath, 'utf-8').trim();
   } catch {
     return null;

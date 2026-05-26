@@ -3,7 +3,7 @@ extends Node
 const PING_INTERVAL := 5.0
 const INACTIVITY_TIMEOUT := 30.0
 
-signal timeout_detected()
+signal timeout_detected(peer_id: int)
 
 # Per-peer activity tracking
 var _peer_activity: Dictionary = {}  # peer_id -> { activity: float, ping: float }
@@ -30,7 +30,7 @@ func tick(delta: float, peer: WebSocketPeer) -> void:
 		_operation_timer += delta
 		if _operation_timer > _operation_timeout:
 			_is_paused = false
-			emit_signal("timeout_detected")
+			emit_signal("timeout_detected", -1)
 		return
 
 	var pid: int = peer.get_instance_id()
@@ -42,7 +42,7 @@ func tick(delta: float, peer: WebSocketPeer) -> void:
 	state.ping += delta
 
 	if state.activity > INACTIVITY_TIMEOUT:
-		emit_signal("timeout_detected")
+		emit_signal("timeout_detected", pid)
 		return
 
 	if state.ping >= PING_INTERVAL:

@@ -17,7 +17,7 @@ import {
   clearGodotPathCache,
   getCachedGodotPath,
   findGodot,
-} from '../build/core/godot-finder.js';
+} from '../src/core/godot-finder.js';
 
 const execFileMock = vi.mocked(execFile);
 const existsSyncMock = vi.mocked(existsSync);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock godot-docs before importing the module under test
-vi.mock('../build/godot-docs.js', () => ({
+vi.mock('../src/godot-docs.js', () => ({
   getClassInfo: vi.fn(() => ({
     name: 'Node2D',
     inherits: 'CanvasItem',
@@ -37,7 +37,7 @@ vi.mock('../build/godot-docs.js', () => ({
   clearApiCache: vi.fn(),
 }));
 
-import { getToolDefinitions, handleTool, TOOL_META } from '../build/tools/docs.js';
+import { getToolDefinitions, handleTool, TOOL_META } from '../src/tools/docs.js';
 
 describe('docs tools', () => {
   const ctx = {};

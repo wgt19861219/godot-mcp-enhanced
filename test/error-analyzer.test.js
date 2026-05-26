@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import { analyzeOutput } from '../build/error-analyzer.js';
+import { analyzeOutput } from '../src/error-analyzer.js';
 
 describe('error-analyzer', () => {
   describe('parse errors', () => {

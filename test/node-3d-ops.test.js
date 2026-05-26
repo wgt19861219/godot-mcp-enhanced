@@ -4,7 +4,7 @@ import {
   getToolDefinitions,
   genCollisionOverlayScript,
   genCreate3DScript,
-} from '../build/tools/node-3d-ops.js';
+} from '../src/tools/node-3d-ops.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

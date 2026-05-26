@@ -4,7 +4,7 @@ import {
   opsSuccess, opsError, opsErrorResult, parseGdscriptResult,
   validateIdentifier,
   validateTimeout,
-} from '../build/tools/shared.js';
+} from '../src/tools/shared.js';
 
 describe('shared constants', () => {
   it('MARKER_RESULT is a non-empty string', () => {

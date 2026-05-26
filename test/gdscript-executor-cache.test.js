@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 
-import { clearGodotPathCache, getCachedGodotPath } from '../build/GodotServer.js';
+import { clearGodotPathCache, getCachedGodotPath } from '../src/GodotServer.js';
 
 describe('Godot path cache', () => {
   beforeEach(() => {

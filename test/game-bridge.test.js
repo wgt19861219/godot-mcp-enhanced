@@ -1,5 +1,5 @@
 import { expect, vi, beforeEach, afterEach } from 'vitest';
-import { getToolDefinitions, handleTool, TOOL_META } from '../build/tools/game-bridge.js';
+import { getToolDefinitions, handleTool, TOOL_META } from '../src/tools/game-bridge.js';
 
 // ─── Tool definition tests ──────────────────────────────────────────────────
 

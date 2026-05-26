@@ -13,7 +13,7 @@ import {
   genShaderLoadFileScript,
   genShaderSaveFileScript,
   genShaderApplyTemplateScript,
-} from '../build/tools/material-ops.js';
+} from '../src/tools/material-ops.js';
 
 // ─── Error Codes ───────────────────────────────────────────────────────────
 

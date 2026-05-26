@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import { getToolDefinitions } from '../build/tools/script.js';
+import { getToolDefinitions } from '../src/tools/script.js';
 
 // ─── Tool definitions ─────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ describe('script-tools edit_script schema', () => {
 
 describe('script-tools lint integration', () => {
   it('lintGDScript detects Godot 4.x deprecated property (L002)', async () => {
-    const { lintGDScript } = await import('../build/tools/gdscript-lint.js');
+    const { lintGDScript } = await import('../src/tools/gdscript-lint.js');
     const code = 'extends RigidBody3D\n\nfunc _ready():\n\tvar body = RigidBody3D.new()\n\tbody.bounce = 0.5\n';
     const result = lintGDScript(code);
     expect(result.errors.length > 0).toBeTruthy();
@@ -70,7 +70,7 @@ describe('script-tools lint integration', () => {
   });
 
   it('lintGDScript passes code without deprecated patterns', async () => {
-    const { lintGDScript } = await import('../build/tools/gdscript-lint.js');
+    const { lintGDScript } = await import('../src/tools/gdscript-lint.js');
     const code = 'extends Node\n\nfunc _ready():\n\tpass\n';
     const result = lintGDScript(code);
     expect(result.errors.length + result.warnings.length).toBe(0);

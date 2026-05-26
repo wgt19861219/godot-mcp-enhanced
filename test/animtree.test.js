@@ -6,7 +6,7 @@ import {
   handleTool,
   genStateSetPosition,
   genStateSetBlend,
-} from '../build/tools/animtree.js';
+} from '../src/tools/animtree.js';
 
 const fakeCtx = { findGodot: async () => '/fake/godot' };
 

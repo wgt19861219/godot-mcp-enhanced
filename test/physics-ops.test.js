@@ -6,7 +6,7 @@ import {
   genBodyInfoScript,
   genDiagnosePhysicsScript,
   genQuerySpatialScript,
-} from '../build/tools/physics-ops.js';
+} from '../src/tools/physics-ops.js';
 
 // ─── TOOL_NAMES ─────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
-import { EditorToolExecutor } from '../build/core/EditorToolExecutor.js';
-import { EditorConnection } from '../build/core/EditorConnection.js';
+import { EditorToolExecutor } from '../src/core/EditorToolExecutor.js';
+import { EditorConnection } from '../src/core/EditorConnection.js';
 import { WebSocketServer } from 'ws';
 
 describe('EditorToolExecutor', () => {

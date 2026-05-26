@@ -3,7 +3,7 @@ import {
   getToolDefinitions,
   TOOL_META,
   handleTool,
-} from '../build/tools/batch-tools.js';
+} from '../src/tools/batch-tools.js';
 import { mkdirSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';

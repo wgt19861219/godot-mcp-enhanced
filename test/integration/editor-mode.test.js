@@ -1,9 +1,9 @@
 import { expect } from 'vitest';
 import { WebSocketServer } from 'ws';
-import { EditorConnection } from '../../build/core/EditorConnection.js';
-import { EditorToolExecutor } from '../../build/core/EditorToolExecutor.js';
-import { ReadOnlyGuard } from '../../build/core/ReadOnlyGuard.js';
-import { registerTools } from '../../build/core/tool-registry.js';
+import { EditorConnection } from '../../src/core/EditorConnection.js';
+import { EditorToolExecutor } from '../../src/core/EditorToolExecutor.js';
+import { ReadOnlyGuard } from '../../src/core/ReadOnlyGuard.js';
+import { registerTools } from '../../src/core/tool-registry.js';
 
 describe('Editor mode integration', () => {
   let wss;

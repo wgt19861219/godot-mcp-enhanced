@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatSessionState, buildStateBlock } from '../build/tools/workflow.js';
+import { formatSessionState, buildStateBlock } from '../src/tools/workflow.js';
 
 describe('Session State', () => {
   it('formatSessionState should produce valid markdown', () => {

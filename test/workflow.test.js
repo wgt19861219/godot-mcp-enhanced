@@ -1,5 +1,5 @@
 import { expect, vi, describe, it } from 'vitest';
-import { getToolDefinitions } from '../build/tools/workflow.js';
+import { getToolDefinitions } from '../src/tools/workflow.js';
 
 describe('workflow tool definitions', () => {
   const tools = getToolDefinitions();
@@ -45,7 +45,7 @@ describe('workflow tool definitions', () => {
 
 describe('workflow dev_loop bridge logic', () => {
   it('BRIDGE_READ_ONLY_METHODS excludes write methods', async () => {
-    const { BRIDGE_READ_ONLY_METHODS } = await import('../build/tools/game-bridge.js');
+    const { BRIDGE_READ_ONLY_METHODS } = await import('../src/tools/game-bridge.js');
     expect(BRIDGE_READ_ONLY_METHODS.has('set_node_property')).toBe(false);
     expect(BRIDGE_READ_ONLY_METHODS.has('send_key')).toBe(false);
     expect(BRIDGE_READ_ONLY_METHODS.has('call_method')).toBe(false);
@@ -53,7 +53,7 @@ describe('workflow dev_loop bridge logic', () => {
   });
 
   it('BRIDGE_READ_ONLY_METHODS includes all read-only methods', async () => {
-    const { BRIDGE_READ_ONLY_METHODS } = await import('../build/tools/game-bridge.js');
+    const { BRIDGE_READ_ONLY_METHODS } = await import('../src/tools/game-bridge.js');
     expect(BRIDGE_READ_ONLY_METHODS.has('ping')).toBe(true);
     expect(BRIDGE_READ_ONLY_METHODS.has('get_tree')).toBe(true);
     expect(BRIDGE_READ_ONLY_METHODS.has('find_nodes')).toBe(true);

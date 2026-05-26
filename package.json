@@ -34,15 +34,19 @@
     "watch": "tsc --watch"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "0.6.0",
-    "ws": "^8.20.1"
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "ws": "8.18.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.11.24",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "^4.1.7",
+    "eslint": "^10.4.0",
     "fast-check": "^4.8.0",
+    "prettier": "^3.8.3",
     "typescript": "^5.3.3",
+    "typescript-eslint": "^8.60.0",
     "vitest": "^4.1.7"
   },
   "engines": {

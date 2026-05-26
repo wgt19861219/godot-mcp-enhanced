@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { getToolDefinitions as getGDDDefs, TOOL_META as gddMeta } from '../../build/tools/game-design.js';
-import { getToolDefinitions as getDeliveryDefs } from '../../build/tools/delivery.js';
-import { getToolDefinitions as getWorkflowDefs } from '../../build/tools/workflow.js';
+import { getToolDefinitions as getGDDDefs, TOOL_META as gddMeta } from '../../src/tools/game-design.js';
+import { getToolDefinitions as getDeliveryDefs } from '../../src/tools/delivery.js';
+import { getToolDefinitions as getWorkflowDefs } from '../../src/tools/workflow.js';
 
 describe('Game Design Integration', () => {
   it('all new tools are registered', () => {

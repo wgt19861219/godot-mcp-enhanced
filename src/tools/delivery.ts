@@ -167,7 +167,7 @@ function getSceneContentCache(projectPath: string): Map<string, string> {
           }
         }
       }
-    } catch { /* ignore unreadable dirs */ }
+    } catch (err) { console.debug('[delivery] scan scene cache:', err); }
   })(projectPath, '');
   return _sceneContentCache;
 }
@@ -262,7 +262,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               result.push(`${prefix}${e.name}`);
             }
           }
-        } catch { /* ignore */ }
+        } catch (err) { console.debug('[delivery] collect scenes:', err); }
         return result;
       }
       scenePaths = collectScenes(projectPath, '');
@@ -312,7 +312,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               result.push(`${prefix}${e.name}`);
             }
           }
-        } catch { /* ignore */ }
+        } catch (err) { console.debug('[delivery] collect scripts:', err); }
         return result;
       }
       scriptPaths = collectScripts(projectPath, '');
@@ -492,7 +492,7 @@ func _initialize():
               result.push(`${prefix}${e.name}`);
             }
           }
-        } catch { /* ignore */ }
+        } catch (err) { console.debug('[delivery] collect GDD files:', err); }
         return result;
       }
 

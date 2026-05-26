@@ -154,7 +154,7 @@ function collectFilesByExt(projectPath: string, extensions: string[], excludeDir
           results.push(full);
         }
       }
-    } catch { /* skip */ }
+    } catch (err) { console.debug('[validation] scan script files:', err); }
   }
   scan(projectPath, 0);
   return results;
@@ -190,7 +190,7 @@ export async function batchValidateScripts(
   const listPath = join(tmpDir, `validate-list-${listId}.json`).replace(/\\/g, '/');
   writeFileSync(listPath, JSON.stringify(resPaths), 'utf-8');
 
-  const gdSafePath = listPath.replace(/"/g, '\\"');
+  const gdSafePath = listPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '').replace(/\r/g, '');
 
   const validatorCode = [
     'extends SceneTree',
@@ -252,8 +252,8 @@ export async function batchValidateScripts(
   });
 
   if (output.startsWith('SPAWN_ERROR:')) {
-    try { rmSync(listPath, { force: true }); } catch {}
-    try { rmSync(validatorPath, { force: true }); } catch {}
+    try { rmSync(listPath, { force: true }); } catch (e) { console.debug('[validation] cleanup list file:', e); }
+    try { rmSync(validatorPath, { force: true }); } catch (e) { console.debug('[validation] cleanup validator file:', e); }
     return [{ file: '<validator>', errors: [output] }];
   }
 
@@ -298,8 +298,8 @@ export async function batchValidateScripts(
       }
     }
   } finally {
-    try { rmSync(listPath, { force: true }); } catch {}
-    try { rmSync(validatorPath, { force: true }); } catch {}
+    try { rmSync(listPath, { force: true }); } catch (e) { console.debug('[validation] cleanup list file (finally):', e); }
+    try { rmSync(validatorPath, { force: true }); } catch (e) { console.debug('[validation] cleanup validator file (finally):', e); }
   }
 
   const finalResults: Array<{ file: string; errors: string[]; filtered_count?: number }> =
@@ -534,7 +534,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           const batchResults = await batchValidateScripts(godot, projectPath, scriptsToCheck, 15000);
           precheckErrors.push(...batchResults);
         }
-      } catch { /* precheck is optional */ }
+      } catch (err) { console.debug('[validation] precheck scripts:', err); }
 
       try {
         const { stdout, stderr } = await execFileAsync(godot, cmdArgs, { timeout: timeout * 1000 });
@@ -566,7 +566,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                 (analysis as ExtendedAnalysisResult).scene_tree = parseMcpScriptOutput(treeResult, 0);
               }
             }
-          } catch { /* tree capture is optional */ }
+          } catch (err) { console.debug('[validation] capture scene tree:', err); }
         }
 
         return textResult(JSON.stringify(analysis, null, 2));
@@ -600,7 +600,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const checkResources = args.check_resources !== false;
       const checkScripts = args.check_scripts !== false;
       const checkScenes = args.check_scenes !== false;
-      const excludePaths: string[] = (args.exclude_paths as string[]) || ['.godot', '.import', 'tools', 'addons'];
+      const excludePaths: string[] = (Array.isArray(args.exclude_paths) && args.exclude_paths.every((s: unknown) => typeof s === 'string') ? args.exclude_paths as string[] : null) || ['.godot', '.import', 'tools', 'addons'];
 
       const issues: Array<{ severity: string; category: string; message: string; file?: string }> = [];
 
@@ -625,7 +625,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               if (exts.includes(ext)) result.push(full);
             }
           }
-        } catch { /* skip */ }
+        } catch (err) { console.debug('[validation] collect files:', err); }
         return result;
       }
 
@@ -742,7 +742,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const godot = await ctx.findGodot();
 
       let scriptsToValidate: string[];
-      if (args.scripts && Array.isArray(args.scripts) && args.scripts.length > 0) {
+      if (args.scripts && Array.isArray(args.scripts) && args.scripts.length > 0 && args.scripts.every((s: unknown) => typeof s === 'string')) {
         scriptsToValidate = (args.scripts as string[]).map(s => resolveWithinRoot(p, s));
       } else {
         scriptsToValidate = collectFilesByExt(p, ['.gd']);
@@ -782,7 +782,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           const content = readFileSync(sf, 'utf-8');
           warnings = scanForCommonPitfalls(content);
           totalWarnings += warnings.length;
-        } catch { /* optional */ }
+        } catch (err) { console.debug('[validation] scan for pitfalls:', err); }
 
         results.push({ file: rel, has_errors: errs.length > 0 || warnings.length > 0, errors: errs, warnings: warnings.length > 0 ? warnings : undefined });
       }
@@ -915,7 +915,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               importedFiles.push(fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
             }
           }
-        } catch { /* skip */ }
+        } catch (err) { console.debug('[validation] import resources scan:', err); }
       }
 
       scanDir(targetDir, 0);

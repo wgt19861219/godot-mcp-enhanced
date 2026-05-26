@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock gdscript-executor before importing the module under test
-vi.mock('../build/gdscript-executor.js', () => ({
+vi.mock('../src/gdscript-executor.js', () => ({
   executeGdscript: vi.fn(async () => ({
     success: true,
     compile_success: true,
@@ -22,8 +22,8 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from '../build/tools/spatial-ops.js';
-import { executeGdscript } from '../build/gdscript-executor.js';
+} from '../src/tools/spatial-ops.js';
+import { executeGdscript } from '../src/gdscript-executor.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

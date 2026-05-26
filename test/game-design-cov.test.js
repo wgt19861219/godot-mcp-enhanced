@@ -1,5 +1,5 @@
 import { expect, describe, it } from "vitest";
-import { chainOfVerification } from "../build/tools/game-design.js";
+import { chainOfVerification } from "../src/tools/game-design.js";
 
 describe("Chain-of-Verification (CoV)", () => {
   it("should generate exactly 5 challenge questions", () => {

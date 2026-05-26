@@ -7,7 +7,7 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
-} from '../build/tools/project.js';
+} from '../src/tools/project.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -3,10 +3,12 @@
 // Exposes Godot project context via MCP Resources protocol so AI clients
 // can discover and read project information without explicit tool calls.
 
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { resolve, join, extname, sep } from 'path';
 import { parseTscnSummary } from './tscn-parser.js';
 import { parseConfigValue } from './helpers.js';
+
+const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB — reject files larger than this
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -365,6 +367,10 @@ function readScriptResource(projectPath: string, scriptPath: string): McpResourc
   if (!existsSync(fullPath)) {
     return { uri: `godot://script/${scriptPath}`, mimeType: 'text/plain', text: `ERROR: Script file not found: ${scriptPath}` };
   }
+  const scriptSize = statSync(fullPath).size;
+  if (scriptSize > MAX_FILE_SIZE) {
+    return { uri: `godot://script/${scriptPath}`, mimeType: 'text/plain', text: `ERROR: File too large (${(scriptSize / 1024 / 1024).toFixed(1)}MB, limit 1MB)` };
+  }
   return { uri: `godot://script/${scriptPath}`, mimeType: 'text/x-gdscript', text: readFileSync(fullPath, 'utf-8') };
 }
 
@@ -372,6 +378,10 @@ function readFileResource(projectPath: string, filePath: string): McpResourceCon
   const fullPath = join(projectPath, filePath);
   if (!existsSync(fullPath)) {
     return { uri: `godot://file/${filePath}`, mimeType: 'text/plain', text: `ERROR: File not found: ${filePath}` };
+  }
+  const fileSize = statSync(fullPath).size;
+  if (fileSize > MAX_FILE_SIZE) {
+    return { uri: `godot://file/${filePath}`, mimeType: 'text/plain', text: `ERROR: File too large (${(fileSize / 1024 / 1024).toFixed(1)}MB, limit 1MB)` };
   }
   return { uri: `godot://file/${filePath}`, mimeType: guessMimeType(filePath), text: readFileSync(fullPath, 'utf-8') };
 }
@@ -560,7 +570,7 @@ function countFiles(projectPath: string): Record<string, number> {
           if (ext) counts[ext] = (counts[ext] || 0) + 1;
         }
       }
-    } catch { /* skip */ }
+    } catch (err) { console.debug('[resources] scanning directory:', err); }
   }
   scan(projectPath, 0);
   return counts;

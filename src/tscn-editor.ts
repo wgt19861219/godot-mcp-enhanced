@@ -177,9 +177,34 @@ export function deleteNode(
 ): SceneEditResult {
   const lines = normalizeLines(tscnContent);
 
-  const targetLine = findNodeSectionLine(lines, nodePath);
+  // Detect root node name from .tscn for path normalization
+  let rootName: string | null = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('[node')) continue;
+    const parentAttr = getBracketAttr(trimmed, 'parent');
+    if (parentAttr === null || parentAttr === '') {
+      rootName = getBracketAttr(trimmed, 'name');
+      break;
+    }
+  }
+
+  // Normalize nodePath: strip leading "root/" or "rootName/" prefix
+  let normalizedPath = nodePath;
+  if (rootName && nodePath.startsWith(rootName + '/')) {
+    normalizedPath = nodePath.slice(rootName.length + 1);
+  } else if (nodePath.startsWith('root/')) {
+    normalizedPath = nodePath.slice('root/'.length);
+  }
+
+  const targetLine = findNodeSectionLine(lines, normalizedPath);
   if (targetLine === -1) {
-    return { success: false, message: `Node not found: ${nodePath}` };
+    // Try original path as fallback
+    const fallbackLine = findNodeSectionLine(lines, nodePath);
+    if (fallbackLine === -1) {
+      return { success: false, message: `Node not found: ${nodePath}` };
+    }
+    normalizedPath = nodePath;
   }
 
   // Find all descendant node sections
@@ -209,7 +234,7 @@ export function deleteNode(
       thisPath = `${parent}/${thisPath}`;
     }
 
-    if (thisPath === nodePath || thisPath.startsWith(nodePath + '/')) {
+    if (thisPath === normalizedPath || thisPath.startsWith(normalizedPath + '/')) {
       const sectionEnd = nodeSectionEnd(lines, i);
       descendantRanges.push([i, sectionEnd]);
     }
