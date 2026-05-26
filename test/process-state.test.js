@@ -266,11 +266,11 @@ describe('busy guard (C-03)', () => {
     expect(getRunningProcess()).toBe(proc);
   });
 
-  it('allows setRunningProcess(null) even when busy (cleanup)', () => {
+  it('allows setRunningProcess(null) even when busy (auto-clears busy)', () => {
     setProcessBusy(true);
-    // setRunningProcess(null) should also be blocked — tools must clear busy first
-    expect(() => setRunningProcess(null)).toThrow(/Cannot replace process/);
-    setProcessBusy(false);
+    // setRunningProcess(null) auto-clears busy — no need for callers to manage order
+    expect(() => setRunningProcess(null)).not.toThrow();
+    expect(isProcessBusy()).toBe(false);
   });
 
   it('resetState clears busy flag', () => {

@@ -49,6 +49,8 @@ export function sanitizeResPath(raw: unknown, field: string): string {
 // % → %% prevents GDScript string formatting from interpreting % as a placeholder.
 // Note: do NOT apply gdEscape to already-escaped output (e.g. gdEscape(gdEscape(x)))
 // as %% would become %%%% (harmless but unnecessary double-escaping).
+// Note: \uXXXX sequences are NOT escaped because GDScript does not support \u escapes
+// (only \xHH for hex and \UXXXXYYYY for unicode codepoints in StringName).
 export function gdEscape(s: string): string {
   return s
     .replace(/\r\n/g, '\n')

@@ -391,6 +391,11 @@ function replaceHookEntry(existing: ClaudeSettings, hookEntry: HookEntry): Claud
 }
 
 function writeAtomic(filePath: string, content: string): void {
+  if (process.platform === 'win32') {
+    // Windows: renameSync fails if target is locked (VS Code, etc.)
+    writeFileSync(filePath, content, 'utf-8');
+    return;
+  }
   const tmp = filePath + '.mcp-tmp';
   writeFileSync(tmp, content, 'utf-8');
   try {

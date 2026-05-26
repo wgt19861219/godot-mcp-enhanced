@@ -268,7 +268,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 				var fails: int = int(_auth_fail_count.get(_LOCKOUT_KEY, 0)) + 1
 				_auth_fail_count[_LOCKOUT_KEY] = fails
 				if fails >= MAX_AUTH_FAILS:
-					var lockout_time := minf(LOCKOUT_BASE_SECONDS * pow(2.0, (fails / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
+					var lockout_time := minf(LOCKOUT_BASE_SECONDS * pow(2.0, (float(fails) / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
 					_auth_locked_until[_LOCKOUT_KEY] = Time.get_ticks_msec() / 1000.0 + lockout_time
 				peer.put_data((JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication required"}}) + "\n").to_utf8_buffer())
 				peer.disconnect_from_host()
@@ -328,7 +328,8 @@ func _handle_message(raw: String) -> String:
 		_:
 			error = {"code": -32601, "message": "Method not found: %s" % method}
 
-	# Promote command-level errors to top-level so TS client sees them
+	# Promote command-level errors to top-level so TS client sees them.
+	# TS sendToBridge only checks resp.error (top-level), never result.error.
 	if error.is_empty() and result is Dictionary and result.has("error"):
 		error = result["error"]
 		result = null

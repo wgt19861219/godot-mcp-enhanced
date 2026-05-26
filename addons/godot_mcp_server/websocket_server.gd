@@ -189,7 +189,7 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 			var fails: int = int(_auth_fail_count.get(_LOCKOUT_KEY, 0)) + 1
 			_auth_fail_count[_LOCKOUT_KEY] = fails
 			if fails >= MAX_AUTH_FAILS:
-				var lockout_time := minf(LOCKOUT_BASE_SECONDS * pow(2.0, (fails / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
+				var lockout_time := minf(LOCKOUT_BASE_SECONDS * pow(2.0, (float(fails) / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
 				_auth_locked_until[_LOCKOUT_KEY] = Time.get_ticks_msec() / 1000.0 + lockout_time
 			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "Authentication failed"}}))
 			peer.close()

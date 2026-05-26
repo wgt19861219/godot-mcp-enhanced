@@ -170,9 +170,15 @@ export class EditorConnection {
       // Increment and wrap, skipping IDs that are already pending
       let candidate = (this.requestId + 1) % Number.MAX_SAFE_INTEGER;
       if (candidate === 0) candidate = 1;
-      while (this.pending.has(candidate)) {
+      let attempts = 0;
+      while (this.pending.has(candidate) && attempts < 1000) {
         candidate = (candidate + 1) % Number.MAX_SAFE_INTEGER;
         if (candidate === 0) candidate = 1;
+        attempts++;
+      }
+      if (attempts >= 1000) {
+        reject(new Error('No available request IDs — too many pending requests'));
+        return;
       }
       const id = this.requestId = candidate;
       const timer = setTimeout(() => {

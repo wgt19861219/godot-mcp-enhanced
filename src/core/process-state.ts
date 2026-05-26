@@ -65,9 +65,11 @@ export function getRunningProcess(): ChildProcess | null {
 }
 
 export function setRunningProcess(proc: ChildProcess | null): void {
-  if (_processBusy) {
+  if (_processBusy && proc !== null) {
     throw new Error('Cannot replace process while another operation is using it');
   }
+  // Clearing the process always clears busy state
+  if (proc === null) _processBusy = false;
   if (_runningProcess && !_runningProcess.killed && proc !== _runningProcess) {
     forceKillTree(_runningProcess);
   }
