@@ -9,6 +9,10 @@ import {
   buildMainScene,
   buildKeyPaths,
   buildAutoloads,
+  buildInputMap,
+  buildPhysics,
+  buildLayerNames,
+  buildMcpMapping,
 } from '../build/tools/claudemd-builder.js';
 
 describe('claudemd-builder — simple builders', () => {
@@ -148,6 +152,100 @@ describe('claudemd-builder — keyPaths & autoloads', () => {
 
     it('returns null when config is null', () => {
       expect(buildAutoloads(null)).toBeNull();
+    });
+  });
+});
+
+describe('claudemd-builder — input/physics/layers/mcp', () => {
+  describe('buildInputMap', () => {
+    it('extracts action names from input section', () => {
+      const config = {
+        input: {
+          move_up: 'Object(InputEventKey,...)',
+          move_down: 'Object(InputEventKey,...)',
+          attack: 'Object(InputEventKey,...)',
+        },
+      };
+      const result = buildInputMap(config);
+      expect(result).toContain('move_up');
+      expect(result).toContain('move_down');
+      expect(result).toContain('attack');
+    });
+
+    it('summarizes actions when more than 15', () => {
+      const input = {};
+      for (let i = 0; i < 20; i++) input[`action_${i}`] = 'Object(...)';
+      const config = { input };
+      const result = buildInputMap(config);
+      expect(result).toContain('等');
+    });
+
+    it('returns null when no input section', () => {
+      expect(buildInputMap({})).toBeNull();
+    });
+
+    it('returns null when config is null', () => {
+      expect(buildInputMap(null)).toBeNull();
+    });
+  });
+
+  describe('buildPhysics', () => {
+    it('returns non-default gravity values', () => {
+      const config = { physics: { '3d/default_gravity': 20.0 } };
+      const result = buildPhysics(config);
+      expect(result).toContain('3D 重力');
+      expect(result).toContain('20');
+    });
+
+    it('returns null when all default', () => {
+      const config = { physics: { '3d/default_gravity': 9.8 } };
+      expect(buildPhysics(config)).toBeNull();
+    });
+
+    it('returns null when config is null', () => {
+      expect(buildPhysics(null)).toBeNull();
+    });
+
+    it('returns null when no physics section', () => {
+      expect(buildPhysics({})).toBeNull();
+    });
+  });
+
+  describe('buildLayerNames', () => {
+    it('extracts non-empty layer names', () => {
+      const config = {
+        layer_names: {
+          '2d_physics/layer_1': 'Player',
+          '2d_physics/layer_2': 'Enemy',
+          '2d_physics/layer_3': '',
+        },
+      };
+      const result = buildLayerNames(config);
+      expect(result).toContain('2D 物理');
+      expect(result).toContain('Player');
+      expect(result).toContain('Enemy');
+      expect(result).not.toContain('layer_3');
+    });
+
+    it('returns null when all layers empty', () => {
+      const config = {
+        layer_names: {
+          '2d_physics/layer_1': '',
+          '2d_physics/layer_2': '',
+        },
+      };
+      expect(buildLayerNames(config)).toBeNull();
+    });
+
+    it('returns null when config is null', () => {
+      expect(buildLayerNames(null)).toBeNull();
+    });
+  });
+
+  describe('buildMcpMapping', () => {
+    it('always returns mapping table', () => {
+      const result = buildMcpMapping();
+      expect(result).toContain('.claude/rules/godot-mcp.md');
     });
   });
 });

@@ -125,3 +125,89 @@ export function buildAutoloads(config: GodotConfig | null): string | null {
 
   return '| 名称 | 路径 |\n|------|------|\n' + rows.join('\n');
 }
+
+// ─── InputMap, Physics, LayerNames, McpMapping builders ────────────────────
+
+export function buildInputMap(config: GodotConfig | null): string | null {
+  if (!config) return null;
+  const input = config.input as Record<string, unknown> | undefined;
+  if (!input) return null;
+
+  const actions = Object.keys(input);
+  if (actions.length === 0) return null;
+
+  if (actions.length > 15) {
+    const shown = actions.slice(0, 15).join(', ');
+    return `- actions: ${shown}，等 ${actions.length} 项`;
+  }
+
+  const lines: string[] = [];
+  for (let i = 0; i < actions.length; i += 5) {
+    lines.push('- ' + actions.slice(i, i + 5).join(', '));
+  }
+  return lines.join('\n');
+}
+
+export function buildPhysics(config: GodotConfig | null): string | null {
+  if (!config) return null;
+  const physics = config.physics as Record<string, unknown> | undefined;
+  if (!physics) return null;
+
+  const lines: string[] = [];
+  const gravity3d = physics['3d/default_gravity'];
+  const gravity2d = physics['2d/default_gravity'];
+  const fps = physics['common/physics_fps'];
+
+  if (typeof gravity3d === 'number' && gravity3d !== 9.8) {
+    lines.push(`- 3D 重力: ${gravity3d}`);
+  }
+  if (typeof gravity2d === 'number' && gravity2d !== 980) {
+    lines.push(`- 2D 重力: ${gravity2d}`);
+  }
+  if (typeof fps === 'number' && fps !== 60) {
+    lines.push(`- 物理 FPS: ${fps}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
+export function buildLayerNames(config: GodotConfig | null): string | null {
+  if (!config) return null;
+  const layers = config.layer_names as Record<string, unknown> | undefined;
+  if (!layers) return null;
+
+  const groups: Record<string, Array<{ idx: number; name: string }>> = {};
+
+  for (const [key, value] of Object.entries(layers)) {
+    if (!value || typeof value !== 'string') continue;
+    const parts = key.split('/');
+    if (parts.length !== 2) continue;
+    const group = parts[0];
+    const layerPart = parts[1];
+    const match = layerPart.match(/layer_(\d+)/);
+    if (!match) continue;
+    const idx = parseInt(match[1], 10);
+
+    if (!groups[group]) groups[group] = [];
+    groups[group].push({ idx, name: value });
+  }
+
+  const LABELS: Record<string, string> = {
+    '2d_physics': '2D 物理', '2d_render': '2D 渲染',
+    '3d_physics': '3D 物理', '3d_render': '3D 渲染',
+  };
+
+  const lines: string[] = [];
+  for (const [group, items] of Object.entries(groups)) {
+    items.sort((a, b) => a.idx - b.idx);
+    const label = LABELS[group] ?? group;
+    const summary = items.map(it => `${it.idx}=${it.name}`).join(', ');
+    lines.push(`- ${label}: ${summary}`);
+  }
+
+  return lines.length > 0 ? lines.join('\n') : null;
+}
+
+export function buildMcpMapping(): string {
+  return '| 领域 | rules 文件 |\n|------|-----------|\n| 脚本开发 | .claude/rules/godot-mcp.md |';
+}
