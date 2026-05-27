@@ -8,6 +8,7 @@ signal timeout_detected(peer_id: int)
 # Per-peer activity tracking
 var _peer_activity: Dictionary = {}  # peer_id -> { activity: float, ping: float }
 var _is_paused: bool = false
+var _ping_json: String = JSON.stringify({"jsonrpc": "2.0", "method": "ping", "params": {}})
 var _operation_timeout: float = 0.0
 var _operation_timer: float = 0.0
 
@@ -47,7 +48,7 @@ func tick(delta: float, peer: WebSocketPeer) -> void:
 
 	if state.ping >= PING_INTERVAL:
 		state.ping = 0.0
-		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "method": "ping", "params": {}}))
+		peer.send_text(_ping_json)
 
 
 func pause_for_operation(timeout_sec: float) -> void:

@@ -3,6 +3,11 @@ build/
 coverage/
 *.js.map
 *.tgz
+*.zip
 .DS_Store
 Thumbs.db
 .env
+.idea/
+.vscode/
+*.swp
+*.swo
