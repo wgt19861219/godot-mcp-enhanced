@@ -101,15 +101,20 @@ export function allowOutsideProjectPaths(): boolean {
   return false;
 }
 
-/** Check if a requested path is within the ALLOWED_PROJECT_PATHS whitelist (or unrestricted if no whitelist set). */
+/** Check if a requested path is within the ALLOWED_PROJECT_PATHS whitelist (deny-by-default). */
 export function isPathInAllowedRoots(requestedPath: string): boolean {
+  if (process.env.GODOT_MCP_UNRESTRICTED === 'true') return true;
   if (allowOutsideProjectPaths()) return true;
   const allowed = getAllowedProjectPaths();
-  if (allowed.length === 0) {
-    console.warn('[SECURITY] ALLOWED_PROJECT_PATHS is not set — all paths are allowed (unrestricted mode). Set ALLOWED_PROJECT_PATHS to limit access.');
-    return true; // No whitelist = unrestricted (existing behavior)
-  }
   const resolved = resolvePath(requestedPath);
+  if (allowed.length === 0) {
+    const cwd = resolvePath(process.cwd());
+    const isAllowed = resolved === cwd || resolved.startsWith(cwd + sep);
+    if (!isAllowed) {
+      console.warn(`[SECURITY] Path "${requestedPath}" denied (not within cwd "${process.cwd()}"). Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true to allow.`);
+    }
+    return isAllowed;
+  }
   return allowed.some(p => resolved === p || resolved.startsWith(p + sep));
 }
 

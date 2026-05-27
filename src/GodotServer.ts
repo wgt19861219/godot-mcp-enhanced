@@ -93,6 +93,10 @@ async function dispatchTool(
   if (typeof args.project_path === 'string' && !isPathInAllowedRoots(args.project_path)) {
     return { content: [{ type: 'text', text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Path not in ALLOWED_PROJECT_PATHS: ${args.project_path}` } }) }], isError: true };
   }
+  // I-SEC-01: Validate search_dir against whitelist
+  if (typeof args.search_dir === 'string' && !isPathInAllowedRoots(args.search_dir)) {
+    return { content: [{ type: 'text', text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Search directory not in ALLOWED_PROJECT_PATHS: ${args.search_dir}. Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true.` } }) }], isError: true };
+  }
   const targetMod = toolModuleMap.get(toolName);
   if (!targetMod) {
     return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };
@@ -240,6 +244,13 @@ export class GodotServer {
           if (typeof pending.args.project_path === 'string' && !isPathInAllowedRoots(pending.args.project_path)) {
             return {
               content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Path not in ALLOWED_PROJECT_PATHS: ${pending.args.project_path}` } }) }],
+              isError: true,
+            };
+          }
+          // I-SEC-01: Validate search_dir against whitelist for editor branch
+          if (typeof pending.args.search_dir === 'string' && !isPathInAllowedRoots(pending.args.search_dir)) {
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Search directory not in ALLOWED_PROJECT_PATHS: ${pending.args.search_dir}. Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true.` } }) }],
               isError: true,
             };
           }

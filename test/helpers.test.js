@@ -1,8 +1,9 @@
-import { expect } from 'vitest';
+import { expect, describe, it, beforeEach, afterAll } from 'vitest';
 import { resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
-import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue } from '../src/helpers.js';
+import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue, isPathInAllowedRoots } from '../src/helpers.js';
 
 describe('validatePath', () => {
   it('resolves relative paths to absolute', () => {
@@ -167,5 +168,48 @@ describe('parseConfigValue (I-06)', () => {
 
   it('parses empty array', () => {
     expect(parseConfigValue('[]')).toEqual([]);
+  });
+});
+
+// ─── isPathInAllowedRoots deny-by-default ────────────────────────────────────
+
+describe('isPathInAllowedRoots deny-by-default', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.ALLOWED_PROJECT_PATHS;
+    delete process.env.GODOT_MCP_UNRESTRICTED;
+    delete process.env.ALLOW_OUTSIDE_PROJECT_PATHS;
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
+  });
+
+  it('should allow cwd when no whitelist set', () => {
+    const cwd = process.cwd();
+    expect(isPathInAllowedRoots(cwd)).toBe(true);
+  });
+
+  it('should deny paths outside cwd when no whitelist set', () => {
+    expect(isPathInAllowedRoots('/definitely/outside/path')).toBe(false);
+  });
+
+  it('should allow GODOT_MCP_UNRESTRICTED to bypass', () => {
+    process.env.GODOT_MCP_UNRESTRICTED = 'true';
+    expect(isPathInAllowedRoots('/any/path')).toBe(true);
+  });
+
+  it('should respect ALLOWED_PROJECT_PATHS whitelist', () => {
+    const tmp = tmpdir();
+    process.env.ALLOWED_PROJECT_PATHS = tmp;
+    expect(isPathInAllowedRoots(tmp)).toBe(true);
+    expect(isPathInAllowedRoots('/not/in/whitelist')).toBe(false);
+  });
+
+  it('should allow subdirectories of cwd when no whitelist set', () => {
+    const cwd = process.cwd();
+    expect(isPathInAllowedRoots(resolve(cwd, 'subdir'))).toBe(true);
   });
 });
