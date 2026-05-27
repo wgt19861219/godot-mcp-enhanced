@@ -523,6 +523,12 @@ func _is_safe_value(val: Variant) -> bool:
 		return true
 	if val is Plane or val is AABB:
 		return true
+	if val is PackedByteArray or val is PackedInt32Array or val is PackedInt64Array:
+		return true
+	if val is PackedFloat32Array or val is PackedFloat64Array or val is PackedStringArray:
+		return true
+	if val is PackedVector2Array or val is PackedVector3Array or val is PackedColorArray:
+		return true
 	if val is Array:
 		for item in val:
 			if not _is_safe_value(item):

@@ -405,6 +405,7 @@ func _find_node(root: Node, path: String) -> Node:
 		return root
 	return root.get_node_or_null(p)
 
+# SYNC: identical copy in scene_commands.gd — keep both in sync
 func _property_exists_and_type_ok(obj: Object, prop_name: String, val) -> bool:
 	var found = false
 	for p in obj.get_property_list():

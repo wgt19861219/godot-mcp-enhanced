@@ -121,6 +121,7 @@ func _find_node_by_path(root: Node, path: String) -> Node:
 		return root.get_node(clean)
 	return null
 
+# SYNC: identical copy in ui_commands.gd — keep both in sync
 func _property_exists_and_type_ok(obj: Object, prop_name: String, val) -> bool:
 	var found = false
 	for p in obj.get_property_list():
