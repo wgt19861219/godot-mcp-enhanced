@@ -26,6 +26,10 @@ var _secret_file: String = ""
 var _crypto: Crypto = null
 var _peer_last_activity: Dictionary = {}
 
+var _recording: bool = false
+var _recorded_events: Array = []
+var _record_start_time: int = 0
+
 const BLOCKED_PROPERTIES := [
 	"script", "owner", "process_mode", "process_priority", "process_input",
 	"process_unhandled_input", "process_unhandled_key_input", "process_internal",
@@ -328,6 +332,10 @@ func _handle_message(raw: String) -> String:
 			result = _cmd_get_performance()
 		"get_viewport_info":
 			result = _cmd_get_viewport_info()
+		"recording.start":
+			result = _cmd_recording_start()
+		"recording.stop":
+			result = _cmd_recording_stop()
 		_:
 			error = {"code": -32601, "message": "Method not found: %s" % method}
 
@@ -681,3 +689,36 @@ func _cmd_get_viewport_info() -> Dictionary:
 	return {
 		"size": {"x": vp.get_visible_rect().size.x, "y": vp.get_visible_rect().size.y},
 	}
+
+
+# ─── Recording ───────────────────────────────────────────────────────────────
+
+func _cmd_recording_start() -> Variant:
+	if _recording:
+		return {"error": {"code": -1, "message": "Recording already in progress"}}
+	_recording = true
+	_recorded_events = []
+	_record_start_time = Time.get_ticks_msec()
+	return {"status": "recording", "message": "Input events are being captured"}
+
+
+func _cmd_recording_stop() -> Variant:
+	if not _recording:
+		return {"error": {"code": -1, "message": "No recording in progress"}}
+	_recording = false
+	var duration_ms: int = Time.get_ticks_msec() - _record_start_time
+	var events: Array = _recorded_events.duplicate()
+	_recorded_events = []
+	return {"version": 1, "duration_ms": duration_ms, "events": events, "event_count": events.size()}
+
+
+func _input(event: InputEvent) -> void:
+	if not _recording:
+		return
+	var time_ms: int = Time.get_ticks_msec() - _record_start_time
+	if event is InputEventKey:
+		_recorded_events.append({"type": "key", "keycode": event.keycode, "pressed": event.pressed, "shift": event.shift_pressed, "ctrl": event.ctrl_pressed, "alt": event.alt_pressed, "time_ms": time_ms})
+	elif event is InputEventMouseButton:
+		_recorded_events.append({"type": "mouse_click", "position": [event.position.x, event.position.y], "button": event.button_index, "pressed": event.pressed, "time_ms": time_ms})
+	elif event is InputEventMouseMotion:
+		_recorded_events.append({"type": "mouse_move", "position": [event.position.x, event.position.y], "time_ms": time_ms})

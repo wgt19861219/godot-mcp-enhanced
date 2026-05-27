@@ -3,6 +3,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath, resolveWithinRoot } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape } from './shared.js';
+import { sendToBridge } from './game-bridge.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -61,81 +62,7 @@ function validateEventsJson(eventsJson: string): { version: number; duration_ms:
   return obj as { version: number; duration_ms: number; events: unknown[] };
 }
 
-// ─── GDScript Generators ───────────────────────────────────────────────────
-
-export function genRecordingStartScript(): string {
-  // Registers an _input callback on the Bridge autoload to capture events.
-  // In headless mode (no Bridge), this will fail — expected behavior.
-  return `${SCENE_TREE_HEADER}
-
-var _mcp_recording: bool = false
-var _mcp_recorded_events: Array = []
-var _mcp_record_start_time: int = 0
-
-func _mcp_recording_input(event: InputEvent) -> void:
-\tif not _mcp_recording:
-\t\treturn
-\tvar time_ms: int = Time.get_ticks_msec() - _mcp_record_start_time
-\tif event is InputEventKey:
-\t\t_mcp_recorded_events.append({
-\t\t\t"type": "key",
-\t\t\t"keycode": event.keycode,
-\t\t\t"pressed": event.pressed,
-\t\t\t"shift": event.shift_pressed,
-\t\t\t"ctrl": event.ctrl_pressed,
-\t\t\t"alt": event.alt_pressed,
-\t\t\t"time_ms": time_ms
-\t\t})
-\telif event is InputEventMouseButton:
-\t\t_mcp_recorded_events.append({
-\t\t\t"type": "mouse_click",
-\t\t\t"position": [event.position.x, event.position.y],
-\t\t\t"button": event.button_index,
-\t\t\t"pressed": event.pressed,
-\t\t\t"time_ms": time_ms
-\t\t})
-\telif event is InputEventMouseMotion:
-\t\t_mcp_recorded_events.append({
-\t\t\t"type": "mouse_move",
-\t\t\t"position": [event.position.x, event.position.y],
-\t\t\t"time_ms": time_ms
-\t\t})
-
-func _initialize():
-\t_mcp_load_main_scene()
-\t_mcp_recording = true
-\t_mcp_recorded_events = []
-\t_mcp_record_start_time = Time.get_ticks_msec()
-\t_mcp_output("recording_started", {"status": "recording", "message": "Input events are being captured"})
-\t_mcp_done()
-`;
-}
-
-export function genRecordingStopScript(): string {
-  return `${SCENE_TREE_HEADER}
-
-var _mcp_recorded_events: Array = []
-var _mcp_record_start_time: int = 0
-
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar events: Array = []
-\tvar duration_ms: int = 0
-\tvar bridge = _mcp_get_node("/root/MCPBridge")
-\tif bridge != null:
-\t\tevents = bridge.get_meta("_mcp_recorded_events", [])
-\t\t_mcp_record_start_time = int(bridge.get_meta("_mcp_record_start_time", 0))
-\t\tbridge.set_meta("_mcp_recording", false)
-\t\tduration_ms = Time.get_ticks_msec() - _mcp_record_start_time if _mcp_record_start_time > 0 else 0
-\t_mcp_output("recording_stopped", {
-\t\t"version": 1,
-\t\t"duration_ms": duration_ms,
-\t\t"events": events,
-\t\t"event_count": events.size()
-\t})
-\t_mcp_done()
-`;
-}
+// ─── GDScript Generators (save/load still use SceneTree) ────────────────────
 
 export function genRecordingSaveScript(fileName: string, eventsJsonEscaped: string): string {
   return `${SCENE_TREE_HEADER}
@@ -340,22 +267,43 @@ export async function handleTool(
     const projectPath = validatePath(args.project_path as string);
     const godot = await ctx.findGodot();
     const loadAutoloads = args.load_autoloads !== false;
-    let script: string;
 
     switch (name) {
       case 'recording_start': {
         if (!loadAutoloads) {
-          return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, 'recording_start requires Game Bridge (load_autoloads=true). Input capture is not available in headless mode.');
+          return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '录制功能需要 Game Bridge 连接，headless 模式不支持。');
         }
-        script = genRecordingStartScript();
-        break;
+        if (ctx.projectDir) {
+          const { setBridgeProjectDir } = await import('./game-bridge.js');
+          setBridgeProjectDir(ctx.projectDir);
+        }
+        const resp = await sendToBridge('recording.start', {}, 5000);
+        if (resp.error) {
+          if (resp.error.message?.includes('Method not found')) {
+            return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '请更新项目中的 MCP Bridge 脚本以支持录制功能。运行 install-plugin 获取最新版本。');
+          }
+          return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, resp.error.message);
+        }
+        const result = resp.result as Record<string, unknown>;
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
       }
       case 'recording_stop': {
         if (!loadAutoloads) {
-          return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, 'recording_stop requires Game Bridge (load_autoloads=true). Recording state is not available in headless mode.');
+          return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '录制功能需要 Game Bridge 连接，headless 模式不支持。');
         }
-        script = genRecordingStopScript();
-        break;
+        if (ctx.projectDir) {
+          const { setBridgeProjectDir } = await import('./game-bridge.js');
+          setBridgeProjectDir(ctx.projectDir);
+        }
+        const resp = await sendToBridge('recording.stop', {}, 5000);
+        if (resp.error) {
+          if (resp.error.message?.includes('Method not found')) {
+            return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '请更新项目中的 MCP Bridge 脚本以支持录制功能。运行 install-plugin 获取最新版本。');
+          }
+          return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, resp.error.message);
+        }
+        const result = resp.result as Record<string, unknown>;
+        return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
       }
       case 'recording_save': {
         const eventsJson = args.events_json as string;
@@ -372,8 +320,20 @@ export async function handleTool(
         const fileName = generateRecordingFileName();
         resolveWithinRoot(projectPath, `recordings/${fileName}`);
         const escapedJson = gdEscape(eventsJson);
-        script = genRecordingSaveScript(fileName, escapedJson);
-        break;
+        const script = genRecordingSaveScript(fileName, escapedJson);
+        const result = await executeGdscript({
+          godotPath: godot,
+          projectPath,
+          code: script,
+          timeout: 30,
+          loadAutoloads,
+        });
+        const errorMapper = (msg: string) => {
+          if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;
+          if (msg.includes('Invalid JSON') || msg.includes('Invalid')) return ERROR_CODES.INVALID_RECORDING_FORMAT;
+          return ERROR_CODES.SCRIPT_EXEC_FAILED;
+        };
+        return parseGdscriptResult(result, [], errorMapper);
       }
       case 'recording_load': {
         const rawName = args.file_name as string;
@@ -388,8 +348,20 @@ export async function handleTool(
         }
         // Path safety: validate resolved path stays within project
         resolveWithinRoot(projectPath, `recordings/${safeName}`);
-        script = genRecordingLoadScript(safeName);
-        break;
+        const script = genRecordingLoadScript(safeName);
+        const result = await executeGdscript({
+          godotPath: godot,
+          projectPath,
+          code: script,
+          timeout: 30,
+          loadAutoloads,
+        });
+        const errorMapper = (msg: string) => {
+          if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;
+          if (msg.includes('Invalid JSON') || msg.includes('Invalid')) return ERROR_CODES.INVALID_RECORDING_FORMAT;
+          return ERROR_CODES.SCRIPT_EXEC_FAILED;
+        };
+        return parseGdscriptResult(result, [], errorMapper);
       }
       case 'recording_play': {
         const eventsJson = args.events_json as string;
@@ -406,32 +378,34 @@ export async function handleTool(
         }
         const speed = typeof args.speed === 'number' && args.speed > 0 ? args.speed : 1.0;
         const escapedJson = gdEscape(eventsJson);
-        script = genRecordingPlayScript(escapedJson, speed);
-        break;
+        const script = genRecordingPlayScript(escapedJson, speed);
+        const result = await executeGdscript({
+          godotPath: godot,
+          projectPath,
+          code: script,
+          timeout: 30,
+          loadAutoloads,
+        });
+        const errorMapper = (msg: string) => {
+          if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;
+          if (msg.includes('Invalid JSON') || msg.includes('Invalid')) return ERROR_CODES.INVALID_RECORDING_FORMAT;
+          return ERROR_CODES.SCRIPT_EXEC_FAILED;
+        };
+        return parseGdscriptResult(result, [], errorMapper);
       }
       default:
         return null;
     }
-
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout: 30,
-      loadAutoloads,
-    });
-
-    const errorMapper = (msg: string) => {
-      if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;
-      if (msg.includes('Invalid JSON') || msg.includes('Invalid')) return ERROR_CODES.INVALID_RECORDING_FORMAT;
-      return ERROR_CODES.SCRIPT_EXEC_FAILED;
-    };
-
-    return parseGdscriptResult(result, [], errorMapper);
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes('INVALID_FILE_NAME')) return opsErrorResult('INVALID_FILE_NAME', msg);
     if (msg.includes('traversal')) return opsErrorResult('INVALID_FILE_NAME', msg);
+    if (msg.includes('ECONNREFUSED')) {
+      return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, 'Cannot connect to MCP Bridge. Is the game running with the bridge autoload installed?');
+    }
+    if (msg.includes('Bridge secret not found')) {
+      return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, 'Cannot connect to MCP Bridge. Is the game running with the bridge autoload installed?');
+    }
     return opsErrorResult('SCRIPT_EXEC_FAILED', msg);
   }
 }

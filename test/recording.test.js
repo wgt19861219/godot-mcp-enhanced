@@ -4,8 +4,6 @@ import {
   getToolDefinitions,
   sanitizeRecordingFileName,
   generateRecordingFileName,
-  genRecordingStartScript,
-  genRecordingStopScript,
   genRecordingSaveScript,
   genRecordingLoadScript,
   genRecordingPlayScript,
@@ -77,37 +75,6 @@ describe('generateRecordingFileName', () => {
   it('passes sanitizeRecordingFileName', () => {
     const name = generateRecordingFileName();
     expect(() => sanitizeRecordingFileName(name)).not.toThrow();
-  });
-});
-
-// ─── genRecordingStartScript ────────────────────────────────────────────────
-
-describe('genRecordingStartScript', () => {
-  it('generates GDScript with recording state', () => {
-    const script = genRecordingStartScript();
-    expect(script.includes('_mcp_recording = true')).toBeTruthy();
-    expect(script.includes('_mcp_recorded_events')).toBeTruthy();
-    expect(script.includes('_mcp_output("recording_started"')).toBeTruthy();
-    expect(script.includes('extends SceneTree')).toBeTruthy();
-  });
-
-  it('includes input event handlers for key and mouse', () => {
-    const script = genRecordingStartScript();
-    expect(script.includes('InputEventKey')).toBeTruthy();
-    expect(script.includes('InputEventMouseButton')).toBeTruthy();
-    expect(script.includes('InputEventMouseMotion')).toBeTruthy();
-  });
-});
-
-// ─── genRecordingStopScript ─────────────────────────────────────────────────
-
-describe('genRecordingStopScript', () => {
-  it('generates GDScript that outputs recording data', () => {
-    const script = genRecordingStopScript();
-    expect(script.includes('_mcp_output("recording_stopped"')).toBeTruthy();
-    expect(script.includes('"version"')).toBeTruthy();
-    expect(script.includes('"events"')).toBeTruthy();
-    expect(script.includes('extends SceneTree')).toBeTruthy();
   });
 });
 
@@ -226,5 +193,21 @@ describe('getToolDefinitions', () => {
     const play = defs.find(d => d.name === 'recording_play');
     expect(play.inputSchema.properties.speed).toBeTruthy();
     expect(play.inputSchema.required.includes('speed')).toBeFalsy();
+  });
+});
+
+// ─── Bridge-mode recording start/stop ───────────────────────────────────────
+
+describe('recording_start/stop use Bridge', () => {
+  it('recording_start handler calls sendToBridge with recording.start method', async () => {
+    // Verify that the module no longer exports genRecordingStartScript
+    const mod = await import('../src/tools/recording.js');
+    expect(mod.genRecordingStartScript).toBeUndefined();
+  });
+
+  it('recording_stop handler calls sendToBridge with recording.stop method', async () => {
+    // Verify that the module no longer exports genRecordingStopScript
+    const mod = await import('../src/tools/recording.js');
+    expect(mod.genRecordingStopScript).toBeUndefined();
   });
 });
