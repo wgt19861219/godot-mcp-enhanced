@@ -10,7 +10,7 @@ import { findInstanceNode, detachInstance, nodePathToNameAndParent } from '../ts
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult, sanitizeResPath } from './shared.js';
 import { normalizeNodePath, gdEscape, toSnakeCase } from './shared.js';
-import { forceKillTree, acquireProcessSlot } from '../core/process-state.js';
+import { forceKillTree, acquireProcessSlot, setProcessBusy } from '../core/process-state.js';
 
 const TOOL_NAMES = [
   'read_scene',
@@ -460,6 +460,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const treeScript = join(scriptsDir, 'query_scene_tree.gd');
 
       if (!existsSync(treeScript)) {
+        setProcessBusy(false);
         return textResult(`Error: query_scene_tree.gd not found at ${treeScript}`);
       }
 
@@ -484,6 +485,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!settled && !proc.killed) {
             settled = true;
             forceKillTree(proc);
+            setProcessBusy(false);
             resolve(textResult('query_scene_tree timed out after 60s'));
           }
         }, 60000);
@@ -492,6 +494,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          setProcessBusy(false);
           const result = parseMcpScriptOutput(out, code);
           resolve(textResult(JSON.stringify(result, null, 2)));
         });
@@ -500,6 +503,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          setProcessBusy(false);
           resolve(textResult(`Error: ${err.message}`));
         });
       });
@@ -513,6 +517,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const inspectScript = join(scriptsDir, 'inspect_node.gd');
 
       if (!existsSync(inspectScript)) {
+        setProcessBusy(false);
         return textResult(`Error: inspect_node.gd not found at ${inspectScript}`);
       }
 
@@ -540,6 +545,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!settled && !proc.killed) {
             settled = true;
             forceKillTree(proc);
+            setProcessBusy(false);
             resolve(textResult('inspect_node timed out after 60s'));
           }
         }, 60000);
@@ -548,6 +554,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          setProcessBusy(false);
           const result = parseMcpScriptOutput(out, code);
           resolve(textResult(JSON.stringify(result, null, 2)));
         });
@@ -556,6 +563,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          setProcessBusy(false);
           resolve(textResult(`Error: ${err.message}`));
         });
       });

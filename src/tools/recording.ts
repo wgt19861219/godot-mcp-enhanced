@@ -3,7 +3,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { validatePath, resolveWithinRoot } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape } from './shared.js';
-import { sendToBridge } from './game-bridge.js';
+import { sendToBridge, setBridgeProjectDir } from './game-bridge.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -274,7 +274,6 @@ export async function handleTool(
           return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '录制功能需要 Game Bridge 连接，headless 模式不支持。');
         }
         if (ctx.projectDir) {
-          const { setBridgeProjectDir } = await import('./game-bridge.js');
           setBridgeProjectDir(ctx.projectDir);
         }
         const resp = await sendToBridge('recording.start', {}, 5000);
@@ -292,7 +291,6 @@ export async function handleTool(
           return opsErrorResult(ERROR_CODES.BRIDGE_NOT_CONNECTED, '录制功能需要 Game Bridge 连接，headless 模式不支持。');
         }
         if (ctx.projectDir) {
-          const { setBridgeProjectDir } = await import('./game-bridge.js');
           setBridgeProjectDir(ctx.projectDir);
         }
         const resp = await sendToBridge('recording.stop', {}, 5000);
