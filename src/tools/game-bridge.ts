@@ -34,6 +34,7 @@ const SECRET_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 let _socket: Socket | null = null;
 let _socketAuthenticated = false;
 let _socketBuffer = '';
+let _connectionLock: Promise<Socket> | null = null;
 
 /** Find the bridge secret file — prefer project .godot dir, fallback to tmpdir. */
 function findBridgeSecretPath(): string {
@@ -94,16 +95,13 @@ function _invalidateSocket(): void {
   _socketBuffer = '';
 }
 
-/** Ensure we have an authenticated persistent connection. */
-function _ensureConnection(timeout: number): Promise<Socket> {
-  if (_socket && _socketAuthenticated && !_socket.destroyed && _socket.writable) {
-    return Promise.resolve(_socket);
-  }
+/** Perform the actual TCP connection and auth handshake. */
+async function _doConnect(timeout: number): Promise<Socket> {
   _invalidateSocket();
 
   const secret = readBridgeSecret();
   if (!secret) {
-    return Promise.reject(new Error('Bridge secret not found. Ensure the game is running with the MCP Bridge autoload.'));
+    throw new Error('Bridge secret not found. Ensure the game is running with the MCP Bridge autoload.');
   }
 
   return new Promise((resolve, reject) => {
@@ -170,12 +168,30 @@ function _ensureConnection(timeout: number): Promise<Socket> {
   });
 }
 
+/** Ensure we have an authenticated persistent connection, serializing concurrent attempts. */
+function _ensureConnection(timeout: number): Promise<Socket> {
+  if (_socket && _socketAuthenticated && !_socket.destroyed && _socket.writable) {
+    return Promise.resolve(_socket);
+  }
+  if (_connectionLock) return _connectionLock;
+  _connectionLock = _doConnect(timeout)
+    .then(sock => {
+      if (_socket !== sock || !_socketAuthenticated) {
+        throw new Error('Connection invalidated during setup');
+      }
+      return sock;
+    })
+    .finally(() => { _connectionLock = null; });
+  return _connectionLock;
+}
+
 /** Set the project directory for bridge secret lookup. Invalidates all cached bridge state. */
 export function setBridgeProjectDir(projectDir: string): void {
   if (_projectDir === projectDir) return;
   _projectDir = projectDir;
   _cachedSecretPath = null;
   _cachedSecret = null;
+  _connectionLock = null;
   _invalidateSocket();
 }
 
