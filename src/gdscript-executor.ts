@@ -139,7 +139,7 @@ function writeSessionFile(content: string, ext: string, sessionDir: string): str
  * Detect if the code is a "full class" (contains `extends`)
  * or a "snippet" that needs auto-wrapping.
  */
-function isFullClass(code: string): boolean {
+export function isFullClass(code: string): boolean {
   // Match `extends` at the start of a line (ignoring whitespace and comments)
   return /^\s*extends\s+/m.test(code);
 }
@@ -149,7 +149,7 @@ function isFullClass(code: string): boolean {
  * Splits user code into declarations (class-level) and statements (inside _initialize).
  * This allows func/var/const definitions to work correctly at class scope.
  */
-function wrapSnippet(code: string, resultMarker = MARKER_RESULT): string {
+export function wrapSnippet(code: string, resultMarker = MARKER_RESULT): string {
   const lines = code.split('\n');
   const declarationLines: string[] = [];
   const statementLines: string[] = [];
@@ -290,7 +290,7 @@ function wrapSnippet(code: string, resultMarker = MARKER_RESULT): string {
  * Wrap a snippet as `extends Node` for autoload mode.
  * The loader scene instantiates this via .new(), so it must be a Node subclass.
  */
-function wrapSnippetAsNode(code: string, resultMarker = MARKER_RESULT): string {
+export function wrapSnippetAsNode(code: string, resultMarker = MARKER_RESULT): string {
   const lines = code.split('\n');
   const declarationLines: string[] = [];
   const statementLines: string[] = [];
@@ -375,7 +375,7 @@ function wrapSnippetAsNode(code: string, resultMarker = MARKER_RESULT): string {
 /**
  * For full class mode, inject helper functions and result reporting.
  */
-function injectHelpers(code: string): string {
+export function injectHelpers(code: string): string {
   // Add helper variables at the top (after extends line)
   const lines = code.split('\n');
   const extendsIdx = lines.findIndex(l => /^\s*extends\s+/.test(l));
@@ -694,7 +694,7 @@ function extractCompileError(raw: string): string {
  * Create a minimal .tscn scene that loads with autoload context.
  * The scene runs the user's script from _ready().
  */
-function createAutoloadLoaderScene(loaderScriptPath: string): string {
+export function createAutoloadLoaderScene(loaderScriptPath: string): string {
   const loaderPathRes = loaderScriptPath.replace(/\\/g, '/').replace(/"/g, '\\"');
   return [
     '[gd_scene load_steps=2 format=3]',
@@ -711,7 +711,7 @@ function createAutoloadLoaderScene(loaderScriptPath: string): string {
  * Create the loader GDScript that loads with autoload context.
  * In _ready(), all autoloads are available. It then loads and runs the user script.
  */
-function createAutoloadLoaderScript(userScriptPath: string): string {
+export function createAutoloadLoaderScript(userScriptPath: string): string {
   const pathRes = userScriptPath.replace(/\\/g, '/').replace(/"/g, '\\"');
   return [
     'extends Node',
