@@ -167,7 +167,17 @@ export function validateParamType(v: unknown): 'number' | 'string' | 'boolean' |
 
 // ─── Value conversion helper ───────────────────────────────────────────────
 
-function valueToGdscript(value: unknown, forShader = false): string {
+/**
+ * Parse a JS value into a GDScript literal.
+ * - number  → "3.14"
+ * - boolean → "true" / "false"
+ * - null/undefined → "null"
+ * - string  → '"escaped"' (or 'load("res://...")' when forShader=true and value starts with res://)
+ * - array[2] → "Vector2(x, y)"
+ * - array[3] → "Vector3(x, y, z)"
+ * - array[4] → "Color(r, g, b, a)"
+ */
+export function parseMaterialParam(value: unknown, forShader = false): string {
   if (value === null || value === undefined) return 'null';
   if (typeof value === 'number') return String(value);
   if (typeof value === 'boolean') return value ? 'true' : 'false';
@@ -256,8 +266,8 @@ export function genMaterialSetParamsScript(
   nodePath: string, materialIndex: number, params: Record<string, unknown>
 ): string {
   const paramLines = Object.entries(params).map(([key, value]) => {
-    const gdShaderValue = valueToGdscript(value, true);
-    const gdValue = valueToGdscript(value, false);
+    const gdShaderValue = parseMaterialParam(value, true);
+    const gdValue = parseMaterialParam(value, false);
     return `\tif is_shader:\n\t\tmat.set_shader_parameter("${gdEscape(key)}", ${gdShaderValue})\n\telse:\n\t\tmat.set("${gdEscape(key)}", ${gdValue})`;
   }).join('\n');
   return `${SCENE_TREE_HEADER}
