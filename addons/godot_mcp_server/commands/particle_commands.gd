@@ -67,6 +67,8 @@ func handle_particles_set_emission(params: Dictionary) -> Dictionary:
 		}
 		if shape_map.has(emission_shape):
 			mat.emission_shape = shape_map[emission_shape]
+		else:
+			return {"error": {"code": -32004, "message": "Invalid emission_shape: " + emission_shape + ". Supported: point, sphere, box, ring"}}
 		var radius = params.get("emission_sphere_radius")
 		if radius != null:
 			mat.emission_sphere_radius = float(radius)

@@ -331,7 +331,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             try {
               const wrappedCode = wrapAssertionCode(a.gdscript, desc);
               const assertResult = await executeGdscript({
-                godotPath: godot, projectPath, code: wrappedCode, timeout, loadAutoloads,
+                godotPath: godot, projectPath, code: wrappedCode, timeout: Math.min(timeout, 15), loadAutoloads,
               });
 
               if (!assertResult.compile_success) {
