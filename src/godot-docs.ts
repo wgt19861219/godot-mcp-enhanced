@@ -89,7 +89,7 @@ interface ApiData {
   };
 }
 
-let classMap: Map<string, RawClass> = new Map();
+const classMap: Map<string, RawClass> = new Map();
 let initialized = false;
 let docsVersion: string | null = null;
 
@@ -185,11 +185,7 @@ export function initDocs(docsPath: string): void {
     data = cachedApiData;
   } else {
     const raw = readFileSync(docsPath, 'utf-8');
-    try {
-      data = JSON.parse(raw);
-    } catch (err) {
-      throw err;
-    }
+    data = JSON.parse(raw);
     cachedApiData = data;
     cachedApiPath = docsPath;
   }

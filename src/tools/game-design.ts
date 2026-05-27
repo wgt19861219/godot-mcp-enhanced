@@ -264,7 +264,6 @@ export function chainOfVerification(verdict: string, context: string): CoVResult
 // ─── MCP Tool Registration ────────────────────────────────────────────────────
 
 import { readFileSync } from "fs";
-import { join } from "path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolContext, ToolResult } from "../types.js";
 import { validatePath, resolveWithinRoot } from "../helpers.js";

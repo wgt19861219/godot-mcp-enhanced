@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { join, dirname, resolve as pathResolve } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { execFile } from 'child_process';

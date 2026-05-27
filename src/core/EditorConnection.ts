@@ -249,7 +249,7 @@ export class EditorConnection {
 
       // Use id=0 for auth (matches plugin expectation)
       this.pending.set(AUTH_REQUEST_ID, {
-        resolve: (result: unknown) => {
+        resolve: (_result: unknown) => {
           if (settled) return;
           settled = true;
           clearTimeout(authTimeout);

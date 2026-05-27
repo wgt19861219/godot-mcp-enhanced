@@ -90,7 +90,7 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   {
     test: (msg) => /Index out of bounds/.test(msg),
     type: 'runtime_error',
-    suggestion: (msg) => {
+    suggestion: (_msg) => {
       return `Array/Dictionary index out of bounds. Verify the index is within valid range: 0 <= index < size(). Add bounds checking before access.`;
     },
   },
@@ -150,7 +150,7 @@ function parseLocation(lines: string[], startIdx: number): ParsedLocation {
     const line = lines[i].trim();
 
     // at: res://path/to/script.gd:123
-    const atMatch = line.match(/^(?:at|in):\s*(.+?)(?:\:(\d+))?$/);
+    const atMatch = line.match(/^(?:at|in):\s*(.+?)(?::(\d+))?$/);
     if (atMatch) {
       result.file = atMatch[1].trim();
       if (atMatch[2]) result.line = parseInt(atMatch[2], 10);

@@ -4,7 +4,7 @@ import { validatePath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { normalizeNodePath, gdEscape } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
-import { ANIM_ERROR_CODES, TRACK_TYPES, ensureNumber, valueToGd, animErrorMapper } from './animation-shared.js';
+import { TRACK_TYPES, ensureNumber, valueToGd, animErrorMapper } from './animation-shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 

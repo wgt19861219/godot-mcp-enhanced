@@ -267,7 +267,7 @@ export function genUiSetThemeScript(
   themePath?: string,
   params?: Record<string, unknown>,
 ): string {
-  let actionBlock = '';
+  let actionBlock: string;
 
   switch (action) {
     case 'create':
@@ -933,7 +933,7 @@ export function genThemeCreateScript(
   sourceNodePath?: string,
   savePath?: string,
 ): string {
-  let actionBlock = '';
+  let actionBlock: string;
 
   if (action === 'create') {
     actionBlock = `

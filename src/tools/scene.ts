@@ -300,7 +300,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       } else if (name === 'add_node') {
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         const safeType = /^[A-Za-z0-9_]+$/;
-        const unsafeName = /[\[\]\"\/:\\]/;
+        const unsafeName = /[\]["/:\\]/;
         if (!safeType.test(String(args.node_type ?? ''))) {
           return textResult(`Error: node_type contains invalid characters: "${args.node_type}"`);
         }
@@ -381,7 +381,6 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       // 输入验证: 防止 .tscn 模板注入
       const safeType = /^[A-Za-z0-9_]+$/;
-      const unsafeName = /[\[\]\"\/:\\]/;
       if (!safeType.test(rootNodeType)) {
         return textResult(`Error: root_node_type contains invalid characters: "${rootNodeType}"`);
       }
@@ -585,7 +584,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       // Input validation for each node
       const safeType = /^[A-Za-z0-9_]+$/;
-      const unsafeName = /[\[\]\"\/:\\]/;
+      const unsafeName = /[\]["/:\\]/;
       const MAX_BATCH_NODES = 100;
       if (nodes.length > MAX_BATCH_NODES) {
         return textResult(`Error: Too many nodes (${nodes.length}). Maximum: ${MAX_BATCH_NODES}`);
@@ -822,7 +821,7 @@ async function handleInstanceScene(args: Record<string, unknown>, ctx: ToolConte
   const instancePath = String(args.instance_path);
 
   // 校验 instance_path 后缀 + 路径安全
-  if (!instancePath.endsWith('.tscn') || !/^res:\/\/[a-zA-Z0-9_\-\/\.]+\.tscn$/.test(instancePath)) {
+  if (!instancePath.endsWith('.tscn') || !/^res:\/\/[a-zA-Z0-9_\-/.]+\.tscn$/.test(instancePath)) {
     return opsErrorResult('INVALID_PARAM', 'instance_path must be a valid res:// path ending in .tscn');
   }
 

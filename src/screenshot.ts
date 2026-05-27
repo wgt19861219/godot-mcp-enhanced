@@ -16,9 +16,8 @@
 
 import { spawn } from 'child_process';
 import { existsSync, statSync, mkdirSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import * as os from 'os';
 import { forceKillTree } from './core/process-state.js';
 import { buildSafeEnv } from './helpers.js';
 

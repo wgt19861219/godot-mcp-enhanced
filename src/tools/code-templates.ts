@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolResult } from '../types.js';
 import { textResult as okResult, errorResult } from '../types.js';
-import { validatePath, validateProjectRoot, resolveWithinRoot, ensureDir } from '../helpers.js';
+import { validateProjectRoot, resolveWithinRoot, ensureDir } from '../helpers.js';
 
 // ─── Code Template Types ────────────────────────────────────────────────────
 
@@ -330,7 +330,7 @@ interface UserTemplateFile {
   variables?: TemplateParam[];
 }
 
-function validateUserTemplate(raw: unknown, filePath: string): UserTemplateFile | null {
+function validateUserTemplate(raw: unknown, _filePath: string): UserTemplateFile | null {
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Record<string, unknown>;
   if (typeof t.id !== 'string' || !t.id) return null;

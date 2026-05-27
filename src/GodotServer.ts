@@ -228,8 +228,7 @@ export class GodotServer {
           if (!pending) {
             return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }] };
           }
-          // S-1: Build operation summary for user visibility
-          const summaryArgs = { ...pending.args };
+          // S-1: Execute confirmed tool
           log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
           // Re-check ReadOnlyGuard for the confirmed tool
           const confirmedToolGuardResult = this.readOnlyGuard.check(pending.toolName);

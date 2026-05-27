@@ -5,7 +5,7 @@ import { textResult } from '../types.js';
 import { validatePath, resolveWithinRoot } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
-import { SCENE_TREE_HEADER, gdEscape, wrapAssertionCode } from './shared.js';
+import { SCENE_TREE_HEADER, wrapAssertionCode } from './shared.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 

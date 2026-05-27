@@ -131,7 +131,6 @@ async function handleTestAssert(args: Record<string, unknown>, godot: string, pr
   const assertionType = gdEscape(rawAssertionType);
   const path = gdEscape((args.path as string) || '');
   const property = gdEscape((args.property as string) || '');
-  const expectedStr = JSON.stringify(args.expected);
   const signalName = gdEscape((args.signal as string) || '');
   const targetPath = gdEscape((args.target as string) || '');
   const methodName = gdEscape((args.method as string) || '');
@@ -187,7 +186,7 @@ func _initialize():
 `;
 
   const result = await executeGdscript({ godotPath: godot, projectPath, code: script, timeout: 30 });
-  return parseGdscriptResult(result, [], (msg) => 'ASSERTION_FAILED');
+  return parseGdscriptResult(result, [], (_msg) => 'ASSERTION_FAILED');
 }
 
 const STRESS_SAFE_TYPES = new Set([
@@ -259,7 +258,7 @@ func _initialize():
 `;
 
   const result = await executeGdscript({ godotPath: godot, projectPath, code: script, timeout: 120 });
-  return parseGdscriptResult(result, [], (msg) => 'STRESS_TEST_FAILED');
+  return parseGdscriptResult(result, [], (_msg) => 'STRESS_TEST_FAILED');
 }
 
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean }> = {

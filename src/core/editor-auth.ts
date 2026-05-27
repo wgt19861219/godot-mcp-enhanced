@@ -1,5 +1,5 @@
 // src/core/editor-auth.ts
-import { readFileSync, writeFileSync, chmodSync, statSync, existsSync } from 'fs';
+import { readFileSync, chmodSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
 

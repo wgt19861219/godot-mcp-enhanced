@@ -12,14 +12,6 @@ function normalizeLines(content: string): string[] {
   return content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 }
 
-/** Find the line index of a section header matching the predicate. */
-function findSectionLine(lines: string[], predicate: (line: string) => boolean): number {
-  for (let i = 0; i < lines.length; i++) {
-    if (predicate(lines[i])) return i;
-  }
-  return -1;
-}
-
 /** Find the end of a section (next `[...]` line or end of file). Returns index of the next section start. */
 function findSectionEnd(lines: string[], startLine: number): number {
   for (let i = startLine + 1; i < lines.length; i++) {
@@ -90,7 +82,7 @@ function findNodeSectionLine(lines: string[], nodePath: string): number {
     }
 
     // Match parent — could be inline or on a property line
-    let inlineParent = getBracketAttr(trimmed, 'parent');
+    const inlineParent = getBracketAttr(trimmed, 'parent');
     if (inlineParent === targetParent) return i;
 
     // Check property lines below the header
@@ -725,7 +717,7 @@ function remapSubResourceRefs(line: string, idMap: Map<number, number>): string 
 function remapConnectionPaths(
   connections: string[],
   instanceNodeName: string,
-  tscnParent: string,
+  _tscnParent: string,
 ): string[] {
   return connections.map(line => {
     let result = line;

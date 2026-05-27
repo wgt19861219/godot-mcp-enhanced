@@ -1,5 +1,4 @@
 import { spawn } from 'child_process';
-import { join } from 'path';
 import { existsSync, writeFileSync, readFileSync } from 'fs';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';

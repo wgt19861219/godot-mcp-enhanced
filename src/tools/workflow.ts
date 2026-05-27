@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync } from 'fs';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
@@ -9,7 +9,7 @@ import { forceKillTree } from '../core/process-state.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, parseGdscriptResult, wrapAssertionCode } from './shared.js';
 import { gdEscape } from './shared.js';
-import { batchValidateScripts, type BatchValidateResult } from './validation.js';
+import { batchValidateScripts } from './validation.js';
 import { sendToBridge, setBridgeProjectDir, BRIDGE_READ_ONLY_METHODS } from './game-bridge.js';
 
 // ─── Session State helpers (file-as-memory pattern) ──────────────────────────
@@ -440,8 +440,6 @@ func _snap(node: Node, max_depth: int, depth: int) -> Dictionary:
       }
 
       const godot = await ctx.findGodot();
-      const pathSep = process.platform === 'win32' ? '\\' : '/';
-      const relOf = (absPath: string) => absPath.replace(projectPath + pathSep, '');
       const fullPaths: string[] = [];
       const missing: string[] = [];
 
