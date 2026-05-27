@@ -25,6 +25,9 @@ export const GUARDED_TOOLS = new Set([
   'remove_node',
   'execute_gdscript',
   'project_replace',
+  'write_script',
+  'save_scene',
+  'detach_instance',
 ]);
 
 export function requiresConfirmation(toolName: string): boolean {

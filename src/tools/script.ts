@@ -103,7 +103,7 @@ export function getToolDefinitions(): Tool[] {
           project_path: { type: 'string', description: 'Path to Godot project directory' },
           script_path: { type: 'string', description: 'Absolute path to the .gd file' },
           content: { type: 'string', description: 'GDScript content to write' },
-          overwrite: { type: 'boolean', description: 'Overwrite if exists (default: true)', default: true },
+          overwrite: { type: 'boolean', description: 'Overwrite if exists (default: false)', default: false },
         },
         required: ['project_path', 'script_path', 'content'],
       },
@@ -265,7 +265,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const scriptPath = args.script_path as string;
       const sp = resolveWithinRoot(validatePath(args.project_path as string), scriptPath);
       const content = args.content as string;
-      const overwrite = args.overwrite !== false; // default true
+      const overwrite = args.overwrite === true; // default false
 
       if (existsSync(sp) && !overwrite) {
         return textResult(`Error: File already exists: ${sp}. Set overwrite=true to replace it.`);

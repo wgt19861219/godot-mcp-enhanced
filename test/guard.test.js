@@ -11,8 +11,14 @@ describe('GUARDED_TOOLS', () => {
   it('includes execute_gdscript (arbitrary code execution)', () => {
     expect(GUARDED_TOOLS.has('execute_gdscript')).toBeTruthy();
   });
-  it('does NOT include write_script (unblocked for usability)', () => {
-    expect(GUARDED_TOOLS.has('write_script')).toBeFalsy();
+  it('includes write_script (file overwrite protection)', () => {
+    expect(GUARDED_TOOLS.has('write_script')).toBeTruthy();
+  });
+  it('includes save_scene (scene overwrite protection)', () => {
+    expect(GUARDED_TOOLS.has('save_scene')).toBeTruthy();
+  });
+  it('includes detach_instance (destructive scene modification)', () => {
+    expect(GUARDED_TOOLS.has('detach_instance')).toBeTruthy();
   });
   it('does NOT include edit_script (auto-validate handles safety)', () => {
     expect(GUARDED_TOOLS.has('edit_script')).toBeFalsy();
@@ -26,8 +32,8 @@ describe('requiresConfirmation', () => {
   it('returns true for execute_gdscript (arbitrary code execution)', () => {
     expect(requiresConfirmation('execute_gdscript')).toBe(true);
   });
-  it('returns false for write_script (unblocked)', () => {
-    expect(requiresConfirmation('write_script')).toBe(false);
+  it('returns true for write_script (now guarded)', () => {
+    expect(requiresConfirmation('write_script')).toBe(true);
   });
   it('returns false for non-guarded tools', () => {
     expect(requiresConfirmation('read_scene')).toBe(false);

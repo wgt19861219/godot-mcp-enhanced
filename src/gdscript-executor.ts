@@ -360,8 +360,8 @@ function injectHelpers(code: string): string {
   const extendsIdx = lines.findIndex(l => /^\s*extends\s+/.test(l));
 
   // Skip injection if the code already declares these helpers (exclude comment lines)
-  const hasOutputsVar = code.split('\n').some(l => /^\s*var\s+_mcp_outputs\s*:/.test(l) && !l.trim().startsWith('#'));
-  const hasOutputFunc = code.split('\n').some(l => /^\s*func\s+_mcp_output\s*\(/.test(l) && !l.trim().startsWith('#'));
+  const hasOutputsVar = lines.some(l => /^\s*var\s+_mcp_outputs\s*:/.test(l) && !l.trim().startsWith('#'));
+  const hasOutputFunc = lines.some(l => /^\s*func\s+_mcp_output\s*\(/.test(l) && !l.trim().startsWith('#'));
 
   const helperLines: string[] = [''];
   if (!hasOutputsVar) {
