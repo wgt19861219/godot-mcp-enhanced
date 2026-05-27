@@ -422,7 +422,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           return textResult(`Error: project.godot not found at ${configPath}`);
         }
 
-        const config = readFileSync(configPath, 'utf-8');
+        let config = readFileSync(configPath, 'utf-8');
         if (config.includes(AUTOLOAD_KEY)) {
           return textResult(`MCP Bridge autoload already registered. Script copied to ${destScript}.`);
         }
@@ -455,7 +455,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           return textResult(`Error: project.godot not found at ${configPath}`);
         }
 
-        const config = readFileSync(configPath, 'utf-8');
+        let config = readFileSync(configPath, 'utf-8');
         if (!config.includes(AUTOLOAD_KEY)) {
           return textResult('MCP Bridge autoload not found in project.godot.');
         }
