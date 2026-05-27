@@ -237,7 +237,7 @@ func _initialize():
 \t\t\t_peak = _mem
 \t\t_n.queue_free()
 \tfor _f in range(3):
-		await get_tree().process_frame
+\t\tawait get_tree().process_frame
 \tvar _obj_after = Performance.get_monitor(Performance.OBJECT_COUNT)
 \tvar _mem_after = Performance.get_monitor(Performance.MEMORY_STATIC)
 \tvar _obj_leaked = (_obj_after - _obj_before) > _iters * 0.1
