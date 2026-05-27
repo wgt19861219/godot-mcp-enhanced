@@ -23,6 +23,7 @@
   "scripts": {
     "install-plugin": "node scripts/install-plugin.js",
     "generate-docs": "node scripts/generate-doc-db.js",
+    "lint": "eslint src/",
     "build": "tsc && node -e \"const fs=require('fs'),p=require('path');const src=p.join(__dirname,'src','scripts');const dst=p.join(__dirname,'build','scripts');fs.mkdirSync(dst,{recursive:true});fs.readdirSync(src).filter(f=>f.endsWith('.gd')).forEach(f=>{fs.copyFileSync(p.join(src,f),p.join(dst,f));console.log('Copied',f)})\"",
     "test": "vitest run",
     "test:watch": "vitest",
