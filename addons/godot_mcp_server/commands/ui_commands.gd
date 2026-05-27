@@ -106,16 +106,18 @@ func handle_ui_set_layout(params: Dictionary) -> Dictionary:
 
 	var grow_direction: String = params.get("grow_direction", "")
 	if grow_direction != "":
-		var dir_map = {
-			"both": Control.GROW_DIRECTION_BOTH,
-			"up": Control.GROW_DIRECTION_UP,
-			"down": Control.GROW_DIRECTION_DOWN,
-			"left": Control.GROW_DIRECTION_LEFT,
-			"right": Control.GROW_DIRECTION_RIGHT,
-		}
-		if dir_map.has(grow_direction):
-			ctrl.grow_horizontal = dir_map[grow_direction]
-			ctrl.grow_vertical = dir_map[grow_direction]
+		match grow_direction:
+			"both":
+				ctrl.grow_horizontal = Control.GROW_DIRECTION_BOTH
+				ctrl.grow_vertical = Control.GROW_DIRECTION_BOTH
+			"up":
+				ctrl.grow_vertical = Control.GROW_DIRECTION_BEGIN
+			"down":
+				ctrl.grow_vertical = Control.GROW_DIRECTION_END
+			"left":
+				ctrl.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+			"right":
+				ctrl.grow_horizontal = Control.GROW_DIRECTION_END
 
 	return {"result": {"node": node_path, "status": "layout_set"}}
 

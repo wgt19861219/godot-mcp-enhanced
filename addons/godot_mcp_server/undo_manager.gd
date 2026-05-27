@@ -16,22 +16,14 @@ func create_action(request_id: int, do_methods: Array, undo_methods: Array) -> v
 
 
 func _add_method(undo_redo: UndoRedo, mode: String, target: Object, method: String, args: Array) -> void:
+	# Godot 4.3+: add_do_method/add_undo_method only accept a single Callable.
+	var cb := Callable(target, method)
+	if args.size() > 0:
+		cb = cb.bindv(args)
 	if mode == "do":
-		match args.size():
-			0: undo_redo.add_do_method(target, method)
-			1: undo_redo.add_do_method(target, method, args[0])
-			2: undo_redo.add_do_method(target, method, args[0], args[1])
-			3: undo_redo.add_do_method(target, method, args[0], args[1], args[2])
-			4: undo_redo.add_do_method(target, method, args[0], args[1], args[2], args[3])
-			_:  undo_redo.add_do_method(Callable(target, method).bindv(args))
+		undo_redo.add_do_method(cb)
 	else:
-		match args.size():
-			0: undo_redo.add_undo_method(target, method)
-			1: undo_redo.add_undo_method(target, method, args[0])
-			2: undo_redo.add_undo_method(target, method, args[0], args[1])
-			3: undo_redo.add_undo_method(target, method, args[0], args[1], args[2])
-			4: undo_redo.add_undo_method(target, method, args[0], args[1], args[2], args[3])
-			_:  undo_redo.add_undo_method(Callable(target, method).bindv(args))
+		undo_redo.add_undo_method(cb)
 
 
 func _add_method_call(undo_redo: UndoRedo, mode: String, m: Dictionary) -> void:

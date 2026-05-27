@@ -32,7 +32,8 @@ func handle_nav_create_region(params: Dictionary, request_id: int) -> Dictionary
 
 	var bake_result: bool = false
 	if params.get("bake", false):
-		bake_result = nav.bake_navigation_mesh()
+		nav.bake_navigation_mesh()
+		bake_result = nav.navigation_mesh != null
 
 	return {"result": {"node_path": str(nav.get_path()), "type": "NavigationRegion3D", "baked": bake_result}}
 

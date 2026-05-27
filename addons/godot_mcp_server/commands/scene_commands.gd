@@ -98,7 +98,7 @@ func handle_set_instance_property(params: Dictionary) -> Dictionary:
 		return {"error": {"code": -32004, "message": "BLOCKED_PROPERTY: " + prop_name}}
 	if ":" in prop_name or "/" in prop_name:
 		return {"error": {"code": -32004, "message": "BLOCKED_SUBPROPERTY: " + prop_name}}
-	if prop_name.is_empty() or (not (prop_name[0] == "_" or prop_name[0].is_alpha())):
+	if prop_name.is_empty() or (not (prop_name[0] == "_" or (prop_name[0] >= "a" and prop_name[0] <= "z") or (prop_name[0] >= "A" and prop_name[0] <= "Z"))):
 		return {"error": {"code": -32004, "message": "INVALID_PROPERTY_NAME: " + prop_name}}
 	if prop_value is Object:
 		return {"error": {"code": -32004, "message": "OBJECT_VALUES_NOT_ALLOWED"}}
