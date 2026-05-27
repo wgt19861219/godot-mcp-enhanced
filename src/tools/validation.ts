@@ -556,7 +556,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                   '--headless', '--path', projectPath,
                   '--script', treeScript,
                   JSON.stringify({ scene_path: scene, max_depth: 3 }),
-                ], { stdio: ['pipe', 'pipe', 'pipe'] });
+                ], { stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
                 proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
                 proc.stderr?.on('data', (d: Buffer) => { out += d.toString(); });
                 proc.on('close', () => { if (!settled) { settled = true; resolve(out); } });

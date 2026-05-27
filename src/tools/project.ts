@@ -9,7 +9,7 @@ import {
   buildAutoloads, buildInputMap, buildPhysics, buildLayerNames, buildMcpMapping,
   mergeSections, SECTION_ORDER, GODOT_MCP_RULES,
 } from './claudemd-builder.js';
-import { validatePath, requireProjectPath, resolveWithinRoot, type GodotConfig } from '../helpers.js';
+import { validatePath, requireString, requireProjectPath, resolveWithinRoot, type GodotConfig } from '../helpers.js';
 
 const TOOL_NAMES = [
   'list_projects',
@@ -104,7 +104,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
   switch (name) {
     case 'list_projects': {
-      const searchDir = validatePath(args.search_dir as string);
+      const searchDir = validatePath(requireString(args, 'search_dir'));
       const maxDepth = (args.max_depth as number) || 3;
       const projects: string[] = [];
 

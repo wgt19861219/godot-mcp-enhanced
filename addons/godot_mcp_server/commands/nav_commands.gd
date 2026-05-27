@@ -49,8 +49,9 @@ func handle_nav_bake_mesh(params: Dictionary) -> Dictionary:
 	if not (node is NavigationRegion3D):
 		return {"error": {"code": -32004, "message": "Node is not a NavigationRegion3D: " + node_path}}
 
-	var result = node.bake_navigation_mesh()
-	return {"result": {"node": node_path, "success": result, "status": "bake_completed"}}
+	node.bake_navigation_mesh()
+	var success = node.navigation_mesh != null
+	return {"result": {"node": node_path, "success": success, "status": "bake_completed"}}
 
 func handle_nav_create_agent(params: Dictionary, request_id: int) -> Dictionary:
 	var root = _get_edited_scene_root()

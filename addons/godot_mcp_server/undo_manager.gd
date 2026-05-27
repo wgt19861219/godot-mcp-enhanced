@@ -16,6 +16,9 @@ func create_action(request_id: int, do_methods: Array, undo_methods: Array) -> v
 
 
 func _add_method(undo_redo: UndoRedo, mode: String, target: Object, method: String, args: Array) -> void:
+	if target == null:
+		push_warning("undo_manager: null target for method '%s'" % method)
+		return
 	# Godot 4.3+: add_do_method/add_undo_method only accept a single Callable.
 	var cb := Callable(target, method)
 	if args.size() > 0:

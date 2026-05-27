@@ -100,7 +100,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
     case 'analyze_screenshot': {
       let imagePath = args.image_path as string | undefined;
-      const projectPathRaw = args.project_path as string | undefined;
+      const projectPathRaw = typeof args.project_path === 'string' ? args.project_path : undefined;
       const projectPath = projectPathRaw?.trim() ? validatePath(projectPathRaw) : undefined;
       const question = (args.question as string) ||
         'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.';

@@ -118,6 +118,8 @@ func handle_ui_set_layout(params: Dictionary) -> Dictionary:
 				ctrl.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 			"right":
 				ctrl.grow_horizontal = Control.GROW_DIRECTION_END
+			_:
+				return {"error": {"code": -32004, "message": "Invalid grow_direction: " + grow_direction}}
 
 	return {"result": {"node": node_path, "status": "layout_set"}}
 
