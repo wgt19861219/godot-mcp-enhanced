@@ -337,27 +337,33 @@ export class GodotServer {
       let secret: string | undefined;
       if (projectPath) {
         secret = (await waitForEditorSecret(projectPath, 5000)) ?? undefined;
-        if (!secret) {
-          console.error('[AUTH] No editor secret found — plugin may not be running');
-        }
       }
-      this.editorConn = new EditorConnection({ port, reconnect: true, secret });
-      try {
-        await this.editorConn.connect();
-        this.editorExecutor = new EditorToolExecutor(this.editorConn);
-        log('Editor: Connected to Godot plugin on port %d', port);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      if (!secret) {
+        console.error('[AUTH] No editor secret found — plugin may not be running');
         if (this.noFallback) {
-          console.error(`[FATAL] Editor mode required but connection failed: ${msg}`);
-          console.error('Set GODOT_MCP_NO_FALLBACK=false to allow fallback, or install the plugin.');
+          console.error('[FATAL] Editor auth required but no secret available. Install the editor plugin.');
           process.exit(1);
         }
-        console.error(`[FALLBACK] Editor mode requested but plugin not found at port ${port}.`);
-        console.error('[FALLBACK] Running in Headless mode. UndoRedo disabled, no scene state persistence.');
-        console.error('[FALLBACK] To enforce editor mode, set GODOT_MCP_NO_FALLBACK=true.');
+        console.error('[FALLBACK] Running in Headless mode (no editor auth).');
         this.connectionMode = 'headless';
-        this.editorConn = null;
+      } else {
+        this.editorConn = new EditorConnection({ port, reconnect: true, secret });
+        try {
+          await this.editorConn.connect();
+          this.editorExecutor = new EditorToolExecutor(this.editorConn);
+          log('Editor: Connected to Godot plugin on port %d', port);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (this.noFallback) {
+            console.error(`[FATAL] Editor mode required but connection failed: ${msg}`);
+            console.error('Set GODOT_MCP_NO_FALLBACK=false to allow fallback, or install the plugin.');
+            process.exit(1);
+          }
+          console.error(`[FALLBACK] Editor connection failed: ${msg}.`);
+          console.error('[FALLBACK] Running in Headless mode. UndoRedo disabled, no scene state persistence.');
+          this.connectionMode = 'headless';
+          this.editorConn = null;
+        }
       }
     }
   }

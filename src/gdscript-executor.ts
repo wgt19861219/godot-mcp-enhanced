@@ -32,9 +32,10 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /Engine\.(set_singleton)\b/, label: 'Engine singleton modification' },
 ];
 
-/** Best-effort scan for dangerous GDScript patterns. Returns warnings array. */
+/** Best-effort scan for dangerous GDScript patterns. Returns warnings array.
+ *  Enabled by default; set GODOT_MCP_SANDBOX=disabled to skip scanning. */
 export function scanGdscriptSandbox(code: string): string[] {
-  if (process.env.GODOT_MCP_SANDBOX !== 'strict') return [];
+  if (process.env.GODOT_MCP_SANDBOX === 'disabled') return [];
   const warnings: string[] = [];
   for (const { pattern, label } of DANGEROUS_PATTERNS) {
     if (pattern.test(code)) {

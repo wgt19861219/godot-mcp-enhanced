@@ -34,7 +34,7 @@ describe('EditorConnection', () => {
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     const result = await conn.request('test_method', { key: 'value' });
     expect(result).toEqual({ status: 'ok' });
@@ -48,10 +48,16 @@ describe('EditorConnection', () => {
 
   it('handles request timeout', async () => {
     wss.on('connection', (ws) => {
-      // 不回复，模拟超时
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        // Reply to auth but ignore other requests to simulate timeout
+        if (msg.method === 'auth') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+        }
+      });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false, requestTimeout: 500 });
+    const conn = new EditorConnection({ port, reconnect: false, requestTimeout: 500, secret: 'test-secret' });
     await conn.connect();
     await expect(() => conn.request('slow_method', {})).rejects.toThrow(/timeout/i);
     conn.disconnect();
@@ -67,7 +73,7 @@ describe('EditorConnection', () => {
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     await conn.startOperation(300);
     expect(received.some(m => m.method === 'operation_start')).toBeTruthy();
@@ -101,5 +107,52 @@ describe('EditorConnection', () => {
     // the key point: no reconnect should be scheduled.
     // We verify by checking that the connection is in a clean state.
     expect(conn.connected).toBe(false);
+  });
+
+  it('rejects connection without secret', async () => {
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+    const conn = new EditorConnection({ port, reconnect: false });
+    await expect(() => conn.connect()).rejects.toThrow(/no secret configured/i);
+  });
+
+  it('rejects connection with wrong secret', async () => {
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.method === 'auth') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Auth failed' } }));
+        } else {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));
+        }
+      });
+    });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'wrong-secret', connectTimeout: 1000 });
+    await expect(() => conn.connect()).rejects.toThrow();
+  });
+
+  it('locks out after repeated auth failures', async () => {
+    let connections = 0;
+    wss.on('connection', (ws) => {
+      connections++;
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.method === 'auth') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'Auth failed' } }));
+        }
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'wrong', connectTimeout: 500 });
+    // Fail 5 times to trigger lockout
+    for (let i = 0; i < 5; i++) {
+      await expect(() => conn.connect()).rejects.toThrow();
+    }
+    // 6th attempt should be locked out immediately
+    await expect(() => conn.connect()).rejects.toThrow(/locked out/i);
   });
 });

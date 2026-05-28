@@ -24,7 +24,7 @@ describe('EditorToolExecutor', () => {
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     const executor = new EditorToolExecutor(conn);
     const result = await executor.execute('add_node', {
@@ -41,11 +41,15 @@ describe('EditorToolExecutor', () => {
     wss.on('connection', (ws) => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
-        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32002, message: 'Node not found' } }));
+        if (msg.method === 'auth') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+        } else {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32002, message: 'Node not found' } }));
+        }
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     const executor = new EditorToolExecutor(conn);
     const result = await executor.execute('edit_node', { node_path: 'root/Missing' });

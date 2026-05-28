@@ -6,6 +6,13 @@ import { promisify } from 'util';
 
 const execFileAsync = promisify(execFile);
 
+// ─── Path security constants ──────────────────────────────────────────────────
+
+const MAX_DECODE_ITERATIONS = 20;
+
+/** Windows device names that must never be used as file names (CON, PRN, AUX, NUL, COM1-9, LPT1-9) */
+const WINDOWS_DEVICE_RE = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
+
 // ─── Path helpers ────────────────────────────────────────────────────────────
 
 /** Resolve a path to absolute. Does NOT validate security — use resolveWithinRoot for that. */
@@ -43,11 +50,24 @@ function safeRealPath(p: string, base?: string): string {
 export function resolveWithinRoot(root: string, userPath: string): string {
   // Resolve real root path (handles symlinks and junction points)
   const base = safeRealPath(resolvePath(root));
-  // Decode iteratively to defeat double-encoding
+
+  // Reject UNC paths (\\server\share) — only relevant on Windows
+  if (/^\\\\[^\\]/.test(userPath)) {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
+
+  // Reject Windows device names in the final path component (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+  const leafName = userPath.replace(/\\/g, '/').split('/').pop() || '';
+  const baseName = leafName.replace(/\.[^.]*$/, '');
+  if (WINDOWS_DEVICE_RE.test(baseName)) {
+    throw new Error(`Path traversal detected: ${userPath}`);
+  }
+
+  // Decode iteratively to defeat multi-layer encoding (generous cap for safety)
   let decoded = userPath;
   let prev = '';
   let iterations = 0;
-  while (decoded !== prev && iterations < 5) {
+  while (decoded !== prev && iterations < MAX_DECODE_ITERATIONS) {
     prev = decoded;
     try {
       decoded = decodeURIComponent(decoded);
@@ -56,6 +76,7 @@ export function resolveWithinRoot(root: string, userPath: string): string {
     }
     iterations++;
   }
+
   // Reject paths containing ".." before resolution
   const normalizedPath = decoded.replace(/\\/g, '/');
   if (normalizedPath.includes('..')) {
@@ -129,22 +150,28 @@ export function allowOutsideProjectPaths(): boolean {
   return false;
 }
 
-/** Check if a requested path is within the ALLOWED_PROJECT_PATHS whitelist (deny-by-default). */
+let _pathAllowWarned = false;
+
+/** Check if a requested path is within the ALLOWED_PROJECT_PATHS whitelist.
+ *  Unconfigured: allow all paths with a one-time warning (local dev tool, zero-config UX).
+ *  Configured: restrict to whitelist entries only (explicit deny-by-default). */
 export function isPathInAllowedRoots(requestedPath: string): boolean {
   if (process.env.GODOT_MCP_UNRESTRICTED === 'true') return true;
   if (allowOutsideProjectPaths()) return true;
   const allowed = getAllowedProjectPaths();
-  const resolved = resolvePath(requestedPath);
   if (allowed.length === 0) {
-    const cwd = resolvePath(process.cwd());
-    const isAllowed = resolved === cwd || resolved.startsWith(cwd + sep);
-    if (!isAllowed) {
-      console.warn(`[SECURITY] Path "${requestedPath}" denied (not within cwd "${process.cwd()}"). Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true to allow.`);
+    if (!_pathAllowWarned) {
+      console.warn('[SECURITY] ALLOWED_PROJECT_PATHS not set — all paths are allowed. Set it to restrict access.');
+      _pathAllowWarned = true;
     }
-    return isAllowed;
+    return true;
   }
+  const resolved = resolvePath(requestedPath);
   return allowed.some(p => resolved === p || resolved.startsWith(p + sep));
 }
+
+/** Reset warning state (test-only). */
+export function _resetPathAllowWarned(): void { _pathAllowWarned = false; }
 
 /** Build a safe environment for child processes, only passing necessary variables. */
 export function buildSafeEnv(): NodeJS.ProcessEnv {

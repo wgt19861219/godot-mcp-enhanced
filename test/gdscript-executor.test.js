@@ -52,56 +52,56 @@ describe('scanGdscriptSandbox', () => {
     delete process.env.GODOT_MCP_SANDBOX;
   });
 
-  it('should detect OS.execute when sandbox is strict', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+  it('should detect OS.execute by default (sandbox on)', () => {
+    delete process.env.GODOT_MCP_SANDBOX;
     const warnings = scanGdscriptSandbox('OS.execute("rm", ["-rf", "/"])');
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('OS system command');
   });
 
-  it('should return empty when sandbox is off', () => {
-    delete process.env.GODOT_MCP_SANDBOX;
+  it('should skip scanning when explicitly disabled', () => {
+    process.env.GODOT_MCP_SANDBOX = 'disabled';
     const warnings = scanGdscriptSandbox('OS.execute("rm", ["-rf", "/"])');
     expect(warnings).toEqual([]);
   });
 
   it('should not flag safe code', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+    delete process.env.GODOT_MCP_SANDBOX;
     const warnings = scanGdscriptSandbox('var x = 1 + 2');
     expect(warnings).toEqual([]);
   });
 
-  it('should detect DirAccess.remove when sandbox is strict', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+  it('should detect DirAccess.remove by default', () => {
+    delete process.env.GODOT_MCP_SANDBOX;
     const warnings = scanGdscriptSandbox('DirAccess.remove("user://save.dat")');
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('Directory removal');
   });
 
-  it('should detect FileAccess open with WRITE when sandbox is strict', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+  it('should detect FileAccess open with WRITE by default', () => {
+    delete process.env.GODOT_MCP_SANDBOX;
     const warnings = scanGdscriptSandbox('FileAccess.open("user://data.txt", FileAccess.WRITE)');
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('File write access');
   });
 
-  it('should detect Engine.set_singleton when sandbox is strict', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+  it('should detect Engine.set_singleton by default', () => {
+    delete process.env.GODOT_MCP_SANDBOX;
     const warnings = scanGdscriptSandbox('Engine.set_singleton("MySingleton", node)');
     expect(warnings.length).toBeGreaterThan(0);
     expect(warnings[0]).toContain('Engine singleton modification');
   });
 
   it('should detect multiple dangerous patterns in one script', () => {
-    process.env.GODOT_MCP_SANDBOX = 'strict';
+    delete process.env.GODOT_MCP_SANDBOX;
     const code = 'OS.execute("ls", [])\nDirAccess.remove_absolute("/tmp/test")';
     const warnings = scanGdscriptSandbox(code);
     expect(warnings.length).toBe(2);
   });
 
-  it('should not activate when GODOT_MCP_SANDBOX is not strict', () => {
+  it('should still scan when GODOT_MCP_SANDBOX is set to other values', () => {
     process.env.GODOT_MCP_SANDBOX = 'warn';
     const warnings = scanGdscriptSandbox('OS.execute("rm", ["-rf", "/"])');
-    expect(warnings).toEqual([]);
+    expect(warnings.length).toBeGreaterThan(0);
   });
 });

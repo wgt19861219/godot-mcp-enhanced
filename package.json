@@ -16,7 +16,9 @@
     "godot-mcp-enhanced": "./build/index.js"
   },
   "files": [
-    "build",
+    "build/**/*.js",
+    "build/**/*.d.ts",
+    "build/scripts/*.gd",
     "addons",
     "scripts"
   ],
@@ -35,7 +37,7 @@
     "watch": "tsc --watch"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {

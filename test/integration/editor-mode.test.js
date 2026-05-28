@@ -28,7 +28,7 @@ describe('Editor mode integration', () => {
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     expect(conn.isConnected()).toBeTruthy();
 
@@ -54,7 +54,7 @@ describe('Editor mode integration', () => {
       });
     });
 
-    const conn = new EditorConnection({ port, reconnect: false });
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     await conn.connect();
     const executor = new EditorToolExecutor(conn);
     const results = await Promise.all([
@@ -62,7 +62,9 @@ describe('Editor mode integration', () => {
       executor.execute('add_node', {}),
     ]);
     expect(results.length).toBe(2);
-    expect(new Set(received).size).toBe(2);
+    // Auth message (id=-1) + 2 tool calls = 3 total messages; filter auth out
+    const toolIds = received.filter(id => id !== -1);
+    expect(new Set(toolIds).size).toBe(2);
     conn.disconnect();
   });
 });

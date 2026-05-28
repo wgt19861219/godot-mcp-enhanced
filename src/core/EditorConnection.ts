@@ -4,6 +4,8 @@ import WebSocket from 'ws';
 // Auth uses a dedicated id outside the normal requestId sequence to avoid conflicts
 const AUTH_REQUEST_ID = -1;
 const MAX_INBOUND_MESSAGE_SIZE = 1048576; // 1MB
+const MAX_AUTH_FAILURES = 5;
+const AUTH_LOCKOUT_MS = 300_000; // 5 minutes
 
 interface EditorConnectionOptions {
   port: number;
@@ -46,6 +48,8 @@ export class EditorConnection {
   private readonly maxReconnectAttempts: number;
   private readonly editorSecret: string | null;
   private authenticated = false;
+  private authFailureCount = 0;
+  private authLockoutUntil = 0;
 
   constructor(private readonly options: EditorConnectionOptions) {
     this.host = options.host ?? '127.0.0.1';
@@ -87,17 +91,46 @@ export class EditorConnection {
         this.reconnectEnabled = this.shouldReconnect;
         this.setupMessageHandler();
         if (this.editorSecret) {
+          // Check auth lockout
+          if (Date.now() < this.authLockoutUntil) {
+            const remaining = Math.ceil((this.authLockoutUntil - Date.now()) / 1000);
+            this.connected = false;
+            this.ws = null;
+            ws.removeAllListeners();
+            ws.terminate();
+            reject(new Error(`Auth locked out: too many failures. Retry in ${remaining}s`));
+            return;
+          }
+          // Reset failure counter if lockout has expired
+          if (this.authFailureCount >= MAX_AUTH_FAILURES && Date.now() >= this.authLockoutUntil) {
+            this.authFailureCount = 0;
+            this.authLockoutUntil = 0;
+          }
           try {
             await this.performAuth();
+            this.authFailureCount = 0; // Reset on success
           } catch (authErr) {
+            this.authFailureCount++;
+            if (this.authFailureCount >= MAX_AUTH_FAILURES) {
+              this.authLockoutUntil = Date.now() + AUTH_LOCKOUT_MS;
+              console.error(`[AUTH] Locked out for ${AUTH_LOCKOUT_MS / 1000}s after ${MAX_AUTH_FAILURES} failures`);
+            }
             this.connected = false;
-            this.connectAttempt = true; // Prevent close handler from treating this as a disconnect
+            this.connectAttempt = true;
             this.ws = null;
             ws.removeAllListeners();
             ws.terminate();
             reject(authErr);
             return;
           }
+        } else {
+          // No secret configured — reject connection for security
+          this.connected = false;
+          this.ws = null;
+          ws.removeAllListeners();
+          ws.terminate();
+          reject(new Error('Editor auth required but no secret configured. Install the editor plugin.'));
+          return;
         }
         const isReconnect = this.reconnectAttempt > 0;
         this.reconnectAttempt = 0;

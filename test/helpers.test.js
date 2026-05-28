@@ -3,7 +3,7 @@ import { resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
-import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue, isPathInAllowedRoots } from '../src/helpers.js';
+import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, allowOutsideProjectPaths, parseConfigValue, isPathInAllowedRoots, _resetPathAllowWarned } from '../src/helpers.js';
 
 describe('validatePath', () => {
   it('resolves relative paths to absolute', () => {
@@ -49,6 +49,39 @@ describe('resolveWithinRoot', () => {
 
   it('rejects mixed slash traversal', () => {
     expect(() => resolveWithinRoot(root, 'valid/../../etc/passwd')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects UNC paths', () => {
+    expect(() => resolveWithinRoot(root, '\\\\evil-server\\share\\passwd')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects Windows device name CON', () => {
+    expect(() => resolveWithinRoot(root, 'CON')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects Windows device name AUX.txt', () => {
+    expect(() => resolveWithinRoot(root, 'AUX.txt')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects Windows device name COM1', () => {
+    expect(() => resolveWithinRoot(root, 'COM1')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects Windows device name in nested path', () => {
+    expect(() => resolveWithinRoot(root, 'scripts/NUL.gd')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects double-encoded traversal', () => {
+    expect(() => resolveWithinRoot(root, '%2e%2e/etc/passwd')).toThrow(/Path traversal detected/);
+  });
+
+  it('rejects triple-encoded traversal', () => {
+    expect(() => resolveWithinRoot(root, '%252e%252e/etc/passwd')).toThrow(/Path traversal detected/);
+  });
+
+  it('allows normal files with no traversal', () => {
+    const result = resolveWithinRoot(root, 'scenes/main.tscn');
+    expect(result.startsWith(root)).toBeTruthy();
   });
 });
 
@@ -171,9 +204,9 @@ describe('parseConfigValue (I-06)', () => {
   });
 });
 
-// ─── isPathInAllowedRoots deny-by-default ────────────────────────────────────
+// ─── isPathInAllowedRoots ──────────────────────────────────────────────────
 
-describe('isPathInAllowedRoots deny-by-default', () => {
+describe('isPathInAllowedRoots', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -181,19 +214,16 @@ describe('isPathInAllowedRoots deny-by-default', () => {
     delete process.env.ALLOWED_PROJECT_PATHS;
     delete process.env.GODOT_MCP_UNRESTRICTED;
     delete process.env.ALLOW_OUTSIDE_PROJECT_PATHS;
+    _resetPathAllowWarned();
   });
 
   afterAll(() => {
     process.env = originalEnv;
   });
 
-  it('should allow cwd when no whitelist set', () => {
-    const cwd = process.cwd();
-    expect(isPathInAllowedRoots(cwd)).toBe(true);
-  });
-
-  it('should deny paths outside cwd when no whitelist set', () => {
-    expect(isPathInAllowedRoots('/definitely/outside/path')).toBe(false);
+  it('should allow all paths when no whitelist set (zero-config)', () => {
+    expect(isPathInAllowedRoots('/definitely/outside/path')).toBe(true);
+    expect(isPathInAllowedRoots(process.cwd())).toBe(true);
   });
 
   it('should allow GODOT_MCP_UNRESTRICTED to bypass', () => {
@@ -208,8 +238,34 @@ describe('isPathInAllowedRoots deny-by-default', () => {
     expect(isPathInAllowedRoots('/not/in/whitelist')).toBe(false);
   });
 
-  it('should allow subdirectories of cwd when no whitelist set', () => {
-    const cwd = process.cwd();
-    expect(isPathInAllowedRoots(resolve(cwd, 'subdir'))).toBe(true);
+  it('should allow subdirectories of whitelisted paths', () => {
+    const tmp = tmpdir();
+    process.env.ALLOWED_PROJECT_PATHS = tmp;
+    expect(isPathInAllowedRoots(resolve(tmp, 'subdir'))).toBe(true);
+  });
+
+  it('should print warning only once when no whitelist set', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    isPathInAllowedRoots('/a');
+    isPathInAllowedRoots('/b');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it('should support semicolon-separated multiple paths in whitelist', () => {
+    const tmp = tmpdir();
+    const alt = resolve(tmp, 'alt');
+    mkdirSync(alt, { recursive: true });
+    process.env.ALLOWED_PROJECT_PATHS = `${tmp};${alt}`;
+    expect(isPathInAllowedRoots(tmp)).toBe(true);
+    expect(isPathInAllowedRoots(alt)).toBe(true);
+    expect(isPathInAllowedRoots('/not/in/either')).toBe(false);
+  });
+
+  it('should handle trailing semicolons in whitelist gracefully', () => {
+    const tmp = tmpdir();
+    process.env.ALLOWED_PROJECT_PATHS = `${tmp};`;
+    expect(isPathInAllowedRoots(tmp)).toBe(true);
+    expect(isPathInAllowedRoots('/not/in/whitelist')).toBe(false);
   });
 });
