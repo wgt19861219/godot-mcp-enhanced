@@ -15,11 +15,11 @@
 
 import { spawn } from 'child_process';
 import { writeFileSync, mkdirSync, rmSync, readdirSync, lstatSync, mkdtempSync, existsSync } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, resolve } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
-import { forceKillTree } from './core/process-state.js';
+import { forceKillTree, getProjectDir, getRunningProcess, acquireShortRunningSlot, releaseShortRunningSlot } from './core/process-state.js';
 import { buildSafeEnv } from './helpers.js';
 
 
@@ -437,6 +437,17 @@ export async function executeGdscript(
   let loadAutoloads = options.loadAutoloads ?? false;
   const startTime = Date.now();
 
+  // Acquire short-running slot to limit concurrent headless processes (max 3)
+  if (!acquireShortRunningSlot()) {
+    return { success: false, compile_success: false, compile_error: 'Too many concurrent headless operations (max 3). Please wait and retry.', errors: [], run_success: false, run_error: '', outputs: [], raw_output: '', duration_ms: 0 };
+  }
+
+  // Warn if same project is being used by a running game process
+  const activeProjectDir = getProjectDir();
+  if (activeProjectDir && getRunningProcess() && resolve(projectPath) === resolve(activeProjectDir)) {
+    console.warn(`[executor] Warning: project ${projectPath} is also being used by a running game process. Headless execution should be safe but watch for .godot/ cache conflicts.`);
+  }
+
   // Hard kill switch: set ALLOW_EXECUTE_GDSCRIPT=false to disable GDScript execution
   if (process.env.ALLOW_EXECUTE_GDSCRIPT === 'false') {
     return { success: false, compile_success: false, compile_error: 'GDScript execution is disabled (ALLOW_EXECUTE_GDSCRIPT=false)', errors: [], run_success: false, run_error: '', outputs: [], raw_output: '', duration_ms: 0 };
@@ -591,6 +602,7 @@ export async function executeGdscript(
 
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
+      releaseShortRunningSlot();
       // Cleanup session directory
       try { rmSync(sessionDir, { recursive: true, force: true }); } catch (e) { console.debug('[executor] cleanup session on close:', e); }
 
@@ -655,6 +667,7 @@ export async function executeGdscript(
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      releaseShortRunningSlot();
       try { rmSync(sessionDir, { recursive: true, force: true }); } catch (e) { console.debug('[executor] cleanup session on proc error:', e); }
 
       resolve({

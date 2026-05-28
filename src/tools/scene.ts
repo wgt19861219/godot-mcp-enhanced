@@ -10,7 +10,7 @@ import { findInstanceNode, detachInstance, nodePathToNameAndParent } from '../ts
 import { executeGdscript } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult, sanitizeResPath } from './shared.js';
 import { normalizeNodePath, gdEscape, toSnakeCase } from './shared.js';
-import { forceKillTree, acquireProcessSlot, setProcessBusy } from '../core/process-state.js';
+import { forceKillTree, acquireShortRunningSlot, releaseShortRunningSlot } from '../core/process-state.js';
 
 const TOOL_NAMES = [
   'read_scene',
@@ -290,6 +290,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'add_node':
     case 'save_scene':
     case 'load_sprite': {
+      if (!acquireShortRunningSlot()) return textResult('Error: too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
       const godot = await ctx.findGodot();
 
@@ -348,6 +349,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!settled && !proc.killed) {
             settled = true;
             forceKillTree(proc);
+            releaseShortRunningSlot();
             resolve({ content: [{ type: 'text', text: `${name} timed out.` }] });
           }
         }, 60000);
@@ -356,6 +358,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          releaseShortRunningSlot();
           if (code !== 0) {
             resolve({ content: [{ type: 'text', text: `${name} failed (exit code ${code}):\n${out}` }] });
           } else {
@@ -367,6 +370,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
+          releaseShortRunningSlot();
           resolve({ content: [{ type: 'text', text: `Error: ${err.message}` }] });
         });
       });
@@ -452,14 +456,14 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     }
 
     case 'query_scene_tree': {
-      if (!acquireProcessSlot()) return textResult('Error: another Godot process is running. Wait for it to finish.');
+      if (!acquireShortRunningSlot()) return textResult('Error: too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
       const godot = await ctx.findGodot();
       const scriptsDir = dirname(ctx.opsScript);
       const treeScript = join(scriptsDir, 'query_scene_tree.gd');
 
       if (!existsSync(treeScript)) {
-        setProcessBusy(false);
+        releaseShortRunningSlot();
         return textResult(`Error: query_scene_tree.gd not found at ${treeScript}`);
       }
 
@@ -484,7 +488,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!settled && !proc.killed) {
             settled = true;
             forceKillTree(proc);
-            setProcessBusy(false);
+            releaseShortRunningSlot();
             resolve(textResult('query_scene_tree timed out after 60s'));
           }
         }, 60000);
@@ -493,7 +497,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
-          setProcessBusy(false);
+          releaseShortRunningSlot();
           const result = parseMcpScriptOutput(out, code);
           resolve(textResult(JSON.stringify(result, null, 2)));
         });
@@ -502,21 +506,21 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
-          setProcessBusy(false);
+          releaseShortRunningSlot();
           resolve(textResult(`Error: ${err.message}`));
         });
       });
     }
 
     case 'inspect_node': {
-      if (!acquireProcessSlot()) return textResult('Error: another Godot process is running. Wait for it to finish.');
+      if (!acquireShortRunningSlot()) return textResult('Error: too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
       const godot = await ctx.findGodot();
       const scriptsDir = dirname(ctx.opsScript);
       const inspectScript = join(scriptsDir, 'inspect_node.gd');
 
       if (!existsSync(inspectScript)) {
-        setProcessBusy(false);
+        releaseShortRunningSlot();
         return textResult(`Error: inspect_node.gd not found at ${inspectScript}`);
       }
 
@@ -544,7 +548,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!settled && !proc.killed) {
             settled = true;
             forceKillTree(proc);
-            setProcessBusy(false);
+            releaseShortRunningSlot();
             resolve(textResult('inspect_node timed out after 60s'));
           }
         }, 60000);
@@ -553,7 +557,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
-          setProcessBusy(false);
+          releaseShortRunningSlot();
           const result = parseMcpScriptOutput(out, code);
           resolve(textResult(JSON.stringify(result, null, 2)));
         });
@@ -562,7 +566,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           clearTimeout(timer);
           if (settled) return;
           settled = true;
-          setProcessBusy(false);
+          releaseShortRunningSlot();
           resolve(textResult(`Error: ${err.message}`));
         });
       });

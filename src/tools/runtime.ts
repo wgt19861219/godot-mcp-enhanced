@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { appendOutput, clearOutputBuffer, killProcess, setProcessBusy, acquireProcessSlot } from '../core/process-state.js';
+import { appendOutput, clearOutputBuffer, killProcess, setProcessBusy, acquireProcessSlot, buildBusyErrorMessage } from '../core/process-state.js';
 import { requireProjectPath, checkVersionMismatch, buildSafeEnv } from '../helpers.js';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -136,8 +136,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       // Atomically acquire the process slot after clearing any existing process
-      if (!acquireProcessSlot()) {
-        return textResult('Error: another Godot process is running. Wait for it to finish.');
+      if (!acquireProcessSlot('run_project')) {
+        return textResult(buildBusyErrorMessage());
       }
 
       ctx.setProjectDir(p);

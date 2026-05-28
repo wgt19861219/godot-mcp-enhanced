@@ -22,6 +22,11 @@ import {
   isProcessBusy,
   setProcessBusy,
   acquireProcessSlot,
+  getBusyInfo,
+  buildBusyErrorMessage,
+  acquireShortRunningSlot,
+  releaseShortRunningSlot,
+  getShortRunningCount,
 } from '../src/core/process-state.js';
 
 function makeMockProc({ killed = false, pid = 12345 } = {}) {
@@ -56,6 +61,21 @@ describe('resetState', () => {
     expect(getProcessStartTime()).toBe(0);
     expect(getProjectDir()).toBe('');
   });
+
+  it('clears short running count', () => {
+    acquireShortRunningSlot();
+    acquireShortRunningSlot();
+    expect(getShortRunningCount()).toBe(2);
+    resetState();
+    expect(getShortRunningCount()).toBe(0);
+  });
+
+  it('clears busy owner', () => {
+    acquireProcessSlot('run_project');
+    expect(getBusyInfo().owner).toBe('run_project');
+    resetState();
+    expect(getBusyInfo().owner).toBe('');
+  });
 });
 
 // ─── get/set runningProcess ──────────────────────────────────────────────────
@@ -80,8 +100,6 @@ describe('getRunningProcess / setRunningProcess', () => {
     setRunningProcess(oldProc);
     setRunningProcess(newProc);
 
-    // On any platform, the old process should be acted upon.
-    // Unix: kill('SIGTERM') is called. Windows: spawnSync is mocked.
     expect(getRunningProcess()).toBe(newProc);
   });
 
@@ -112,6 +130,14 @@ describe('getRunningProcess / setRunningProcess', () => {
 
     expect(getOutputBuffer()).toEqual([]);
     expect(getProcessStartTime()).toBe(0);
+  });
+
+  it('clears busy owner when set to null', () => {
+    acquireProcessSlot('run_project');
+    expect(isProcessBusy()).toBe(true);
+    setRunningProcess(null);
+    expect(isProcessBusy()).toBe(false);
+    expect(getBusyInfo().owner).toBe('');
   });
 });
 
@@ -228,7 +254,6 @@ describe('killProcess', () => {
   it('resolves when close event fires', async () => {
     const proc = makeMockProc({ killed: false });
     const promise = killProcess(proc);
-    // Simulate close event
     proc.emit('close');
     await expect(promise).resolves.toBeUndefined();
   });
@@ -255,6 +280,13 @@ describe('busy guard (C-03)', () => {
     expect(isProcessBusy()).toBe(false);
   });
 
+  it('setProcessBusy(false) clears owner', () => {
+    acquireProcessSlot('test_tool');
+    expect(getBusyInfo().owner).toBe('test_tool');
+    setProcessBusy(false);
+    expect(getBusyInfo().owner).toBe('');
+  });
+
   it('blocks setRunningProcess when busy', () => {
     setProcessBusy(true);
     expect(() => setRunningProcess(makeMockProc())).toThrow(/Cannot replace process while another operation is using it/);
@@ -269,7 +301,6 @@ describe('busy guard (C-03)', () => {
 
   it('allows setRunningProcess(null) even when busy (auto-clears busy)', () => {
     setProcessBusy(true);
-    // setRunningProcess(null) auto-clears busy — no need for callers to manage order
     expect(() => setRunningProcess(null)).not.toThrow();
     expect(isProcessBusy()).toBe(false);
   });
@@ -281,12 +312,12 @@ describe('busy guard (C-03)', () => {
   });
 });
 
-// ─── acquireProcessSlot (C-TYP-02 TOCTOU fix) ────────────────────────────────
+// ─── acquireProcessSlot ──────────────────────────────────────────────────────
 
 describe('acquireProcessSlot', () => {
   it('returns true and sets busy when slot is free', () => {
     expect(isProcessBusy()).toBe(false);
-    expect(acquireProcessSlot()).toBe(true);
+    expect(acquireProcessSlot('run_project')).toBe(true);
     expect(isProcessBusy()).toBe(true);
   });
 
@@ -304,5 +335,125 @@ describe('acquireProcessSlot', () => {
     expect(acquireProcessSlot()).toBe(true);
     setProcessBusy(false);
     expect(acquireProcessSlot()).toBe(true);
+  });
+
+  it('records owner name', () => {
+    acquireProcessSlot('run_project');
+    expect(getBusyInfo().owner).toBe('run_project');
+  });
+
+  it('records owner as empty string by default', () => {
+    acquireProcessSlot();
+    expect(getBusyInfo().owner).toBe('');
+  });
+});
+
+// ─── getBusyInfo ─────────────────────────────────────────────────────────────
+
+describe('getBusyInfo', () => {
+  it('returns empty info when not busy', () => {
+    const info = getBusyInfo();
+    expect(info.owner).toBe('');
+    expect(info.startTime).toBe(0);
+    expect(info.projectDir).toBe('');
+  });
+
+  it('returns owner and context when busy', () => {
+    setProcessStartTime(1000);
+    setProjectDir('/my/project');
+    acquireProcessSlot('run_project');
+    const info = getBusyInfo();
+    expect(info.owner).toBe('run_project');
+    expect(info.startTime).toBe(1000);
+    expect(info.projectDir).toBe('/my/project');
+  });
+});
+
+// ─── buildBusyErrorMessage ───────────────────────────────────────────────────
+
+describe('buildBusyErrorMessage', () => {
+  it('returns empty string when not busy', () => {
+    expect(buildBusyErrorMessage()).toBe('');
+  });
+
+  it('includes owner when provided', () => {
+    acquireProcessSlot('run_project');
+    const msg = buildBusyErrorMessage();
+    expect(msg).toContain('run_project');
+    expect(msg).toContain('stop_project');
+  });
+
+  it('includes elapsed time when startTime is set', () => {
+    setProcessStartTime(Date.now() - 45000);
+    acquireProcessSlot('run_project');
+    const msg = buildBusyErrorMessage();
+    expect(msg).toMatch(/running for \d+s/);
+  });
+
+  it('includes project dir when set', () => {
+    setProjectDir('/my/game');
+    acquireProcessSlot('run_project');
+    const msg = buildBusyErrorMessage();
+    expect(msg).toContain('/my/game');
+  });
+
+  it('works without owner', () => {
+    acquireProcessSlot();
+    const msg = buildBusyErrorMessage();
+    expect(msg).toContain('another Godot process is running');
+    expect(msg).toContain('stop_project');
+  });
+});
+
+// ─── short-running process lock ──────────────────────────────────────────────
+
+describe('acquireShortRunningSlot / releaseShortRunningSlot', () => {
+  it('acquires slot successfully', () => {
+    expect(acquireShortRunningSlot()).toBe(true);
+    expect(getShortRunningCount()).toBe(1);
+  });
+
+  it('allows up to 3 concurrent slots', () => {
+    expect(acquireShortRunningSlot()).toBe(true);
+    expect(acquireShortRunningSlot()).toBe(true);
+    expect(acquireShortRunningSlot()).toBe(true);
+    expect(acquireShortRunningSlot()).toBe(false);  // 4th fails
+  });
+
+  it('releases slot correctly', () => {
+    acquireShortRunningSlot();
+    acquireShortRunningSlot();
+    expect(getShortRunningCount()).toBe(2);
+    releaseShortRunningSlot();
+    expect(getShortRunningCount()).toBe(1);
+  });
+
+  it('does not go below 0 on over-release', () => {
+    releaseShortRunningSlot();
+    releaseShortRunningSlot();
+    expect(getShortRunningCount()).toBe(0);
+  });
+
+  it('allows re-acquire after release', () => {
+    acquireShortRunningSlot();
+    acquireShortRunningSlot();
+    acquireShortRunningSlot();
+    expect(acquireShortRunningSlot()).toBe(false);
+    releaseShortRunningSlot();
+    expect(acquireShortRunningSlot()).toBe(true);
+  });
+
+  it('is independent of long-running lock', () => {
+    acquireProcessSlot('run_project');
+    // Short-running slot should still be available even when long-running is busy
+    expect(acquireShortRunningSlot()).toBe(true);
+    expect(getShortRunningCount()).toBe(1);
+  });
+
+  it('resetState clears count', () => {
+    acquireShortRunningSlot();
+    acquireShortRunningSlot();
+    resetState();
+    expect(getShortRunningCount()).toBe(0);
   });
 });
