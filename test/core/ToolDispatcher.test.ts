@@ -516,7 +516,7 @@ describe('ToolDispatcher.handleCall', () => {
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
     const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
-    const result = await dispatcher.handleCall({
+    await dispatcher.handleCall({
       params: { name: 'scene', arguments: { some_other_param: 'value' } },
     });
     expect(mockModule.handleTool).toHaveBeenCalled();
@@ -552,7 +552,7 @@ describe('ToolDispatcher.handleCall', () => {
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
     const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
-    const result = await dispatcher.handleCall({
+    await dispatcher.handleCall({
       params: { name: 'scene', arguments: {} },
     });
     expect(mockModule.handleTool).toHaveBeenCalled();
@@ -564,24 +564,24 @@ describe('ToolDispatcher.handleCall', () => {
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
     const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
-    const result = await dispatcher.handleCall({
+    await dispatcher.handleCall({
       params: { name: 'scene', arguments: { project_path: '/valid' } },
     });
     expect(mockModule.handleTool).toHaveBeenCalled();
   });
 
-  // [V13] confirm_and_execute 路径也拦截（confirm 使用 pending.args，不经过 validateCommonArgs）
-  it('validates args in confirm_and_execute path', async () => {
+  // [V13] confirm_and_execute 分支使用 pending.args（包含 project_path: 123），
+  // 但 validateCommonArgs 只校验 request.params.arguments 中的参数，所以 pending.args 不被拦截
+  it('does not validate pending.args in confirm_and_execute branch', async () => {
     const guard = createMockGuard(false);
     mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { project_path: 123 } });
     const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
     const result = await dispatcher.handleCall({
       params: { name: 'confirm_and_execute', arguments: { token: 'valid' } },
     });
-    // confirm_and_execute 分支使用 pending.args（包含 project_path: 123），
-    // 但 validateCommonArgs 只校验 request.params.arguments 中的参数，
-    // 不校验 pending.args。所以这里应该通过验证。
-    expect(result).toBeTruthy();
+    expect(result.isError).not.toBe(true);
+    const text = (result.content[result.content.length - 1] as { text: string }).text;
+    expect(text).toMatch(/(_duration_ms|status)/);
   });
 
   // [V14] editor 模式传入 project_path=123 → 在 editorExec 前拦截
