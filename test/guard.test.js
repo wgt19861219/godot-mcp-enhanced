@@ -52,6 +52,12 @@ describe('requiresConfirmation', () => {
   it('returns true for runtime.run_project', () => {
     expect(requiresConfirmation('runtime', { action: 'run_project' })).toBe(true);
   });
+  it('returns true for runtime.launch_editor', () => {
+    expect(requiresConfirmation('runtime', { action: 'launch_editor' })).toBe(true);
+  });
+  it('returns true for runtime.stop_project', () => {
+    expect(requiresConfirmation('runtime', { action: 'stop_project' })).toBe(true);
+  });
   it('returns false for runtime.get_godot_version', () => {
     expect(requiresConfirmation('runtime', { action: 'get_godot_version' })).toBe(false);
     expect(requiresConfirmation('runtime', { action: 'run_tests' })).toBe(false);

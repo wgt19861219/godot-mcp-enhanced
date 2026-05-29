@@ -39,7 +39,7 @@ const GUARDED: Record<string, Set<string> | null> = {
   animation: new Set(['delete']),
   tilemap: new Set(['tilemap_clear']),
   game: new Set(['game_bridge_install', 'game_bridge_uninstall']),
-  runtime: new Set(['run_project']),
+  runtime: new Set(['run_project', 'launch_editor', 'stop_project']),
 };
 
 export function requiresConfirmation(toolName: string, args?: Record<string, unknown>): boolean {

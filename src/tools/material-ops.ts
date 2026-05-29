@@ -750,6 +750,7 @@ export async function handleTool(
       code: script,
       timeout: 30,
       loadAutoloads,
+      _skipSandbox: true, // shader_save uses FileAccess.open(...WRITE) internally
     });
 
     return parseGdscriptResult(result, [], materialErrorMapper);

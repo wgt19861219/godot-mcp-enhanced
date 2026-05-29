@@ -33,7 +33,6 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /JavaScriptBridge\.eval\b/, label: 'JavaScript eval (web escape)' },
   { pattern: /\bstr2var\b/, label: 'str2var (arbitrary deserialization)' },
   { pattern: /\bbytes2var\b/, label: 'bytes2var (arbitrary deserialization)' },
-  { pattern: /\bvar2bytes\b/, label: 'var2bytes (serialization)' },
   { pattern: /load\s*\(\s*"(?!res:\/\/)/, label: 'load() with non-resource path' },
   { pattern: /Thread\.(new|start)\b/, label: 'Thread creation' },
   { pattern: /Semaphore\.new\b/, label: 'Semaphore creation' },
@@ -81,6 +80,8 @@ export interface ExecuteGdscriptOptions {
   timeout: number; // seconds
   /** When true, runs with full autoload context (slower but can access autoloads like DataRegistry) */
   loadAutoloads?: boolean;
+  /** @internal Skip sandbox scanning for trusted tool-generated code (e.g. recording_save, shader_save). */
+  _skipSandbox?: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -464,7 +465,7 @@ export async function executeGdscript(
   }
 
   // C-SEC-02: Sandbox scan — BLOCKS execution on dangerous patterns by default
-  const sandboxWarnings = scanGdscriptSandbox(code);
+  const sandboxWarnings = options._skipSandbox ? [] : scanGdscriptSandbox(code);
   if (sandboxWarnings.length > 0 && process.env.GODOT_MCP_ALLOW_UNSAFE !== 'true') {
     return {
       success: false, compile_success: false,

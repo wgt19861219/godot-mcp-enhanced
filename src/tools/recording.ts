@@ -283,6 +283,7 @@ export async function handleTool(
           code: script,
           timeout: 30,
           loadAutoloads,
+          _skipSandbox: true, // recording_save uses FileAccess.open(...WRITE) internally
         });
         const errorMapper = (msg: string) => {
           if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;
