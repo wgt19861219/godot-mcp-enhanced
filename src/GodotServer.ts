@@ -128,6 +128,8 @@ export class GodotServer {
   private editorExecutor: EditorToolExecutor | null = null;
   private connectionMode: 'headless' | 'editor';
   private noFallback: boolean;
+  private _editorFallback = false;
+  private _editorFallbackWarned = false;
 
   constructor(opsScript: string, options: ServerOptions = {}) {
     this.opsScript = opsScript;
@@ -190,6 +192,18 @@ export class GodotServer {
       parseGodotConfig,
     };
 
+    /** I-12: Attach editor-fallback warning to first tool response only. */
+    const attachFallbackWarning = (result: ToolResult): ToolResult => {
+      if (this._editorFallback && !this._editorFallbackWarned) {
+        this._editorFallbackWarned = true;
+        const first = result.content?.[0];
+        if (first?.type === 'text') {
+          first.text += '\n\n⚠️ [EDITOR_FALLBACK] Running in Headless mode — Editor features (UndoRedo, live scene sync) unavailable.';
+        }
+      }
+      return result;
+    };
+
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: rawArgs } = request.params;
       const startTime = Date.now();
@@ -238,9 +252,9 @@ export class GodotServer {
           if (this.connectionMode === 'editor' && this.editorExecutor) {
             const editorResult = await this.editorExecutor.execute(pending.toolName, pending.args);
             const duration = Date.now() - startTime;
-            return { ...editorResult, content: [...editorResult.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] };
+            return attachFallbackWarning({ ...editorResult, content: [...editorResult.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] });
           }
-          return dispatchTool(pending.toolName, pending.args, ctx, startTime);
+          return attachFallbackWarning(dispatchTool(pending.toolName, pending.args, ctx, startTime));
         }
 
         if (requiresConfirmation(name, args)) {
@@ -264,10 +278,10 @@ export class GodotServer {
         if (this.connectionMode === 'editor' && this.editorExecutor) {
           const editorResult = await this.editorExecutor.execute(name, args);
           const duration = Date.now() - startTime;
-          return { ...editorResult, content: [...editorResult.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] };
+          return attachFallbackWarning({ ...editorResult, content: [...editorResult.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] });
         }
 
-        return dispatchTool(name, args, ctx, startTime);
+        return attachFallbackWarning(dispatchTool(name, args, ctx, startTime));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         log('Tool error:', name, msg);
@@ -327,6 +341,7 @@ export class GodotServer {
           process.exit(1);
         }
         console.error('[FALLBACK] Running in Headless mode (no editor auth).');
+        this._editorFallback = true;
         this.connectionMode = 'headless';
       } else {
         this.editorConn = new EditorConnection({ port, reconnect: true, secret });
@@ -343,6 +358,7 @@ export class GodotServer {
           }
           console.error(`[FALLBACK] Editor connection failed: ${msg}.`);
           console.error('[FALLBACK] Running in Headless mode. UndoRedo disabled, no scene state persistence.');
+          this._editorFallback = true;
           this.connectionMode = 'headless';
           this.editorConn = null;
         }
