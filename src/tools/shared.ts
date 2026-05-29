@@ -2,8 +2,6 @@ import type { ExecuteGdscriptResult } from '../gdscript-executor.js';
 import { textResult, errorResult } from '../types.js';
 import type { ToolResult } from '../types.js';
 import { isVerifyEligible } from '../core/tool-registry.js';
-import { readdirSync } from 'fs';
-import { join } from 'path';
 
 export const MARKER_RESULT = '___MCP_RESULT___';
 
@@ -120,7 +118,7 @@ export function valueToGd(v: unknown, trackType?: string): string {
   }
 
   // ── object → {x,y} / {x,y,z} / {r,g,b,a} ──
-  if (typeof v === 'object') {
+  if (typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
     const obj = v as Record<string, unknown>;
     const keys = Object.keys(obj);
     if (keys.some(k => !['x', 'y', 'z', 'r', 'g', 'b', 'a'].includes(k))) {
@@ -430,39 +428,4 @@ export function genCheckProperties(nodePath: string, props: Record<string, unkno
   }
   lines.push('\t_mcp_output("props", JSON.stringify(_props))');
   return lines.join('\n');
-}
-
-/** Default directories to skip during recursive file scanning. */
-export const DEFAULT_SKIP_DIRS = ['.godot', '.import', 'addons', 'tools'];
-
-/** Recursively scan a directory for files matching extensions, skipping common generated dirs.
- *  @param rootDir Absolute path to start scanning
- *  @param extensions File extensions to include (e.g. ['.gd', '.tscn'])
- *  @param options.skipDirs Directory names to skip (default: DEFAULT_SKIP_DIRS)
- *  @param options.maxDepth Maximum recursion depth (default: 15)
- *  @param options.skipDotFiles Skip files/dirs starting with '.' (default: true) */
-export function scanFiles(
-  rootDir: string,
-  extensions: string[],
-  options: { skipDirs?: string[]; maxDepth?: number; skipDotFiles?: boolean } = {},
-): string[] {
-  const { skipDirs = DEFAULT_SKIP_DIRS, maxDepth = 15, skipDotFiles = true } = options;
-  const results: string[] = [];
-  function scan(dir: string, depth: number): void {
-    if (depth > maxDepth) return;
-    try {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        if (skipDotFiles && entry.name.startsWith('.')) continue;
-        if (skipDirs.includes(entry.name)) continue;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          scan(full, depth + 1);
-        } else if (extensions.some(ext => entry.name.endsWith(ext))) {
-          results.push(full);
-        }
-      }
-    } catch (err) { console.debug('[shared] scanFiles:', err); }
-  }
-  scan(rootDir, 0);
-  return results;
 }

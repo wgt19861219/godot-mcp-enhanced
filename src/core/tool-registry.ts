@@ -97,12 +97,19 @@ export function clearRegistry(): void {
 
 // ─── Mode filters ────────────────────────────────────────────────────────────
 
+// LITE mode tool set — coarse-grained after tool consolidation.
+// Each merged tool name (e.g. 'scene') includes both safe and destructive actions.
+// Destructive actions are protected by the confirmation token guard (guard.ts GUARDED map),
+// which provides the second layer of defense at the action level.
 export const LITE_TOOLS = new Set([
   'project', 'scene', 'script',
   'runtime',
   'validation', 'confirm_and_execute',
 ]);
 
+// Tools eligible for quick verification (run_and_verify).
+// After consolidation, these merged tools may contain actions without a quickVerify handler —
+// those will return 'not_implemented' gracefully.
 export const VERIFY_ELIGIBLE_TOOLS = new Set([
   'scene', 'script', 'ui',
 ]);

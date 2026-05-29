@@ -33,6 +33,11 @@ function ensureCleanupTimer(): void {
 }
 
 // Map: merged tool name → Set of guarded actions (null = entire tool is guarded)
+//
+// IMPORTANT: This guard relies on GodotServer.ts routing by MERGED tool name (e.g. 'scene',
+// 'script', 'game') rather than legacy individual names. If a caller bypasses the merged-name
+// router and uses the old name directly (e.g. 'remove_node'), the guard WILL NOT catch it.
+// GodotServer.handleToolCall() is the single entry point and always resolves to merged names.
 const GUARDED: Record<string, Set<string> | null> = {
   scene: new Set(['remove_node', 'save_scene', 'detach_instance']),
   script: null, // write_script / edit_script / project_replace / execute_gdscript 全部需确认

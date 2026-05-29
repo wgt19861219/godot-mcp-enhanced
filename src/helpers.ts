@@ -1,5 +1,5 @@
 import { isAbsolute, resolve, dirname, relative, sep } from 'path';
-import { existsSync, mkdirSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -337,4 +337,40 @@ export function parseMcpScriptOutput(rawOutput: string, exitCode: number | null,
     error: exitCode !== 0 ? `Process exited with code ${exitCode}` : 'No structured output found',
     raw_output: logLines.join('\n'),
   };
+}
+
+// ─── File scanner ────────────────────────────────────────────────────────────
+
+export const DEFAULT_SKIP_DIRS = ['.godot', '.import', 'addons', 'tools'];
+
+/** Recursively scan a directory for files matching given extensions.
+ *  @param rootDir Root directory to scan
+ *  @param extensions File extensions to include (e.g. ['.gd', '.tscn'])
+ *  @param options.skipDirs Directory names to skip (default: DEFAULT_SKIP_DIRS)
+ *  @param options.maxDepth Maximum recursion depth (default: 15)
+ *  @param options.skipDotFiles Skip files/dirs starting with '.' (default: true) */
+export function scanFiles(
+  rootDir: string,
+  extensions: string[],
+  options: { skipDirs?: string[]; maxDepth?: number; skipDotFiles?: boolean } = {},
+): string[] {
+  const { skipDirs = DEFAULT_SKIP_DIRS, maxDepth = 15, skipDotFiles = true } = options;
+  const results: string[] = [];
+  function scan(dir: string, depth: number): void {
+    if (depth > maxDepth) return;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (skipDotFiles && entry.name.startsWith('.')) continue;
+        if (skipDirs.includes(entry.name)) continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          scan(full, depth + 1);
+        } else if (extensions.some(ext => entry.name.endsWith(ext))) {
+          results.push(full);
+        }
+      }
+    } catch (err) { console.debug('[helpers] scanFiles:', err); }
+  }
+  scan(rootDir, 0);
+  return results;
 }

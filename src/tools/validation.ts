@@ -8,8 +8,8 @@ import { promisify } from 'util';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { opsErrorResult, scanFiles } from './shared.js';
-import { requireProjectPath, resolveWithinRoot, parseMcpScriptOutput, normalizeUserProjectPath, checkVersionMismatch, buildSafeEnv } from '../helpers.js';
+import { opsErrorResult } from './shared.js';
+import { requireProjectPath, resolveWithinRoot, parseMcpScriptOutput, normalizeUserProjectPath, checkVersionMismatch, buildSafeEnv, scanFiles } from '../helpers.js';
 import { analyzeOutput, type AnalysisResult } from '../error-analyzer.js';
 import { forceKillTree } from '../core/process-state.js';
 
