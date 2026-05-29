@@ -27,10 +27,39 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('scene', { action: 'read_scene' })).toBe(false);
     expect(requiresConfirmation('scene', { action: 'edit_node' })).toBe(false);
   });
+  it('returns true for animation.delete', () => {
+    expect(requiresConfirmation('animation', { action: 'delete' })).toBe(true);
+  });
+  it('returns false for animation.get_info', () => {
+    expect(requiresConfirmation('animation', { action: 'get_info' })).toBe(false);
+    expect(requiresConfirmation('animation', { action: 'play' })).toBe(false);
+  });
+  it('returns true for tilemap.tilemap_clear', () => {
+    expect(requiresConfirmation('tilemap', { action: 'tilemap_clear' })).toBe(true);
+  });
+  it('returns false for tilemap.tilemap_read', () => {
+    expect(requiresConfirmation('tilemap', { action: 'tilemap_read' })).toBe(false);
+    expect(requiresConfirmation('tilemap', { action: 'tilemap_set_cell' })).toBe(false);
+  });
+  it('returns true for game.game_bridge_install', () => {
+    expect(requiresConfirmation('game', { action: 'game_bridge_install' })).toBe(true);
+    expect(requiresConfirmation('game', { action: 'game_bridge_uninstall' })).toBe(true);
+  });
+  it('returns false for game.game_query', () => {
+    expect(requiresConfirmation('game', { action: 'game_query' })).toBe(false);
+    expect(requiresConfirmation('game', { action: 'game_input' })).toBe(false);
+  });
+  it('returns true for runtime.run_project', () => {
+    expect(requiresConfirmation('runtime', { action: 'run_project' })).toBe(true);
+  });
+  it('returns false for runtime.get_godot_version', () => {
+    expect(requiresConfirmation('runtime', { action: 'get_godot_version' })).toBe(false);
+    expect(requiresConfirmation('runtime', { action: 'run_tests' })).toBe(false);
+  });
   it('returns false for non-guarded tools', () => {
-    expect(requiresConfirmation('animation')).toBe(false);
     expect(requiresConfirmation('validation')).toBe(false);
     expect(requiresConfirmation('workflow')).toBe(false);
+    expect(requiresConfirmation('screenshot')).toBe(false);
   });
 });
 

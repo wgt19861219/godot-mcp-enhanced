@@ -35,7 +35,11 @@ function ensureCleanupTimer(): void {
 // Map: merged tool name → Set of guarded actions (null = entire tool is guarded)
 const GUARDED: Record<string, Set<string> | null> = {
   scene: new Set(['remove_node', 'save_scene', 'detach_instance']),
-  script: null,
+  script: null, // write_script / edit_script / project_replace / execute_gdscript 全部需确认
+  animation: new Set(['delete']),
+  tilemap: new Set(['tilemap_clear']),
+  game: new Set(['game_bridge_install', 'game_bridge_uninstall']),
+  runtime: new Set(['run_project']),
 };
 
 export function requiresConfirmation(toolName: string, args?: Record<string, unknown>): boolean {
