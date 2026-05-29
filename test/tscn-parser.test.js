@@ -188,3 +188,10 @@ describe('Property: parseTscn fuzz', () => {
     );
   });
 });
+
+describe('parseTscn input size limit', () => {
+  it('rejects input exceeding 10MB size limit', () => {
+    const hugeContent = 'x'.repeat(10 * 1024 * 1024 + 1);
+    expect(() => parseTscn(hugeContent)).toThrow('tscn input too large');
+  });
+});

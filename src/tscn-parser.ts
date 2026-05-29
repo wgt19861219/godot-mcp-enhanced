@@ -145,6 +145,7 @@ function parseValue(raw: string, maxDepth: number = 50): unknown {
  * Limits output to MAX_ELEMENTS to prevent O(n^2) ReDoS.
  */
 const MAX_SPLIT_ELEMENTS = 10000;
+const MAX_TSCN_INPUT_SIZE = 10 * 1024 * 1024; // 10MB
 
 function splitTopLevel(input: string): string[] {
   const parts: string[] = [];
@@ -244,6 +245,9 @@ function splitLines(content: string): string[] {
 }
 
 export function parseTscn(content: string): ParsedScene {
+  if (content.length > MAX_TSCN_INPUT_SIZE) {
+    throw new Error(`tscn input too large: ${content.length} bytes exceeds ${MAX_TSCN_INPUT_SIZE} byte limit`);
+  }
   const lines = splitLines(content);
   const result: ParsedScene = {
     header: {},
