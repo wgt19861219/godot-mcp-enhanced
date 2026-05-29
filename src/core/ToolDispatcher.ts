@@ -15,6 +15,7 @@ import {
   LITE_TOOLS,
 } from './tool-registry.js';
 import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
+import { opsErrorResult, COMMON_ERROR_CODES } from '../tools/shared.js';
 import * as ps from './process-state.js';
 
 const DEBUG = process.env.DEBUG === 'true';
@@ -104,6 +105,10 @@ export class ToolDispatcher {
     const args = this.normalizeArgs(rawArgs);
 
     try {
+      // ── 0. Common arg type validation ──
+      const typeErr = this.validateCommonArgs(args);
+      if (typeErr) return typeErr;
+
       // ── 1. ReadOnlyGuard ──
       const guardResult = this.readOnlyGuard.check(name);
       if (guardResult.blocked) {
@@ -201,6 +206,29 @@ export class ToolDispatcher {
       }
     }
     return args;
+  }
+
+  /** Validate common arg types (project_path, action). Returns error ToolResult or null. */
+  private validateCommonArgs(args: Record<string, unknown>): ToolResult | null {
+    if ('project_path' in args) {
+      const v = args.project_path;
+      if (typeof v !== 'string' || v.trim() === '') {
+        return opsErrorResult(
+          COMMON_ERROR_CODES.INVALID_PARAMS,
+          `project_path must be a non-empty string, got: ${typeof v === 'string' ? '""' : JSON.stringify(v)}`,
+        );
+      }
+    }
+    if ('action' in args) {
+      const v = args.action;
+      if (typeof v !== 'string' || v.trim() === '') {
+        return opsErrorResult(
+          COMMON_ERROR_CODES.INVALID_PARAMS,
+          `action must be a non-empty string, got: ${typeof v === 'string' ? '""' : JSON.stringify(v)}`,
+        );
+      }
+    }
+    return null;
   }
 
   private validatePathArgs(args: Record<string, unknown>): ToolResult | null {
