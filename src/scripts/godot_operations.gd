@@ -530,8 +530,13 @@ func _is_safe_property(prop_name: String) -> bool:
 	return true
 
 
-func _is_safe_value(val) -> bool:
+const MAX_SAFE_VALUE_DEPTH := 10
+
+func _is_safe_value(val, depth: int = 0) -> bool:
 	# Whitelist: only allow safe value types (consistent with mcp_bridge.gd)
+	# A-17: depth limit prevents stack overflow from deeply nested values
+	if depth > MAX_SAFE_VALUE_DEPTH:
+		return false
 	if val == null:
 		return true
 	if val is bool or val is int or val is float or val is String:
@@ -552,12 +557,12 @@ func _is_safe_value(val) -> bool:
 		return true
 	if val is Array:
 		for item in val:
-			if not _is_safe_value(item):
+			if not _is_safe_value(item, depth + 1):
 				return false
 		return true
 	if val is Dictionary:
 		for key in val:
-			if not _is_safe_value(val[key]):
+			if not _is_safe_value(val[key], depth + 1):
 				return false
 		return true
 	return false

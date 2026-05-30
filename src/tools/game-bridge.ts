@@ -29,6 +29,9 @@ let _cachedSecret: string | null = null;
 let _projectDir: string | null = null;
 let _cachedSecretPath: string | null = null;
 let _cachedSecretAt: number = 0;
+// A-06: 5-minute TTL balances file I/O overhead vs attack window exposure.
+// Shorter TTL increases fs reads; longer TTL extends the window if secret is compromised.
+// For local-only TCP (127.0.0.1), this is an acceptable tradeoff.
 const SECRET_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 // Persistent connection state
@@ -425,6 +428,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         if (existsSync(scriptPath)) {
           unlinkSync(scriptPath);
         }
+
+        // A-07: Clean up secret file on uninstall
+        const secretPath = join(projectPath, '.godot', `mcp_bridge_${BRIDGE_PORT}.secret`);
+        if (existsSync(secretPath)) {
+          try { unlinkSync(secretPath); } catch { /* best effort */ }
+        }
+        _cachedSecret = null;
+        _cachedSecretPath = null;
+        _invalidateSocket();
 
         return textResult(JSON.stringify({ success: true, message: 'MCP Bridge uninstalled.' }));
       }
