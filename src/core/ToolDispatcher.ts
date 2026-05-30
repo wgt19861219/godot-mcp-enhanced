@@ -13,6 +13,7 @@ import {
   getAllToolDefinitions,
   getModuleForTool,
   LITE_TOOLS,
+  MINIMAL_TOOLS,
 } from './tool-registry.js';
 import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
 import { opsErrorResult, COMMON_ERROR_CODES } from '../tools/shared.js';
@@ -26,7 +27,7 @@ function log(...args: unknown[]): void {
 export interface DispatcherOptions {
   // 模式控制
   readOnly: boolean;
-  mode: 'full' | 'lite';
+  mode: 'full' | 'lite' | 'minimal';
   connectionMode: 'headless' | 'editor';
   noFallback: boolean;
 
@@ -94,6 +95,9 @@ export class ToolDispatcher {
     if (this.options.mode === 'lite') {
       allTools = allTools.filter(t => LITE_TOOLS.has(t.name));
       log('LITE mode: %d tools available', allTools.length);
+    } else if (this.options.mode === 'minimal') {
+      allTools = allTools.filter(t => MINIMAL_TOOLS.has(t.name));
+      log('MINIMAL mode: %d tools available', allTools.length);
     }
 
     return allTools;

@@ -112,9 +112,25 @@ export function clearRegistry(): void {
 // Destructive actions are protected by the confirmation token guard (guard.ts GUARDED map),
 // which provides the second layer of defense at the action level.
 export const LITE_TOOLS = new Set([
-  'project', 'scene', 'script',
-  'runtime',
-  'validation', 'confirm_and_execute',
+  'project', 'scene', 'script',           // 核心 CRUD
+  'runtime', 'validation',                // 运行和验证
+  'confirm_and_execute',                   // 确认执行
+  'animation',                             // 动画基础
+  'audio',                                 // 音频基础
+  'docs',                                  // 文档查询
+  'signal',                                // 信号操作
+  'material',                              // 材质基础
+  'test',                                  // 测试
+  'screenshot',                            // 截图
+  'profiler',                              // 性能
+  'workflow',                              // dev_loop
+  'game',                                  // Bridge
+]);
+
+export const MINIMAL_TOOLS = new Set([
+  'project', 'scene', 'script',           // 最小可用集
+  'runtime', 'validation',                // 运行和验证
+  'confirm_and_execute',                   // 确认执行
 ]);
 
 // Tools eligible for quick verification (run_and_verify).

@@ -6,7 +6,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const args = process.argv.slice(2);
-const toolMode = args.includes('--lite') ? 'lite'
+const toolMode = args.includes('--minimal') ? 'minimal'
+  : args.includes('--lite') ? 'lite'
+  : process.env.GODOT_MCP_MODE === 'minimal' ? 'minimal'
   : process.env.GODOT_MCP_MODE === 'lite' ? 'lite'
   : 'full';
 

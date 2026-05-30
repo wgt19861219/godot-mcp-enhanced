@@ -105,6 +105,7 @@ const GUIDES: Record<string, { name: string; description: string; text: string }
 2. Run the MCP server: \`npx godot-mcp-enhanced\`
 3. For read-only mode: set \`READ_ONLY_MODE=true\`
 4. For lite mode (14 core tools): add \`--lite\` flag
+5. For minimal mode (6 core tools): add \`--minimal\` flag
 
 ## Core Workflow
 1. **list_projects** — find Godot projects

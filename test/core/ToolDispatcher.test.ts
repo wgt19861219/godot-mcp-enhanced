@@ -12,13 +12,15 @@ const {
   mockGetAllToolDefinitions,
   mockGetModuleForTool,
   mockLITE_TOOLS,
+  mockMINIMAL_TOOLS,
   mockRequiresConfirmation,
   mockCreatePendingToken,
   mockConsumeToken,
 } = vi.hoisted(() => ({
   mockGetAllToolDefinitions: vi.fn<() => Tool[]>(),
   mockGetModuleForTool: vi.fn(),
-  mockLITE_TOOLS: new Set(['project', 'scene', 'script', 'validation', 'confirm_and_execute']),
+  mockLITE_TOOLS: new Set(['project', 'scene', 'script', 'validation', 'confirm_and_execute', 'animation', 'audio', 'docs', 'signal', 'material', 'test', 'screenshot', 'profiler', 'workflow', 'game']),
+  mockMINIMAL_TOOLS: new Set(['project', 'scene', 'script', 'runtime', 'validation', 'confirm_and_execute']),
   mockRequiresConfirmation: vi.fn(),
   mockCreatePendingToken: vi.fn(),
   mockConsumeToken: vi.fn(),
@@ -28,6 +30,7 @@ vi.mock('../../src/core/tool-registry.js', () => ({
   getAllToolDefinitions: mockGetAllToolDefinitions,
   getModuleForTool: mockGetModuleForTool,
   LITE_TOOLS: mockLITE_TOOLS,
+  MINIMAL_TOOLS: mockMINIMAL_TOOLS,
 }));
 
 vi.mock('../../src/guard.js', () => ({
@@ -72,8 +75,19 @@ const FIXTURE_TOOLS: Tool[] = [
   { name: 'scene', description: 'Scene ops', inputSchema: { type: 'object', properties: {} } },
   { name: 'script', description: 'Script ops', inputSchema: { type: 'object', properties: {} } },
   { name: 'project', description: 'Project ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'runtime', description: 'Runtime ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'validation', description: 'Validation ops', inputSchema: { type: 'object', properties: {} } },
   { name: 'docs', description: 'Docs ops', inputSchema: { type: 'object', properties: {} } },
   { name: 'screenshot', description: 'Screenshot ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'animation', description: 'Animation ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'audio', description: 'Audio ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'signal', description: 'Signal ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'material', description: 'Material ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'test', description: 'Test ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'profiler', description: 'Profiler ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'workflow', description: 'Workflow ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'game', description: 'Game ops', inputSchema: { type: 'object', properties: {} } },
+  { name: 'tilemap', description: 'Tilemap ops', inputSchema: { type: 'object', properties: {} } },
 ];
 
 function createOptions(overrides?: Partial<DispatcherOptions>): DispatcherOptions {
@@ -141,6 +155,29 @@ describe('ToolDispatcher.getFilteredTools', () => {
     expect(names).toContain('project');
     expect(names).toContain('scene');
     expect(names).toContain('confirm_and_execute');
+    // lite 应排除不在 LITE_TOOLS 中的工具（如 tilemap）
+    expect(names).not.toContain('tilemap');
+  });
+
+  // [T22b] minimal → 只保留 MINIMAL_TOOLS (6 个核心工具)
+  it('filters to MINIMAL_TOOLS in minimal mode', () => {
+    const dispatcher = new ToolDispatcher(createOptions({ mode: 'minimal' }));
+    const tools = dispatcher.getFilteredTools();
+    const names = tools.map(t => t.name);
+    for (const name of names) {
+      expect(mockMINIMAL_TOOLS.has(name)).toBe(true);
+    }
+    expect(names).toContain('project');
+    expect(names).toContain('scene');
+    expect(names).toContain('script');
+    expect(names).toContain('runtime');
+    expect(names).toContain('validation');
+    expect(names).toContain('confirm_and_execute');
+    // minimal 应排除 docs, screenshot, animation 等
+    expect(names).not.toContain('docs');
+    expect(names).not.toContain('screenshot');
+    expect(names).not.toContain('animation');
+    expect(names).not.toContain('tilemap');
   });
 
   // [T23] readOnly + lite 组合
@@ -158,6 +195,24 @@ describe('ToolDispatcher.getFilteredTools', () => {
     expect(names).not.toContain('project');
     for (const name of names) {
       expect(mockLITE_TOOLS.has(name)).toBe(true);
+    }
+  });
+
+  // [T23b] readOnly + minimal 组合
+  it('applies both readOnly and minimal filters combined', () => {
+    const guard = createMockGuard(false);
+    (guard.check as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      const blocked = ['scene', 'script', 'project'].includes(name);
+      return { blocked, errorCode: blocked ? -32001 : undefined, message: blocked ? 'blocked' : undefined };
+    });
+    const dispatcher = new ToolDispatcher(createOptions({ readOnly: true, mode: 'minimal', readOnlyGuard: guard }));
+    const tools = dispatcher.getFilteredTools();
+    const names = tools.map(t => t.name);
+    expect(names).not.toContain('scene');
+    expect(names).not.toContain('script');
+    expect(names).not.toContain('project');
+    for (const name of names) {
+      expect(mockMINIMAL_TOOLS.has(name)).toBe(true);
     }
   });
 });
