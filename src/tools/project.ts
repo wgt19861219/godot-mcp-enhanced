@@ -242,11 +242,37 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (doHooks) {
         const claudeDir = join(p, '.claude');
         const settingsPath = join(claudeDir, 'settings.json');
-        const hookEntry = {
-          matcher: 'mcp__godot__edit_script|mcp__godot__write_script',
+
+        // PostToolUse hooks for different file types
+        const hookEntries: HookEntry[] = [
+          {
+            matcher: 'mcp__godot__edit_script|mcp__godot__write_script',
+            hooks: [{
+              type: 'command',
+              command: "echo '>>> GDScript file modified — you MUST call validate_scripts now to verify syntax.'",
+            }],
+          },
+          {
+            matcher: 'mcp__godot__scene|mcp__godot__batch',
+            hooks: [{
+              type: 'command',
+              command: "echo '>>> Scene/resource file modified — you SHOULD call save_scene to persist changes.'",
+            }],
+          },
+          {
+            matcher: 'mcp__godot__material',
+            hooks: [{
+              type: 'command',
+              command: "echo '>>> Shader/material modified — consider calling validate_scripts to verify.'",
+            }],
+          },
+        ];
+
+        // SessionStart hook
+        const sessionStartEntry: SessionStartEntry = {
           hooks: [{
             type: 'command',
-            command: "echo '>>> GDScript file modified — you MUST call validate_scripts now to verify syntax.'",
+            command: "echo '>>> Session started — ensure Godot 4.4+ is installed and GODOT_MCP_NO_FALLBACK is set if needed.'",
           }],
         };
 
@@ -262,20 +288,42 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
         if (existing) {
           const postHooks = existing.hooks?.PostToolUse;
-          const alreadyConfigured = Array.isArray(postHooks) && postHooks.some(h => h.matcher === hookEntry.matcher);
-          if (alreadyConfigured && !force) {
+          // Check if all PostToolUse matchers are already present
+          const existingMatchers = new Set((postHooks ?? []).map(h => h.matcher));
+          const allConfigured = hookEntries.every(he => existingMatchers.has(he.matcher));
+          // Check if SessionStart is already configured
+          const ssConfigured = (existing.hooks?.SessionStart ?? []).some(
+            e => (e.hooks[0]?.command ?? '') === sessionStartEntry.hooks[0].command,
+          );
+
+          if (allConfigured && ssConfigured && !force) {
             actions.push('hooks: skipped (already configured, use force=true to overwrite)');
           } else {
-            // force: remove old entry with same matcher, then append new one
-            const merged = force && alreadyConfigured ? replaceHookEntry(existing, hookEntry) : mergeHooks(existing, hookEntry);
-            writeAtomic(settingsPath, JSON.stringify(merged, null, 2));
+            let current = existing;
+            // Merge/replace each PostToolUse hookEntry
+            for (const he of hookEntries) {
+              const hasMatcher = existingMatchers.has(he.matcher);
+              current = (force && hasMatcher) ? replaceHookEntry(current, he) : mergeHooks(current, he);
+            }
+            // Merge/replace SessionStart entry
+            if (ssConfigured && force) {
+              current = replaceSessionStart(current, sessionStartEntry);
+            } else if (!ssConfigured) {
+              current = mergeSessionStart(current, sessionStartEntry);
+            }
+            writeAtomic(settingsPath, JSON.stringify(current, null, 2));
             actions.push(force ? 'hooks: updated .claude/settings.json (force)' : 'hooks: updated .claude/settings.json');
           }
         } else if (existing === null && existsSync(settingsPath)) {
           // JSON parse failed — don't touch the file
         } else {
           mkdirSync(claudeDir, { recursive: true });
-          writeAtomic(settingsPath, JSON.stringify({ hooks: { PostToolUse: [hookEntry] } }, null, 2));
+          writeAtomic(settingsPath, JSON.stringify({
+            hooks: {
+              PostToolUse: hookEntries,
+              SessionStart: [sessionStartEntry],
+            },
+          }, null, 2));
           actions.push('hooks: created .claude/settings.json');
         }
       }
@@ -371,11 +419,18 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 interface HookEntry { matcher: string; hooks: Array<{ type: string; command: string }> }
-interface SettingsHooks { PostToolUse: HookEntry[] }
-interface ClaudeSettings { [key: string]: unknown; hooks?: { PostToolUse?: HookEntry[] } }
+interface SessionStartEntry { hooks: Array<{ type: string; command: string }> }
+interface SettingsHooks {
+  PostToolUse: HookEntry[];
+  SessionStart?: SessionStartEntry[];
+}
+interface ClaudeSettings { [key: string]: unknown; hooks?: { PostToolUse?: HookEntry[]; SessionStart?: SessionStartEntry[] } }
 
 function mergeHooks(existing: ClaudeSettings, hookEntry: HookEntry): ClaudeSettings {
-  const hooks: SettingsHooks = { PostToolUse: [...(existing.hooks?.PostToolUse ?? [])] };
+  const hooks: SettingsHooks = {
+    ...existing.hooks,
+    PostToolUse: [...(existing.hooks?.PostToolUse ?? [])],
+  };
   hooks.PostToolUse.push(hookEntry);
   return { ...existing, hooks };
 }
@@ -383,7 +438,26 @@ function mergeHooks(existing: ClaudeSettings, hookEntry: HookEntry): ClaudeSetti
 function replaceHookEntry(existing: ClaudeSettings, hookEntry: HookEntry): ClaudeSettings {
   const filtered = (existing.hooks?.PostToolUse ?? []).filter(h => h.matcher !== hookEntry.matcher);
   filtered.push(hookEntry);
-  const hooks: SettingsHooks = { PostToolUse: filtered };
+  const hooks: SettingsHooks = { ...existing.hooks, PostToolUse: filtered };
+  return { ...existing, hooks };
+}
+
+function mergeSessionStart(existing: ClaudeSettings, entry: SessionStartEntry): ClaudeSettings {
+  const hooks: SettingsHooks = {
+    ...existing.hooks,
+    PostToolUse: existing.hooks?.PostToolUse ?? [],
+    SessionStart: [...(existing.hooks?.SessionStart ?? []), entry],
+  };
+  return { ...existing, hooks };
+}
+
+function replaceSessionStart(existing: ClaudeSettings, entry: SessionStartEntry): ClaudeSettings {
+  // Deduplicate by first hook command text
+  const existingSS = existing.hooks?.SessionStart ?? [];
+  const cmd = entry.hooks[0]?.command ?? '';
+  const filtered = existingSS.filter(e => (e.hooks[0]?.command ?? '') !== cmd);
+  filtered.push(entry);
+  const hooks: SettingsHooks = { ...existing.hooks, PostToolUse: existing.hooks?.PostToolUse ?? [], SessionStart: filtered };
   return { ...existing, hooks };
 }
 

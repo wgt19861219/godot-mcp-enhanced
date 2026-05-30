@@ -370,8 +370,16 @@ describe('project-tools handleTool — setup_project_rules', () => {
     const settingsPath = join(dir, '.claude', 'settings.json');
     expect(existsSync(settingsPath)).toBe(true);
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    // PostToolUse: 3 hook entries (edit_script, scene/batch, material)
     expect(settings.hooks.PostToolUse).toBeDefined();
+    expect(settings.hooks.PostToolUse.length).toBe(3);
     expect(settings.hooks.PostToolUse[0].matcher).toContain('edit_script');
+    expect(settings.hooks.PostToolUse[1].matcher).toContain('scene');
+    expect(settings.hooks.PostToolUse[2].matcher).toContain('material');
+    // SessionStart: 1 entry
+    expect(settings.hooks.SessionStart).toBeDefined();
+    expect(settings.hooks.SessionStart.length).toBe(1);
+    expect(settings.hooks.SessionStart[0].hooks[0].command).toContain('Session started');
 
     // Verify CLAUDE.md
     const claudeMdPath = join(dir, 'CLAUDE.md');
@@ -418,13 +426,14 @@ describe('project-tools handleTool — setup_project_rules', () => {
     // First run: creates everything
     await callProject('setup_project_rules', { project_path: dir }, ctx);
 
-    // Second run: should skip both
+    // Second run: should skip hooks and CLAUDE.md (rules file skipped too)
     const result = await callProject('setup_project_rules', { project_path: dir }, ctx);
     expect(result).not.toBeNull();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.actions).toBeDefined();
     expect(parsed.actions.length).toBe(2);
-    expect(parsed.actions.every(a => a.includes('skipped') || a.includes('will not overwrite'))).toBe(true);
+    // hooks should be skipped, rules should be skipped
+    expect(parsed.actions.some(a => a.includes('skipped'))).toBe(true);
   });
 
   it('merges hooks into existing settings.json', async () => {
@@ -442,7 +451,11 @@ describe('project-tools handleTool — setup_project_rules', () => {
 
     const settings = JSON.parse(readFileSync(join(dir, '.claude', 'settings.json'), 'utf-8'));
     expect(settings.someOtherSetting).toBe(true);
-    expect(settings.hooks.PostToolUse.length).toBe(2);
+    // 1 existing + 3 new PostToolUse entries
+    expect(settings.hooks.PostToolUse.length).toBe(4);
+    // SessionStart should also be present
+    expect(settings.hooks.SessionStart).toBeDefined();
+    expect(settings.hooks.SessionStart.length).toBe(1);
   });
 
   it('overwrites with force=true and preserves file content', async () => {
@@ -461,10 +474,11 @@ describe('project-tools handleTool — setup_project_rules', () => {
     expect(parsed.actions).toBeDefined();
     expect(parsed.actions.some(a => a.includes('updated') || a.includes('created'))).toBe(true);
 
-    // Verify settings.json still has valid structure with hook
+    // Verify settings.json still has valid structure with all hooks
     const settings = JSON.parse(readFileSync(join(dir, '.claude', 'settings.json'), 'utf-8'));
-    expect(settings.hooks.PostToolUse.length).toBe(1);
+    expect(settings.hooks.PostToolUse.length).toBe(3);
     expect(settings.hooks.PostToolUse[0].matcher).toContain('edit_script');
+    expect(settings.hooks.SessionStart.length).toBe(1);
 
     // Verify CLAUDE.md still has rules section
     const claudeMd = readFileSync(join(dir, 'CLAUDE.md'), 'utf-8');
