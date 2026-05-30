@@ -210,6 +210,76 @@ export function validateVector3(v: unknown): { x: number; y: number; z: number }
   return { x: obj.x as number, y: obj.y as number, z: obj.z as number };
 }
 
+// ─── GDScript 辅助函数（共享模板）────────────────────────
+// SCENE_TREE_HEADER 和 gdscript-executor.ts 的 wrapSnippet 共同引用。
+// 使用 readonly string[] 而非模板字面量，防止 JS 变量插值污染 GDScript 代码。
+
+/** _mcp_get_root() — 获取场景根节点（缓存） */
+export const GD_MCP_GET_ROOT: readonly string[] = [
+  'func _mcp_get_root() -> Node:',
+  '\tif _mcp_root != null:',
+  '\t\treturn _mcp_root',
+  '\tif root != null:',
+  '\t\t_mcp_root = root',
+  '\t\treturn _mcp_root',
+  '\tvar ml: Variant = Engine.get_main_loop()',
+  '\tif ml != null and ml is SceneTree and ml.root != null:',
+  '\t\t_mcp_root = ml.root',
+  '\t\treturn _mcp_root',
+  '\treturn null',
+];
+
+/** _mcp_get_node() — 按路径获取节点（精确版：只在根节点上下文跳过 "root"） */
+export const GD_MCP_GET_NODE: readonly string[] = [
+  'func _mcp_get_node(path: NodePath) -> Node:',
+  '\tvar _p: String = str(path)',
+  '\tif _p.begins_with("/"):',
+  '\t\t_p = _p.substr(1)',
+  '\tvar _r: Node = _mcp_get_root()',
+  '\tif _r == null:',
+  '\t\treturn null',
+  '\t# Fallback: root.get_node() may fail in headless _initialize()',
+  '\tvar _node: Node = _r.get_node_or_null(_p)',
+  '\tif _node != null:',
+  '\t\treturn _node',
+  '\t# Manual traversal for headless compatibility',
+  '\tvar _parts: PackedStringArray = _p.split("/")',
+  '\t_node = _r',
+  '\tfor _part in _parts:',
+  '\t\tif _part == "":',
+  '\t\t\tcontinue',
+  '\t\tvar _found: bool = false',
+  '\t\tfor _ch in _node.get_children():',
+  '\t\t\tif _ch.name == _part:',
+  '\t\t\t\t_node = _ch',
+  '\t\t\t\t_found = true',
+  '\t\t\t\tbreak',
+  '\t\tif not _found:',
+  '\t\t\tif _part == "root" and _node == _r:',
+  '\t\t\t\tcontinue',
+  '\t\t\treturn null',
+  '\treturn _node',
+];
+
+/** _mcp_load_main_scene() — 加载主场景 */
+export const GD_MCP_LOAD_MAIN_SCENE: readonly string[] = [
+  'func _mcp_load_main_scene() -> void:',
+  '\tvar _r: Node = _mcp_get_root()',
+  '\tif _r == null:',
+  '\t\treturn',
+  '\tvar _sp: Variant = ProjectSettings.get_setting("application/run/main_scene")',
+  '\tif _sp != null and _sp != "":',
+  '\t\tvar _sr = load(_sp)',
+  '\t\tif _sr:',
+  '\t\t\t_r.add_child(_sr.instantiate())',
+];
+
+/** _mcp_output() — 记录输出（修复：SCENE_TREE_HEADER 原缺失此函数） */
+export const GD_MCP_OUTPUT: readonly string[] = [
+  'func _mcp_output(key: String, value: Variant) -> void:',
+  '\t_mcp_outputs.append({"key": key, "value": str(value)})',
+];
+
 export const SCENE_TREE_HEADER = `extends SceneTree
 
 var _mcp_root: Node = null
