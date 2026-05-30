@@ -35,7 +35,7 @@ func _mcp_get_node(path: NodePath) -> Node:
 	var _parts: PackedStringArray = _p.split("/")
 	_node = _r
 	for _part in _parts:
-		if _part == "" or _part == "root":
+		if _part == "":
 			continue
 		var _found: bool = false
 		for _ch in _node.get_children():
@@ -44,8 +44,11 @@ func _mcp_get_node(path: NodePath) -> Node:
 				_found = true
 				break
 		if not _found:
+			if _part == "root" and _node == _r:
+				continue
 			return null
 	return _node
+
 func _mcp_load_main_scene() -> void:
 	var _r: Node = _mcp_get_root()
 	if _r == null:
@@ -106,7 +109,7 @@ func _mcp_get_node(path: NodePath) -> Node:
 	var _parts: PackedStringArray = _p.split("/")
 	_node = _r
 	for _part in _parts:
-		if _part == "" or _part == "root":
+		if _part == "":
 			continue
 		var _found: bool = false
 		for _ch in _node.get_children():
@@ -115,8 +118,11 @@ func _mcp_get_node(path: NodePath) -> Node:
 				_found = true
 				break
 		if not _found:
+			if _part == "root" and _node == _r:
+				continue
 			return null
 	return _node
+
 func _mcp_load_main_scene() -> void:
 	var _r: Node = _mcp_get_root()
 	if _r == null:

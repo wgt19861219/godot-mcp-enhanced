@@ -21,7 +21,7 @@ import { randomUUID } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
 import { forceKillTree, getProjectDir, getRunningProcess, acquireShortRunningSlot, releaseShortRunningSlot } from './core/process-state.js';
 import { buildSafeEnv } from './helpers.js';
-import { MARKER_RESULT as MARKER_RESULT_SHARED } from './tools/shared.js';
+import { MARKER_RESULT as MARKER_RESULT_SHARED, GD_MCP_GET_ROOT, GD_MCP_GET_NODE, GD_MCP_LOAD_MAIN_SCENE, GD_MCP_OUTPUT } from './tools/shared.js';
 
 
 // ─── Sandbox scanner (C-SEC-02) ──────────────────────────────────────────────
@@ -217,64 +217,20 @@ export function wrapSnippet(code: string, resultMarker = MARKER_RESULT_SHARED): 
   // Build via array join — prevents JS template interpolation of user code
   const scriptLines: string[] = [
     'extends SceneTree',
-    '## MCP snippet mode \u2014 autoloads are NOT available unless load_autoloads=true',
+    '## MCP snippet mode — autoloads are NOT available unless load_autoloads=true',
     '## Use Variant type for variables to avoid "Cannot infer type" errors',
     '',
     'var _mcp_outputs: Array = []',
     'var _mcp_root: Node = null',
     '',
-    'func _mcp_get_root() -> Node:',
-    '\tif _mcp_root != null:',
-    '\t\treturn _mcp_root',
-    '\tif root != null:',
-    '\t\t_mcp_root = root',
-    '\t\treturn _mcp_root',
-    '\tvar ml: Variant = Engine.get_main_loop()',
-    '\tif ml != null and ml is SceneTree and ml.root != null:',
-    '\t\t_mcp_root = ml.root',
-    '\t\treturn _mcp_root',
-    '\treturn null',
+    ...GD_MCP_GET_ROOT,
     '',
-    'func _mcp_get_node(path: NodePath) -> Node:',
-    '\tvar _p: String = str(path)',
-    '\tif _p.begins_with("/"):',
-    '\t\t_p = _p.substr(1)',
-    '\tvar _r: Node = _mcp_get_root()',
-    '\tif _r == null:',
-    '\t\treturn null',
-    '\t# Fallback: root.get_node() may fail in headless _initialize()',
-    '\tvar _node: Node = _r.get_node_or_null(_p)',
-    '\tif _node != null:',
-    '\t\treturn _node',
-    '\t# Manual traversal for headless compatibility',
-    '\tvar _parts: PackedStringArray = _p.split("/")',
-    '\t_node = _r',
-    '\tfor _part in _parts:',
-    '\t\tif _part == "" or _part == "root":',
-    '\t\t\tcontinue',
-    '\t\tvar _found: bool = false',
-    '\t\tfor _ch in _node.get_children():',
-    '\t\t\tif _ch.name == _part:',
-    '\t\t\t\t_node = _ch',
-    '\t\t\t\t_found = true',
-    '\t\t\t\tbreak',
-    '\t\tif not _found:',
-    '\t\t\treturn null',
-    '\treturn _node',
-    'func _mcp_load_main_scene() -> void:',
-    '\tvar _r: Node = _mcp_get_root()',
-    '\tif _r == null:',
-    '\t\treturn',
-    '\tvar _sp: Variant = ProjectSettings.get_setting("application/run/main_scene")',
-    '\tif _sp != null and _sp != "":',
-    '\t\tvar _sr = load(_sp)',
-    '\t\tif _sr:',
-    '\t\t\t_r.add_child(_sr.instantiate())',
+    ...GD_MCP_GET_NODE,
     '',
-    'func _mcp_output(key: String, value: Variant) -> void:',
-    '\t_mcp_outputs.append({"key": key, "value": str(value)})',
+    ...GD_MCP_LOAD_MAIN_SCENE,
+    '',
+    ...GD_MCP_OUTPUT,
   ];
-
   // User code — safe: array join does not interpolate dollar-brace or backticks
   if (declarationLines.length > 0) {
     scriptLines.push('');
@@ -356,12 +312,11 @@ export function wrapSnippetAsNode(code: string, resultMarker = MARKER_RESULT_SHA
   // Build via array join — prevents JS template interpolation of user code
   const nodeLines: string[] = [
     'extends Node',
-    '## MCP autoload snippet mode \u2014 runs as Node child in loader scene',
+    '## MCP autoload snippet mode — runs as Node child in loader scene',
     '',
     'var _mcp_outputs: Array = []',
     '',
-    'func _mcp_output(key: String, value: Variant) -> void:',
-    '\t_mcp_outputs.append({"key": key, "value": str(value)})',
+    ...GD_MCP_OUTPUT,
   ];
 
   // User code — safe: array join does not interpolate dollar-brace or backticks
