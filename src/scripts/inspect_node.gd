@@ -90,7 +90,6 @@ func _init():
 
 	_output_result(result)
 
-	root.queue_free()
 	quit()
 
 func _get_all_properties(node: Node) -> Dictionary:

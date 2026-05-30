@@ -9,7 +9,9 @@ interface PendingToken {
 
 const TOKEN_TTL_MS = 180_000; // 3 minutes
 const MAX_TOKENS = 100;
+const TOKEN_RATE_LIMIT = 5; // max new tokens per second
 const pendingTokens = new Map<string, PendingToken>();
+let _recentCreations: number[] = []; // timestamps of recent createPendingToken calls
 
 let _cleanupTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
   const now = Date.now();
@@ -58,6 +60,12 @@ export function requiresConfirmation(toolName: string, args?: Record<string, unk
 export function createPendingToken(toolName: string, args: Record<string, unknown>): string {
   ensureCleanupTimer();
   const now = Date.now();
+  // A-08: Rate limit — prevent high-frequency token creation from evicting legitimate tokens
+  _recentCreations = _recentCreations.filter(t => now - t < 1000);
+  if (_recentCreations.length >= TOKEN_RATE_LIMIT) {
+    throw new Error(`Token creation rate limit exceeded (max ${TOKEN_RATE_LIMIT}/s). Please wait and retry.`);
+  }
+  _recentCreations.push(now);
   // 清理过期 token
   for (const [key, pending] of pendingTokens) {
     if (now - pending.createdAt > TOKEN_TTL_MS) pendingTokens.delete(key);
@@ -101,6 +109,7 @@ export function pendingCount(): number {
  */
 export function resetState(): void {
   pendingTokens.clear();
+  _recentCreations = [];
   if (_cleanupTimer !== null) {
     clearInterval(_cleanupTimer);
     _cleanupTimer = null;

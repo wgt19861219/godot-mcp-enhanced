@@ -1,7 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscript } from '../gdscript-executor.js';
+import { executeGdscriptTrusted } from '../gdscript-executor.js';
 import { normalizeNodePath, gdEscape, sanitizeResPath, validateIdentifier } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
 
@@ -744,13 +744,12 @@ export async function handleTool(
         return opsErrorResult('SCRIPT_EXEC_FAILED', `Unknown action: ${action}`);
       }
 
-    const result = await executeGdscript({
+    const result = await executeGdscriptTrusted({
       godotPath: godot,
       projectPath,
       code: script,
       timeout: 30,
       loadAutoloads,
-      _skipSandbox: true, // shader_save uses FileAccess.open(...WRITE) internally
     });
 
     return parseGdscriptResult(result, [], materialErrorMapper);

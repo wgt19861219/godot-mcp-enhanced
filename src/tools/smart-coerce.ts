@@ -14,7 +14,7 @@ const NAMED_COLORS: Record<string, [number, number, number]> = {
   cyan: [0, 1, 1], magenta: [1, 0, 1], orange: [1, 0.647, 0],
   purple: [0.502, 0, 0.502], pink: [1, 0.753, 0.796],
   gray: [0.502, 0.502, 0.502], grey: [0.502, 0.502, 0.502],
-  transparent: [1, 1, 1],
+  transparent: [0, 0, 0],
 };
 
 function hexToNorm(hex: string): [number, number, number, number] {

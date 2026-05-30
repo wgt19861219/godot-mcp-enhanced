@@ -71,21 +71,27 @@ func cleanup() -> void:
 		_recording_commands.queue_free()
 		_recording_commands = null
 	if _animation_commands:
+		if _animation_commands.has_method("cleanup"): _animation_commands.cleanup()
 		_animation_commands.queue_free()
 		_animation_commands = null
 	if _ui_commands:
+		if _ui_commands.has_method("cleanup"): _ui_commands.cleanup()
 		_ui_commands.queue_free()
 		_ui_commands = null
 	if _scene_commands:
+		if _scene_commands.has_method("cleanup"): _scene_commands.cleanup()
 		_scene_commands.queue_free()
 		_scene_commands = null
 	if _node_commands:
+		if _node_commands.has_method("cleanup"): _node_commands.cleanup()
 		_node_commands.queue_free()
 		_node_commands = null
 	if _test_commands:
+		if _test_commands.has_method("cleanup"): _test_commands.cleanup()
 		_test_commands.queue_free()
 		_test_commands = null
 	if _export_commands:
+		if _export_commands.has_method("cleanup"): _export_commands.cleanup()
 		_export_commands.queue_free()
 		_export_commands = null
 	if _particle_commands:
@@ -94,12 +100,15 @@ func cleanup() -> void:
 		_particle_commands.queue_free()
 		_particle_commands = null
 	if _nav_commands:
+		if _nav_commands.has_method("cleanup"): _nav_commands.cleanup()
 		_nav_commands.queue_free()
 		_nav_commands = null
 	if _animtree_commands:
+		if _animtree_commands.has_method("cleanup"): _animtree_commands.cleanup()
 		_animtree_commands.queue_free()
 		_animtree_commands = null
 	if _undo_manager:
+		if _undo_manager.has_method("cleanup"): _undo_manager.cleanup()
 		_undo_manager.queue_free()
 		_undo_manager = null
 

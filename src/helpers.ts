@@ -62,6 +62,7 @@ export function safeRealPath(p: string, base?: string): string {
 
 export function resolveWithinRoot(root: string, userPath: string): string {
   // Resolve real root path (handles symlinks and junction points)
+  // NOTE: TOCTOU window exists between symlink check and actual use — accepted risk for local-only scenarios.
   const base = safeRealPath(resolvePath(root));
 
   // Reject UNC paths (\\server\share) — only relevant on Windows
@@ -238,7 +239,7 @@ export async function checkVersionMismatch(projectPath: string, godotBin: string
     }
     return null;
   } catch (err) {
-    console.debug('[helpers] checkGodotVersion failed:', err);
+    console.warn('[helpers] checkVersionMismatch failed:', (err as Error).message);
     return null;
   }
 }
@@ -310,7 +311,10 @@ export function parseGodotConfig(content: string): GodotConfig {
       const container = currentSection
         ? (sectioned[currentSection] as Record<string, unknown>)
         : sectioned;
-      container[kvMatch[1]] = parseConfigValue(kvMatch[2].trim());
+      // I-03: Ensure container is actually an object before writing properties
+      if (container && typeof container === 'object' && !Array.isArray(container)) {
+        container[kvMatch[1]] = parseConfigValue(kvMatch[2].trim());
+      }
     }
   }
 

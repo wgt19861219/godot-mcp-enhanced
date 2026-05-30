@@ -126,11 +126,11 @@ export class ToolDispatcher {
       if (name === 'confirm_and_execute') {
         const token = args.token as string;
         if (!token || typeof token !== 'string') {
-          return { content: [{ type: 'text', text: 'Error: confirmation_token is required' }] };
+          return { content: [{ type: 'text', text: 'Error: confirmation_token is required' }], isError: true };
         }
         const pending = consumeToken(token);
         if (!pending) {
-          return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }] };
+          return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }], isError: true };
         }
 
         // 二次 guard 检查
@@ -181,7 +181,7 @@ export class ToolDispatcher {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('Tool error:', name, msg);
-      return { content: [{ type: 'text', text: `Error: ${msg}` }] };
+      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
     }
   }
 
@@ -201,6 +201,7 @@ export class ToolDispatcher {
     this._editorFallback = true;
   }
 
+  /** Convert camelCase arg keys to snake_case. Only top-level keys are converted; nested objects are left intact. */
   private normalizeArgs(rawArgs: Record<string, unknown> | undefined): Record<string, unknown> {
     const args: Record<string, unknown> = {};
     if (rawArgs) {
@@ -250,14 +251,14 @@ export class ToolDispatcher {
     if (pathErr) return pathErr;
     const targetMod = getModuleForTool(toolName);
     if (!targetMod) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }] };
+      return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }], isError: true };
     }
     const result = await targetMod.handleTool(toolName, args, this.ctx);
     if (result !== null) {
       const duration = Date.now() - startTime;
       return { ...result, content: [...result.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] };
     }
-    return { content: [{ type: 'text', text: `Tool "${toolName}" registered but handler returned null` }] };
+    return { content: [{ type: 'text', text: `Tool "${toolName}" registered but handler returned null` }], isError: true };
   }
 
   private attachFallbackWarning(result: ToolResult): ToolResult {

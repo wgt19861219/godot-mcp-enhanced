@@ -38,6 +38,12 @@ export class EditorConnection {
   private disconnectHandlers = new Set<() => void>();
   private reconnectHandlers = new Set<() => void>();
 
+  /** Track dropped notify() calls so callers can detect stale scene-tree state */
+  private _droppedNotifications = 0;
+
+  /** Guard against duplicate fireDisconnect() calls */
+  private _disconnectFired = false;
+
   /**
    * Backward-compatible setter: converts a direct assignment like
    * `conn.onDisconnect = fn` into the multicast Set pattern.
@@ -79,6 +85,8 @@ export class EditorConnection {
   }
 
   private fireDisconnect(): void {
+    if (this._disconnectFired) return;
+    this._disconnectFired = true;
     for (const handler of this.disconnectHandlers) handler();
   }
 
@@ -135,6 +143,7 @@ export class EditorConnection {
         this.ws = ws;
         this.connected = true;
         this.connectAttempt = false;
+        this._disconnectFired = false;
         // C-3: Reset reconnectEnabled on successful connection
         this.reconnectEnabled = this.shouldReconnect;
         this.setupMessageHandler();
@@ -221,7 +230,8 @@ export class EditorConnection {
           return;
         }
         const msg = JSON.parse(raw);
-        if (msg.id != null && this.pending.has(msg.id)) {
+        // A-12: Validate msg.id is a number before using as pending lookup key
+        if (typeof msg.id === 'number' && this.pending.has(msg.id)) {
           const pending = this.pending.get(msg.id)!;
           clearTimeout(pending.timer);
           this.pending.delete(msg.id);
@@ -241,6 +251,17 @@ export class EditorConnection {
       } catch (err) {
         const snippet = typeof raw === 'string' ? raw.substring(0, 200) : '(unavailable)';
         console.warn('[editor-conn] parse WebSocket message:', (err as Error).message, 'raw:', snippet);
+        // Attempt to extract id from malformed JSON and reject the pending request
+        const idMatch = raw.match(/"id"\s*:\s*(\d+)/);
+        if (idMatch) {
+          const badId = Number(idMatch[1]);
+          const pending = this.pending.get(badId);
+          if (pending) {
+            clearTimeout(pending.timer);
+            this.pending.delete(badId);
+            pending.reject(new Error(`JSON parse error in editor response: ${(err as Error).message}`));
+          }
+        }
       }
     });
   }
@@ -287,8 +308,19 @@ export class EditorConnection {
     try {
       this.ws.send(JSON.stringify({ jsonrpc: '2.0', method, params }));
     } catch (err) {
-      console.debug('[EditorConnection] notify send failed:', err);
+      this._droppedNotifications++;
+      console.error('[EditorConnection] notify send failed (method=%s, dropped=%d):', method, this._droppedNotifications, err);
     }
+  }
+
+  /** Number of notify() calls that failed to send since last check */
+  get droppedNotifications(): number {
+    return this._droppedNotifications;
+  }
+
+  /** Reset the dropped notification counter (call after consuming the value) */
+  resetDroppedNotifications(): void {
+    this._droppedNotifications = 0;
   }
 
   onNotification(method: string, handler: (params: unknown) => void): void {
@@ -384,7 +416,7 @@ export class EditorConnection {
         await this.connect();
         console.error('[EditorConnection] Reconnected');
       } catch (err) {
-        console.debug('[EditorConnection] reconnect failed:', err);
+        console.warn('[EditorConnection] reconnect failed:', err);
       }
     }, delay);
   }

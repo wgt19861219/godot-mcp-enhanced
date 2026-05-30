@@ -84,13 +84,20 @@ export interface ExecuteGdscriptOptions {
   timeout: number; // seconds
   /** When true, runs with full autoload context (slower but can access autoloads like DataRegistry) */
   loadAutoloads?: boolean;
-  /** @internal Skip sandbox scanning for trusted tool-generated code (e.g. recording_save, shader_save). */
-  _skipSandbox?: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const TMP_PREFIX = 'godot-mcp-exec-';
+
+/** I-16: Opaque symbol to prevent external code from bypassing sandbox */
+const _trustedSymbol = Symbol('trusted');
+
+/** Execute GDScript with sandbox scanning disabled. Only for internal trusted code paths. */
+export function executeGdscriptTrusted(options: Omit<ExecuteGdscriptOptions, '_skipSandbox'>): Promise<ExecuteGdscriptResult> {
+  (options as unknown as Record<symbol, boolean>)[_trustedSymbol] = true;
+  return executeGdscript(options as ExecuteGdscriptOptions);
+}
 /** Re-export markers from shared.ts for consumers that import from this module */
 export { MARKER_RESULT_SHARED as MARKER_RESULT, MARKER_ERROR_SHARED as MARKER_ERROR };
 
@@ -403,7 +410,8 @@ export function parseMcpMarkers(raw: string, resultMarker = MARKER_RESULT_SHARED
 export async function executeGdscript(
   options: ExecuteGdscriptOptions
 ): Promise<ExecuteGdscriptResult> {
-  const { godotPath, projectPath, code, timeout = 30 } = options;
+  const { godotPath, projectPath, timeout = 30 } = options;
+  let code = options.code;
   let loadAutoloads = options.loadAutoloads ?? false;
   const startTime = Date.now();
 
@@ -424,7 +432,8 @@ export async function executeGdscript(
   }
 
   // C-SEC-02: Sandbox scan — BLOCKS execution on dangerous patterns by default
-  const sandboxWarnings = options._skipSandbox ? [] : scanGdscriptSandbox(code);
+  const skipSandbox = (options as unknown as Record<symbol, boolean>)[_trustedSymbol] === true;
+  const sandboxWarnings = skipSandbox ? [] : scanGdscriptSandbox(code);
   if (sandboxWarnings.length > 0 && process.env.GODOT_MCP_ALLOW_UNSAFE !== 'true') {
     return {
       success: false, compile_success: false,
@@ -434,6 +443,8 @@ export async function executeGdscript(
   }
   if (sandboxWarnings.length > 0 && process.env.GODOT_MCP_ALLOW_UNSAFE === 'true') {
     console.warn('[SECURITY] GODOT_MCP_ALLOW_UNSAFE=true — executing despite sandbox warnings:', sandboxWarnings);
+    // I-18: Mark execution output so downstream consumers know sandbox was bypassed
+    code = '# [UNSANDBOXED] Executing with GODOT_MCP_ALLOW_UNSAFE=true\n' + code;
   }
 
   // Validate godotPath exists and looks like a Godot binary
@@ -511,7 +522,7 @@ export async function executeGdscript(
     // Autoload mode: create a loader scene that initializes all autoloads first
     try {
       // Write loader script first to get its absolute path
-      const loaderScriptPath = writeSessionFile(createAutoloadLoaderScript(tempFile), '.gd', sessionDir);
+      const loaderScriptPath = writeSessionFile(createAutoloadLoaderScript(tempFile, rndError), '.gd', sessionDir);
       tempFiles.push(loaderScriptPath);
       // Create scene referencing loader script by absolute path (not res://)
       const loaderScene = createAutoloadLoaderScene(loaderScriptPath);
@@ -698,7 +709,7 @@ export function createAutoloadLoaderScene(loaderScriptPath: string): string {
  * Create the loader GDScript that loads with autoload context.
  * In _ready(), all autoloads are available. It then loads and runs the user script.
  */
-export function createAutoloadLoaderScript(userScriptPath: string): string {
+export function createAutoloadLoaderScript(userScriptPath: string, errorMarker: string): string {
   const pathRes = userScriptPath.replace(/\\/g, '/').replace(/"/g, '\\"');
   return [
     'extends Node',
@@ -706,7 +717,7 @@ export function createAutoloadLoaderScript(userScriptPath: string): string {
     'func _ready() -> void:',
     '\tvar user_script: GDScript = load("' + pathRes + '") as GDScript',
     '\tif user_script == null:',
-    '\t\tprint("___MCP_ERROR___" + JSON.stringify({"success": false, "error": "Failed to load user script"}))',
+    '\t\tprint("' + errorMarker + '" + JSON.stringify({"success": false, "error": "Failed to load user script"}))',
     '\t\tget_tree().quit(0)',
     '\t\treturn',
     '\tvar instance: Variant = user_script.new()',

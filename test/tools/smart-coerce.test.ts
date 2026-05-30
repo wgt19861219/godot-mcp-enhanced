@@ -44,7 +44,7 @@ describe('smartCoerce', () => {
     });
 
     it('should convert "transparent" to Color with alpha 0', () => {
-      expect(smartCoerce('transparent')).toBe('Color(1, 1, 1, 0)');
+      expect(smartCoerce('transparent')).toBe('Color(0, 0, 0, 0)');
     });
 
     it('should be case-insensitive', () => {

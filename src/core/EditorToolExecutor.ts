@@ -59,6 +59,16 @@ export class EditorToolExecutor {
         content: [{ type: 'text' as const, text: JSON.stringify(result) }],
       };
     } catch (err) {
+      if (err instanceof Error && ('code' in err || 'data' in err)) {
+        // Preserve structured error info from editor plugin (I-12)
+        const structured: Record<string, unknown> = { error: err.message };
+        if ('code' in err) structured.code = (err as Record<string, unknown>).code;
+        if ('data' in err) structured.data = (err as Record<string, unknown>).data;
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(structured) }],
+          isError: true,
+        };
+      }
       const message = err instanceof Error ? err.message : 'Unknown error';
       return {
         content: [{ type: 'text' as const, text: JSON.stringify({ error: message }) }],

@@ -37,6 +37,8 @@ const BLOCKED_PROPERTIES := [
 	"input_event", "ready", "tree_entered", "tree_exited", "tree_exiting",
 ]
 
+# WARNING: "get" + "get_property_list" can enumerate most public properties.
+# This is intentional for debugging but be aware of the information disclosure vector.
 const ALLOWED_METHODS := [
 	"get", "get_class", "get_path", "get_children", "get_child", "get_child_count",
 	"get_parent", "get_property_list", "has_method", "is_class", "get_instance_id",
@@ -89,8 +91,8 @@ func _process(_delta: float) -> void:
 				p.disconnect_from_host()
 				to_remove.append(i)
 				continue
-		_peer_last_activity[pid_act] = Time.get_ticks_msec() / 1000.0
 		if p.get_available_bytes() > 0:
+			_peer_last_activity[pid_act] = Time.get_ticks_msec() / 1000.0
 			var byte_count := p.get_available_bytes()
 			var result := p.get_data(byte_count)
 			if result[0] == OK:

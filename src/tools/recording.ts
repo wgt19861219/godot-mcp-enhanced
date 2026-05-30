@@ -1,7 +1,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { requireProjectPath, resolveWithinRoot } from '../helpers.js';
-import { executeGdscript } from '../gdscript-executor.js';
+import { executeGdscript, executeGdscriptTrusted } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, gdEscape } from './shared.js';
 import { sendToBridge, setBridgeProjectDir } from './game-bridge.js';
 
@@ -281,13 +281,12 @@ export async function handleTool(
         resolveWithinRoot(projectPath, `recordings/${fileName}`);
         const escapedJson = gdEscape(eventsJson);
         const script = genRecordingSaveScript(fileName, escapedJson);
-        const result = await executeGdscript({
+        const result = await executeGdscriptTrusted({
           godotPath: godot,
           projectPath,
           code: script,
           timeout: 30,
           loadAutoloads,
-          _skipSandbox: true, // recording_save uses FileAccess.open(...WRITE) internally
         });
         const errorMapper = (msg: string) => {
           if (msg.includes('not found') || msg.includes('File not found')) return ERROR_CODES.RECORDING_FILE_NOT_FOUND;

@@ -87,7 +87,7 @@ function readBridgeSecret(): string | null {
     _cachedSecretAt = Date.now();
     return _cachedSecret;
   } catch (err) {
-    console.debug('[bridge] read bridge secret:', err);
+    console.warn('[bridge] read bridge secret failed (%s): %s', (err as Error).message, secretPath);
     return null;
   }
 }
@@ -187,6 +187,10 @@ function _ensureConnection(timeout: number): Promise<Socket> {
       }
       return sock;
     })
+    .catch(err => {
+      _connectionLock = null; // Clear lock before propagating so next call can retry
+      throw err;
+    })
     .finally(() => { _connectionLock = null; });
   return _connectionLock;
 }
@@ -242,6 +246,8 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
             doResolve(resp);
             return;
           } catch {
+            // Log unparseable lines instead of silently discarding (I-10)
+            console.warn('[bridge] sendToBridge: unparseable JSON line (request %d): %s', id, line.substring(0, 120));
             continue;
           }
         }
@@ -274,7 +280,7 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
 
   // Chain onto the send lock — next request waits for this one to settle
   const prev = _sendLock;
-  let resolveLock!: () => void;
+  let resolveLock: () => void = () => {};
   _sendLock = new Promise<void>(r => { resolveLock = r; });
   return prev.then(() => run()).finally(resolveLock);
 }

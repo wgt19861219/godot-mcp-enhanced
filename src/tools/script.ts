@@ -621,6 +621,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       // Collect files
       const MAX_FILES = 500;
       const matchedFiles: string[] = [];
+      const skippedDirs: string[] = [];
       function scanDir(dir: string, depth: number): void {
         if (matchedFiles.length >= MAX_FILES) return;
         if (depth > 15) return;
@@ -637,7 +638,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               matchedFiles.push(full);
             }
           }
-        } catch (err) { console.debug('[script] scan dir for files:', err); }
+        } catch (err) {
+          console.debug('[script] scan dir for files:', err);
+          skippedDirs.push(dir.slice(p.length + 1) || dir);
+        }
       }
       scanDir(p, 0);
       if (matchedFiles.length >= MAX_FILES) {
@@ -691,6 +695,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         `Changed: ${changedFiles.length} files (${totalReplacements} replacements)`,
         unchangedFiles.length > 0 ? `Unchanged: ${unchangedFiles.length} files` : '',
         skippedLarge.length > 0 ? `Skipped (>${MAX_FILE_SIZE / 1_000_000}MB): ${skippedLarge.length} files` : '',
+        skippedDirs.length > 0 ? `Skipped dirs (unreadable): ${skippedDirs.slice(0, 10).join(', ')}${skippedDirs.length > 10 ? ` ... and ${skippedDirs.length - 10} more` : ''}` : '',
       ].filter(Boolean).join('\n');
 
       const details = changedFiles.length > 0

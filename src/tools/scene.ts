@@ -114,7 +114,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'load_sprite': {
       if (!acquireShortRunningSlot()) return opsErrorResult('CONCURRENCY_LIMIT', 'too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
-      const godot = await ctx.findGodot();
+      let godot: string;
+      try {
+        godot = await ctx.findGodot();
+      } catch (e) {
+        releaseShortRunningSlot();
+        throw e;
+      }
 
       const params: Record<string, unknown> = {};
       if (action === 'create_scene') {
@@ -125,9 +131,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const safeType = /^[A-Za-z0-9_]+$/;
         const unsafeName = /[\]["/:\\]/;
         if (!safeType.test(String(args.node_type ?? ''))) {
+          releaseShortRunningSlot();
           return textResult(`Error: node_type contains invalid characters: "${args.node_type}"`);
         }
         if (!String(args.node_name ?? '') || unsafeName.test(String(args.node_name))) {
+          releaseShortRunningSlot();
           return textResult(`Error: node_name contains invalid characters: "${args.node_name}"`);
         }
         params.node_type = args.node_type;
@@ -142,6 +150,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             resolveWithinRoot(p, np);
             params.new_path = np;
           } catch {
+            releaseShortRunningSlot();
             return opsErrorResult('INVALID_PATH', 'new_path contains path traversal');
           }
         }
@@ -149,6 +158,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         params.scene_path = normalizeUserProjectPath(args.scene_path as string);
         const tp = String(args.texture_path);
         try { sanitizeResPath(tp, 'texture_path'); } catch {
+          releaseShortRunningSlot();
           return opsErrorResult('INVALID_PATH', 'texture_path contains path traversal');
         }
         params.texture_path = tp;
@@ -281,7 +291,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'query_scene_tree': {
       if (!acquireShortRunningSlot()) return opsErrorResult('CONCURRENCY_LIMIT', 'too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
-      const godot = await ctx.findGodot();
+      let godot: string;
+      try {
+        godot = await ctx.findGodot();
+      } catch (e) {
+        releaseShortRunningSlot();
+        throw e;
+      }
       const scriptsDir = dirname(ctx.opsScript);
       const treeScript = join(scriptsDir, 'query_scene_tree.gd');
 
@@ -339,7 +355,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     case 'inspect_node': {
       if (!acquireShortRunningSlot()) return opsErrorResult('CONCURRENCY_LIMIT', 'too many concurrent headless operations (max 3). Please wait and retry.');
       const p = requireProjectPath(args);
-      const godot = await ctx.findGodot();
+      let godot: string;
+      try {
+        godot = await ctx.findGodot();
+      } catch (e) {
+        releaseShortRunningSlot();
+        throw e;
+      }
       const scriptsDir = dirname(ctx.opsScript);
       const inspectScript = join(scriptsDir, 'inspect_node.gd');
 
@@ -433,7 +455,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         }
       }
 
-      const godot = await ctx.findGodot();
+      let godot: string;
+      try {
+        godot = await ctx.findGodot();
+      } catch (e) {
+        releaseShortRunningSlot();
+        throw e;
+      }
 
       return new Promise((resolve) => {
         const proc = spawn(godot, [
@@ -576,7 +604,7 @@ func _initialize():
     case 'health_check': {
       const p = requireProjectPath(args);
       const scenePath = args.scene_path as string;
-      if (!scenePath) {
+      if (!scenePath || typeof scenePath !== 'string') {
         return opsErrorResult('INVALID_PARAMS', 'scene_path is required for health_check', {
           suggestion: 'Provide the scene file path relative to project, e.g. "scenes/main.tscn"',
         });
@@ -652,7 +680,7 @@ function gdScriptSetLine(key: string, value: unknown, varName = 'node'): string 
     if (needsTrySet) {
       return `_try_set(${varName}, "${ek}", ${expr})`;
     }
-    return `${varName}.${key} = ${expr}`;
+    return `${varName}.${ek} = ${expr}`;
   } catch (e: unknown) {
     // valueToGd throws on non-finite numbers — convert to a skip comment
     const msg = (e as Error).message;
@@ -946,18 +974,14 @@ function handleDetachInstance(args: Record<string, unknown>): ToolResult {
 
 // ─── 原子写入辅助 ────────────────────────────────────────────────────────────
 
-/** Atomic file write: write to temp then rename. Falls back to direct write on Windows. */
+/** Atomic file write: write to temp then rename. Uses temp+rename on all platforms (NTFS same-volume rename is atomic). */
 function writeAtomic(filePath: string, content: string): void {
-  if (process.platform === 'win32') {
-    writeFileSync(filePath, content, 'utf-8');
-    return;
-  }
   const tmp = filePath + '.mcp-tmp';
   writeFileSync(tmp, content, 'utf-8');
   try {
     renameSync(tmp, filePath);
   } catch (e) {
-    try { unlinkSync(tmp); } catch { /* best effort cleanup */ }
+    try { unlinkSync(tmp); } catch (cleanupErr) { console.debug("[scene] writeAtomic temp cleanup failed:", cleanupErr); }
     throw e;
   }
 }

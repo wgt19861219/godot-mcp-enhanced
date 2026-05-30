@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
@@ -238,7 +238,7 @@ export async function batchValidateScripts(
   if (output.startsWith('SPAWN_ERROR:')) {
     try { rmSync(listPath, { force: true }); } catch (e) { console.debug('[validation] cleanup list file:', e); }
     try { rmSync(validatorPath, { force: true }); } catch (e) { console.debug('[validation] cleanup validator file:', e); }
-    return [{ file: '<validator>', errors: [output] }];
+    return [{ file: '<validator:spawn>', errors: [output] }];
   }
 
   let filteredCount = 0;
@@ -826,17 +826,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           csResults.push({ file: `${csFiles.length} .cs files`, status: 'skipped', engine: 'dotnet', warning: 'No .csproj found, C# validation skipped' });
         } else {
           try {
-            execSync('dotnet build --no-restore 2>&1', {
+            await execFileAsync('dotnet', ['build', '--no-restore'], {
               cwd: p,
               timeout: 30000,
               encoding: 'utf-8',
             });
             csResults.push({ file: `${csFiles.length} .cs files`, status: 'valid', engine: 'dotnet' });
-          } catch (e: any) {
-            if (e.code === 'ENOENT') {
+          } catch (e: unknown) {
+            const err = e as Record<string, unknown>;
+            if (err.code === 'ENOENT') {
               csResults.push({ file: `${csFiles.length} .cs files`, status: 'skipped', engine: 'dotnet', warning: 'dotnet CLI not found in PATH' });
             } else {
-              const output = e.stdout || e.message || 'dotnet build failed';
+              const output = (err.stdout as string) || (err.message as string) || 'dotnet build failed';
               csResults.push({ file: `${csFiles.length} .cs files`, status: 'error', engine: 'dotnet', error: output.substring(0, 2000) });
             }
           }
@@ -868,6 +869,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         scriptsSummary.scenes_validated = sceneFiles.length;
         scriptsSummary.scene_errors = sceneTotalErrors;
         summaryMsg += ` Validated ${sceneFiles.length} scene/resource file(s), ${sceneResults.filter(r => r.has_errors).length} with errors.`;
+        scriptsSummary.summary = summaryMsg;
       }
 
       const vWarn = await checkVersionMismatch(p, godot);

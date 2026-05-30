@@ -11,14 +11,14 @@ func _init():
 	if script_index == -1:
 		log_error("Could not find --script argument")
 		quit(1)
-
+	return
 	var operation_index = script_index + 2
 	var params_index = script_index + 3
 
 	if args.size() <= params_index:
 		log_error("Usage: godot --headless --script godot_operations.gd <operation> <json_params>")
 		quit(1)
-
+	return
 	log_debug("All arguments: " + str(args))
 	var operation = args[operation_index]
 	var params_json = args[params_index]
@@ -36,11 +36,11 @@ func _init():
 		log_error("Failed to parse JSON parameters: " + params_json)
 		log_error("JSON Error: " + json.get_error_message() + " at line " + str(json.get_error_line()))
 		quit(1)
-
+	return
 	if not params:
 		log_error("Failed to parse JSON parameters: " + params_json)
 		quit(1)
-
+	return
 	log_info("Executing operation: " + operation)
 
 	match operation:
@@ -65,7 +65,7 @@ func _init():
 			cleanup_and_quit([], 1)
 
 	quit()
-
+	return
 # ─── Logging helpers ──────────────────────────────────────────────────────────
 
 func log_debug(message: String) -> void:
@@ -83,6 +83,7 @@ func cleanup_and_quit(nodes: Array, exit_code: int = 0) -> void:
 		if is_instance_valid(node):
 			node.free()
 	quit(exit_code)
+	return
 
 # ─── Class helpers ────────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ func create_scene(params):
 	if not scene_root:
 		log_error("Failed to instantiate node of type: " + root_node_type)
 		quit(1)
-
+	return
 	scene_root.name = "root"
 
 	var packed_scene = PackedScene.new()
@@ -182,8 +183,7 @@ func create_scene(params):
 	else:
 		log_error("Failed to save scene. Error: " + str(save_error))
 		quit(1)
-
-
+	return
 func add_node(params):
 	log_info("Adding node to scene: " + params.scene_path)
 
@@ -194,12 +194,12 @@ func add_node(params):
 	if not FileAccess.file_exists(absolute_scene_path):
 		log_error("Scene file does not exist: " + absolute_scene_path)
 		quit(1)
-
+	return
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene_root = scene.instantiate()
 
 	var parent_path = "root"
@@ -259,12 +259,12 @@ func batch_add_nodes(params):
 	if not FileAccess.file_exists(absolute_scene_path):
 		log_error("Scene file does not exist: " + absolute_scene_path)
 		quit(1)
-
+	return
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene_root = scene.instantiate()
 	var nodes = params.nodes
 	var added_count = 0
@@ -333,14 +333,14 @@ func load_sprite(params):
 	if not FileAccess.file_exists(full_scene_path):
 		log_error("Scene file does not exist: " + full_scene_path)
 		quit(1)
-
+	return
 	var full_texture_path = _sanitize_res_path(params.texture_path)
 
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene_root = scene.instantiate()
 
 	var node_path = params.node_path
@@ -399,12 +399,12 @@ func export_mesh_library(params):
 	if not FileAccess.file_exists(full_scene_path):
 		log_error("Scene file does not exist: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene_root = scene.instantiate()
 	var mesh_library = MeshLibrary.new()
 
@@ -472,12 +472,12 @@ func save_scene(params):
 	if not FileAccess.file_exists(full_scene_path):
 		log_error("Scene file does not exist: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		quit(1)
-
+	return
 	var scene_root = scene.instantiate()
 
 	var save_path = _sanitize_res_path(params.new_path) if params.has("new_path") else full_scene_path
@@ -603,7 +603,7 @@ func get_uid(params):
 	if not params.has("file_path"):
 		log_error("File path is required")
 		quit(1)
-
+	return
 	var file_path = _sanitize_res_path(params.file_path)
 
 	log_info("Getting UID for file: " + file_path)
@@ -613,7 +613,7 @@ func get_uid(params):
 	if not FileAccess.file_exists(file_path):
 		log_error("File does not exist: " + file_path)
 		quit(1)
-
+	return
 	var uid_path = file_path + ".uid"
 	var f = FileAccess.open(uid_path, FileAccess.READ)
 

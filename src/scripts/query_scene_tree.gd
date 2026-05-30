@@ -55,7 +55,6 @@ func _init():
 
 	_output_result({"root": tree_data, "total_nodes": total, "scene_path": scene_path})
 
-	root.queue_free()
 	quit()
 
 func _inspect_node(node: Node, depth: int, max_depth: int) -> Dictionary:
