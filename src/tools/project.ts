@@ -44,6 +44,8 @@ export function getToolDefinitions(): Tool[] {
           renderer: { type: 'string', description: '渲染器："forward_plus"（默认）、"mobile"、"gl_compatibility"', default: 'forward_plus', enum: ['forward_plus', 'mobile', 'gl_compatibility'] },
           hooks: { type: 'boolean', description: '创建 .claude/settings.json 的 PostToolUse hook（默认 true）', default: true },
           claude_md: { type: 'boolean', description: '创建/追加 CLAUDE.md 验证规则（默认 true）', default: true },
+          ci: { type: 'boolean', description: '生成 GitHub Actions CI workflow（默认 false）', default: false },
+          godot_version: { type: 'string', description: 'CI 中使用的 Godot 版本（默认 4.4）', default: '4.4' },
           force: { type: 'boolean', description: '覆盖已有配置（默认 false）', default: false },
         },
         required: ['action'],
@@ -404,6 +406,21 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         }
       }
 
+      // ── CI workflow ──
+      if (args.ci === true) {
+        const godotVersion = (args.godot_version as string) || '4.4';
+        const githubDir = join(p, '.github', 'workflows');
+        const ciPath = join(githubDir, 'godot-ci.yml');
+
+        if (existsSync(ciPath) && !force) {
+          actions.push('ci: skipped (.github/workflows/godot-ci.yml exists, use force=true to overwrite)');
+        } else {
+          mkdirSync(githubDir, { recursive: true });
+          writeAtomic(ciPath, generateCiTemplate(godotVersion));
+          actions.push(`ci: created .github/workflows/godot-ci.yml (Godot ${godotVersion})`);
+        }
+      }
+
       report.actions = actions;
       return textResult(JSON.stringify(report, null, 2));
     }
@@ -416,6 +433,39 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean }> = {
   project: { readonly: false, long_running: false },
 };
+
+// ─── CI template generator ────────────────────────────────────────────────────
+
+export function generateCiTemplate(godotVersion: string = '4.4'): string {
+  const downloadVersion = godotVersion.includes('-') ? godotVersion : `${godotVersion}-stable`;
+  const baseUrl = 'https://github.com/godotengine/godot/releases/download';
+  const filename = `Godot_v${downloadVersion}_linux.x86_64`;
+
+  return `name: Godot CI
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot ${downloadVersion}
+        run: |
+          wget -q ${baseUrl}/${downloadVersion}/${filename}.zip
+          unzip ${filename}.zip
+          chmod +x ${filename}
+          sudo mv ${filename} /usr/local/bin/godot
+      - name: Import project resources
+        run: godot --headless --import --path .
+      - name: Validate scripts
+        run: godot --headless --check-only --path . 2>&1 | tee validate.log
+      - name: Check for errors
+        run: |
+          if grep -qi "script error\\|parse error\\|invalid" validate.log; then
+            echo "Validation failed!"
+            exit 1
+          fi
+`;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
