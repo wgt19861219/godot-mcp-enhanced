@@ -56,11 +56,14 @@ script = ExtResource("2")
     expect(result).toContain('name="Enemy"');
   });
 
-  it('应重新编号合并后的 ext_resource id', () => {
+  it('应保留原始 ext_resource id（无碰撞时）', () => {
     const result = mergeTscn(ours, theirs);
-    const extMatches = result.match(/\[ext_resource[^[]*id="(\d+)"/g);
+    // ours 的 ext_resource 应保留原始 id
+    expect(result).toContain('path="res://a.gd" id="1"');
+    expect(result).toContain('path="res://b.gd" id="2"');
+    const extMatches = result.match(/\[ext_resource[^[]*id="([^"]+)"/g);
     expect(extMatches).toBeTruthy();
-    const ids = extMatches!.map(m => m.match(/id="(\d+)"/)![1]);
+    const ids = extMatches!.map(m => m.match(/id="([^"]+)"/)![1]);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -113,5 +116,87 @@ shape = SubResource("1")
     expect(subRef).toBeTruthy();
     // 对应的 sub_resource id 应与引用一致
     expect(result).toContain(`id="${subRef![1]}"]`);
+  });
+
+  it('应处理 ID 碰撞（theirs 的 ID 已被 ours 使用）', () => {
+    const a = `[gd_scene format=3]
+[ext_resource type="Script" path="res://a.gd" id="1"]
+[ext_resource type="Script" path="res://b.gd" id="2"]
+[node name="Root" type="Node3D"]
+`;
+    const b = `[gd_scene format=3]
+[ext_resource type="Script" path="res://c.gd" id="2"]
+[ext_resource type="Script" path="res://d.gd" id="3"]
+[node name="Root" type="Node3D"]
+`;
+    const result = mergeTscn(a, b);
+    expect(result).toContain('path="res://a.gd" id="1"');
+    expect(result).toContain('path="res://b.gd" id="2"');
+    expect(result).toContain('path="res://c.gd" id="3"');
+    expect(result).toContain('path="res://d.gd" id="4"');
+    const ids = result.match(/id="(\d+)"/g);
+    expect(new Set(ids).size).toBe(ids!.length);
+  });
+
+  it('应保留字符串 UID 的 sub_resource id', () => {
+    const a = `[gd_scene format=3]
+[sub_resource type="BoxShape3D" id="BoxShape3D_gds123"]
+size = Vector3(1, 1, 1)
+[node name="Root" type="Node3D"]
+`;
+    const b = `[gd_scene format=3]
+[node name="Extra" type="Node3D" parent="."]
+`;
+    const result = mergeTscn(a, b);
+    expect(result).toContain('id="BoxShape3D_gds123"');
+  });
+
+  it('应处理字符串 UID 二次碰撞（while 循环）', () => {
+    const a = `[gd_scene format=3]
+[sub_resource type="BoxShape3D" id="Box3D_abc"]
+size = Vector3(1, 1, 1)
+
+[sub_resource type="SphereShape3D" id="Box3D_abc_m1"]
+radius = 2.0
+
+[node name="Root" type="Node3D"]
+`;
+    const b = `[gd_scene format=3]
+[sub_resource type="BoxShape3D" id="Box3D_abc"]
+size = Vector3(3, 3, 3)
+
+[node name="Extra" type="Node3D" parent="."]
+`;
+    const result = mergeTscn(a, b);
+    expect(result).toContain('id="Box3D_abc"]');
+    expect(result).toContain('id="Box3D_abc_m1"]');
+    expect(result).toContain('id="Box3D_abc_m2"]');
+    expect(result).toContain('size = Vector3(3, 3, 3)');
+  });
+
+  it('应更新 header 的 load_steps', () => {
+    const a = `[gd_scene load_steps=2 format=3]
+[ext_resource type="Script" path="res://a.gd" id="1"]
+[node name="Root" type="Node3D"]
+`;
+    const b = `[gd_scene load_steps=2 format=3]
+[ext_resource type="Script" path="res://b.gd" id="2"]
+[node name="Root" type="Node3D"]
+`;
+    const result = mergeTscn(a, b);
+    expect(result).toContain('load_steps=3');
+  });
+
+  it('应在 format 不匹配时添加警告注释', () => {
+    const a = `[gd_scene format=3]
+[ext_resource type="Script" path="res://a.gd" id="1"]
+[node name="Root" type="Node3D"]
+`;
+    const b = `[gd_scene format=2]
+[ext_resource type="Script" path="res://b.gd" id="2"]
+[node name="Root" type="Node3D"]
+`;
+    const result = mergeTscn(a, b);
+    expect(result).toContain('WARNING: format mismatch');
   });
 });

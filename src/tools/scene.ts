@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 import { join, dirname } from 'path';
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, statSync } from 'fs';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
@@ -613,6 +613,15 @@ func _initialize():
       if (!existsSync(fullPathB)) {
         return opsErrorResult('FILE_NOT_FOUND', `Scene B not found: ${sceneB}`);
       }
+      const MAX_MERGE_SIZE = 10 * 1024 * 1024; // 10MB limit (consistent with parseTscn)
+      const statA = statSync(fullPathA);
+      const statB = statSync(fullPathB);
+      if (statA.size > MAX_MERGE_SIZE || statB.size > MAX_MERGE_SIZE) {
+        return opsErrorResult('FILE_TOO_LARGE', `Scene file exceeds 10MB merge limit (A: ${statA.size}B, B: ${statB.size}B)`);
+      }
+      if (!existsSync(fullPathB)) {
+        return opsErrorResult('FILE_NOT_FOUND', `Scene B not found: ${sceneB}`);
+      }
       const ours = readFileSync(fullPathA, 'utf-8');
       const theirs = readFileSync(fullPathB, 'utf-8');
       const merged = mergeTscn(ours, theirs);
@@ -1013,21 +1022,51 @@ export function mergeTscn(ours: string, theirs: string): string {
     }
   }
 
-  // Re-index: build old→new id maps
+  // ID assignment: preserve originals, remap only on collision
+  // Phase 1: reserve all ours IDs (ours resources always keep their original IDs)
+  const usedIds = new Set<string>();
+  oursExt.forEach(e => { if (e.originalId) usedIds.add(e.originalId); });
+  oursSub.forEach(s => { if (s.originalId) usedIds.add(s.originalId); });
+
+  // Helper: generate a collision-free new ID matching the type of the original
+  const allocateId = (originalId: string, isOurs: boolean): string => {
+    if (isOurs || !usedIds.has(originalId)) {
+      usedIds.add(originalId);
+      return originalId;
+    }
+    // Collision — generate new ID preserving type
+    if (/^\d+$/.test(originalId)) {
+      const maxNum = [...usedIds].filter(id => /^\d+$/.test(id)).reduce((max, id) => Math.max(max, parseInt(id)), 0);
+      const newId = String(maxNum + 1);
+      usedIds.add(newId);
+      return newId;
+    }
+    // String UID: append _m{N} with loop until free
+    let seq = 1;
+    let candidate = `${originalId}_m${seq}`;
+    while (usedIds.has(candidate)) {
+      seq++;
+      candidate = `${originalId}_m${seq}`;
+    }
+    usedIds.add(candidate);
+    return candidate;
+  };
+
   const extIdMap: Record<string, string> = {};
   const reindexedExt: string[] = [];
-  let nextId = 1;
   mergedExt.forEach((ext) => {
-    const newId = String(nextId++);
-    if (ext.originalId) extIdMap[ext.originalId] = newId;
+    const isOurs = oursExt.some(o => o.path === ext.path);
+    const newId = allocateId(ext.originalId, isOurs);
+    if (ext.originalId && ext.originalId !== newId) extIdMap[ext.originalId] = newId;
     reindexedExt.push(`[ext_resource type="${ext.type}" path="${ext.path}" id="${newId}"]`);
   });
 
   const subIdMap: Record<string, string> = {};
   const reindexedSub: string[] = [];
   mergedSub.forEach((sub) => {
-    const newId = String(nextId++);
-    subIdMap[sub.originalId] = newId;
+    const isOurs = oursSub.some(o => o.type === sub.type && o.body === sub.body);
+    const newId = allocateId(sub.originalId, isOurs);
+    if (sub.originalId !== newId) subIdMap[sub.originalId] = newId;
     reindexedSub.push(`[sub_resource type="${sub.type}" id="${newId}"]\n${sub.body}`);
   });
 
@@ -1042,8 +1081,23 @@ export function mergeTscn(ours: string, theirs: string): string {
     }
   }
 
+  // Update header load_steps
+  const totalResources = mergedExt.length + mergedSub.length;
+  const updatedHeader = header.replace(/load_steps=\d+/, `load_steps=${totalResources + 1}`);
+
+  // Detect format mismatch
+  const formatOf = (content: string): string | null => {
+    const m = content.match(/format=(\d+)/);
+    return m ? m[1] : null;
+  };
+  const fmtA = formatOf(ours);
+  const fmtB = formatOf(theirs);
+
   // Rebuild the scene file
-  const parts: string[] = [header, ''];
+  const parts: string[] = [updatedHeader, ''];
+  if (fmtA && fmtB && fmtA !== fmtB) {
+    parts.push(`; WARNING: format mismatch — ours=${fmtA} theirs=${fmtB}`);
+  }
   parts.push(...reindexedExt);
   if (reindexedSub.length > 0) {
     parts.push('');
@@ -1052,16 +1106,18 @@ export function mergeTscn(ours: string, theirs: string): string {
   parts.push('');
   for (const node of mergedNodes) {
     let body = node.body;
-    // Remap ExtResource("oldId") → ExtResource("newId")
-    body = body.replace(/ExtResource\("([^"]+)"\)/g, (_match, id: string) => {
-      const newId = extIdMap[id];
-      return newId ? `ExtResource("${newId}")` : `ExtResource("${id}")`;
-    });
-    // Remap SubResource("oldId") → SubResource("newId")
-    body = body.replace(/SubResource\("([^"]+)"\)/g, (_match, id: string) => {
-      const newId = subIdMap[id];
-      return newId ? `SubResource("${newId}")` : `SubResource("${id}")`;
-    });
+    if (Object.keys(extIdMap).length > 0) {
+      body = body.replace(/ExtResource\("([^"]+)"\)/g, (_match, id: string) => {
+        const newId = extIdMap[id];
+        return newId ? `ExtResource("${newId}")` : `ExtResource("${id}")`;
+      });
+    }
+    if (Object.keys(subIdMap).length > 0) {
+      body = body.replace(/SubResource\("([^"]+)"\)/g, (_match, id: string) => {
+        const newId = subIdMap[id];
+        return newId ? `SubResource("${newId}")` : `SubResource("${id}")`;
+      });
+    }
     parts.push(body);
     parts.push('');
   }
@@ -1142,7 +1198,6 @@ export function checkSceneHealth(
   }
 
   // Check 3: Orphan leaf nodes (no script, no children, not a built-in type)
-  const parentPaths = new Set(nodes.map(n => n.parent ? `${n.parent}/${n.name}` : n.name));
   const builtInTypes = new Set(['Camera2D', 'Camera3D', 'CollisionShape2D', 'CollisionShape3D',
     'VisibleOnScreenNotifier2D', 'VisibleOnScreenNotifier3D', 'AudioListener2D', 'AudioListener3D']);
 
