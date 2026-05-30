@@ -41,7 +41,17 @@
 
 5. 新 ID 生成规则（碰撞时）：
    - 数字 ID（匹配 /^\d+$/）：取 max(usedIds 中所有数字) + 1
-   - 字符串 UID：原ID + "_m" + 序号（如 "Box3D_abc_m1"）
+   - 字符串 UID：原ID + "_m" + 序号，while 循环递增直到无碰撞：
+     ```
+     let candidate = `${originalId}_m1`;
+     let seq = 1;
+     while (usedIds.has(candidate)) {
+       seq++;
+       candidate = `${originalId}_m${seq}`;
+     }
+     ```
+     覆盖场景：ours 有 "Box3D_abc" 和 "Box3D_abc_m1"，theirs 有 "Box3D_abc" 碰撞，
+     循环跳过已占用的 _m1，分配 _m2。
 
 6. 引用重映射（仅对被重分配了新 ID 的资源）：
    - 替换 ExtResource("oldId") → ExtResource("newId")
@@ -61,14 +71,18 @@ ours:   ext_resource id="1" path="a.gd"
 
 theirs: ext_resource id="1" path="a.gd"    ← 去重跳过（path 相同）
         ext_resource id="2" path="c.gd"    ← ID "2" 已被 ours 使用
-        ext_resource id="3" path="d.gd"    ← ID "3" 未被使用
+        ext_resource id="3" path="d.gd"    ← ID "3" 未被 ours 使用
+
+处理顺序（mergedExt = [ours#1, ours#2, theirs#c, theirs#d]）:
+  - ours#1: 保留 id="1", usedIds = {1}
+  - ours#2: 保留 id="2", usedIds = {1,2}
+  - theirs#c: 原ID "2" ∈ usedIds → 数字碰撞 → max(1,2)+1=3, "3" ∉ usedIds → 分配 "3"
+  - theirs#d: 原ID "3" ∈ usedIds → 数字碰撞 → max(1,2,3)+1=4 → 分配 "4"
 
 结果:   ext_resource id="1" path="a.gd"    ← ours 保留
         ext_resource id="2" path="b.gd"    ← ours 保留
-        ext_resource id="3" path="c.gd"    ← theirs id="2" 碰撞，分配新 ID "3"... 但 "3" 也被 theirs 占用
-                                            实际：取 max(1,2)=2, +1=3, 检查 3 是否在 usedIds...
-                                            最终分配 "4" → id="4" path="c.gd"
-        ext_resource id="3" path="d.gd"    ← theirs 保留原始 ID "3"
+        ext_resource id="3" path="c.gd"    ← theirs 重映射 2→3
+        ext_resource id="4" path="d.gd"    ← theirs 重映射 3→4
 ```
 
 #### 修正 load_steps
@@ -104,11 +118,12 @@ if (oursFmt !== theirsFmt) {
 
 ### 测试计划
 
-1. **现有测试全部通过**（回归）：ID 保留行为应兼容现有无碰撞场景
+1. **更新现有重编号测试** — 现有 "应重新编号合并后的 ext_resource id" 测试期望 ID 从 1 递增，需改为验证 ID 唯一且保留原始值（无碰撞场景下 ID 不变）
 2. **新增：ID 碰撞测试** — ours 和 theirs 同 ID 不同 path，验证新分配
 3. **新增：字符串 UID 测试** — sub_resource 用字符串 UID，验证保留
-4. **新增：load_steps 更新测试** — 验证合并后 header 的 load_steps 正确
-5. **新增：format 不匹配警告测试** — 验证警告注释生成
+4. **新增：字符串 UID 二次碰撞测试** — ours 有 "Box3D_abc" 和 "Box3D_abc_m1"，theirs 有 "Box3D_abc" 碰撞，验证分配 "Box3D_abc_m2"（跳过 _m1）
+5. **新增：load_steps 更新测试** — 验证合并后 header 的 load_steps 正确
+6. **新增：format 不匹配警告测试** — 验证警告注释生成
 
 ---
 
@@ -129,7 +144,7 @@ if (oursFmt !== theirsFmt) {
 
 | 命令 | 参数 | 校验规则 |
 |------|------|----------|
-| `waitFor("path")` | path | 必须匹配 `/^root(\/[\w]+)+$/`；长度 ≤ 1024 |
+| `waitFor("path")` | path | 必须匹配 `/^root(\/[\w.\-]+)+$/`；长度 ≤ 1024 |
 | `click(x, y, "button")` | x, y | 范围 `[0, 10000]` |
 | | button | ∈ `["left", "right", "middle"]` |
 | `press("key")` | key | 匹配 `/^[\w ]+$/`；长度 ≤ 64 |
@@ -147,7 +162,7 @@ if (oursFmt !== theirsFmt) {
 校验失败返回 `_error` 命令：
 
 ```typescript
-{ method: '_error', params: { message: 'waitFor: path must start with "root/" and use alphanumeric segments — got "abc"' } }
+{ method: '_error', params: { message: 'waitFor: path must start with "root/" and use alphanumeric/dot/hyphen segments — got "abc"' } }
 ```
 
 `null` 保留给"不是 DSL 命令"的情况。`_error` 明确表示"是 DSL 但参数非法"。
@@ -178,7 +193,7 @@ const waitMatch = trimmed.match(/^waitFor\(\s*"([^"]+)"\s*\)$/);
 if (waitMatch) {
   const path = waitMatch[1];
   // 校验
-  if (!/^root(\/[\w]+)+$/.test(path))
+  if (!/^root(\/[\w.\-]+)+$/.test(path))
     return { method: '_error', params: { message: `waitFor: invalid path "${path}" — must be root/X/Y format` } };
   if (path.length > 1024)
     return { method: '_error', params: { message: `waitFor: path exceeds 1024 chars` } };
@@ -199,10 +214,14 @@ if (waitMatch) {
 1. **现有测试全部通过**（回归）：合法输入不受影响
 2. **新增：waitFor 路径校验** — `waitFor("abc")` 返回 `_error`
 3. **新增：click 坐标越界** — `click(-1, 99999)` 返回 `_error`
-4. **新增：press 键名校验** — `press("Key<script>")` 返回 `_error`
-5. **新增：typeText 控制字符** — `typeText("hello\x00world")` 返回 `_error`
-6. **新增：waitMs 越界** — `waitMs(999999)` 返回 `_error`
-7. **新增：超长参数** — 各命令超长输入返回 `_error`
+4. **新增：click 边界值** — `click(0, 0)` 和 `click(10000, 10000)` 正常通过
+5. **新增：press 键名校验** — `press("Key<script>")` 返回 `_error`
+6. **新增：typeText 控制字符** — `typeText("hello\x00world")` 返回 `_error`
+7. **新增：typeText 空字符串** — `typeText("")` 正常通过（空文本合法）
+8. **新增：waitMs 越界** — `waitMs(999999)` 返回 `_error`
+9. **新增：waitMs 边界值** — `waitMs(0)` 和 `waitMs(60000)` 正常通过
+10. **新增：超长参数** — 各命令超长输入返回 `_error`
+11. **新增：_error 集成测试** — 多行 DSL 中某行出错时验证其余行继续解析、错误被收集
 
 ---
 
