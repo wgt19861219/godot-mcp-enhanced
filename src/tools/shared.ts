@@ -2,6 +2,7 @@ import type { ExecuteGdscriptResult } from '../gdscript-executor.js';
 import { textResult, errorResult } from '../types.js';
 import type { ToolResult } from '../types.js';
 import { isVerifyEligible } from '../core/tool-registry.js';
+import { smartCoerce, coerceRect2 } from './smart-coerce.js';
 
 export const MARKER_RESULT = '___MCP_RESULT___';
 export const MARKER_ERROR = '___MCP_ERROR___';
@@ -82,6 +83,19 @@ export function gdEscape(s: string): string {
  * @param trackType Optional animation track type hint (e.g. 'rotation_3d' → Quaternion).
  */
 export function valueToGd(v: unknown, trackType?: string): string {
+  // ── Smart coercion layer (only for objects and strings) ──
+  if (typeof v === 'object' && v !== null) {
+    const rectResult = coerceRect2(v);
+    if (typeof rectResult === 'string') return rectResult;
+  }
+  if (typeof v === 'string') {
+    const coerced = smartCoerce(v);
+    if (coerced !== v) {
+      if (typeof coerced === 'string') return coerced;
+      if (typeof coerced === 'object') return valueToGd(coerced, trackType);
+    }
+  }
+
   // ── null / undefined ──
   if (v === null || v === undefined) return 'null';
 
