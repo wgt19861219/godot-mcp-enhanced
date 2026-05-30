@@ -619,9 +619,6 @@ func _initialize():
       if (statA.size > MAX_MERGE_SIZE || statB.size > MAX_MERGE_SIZE) {
         return opsErrorResult('FILE_TOO_LARGE', `Scene file exceeds 10MB merge limit (A: ${statA.size}B, B: ${statB.size}B)`);
       }
-      if (!existsSync(fullPathB)) {
-        return opsErrorResult('FILE_NOT_FOUND', `Scene B not found: ${sceneB}`);
-      }
       const ours = readFileSync(fullPathA, 'utf-8');
       const theirs = readFileSync(fullPathB, 'utf-8');
       const merged = mergeTscn(ours, theirs);
