@@ -374,6 +374,151 @@ export function getScaffoldFiles(templateName: string, projectName: string): Sca
   return files;
 }
 
+// ─── Architecture pattern templates ───────────────────────────────────────────
+
+interface ArchTemplate {
+  id: string;
+  name: string;
+  description: string;
+  params: TemplateParam[];
+  generate: (params: Record<string, string>) => string;
+}
+
+export const ARCHITECTURE_TEMPLATES: Record<string, ArchTemplate> = {
+  'observer-pattern': {
+    id: 'A001',
+    name: 'observer_pattern',
+    description: '信号驱动的观察者模式',
+    params: [
+      { name: 'signal_name', type: 'string', default: 'health_changed' },
+      { name: 'class_name', type: 'string', default: 'Player' },
+    ],
+    generate: (p) => `extends Node
+class_name ${p.class_name || 'Player'}
+
+# ── Observer pattern: signal-driven ──
+signal ${(p.signal_name || 'health_changed')}(new_value: int)
+
+@export var max_health: int = 100
+var current_health: int:
+	set(v):
+		current_health = clampi(v, 0, max_health)
+		${(p.signal_name || 'health_changed')}.emit(current_health)
+
+func take_damage(amount: int) -> void:
+	current_health -= amount
+
+# ── Observer: connect in _ready ──
+# health_changed.connect(_on_health_changed)
+# func _on_health_changed(new_hp: int) -> void:
+#     if new_hp <= 0: _die()
+`,
+  },
+  'state-machine': {
+    id: 'A002',
+    name: 'state_machine',
+    description: '枚举驱动的状态机模式',
+    params: [
+      { name: 'states', type: 'string', default: 'idle,run,jump' },
+      { name: 'class_name', type: 'string', default: 'Character' },
+    ],
+    generate: (p) => {
+      const statesStr = p.states || 'idle,run,jump';
+      const states = statesStr.split(',').map(s => s.trim().toUpperCase());
+      const className = p.class_name || 'Character';
+      return `extends CharacterBody2D
+class_name ${className}
+
+# ── State machine pattern ──
+enum State { ${states.join(', ')} }
+var state: State = State.${states[0]}
+
+func _physics_process(delta: float) -> void:
+	match state:
+		State.${states[0]}:
+			_process_${states[0].toLowerCase()}(delta)
+${states.slice(1).map(s => `\t\tState.${s}:\n\t\t\t_process_${s.toLowerCase()}(delta)`).join('\n')}
+
+func _transition_to(new_state: State) -> void:
+	if state == new_state: return
+	_exit_state(state)
+	state = new_state
+	_enter_state(state)
+
+func _enter_state(s: State) -> void: pass
+func _exit_state(s: State) -> void: pass
+func _process_${states[0].toLowerCase()}(_delta: float) -> void: pass
+`;
+    },
+  },
+  'component-system': {
+    id: 'A003',
+    name: 'component_system',
+    description: 'Node 组合的组件系统',
+    params: [
+      { name: 'class_name', type: 'string', default: 'Entity' },
+    ],
+    generate: (p) => `extends Node2D
+class_name ${p.class_name || 'Entity'}
+
+# ── Component system: node composition ──
+# Add components as child nodes, each handles one concern
+
+@onready var components: Dictionary = {}
+
+func _ready() -> void:
+	for child in get_children():
+		if child.has_method(&"get_component_name"):
+			components[child.get_component_name()] = child
+
+func get_component(name: String) -> Node:
+	return components.get(name)
+
+func add_component(comp: Node) -> void:
+	add_child(comp)
+	if comp.has_method(&"get_component_name"):
+		components[comp.get_component_name()] = comp
+
+func remove_component(name: String) -> void:
+	var comp = components.get(name)
+	if comp:
+		remove_child(comp)
+		comp.queue_free()
+		components.erase(name)
+`,
+  },
+  'event-bus': {
+    id: 'A004',
+    name: 'event_bus',
+    description: 'Autoload 单例事件总线',
+    params: [],
+    generate: (_p) => `extends Node
+class_name EventBus
+
+# ── Event bus: autoload singleton ──
+# Add as Autoload in Project Settings → AutoLoad (name: EventBus)
+
+signal game_started
+signal game_paused
+signal level_completed(level_num: int)
+signal player_died
+
+# Typed event dispatchers
+static func emit_game_started() -> void:
+	(_get_bus()).game_started.emit()
+
+static func emit_player_died() -> void:
+	(_get_bus()).player_died.emit()
+
+static func emit_level_completed(num: int) -> void:
+	(_get_bus()).level_completed.emit(num)
+
+static func _get_bus() -> Node:
+	return Engine.get_main_loop().root.get_node("/root/EventBus")
+`,
+  },
+};
+
 const RULE_TO_TEMPLATE: Record<string, string> = {
   "L001": "T001",
   "L002": "T002",
