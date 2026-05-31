@@ -218,10 +218,12 @@ setup_project_rules(project_path="你的项目路径")
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `GODOT_PATH` | Godot 可执行文件路径 | 自动检测 |
+| `GODOT_PROJECT_PATH` | 指定 Godot 项目路径（跳过自动检测） | 自动检测 |
+| `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 二进制搜索目录（分号分隔） | — |
 | `DEBUG` | 启用详细日志 | `false` |
 | `ALLOW_OUTSIDE_PROJECT_PATHS` | 允许工具访问项目目录外的文件（如截图输出路径） | `false` |
 
-## 工具列表（130+ 个）
+## 工具列表（140+ 个）
 
 ### 执行工具
 
@@ -277,12 +279,17 @@ setup_project_rules(project_path="你的项目路径")
 | `load_sprite` | 加载纹理到精灵节点 |
 | `edit_node` | 编辑节点属性（位置/缩放/旋转/自定义属性） |
 | `remove_node` | 从场景移除节点（需确认令牌） |
+| `quick_scene` | 快速创建场景 + 可选脚本（一步到位） |
+| `instance_scene` | 实例化 .tscn 场景到目标父节点 |
+| `detach_instance` | 从场景树分离实例节点 |
+| `diff_scenes` | 比较两个 .tscn 场景文件差异 |
+| `merge_scene` | .tscn 冲突解决（三方合并，ExtResource/SubResource ID 重映射） |
 
 ### 脚本工具
 
 | 工具 | 说明 |
 |------|------|
-| `read_script` | 读取 .gd 文件（含元数据） |
+| `read_script` | 读取 .gd/.cs 文件（含元数据） |
 | `write_script` | 写入/覆盖 .gd 文件 |
 | `edit_script` | 按行范围编辑 .gd 文件。支持 `raw`/`smart` 缩进模式、内容验证、变更前后对比。 |
 | `generate_test` | 分析 .gd 文件并生成 GUT 测试脚本 |
@@ -599,6 +606,8 @@ MIT
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| **v0.16.0** | 2026-05-31 | 审查驱动质量提升 — ToolDispatcher 提取 + 87 次提交 + merge_scene + 项目脚手架 + 智能类型转换 + 1638 测试 |
+| **v0.15.1** | 2026-05-27 | Godot 4.6 editor plugin 兼容性修复 |
 | **v0.15.0** | 2026-05-27 | 6 代理并行审查（14 CRITICAL 修复）+ deny-by-default 安全 + Bridge 录制 + ESLint + 1509 测试 |
 | **v0.14.0** | 2026-05-24 | 7 轴全维度审查（8 CRITICAL 修复）+ IK 框架 MVP + Vitest 迁移 1257 测试 |
 | **v0.13.0** | 2026-05-23 | Bridge 安全加固 20 项 + requestId 取模 + CSS Grid + EditorConnection 重连上限 |
