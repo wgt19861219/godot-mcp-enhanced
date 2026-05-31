@@ -49,13 +49,13 @@ describe('shared verify utilities', () => {
     expect(code.includes('_mcp_done')).toBeTruthy();
   });
 
-  it('wrapAssertionCode escapes dollar signs in description', async () => {
+  it('wrapAssertionCode preserves dollar signs in description', async () => {
     const mod = await import('../src/tools/shared.js');
     const code = mod.wrapAssertionCode('_mcp_output("t", "v")', 'test $var');
-    // gdEscape turns $ into \$, so the raw dollar sign is escaped
+    // $ is NOT escaped — it has no special meaning in GDScript string literals
     const descLine = code.split('\n').find(l => l.includes('_desc'));
     expect(descLine).toBeTruthy();
-    expect(descLine.includes('\\$var')).toBeTruthy();
+    expect(descLine.includes('$var')).toBeTruthy();
   });
 
   it('genCheckNodeExists template generates valid GDScript', async () => {

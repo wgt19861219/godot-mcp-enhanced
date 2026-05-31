@@ -87,8 +87,8 @@ describe('gdEscape — GDScript string escaping', () => {
     expect(gdEscape('say "hello"')).toBe('say \\"hello\\"');
   });
 
-  it('escapes dollar sign to \\$', () => {
-    expect(gdEscape('$Node/Child')).toBe('\\$Node/Child');
+  it('does NOT escape dollar sign (not special in GDScript strings)', () => {
+    expect(gdEscape('$Node/Child')).toBe('$Node/Child');
   });
 
   it('escapes percent to %% (GDScript format placeholder)', () => {
@@ -121,7 +121,7 @@ describe('gdEscape — GDScript string escaping', () => {
     expect(result).toContain('\\t');
     expect(result).toContain('\\"');
     expect(result).toContain('%%');
-    expect(result).toContain('\\$');
+    // $ is NOT escaped — not special in GDScript double-quoted strings
     expect(result).toContain("\\'");
   });
 
@@ -458,10 +458,9 @@ describe('genCheckNodeExists — GDScript node existence check', () => {
   });
 
   it('handles paths with special characters via gdEscape', () => {
-    // Path with $ character — should be escaped
+    // Path with $ character — NOT escaped ($ is not special in GDScript strings)
     const code = genCheckNodeExists('root/$Special');
-    expect(code).toContain('\\$Special');
-    expect(code).not.toMatch(/[^\\]\$Special/);
+    expect(code).toContain('$Special');
   });
 });
 

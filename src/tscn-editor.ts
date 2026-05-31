@@ -230,7 +230,10 @@ export function deleteNode(
       }
     }
 
-    // Build this node's full path
+    // Build this node's full path (relative to root).
+    // Each node's path is unique in .tscn because parent is recorded explicitly,
+    // so startsWith(normalizedPath + '/') won't accidentally match nodes under
+    // a different ancestor that merely shares a name component.
     let thisPath = name || '';
     if (parent && parent !== '') {
       thisPath = `${parent}/${thisPath}`;

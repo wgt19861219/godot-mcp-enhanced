@@ -1,5 +1,5 @@
 // src/core/editor-auth.ts
-import { readFileSync, chmodSync, statSync, existsSync } from 'fs';
+import { readFileSync, chmodSync, statSync } from 'fs';
 import { join } from 'path';
 import { execFileSync } from 'child_process';
 
@@ -64,13 +64,13 @@ function checkFilePermissions(filePath: string): boolean {
 export function readEditorSecret(projectPath: string): string | null {
   const secretPath = join(projectPath, '.godot', SECRET_FILE_NAME);
   try {
-    if (existsSync(secretPath)) {
-      if (!checkFilePermissions(secretPath)) {
-        console.error(`[SECURITY] Refusing to read editor secret with insecure permissions: ${secretPath}`);
-        return null;
-      }
+    // Read directly without existsSync to avoid TOCTOU race between check and read.
+    const content = readFileSync(secretPath, 'utf-8').trim();
+    if (!checkFilePermissions(secretPath)) {
+      console.error(`[SECURITY] Refusing to use editor secret with insecure permissions: ${secretPath}`);
+      return null;
     }
-    return readFileSync(secretPath, 'utf-8').trim();
+    return content;
   } catch {
     return null;
   }

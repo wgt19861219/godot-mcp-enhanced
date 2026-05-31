@@ -70,10 +70,18 @@ function extractBalancedParenContent(input: string, typeName: string): string | 
   return null;
 }
 
+/**
+ * Parse a raw value string into a JS value.
+ *
+ * IMPORTANT: splitTopLevel() only splits on commas at the top level; it does NOT
+ * unescape "" sequences — they pass through unchanged in the split result.
+ * All unescaping of Godot's "" → " string escaping happens HERE, exactly once.
+ */
 function parseValue(raw: string, maxDepth: number = 50): unknown {
   const trimmed = raw.trim();
 
-  // String
+  // String — Godot uses "" (two double-quotes) to escape a literal " inside strings.
+  // splitTopLevel preserves "" verbatim, so we unescape exactly once here.
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return trimmed.slice(1, -1).replace(/""/g, '"');
   }
@@ -201,17 +209,19 @@ function parseDictContent(inner: string, maxDepth: number): Record<string, unkno
   const result: Record<string, unknown> = {};
   const entries = splitTopLevel(trimmed);
   for (const entry of entries) {
-    // GDScript dict syntax: key = value  OR  "key": value
-    const eqIdx = entry.indexOf('=');
+    // GDScript dict syntax: "key": value (Godot 4.x standard) OR key = value (compat)
+    // Check colon first — it's the standard separator and avoids confusion with =
+    // inside values (e.g. Resource("id") where the value contains an = sign).
     const colonIdx = entry.indexOf(':');
+    const eqIdx = entry.indexOf('=');
     let key: string;
     let valRaw: string;
-    if (eqIdx !== -1) {
-      key = entry.slice(0, eqIdx).trim();
-      valRaw = entry.slice(eqIdx + 1).trim();
-    } else if (colonIdx !== -1) {
+    if (colonIdx !== -1) {
       key = entry.slice(0, colonIdx).trim();
       valRaw = entry.slice(colonIdx + 1).trim();
+    } else if (eqIdx !== -1) {
+      key = entry.slice(0, eqIdx).trim();
+      valRaw = entry.slice(eqIdx + 1).trim();
     } else {
       continue;
     }

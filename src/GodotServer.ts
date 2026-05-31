@@ -153,8 +153,14 @@ export class GodotServer {
   }
 
   private detectProjectPath(): string | undefined {
+    // Allow explicit override via environment variable
+    const envPath = process.env.GODOT_PROJECT_PATH;
+    if (envPath) {
+      if (existsSync(join(envPath, 'project.godot'))) return envPath;
+      console.error(`GODOT_PROJECT_PATH="${envPath}" does not contain project.godot, ignoring`);
+    }
     let dir = process.cwd();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 15; i++) {
       if (existsSync(join(dir, 'project.godot'))) return dir;
       const parent = join(dir, '..');
       if (parent === dir) break;

@@ -42,7 +42,13 @@ const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
 
 /** Best-effort scan for dangerous GDScript patterns. Returns warnings array.
  *  Enabled by default; set GODOT_MCP_SANDBOX=disabled to skip scanning.
- *  When warnings are found, execution is BLOCKED unless GODOT_MCP_ALLOW_UNSAFE=true. */
+ *  When warnings are found, execution is BLOCKED unless GODOT_MCP_ALLOW_UNSAFE=true.
+ *
+ *  LIMITATIONS: This scanner uses simple regex matching and does NOT parse GDScript syntax.
+ *  It can be bypassed by string concatenation (e.g. "OS" + ".execute"), preload of
+ *  malicious scripts, or other indirect execution patterns. It is designed to prevent
+ *  ACCIDENTAL use of dangerous APIs, not to defend against adversarial input. For
+ *  true sandboxing, use container/VM isolation. */
 export function scanGdscriptSandbox(code: string): string[] {
   if (process.env.GODOT_MCP_SANDBOX === 'disabled') {
     console.warn('[SECURITY] GODOT_MCP_SANDBOX=disabled — sandbox scanning skipped');
@@ -205,7 +211,10 @@ export function wrapSnippet(code: string, resultMarker = MARKER_RESULT_SHARED): 
       continue;
     }
 
-    // Lines indented under a func declaration are part of that func body
+    // Lines indented under a func declaration are part of that func body.
+    // A top-level (column-0) non-comment line ends the func body.
+    // Comment lines at column 0 are intentionally allowed inside func bodies —
+    // they don't constitute a new top-level construct.
     if (inFuncBody) {
       if (/^[^\t ]/.test(line) && !trimmed.startsWith('#')) {
         inFuncBody = false;

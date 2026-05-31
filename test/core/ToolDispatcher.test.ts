@@ -328,7 +328,7 @@ describe('ToolDispatcher.handleCall', () => {
     const dispatcher = createDispatcherForHandleCall();
     const result = await dispatcher.handleCall({ params: { name: 'confirm_and_execute', arguments: { token: 'bad-token' } } });
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain('invalid or expired');
+    expect(text).toContain('Invalid or expired');
   });
 
   // [T7] confirm 分支二次 readOnlyGuard 检查

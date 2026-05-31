@@ -116,30 +116,24 @@ export class ToolDispatcher {
       // ── 1. ReadOnlyGuard ──
       const guardResult = this.readOnlyGuard.check(name);
       if (guardResult.blocked) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: guardResult.errorCode, message: guardResult.message } }) }],
-          isError: true,
-        };
+        return opsErrorResult(String(guardResult.errorCode ?? 'READ_ONLY'), guardResult.message ?? 'Operation blocked in read-only mode');
       }
 
       // ── 2. confirm_and_execute 分支 ──
       if (name === 'confirm_and_execute') {
         const token = args.token as string;
         if (!token || typeof token !== 'string') {
-          return { content: [{ type: 'text', text: 'Error: confirmation_token is required' }], isError: true };
+          return opsErrorResult('MISSING_TOKEN', 'confirmation_token is required');
         }
         const pending = consumeToken(token);
         if (!pending) {
-          return { content: [{ type: 'text', text: 'Error: invalid or expired confirmation token' }], isError: true };
+          return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
         }
 
         // 二次 guard 检查
         const confirmedGuardResult = this.readOnlyGuard.check(pending.toolName);
         if (confirmedGuardResult.blocked) {
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: confirmedGuardResult.errorCode, message: confirmedGuardResult.message } }) }],
-            isError: true,
-          };
+          return opsErrorResult(String(confirmedGuardResult.errorCode ?? 'READ_ONLY'), confirmedGuardResult.message ?? 'Operation blocked in read-only mode');
         }
 
         // 复用同一 editor/headless 分支逻辑
@@ -181,7 +175,7 @@ export class ToolDispatcher {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log('Tool error:', name, msg);
-      return { content: [{ type: 'text', text: `Error: ${msg}` }], isError: true };
+      return opsErrorResult('TOOL_ERROR', msg);
     }
   }
 
@@ -238,10 +232,10 @@ export class ToolDispatcher {
 
   private validatePathArgs(args: Record<string, unknown>): ToolResult | null {
     if (typeof args.project_path === 'string' && !isPathInAllowedRoots(args.project_path)) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Path not in ALLOWED_PROJECT_PATHS: ${args.project_path}` } }) }], isError: true };
+      return opsErrorResult('PATH_NOT_ALLOWED', `Path not in ALLOWED_PROJECT_PATHS: ${args.project_path}`);
     }
     if (typeof args.search_dir === 'string' && !isPathInAllowedRoots(args.search_dir)) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: { code: 'PATH_NOT_ALLOWED', message: `Search directory not in ALLOWED_PROJECT_PATHS: ${args.search_dir}. Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true.` } }) }], isError: true };
+      return opsErrorResult('PATH_NOT_ALLOWED', `Search directory not in ALLOWED_PROJECT_PATHS: ${args.search_dir}. Set ALLOWED_PROJECT_PATHS or GODOT_MCP_UNRESTRICTED=true.`);
     }
     return null;
   }
@@ -251,14 +245,14 @@ export class ToolDispatcher {
     if (pathErr) return pathErr;
     const targetMod = getModuleForTool(toolName);
     if (!targetMod) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }], isError: true };
+      return opsErrorResult('UNKNOWN_TOOL', `Unknown tool: ${toolName}`);
     }
     const result = await targetMod.handleTool(toolName, args, this.ctx);
     if (result !== null) {
       const duration = Date.now() - startTime;
       return { ...result, content: [...result.content, { type: 'text' as const, text: `_duration_ms: ${duration}` }] };
     }
-    return { content: [{ type: 'text', text: `Tool "${toolName}" registered but handler returned null` }], isError: true };
+    return opsErrorResult('HANDLER_NULL', `Tool "${toolName}" registered but handler returned null`);
   }
 
   private attachFallbackWarning(result: ToolResult): ToolResult {

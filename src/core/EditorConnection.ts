@@ -276,7 +276,9 @@ export class EditorConnection {
         reject(new Error('Not connected'));
         return;
       }
-      // Increment and wrap, skipping IDs that are already pending
+      // Increment and wrap (ID 0 is reserved/skipped to avoid falsy confusion).
+      // Wrapping at MAX_SAFE_INTEGER is safe — in practice unreachable (would need
+      // ~9 quadrillion requests). The modulo ensures we never overflow.
       let candidate = (this.requestId + 1) % Number.MAX_SAFE_INTEGER;
       if (candidate === 0) candidate = 1;
       let attempts = 0;
@@ -307,6 +309,15 @@ export class EditorConnection {
     });
   }
 
+  /**
+   * Send a fire-and-forget notification to the editor plugin.
+   *
+   * NOTE: This is currently unused but retained as a future-facing API.
+   * When adopting it for critical state changes (e.g. scene-tree mutations),
+   * consider using request() instead to guarantee delivery, or check
+   * droppedNotifications > 0 after a batch of notify calls and trigger
+   * a full scene-tree refresh if any were lost.
+   */
   async notify(method: string, params: Record<string, unknown> = {}): Promise<void> {
     if (!this.ws || !this.connected) throw new Error('Not connected');
     try {

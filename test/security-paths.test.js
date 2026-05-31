@@ -111,8 +111,8 @@ describe('gdEscape edge cases', () => {
     expect(gdEscape('100%')).toBe('100%%');
   });
 
-  it('escapes dollar sign', () => {
-    expect(gdEscape('$var')).toBe('\\$var');
+  it('does NOT escape dollar sign (not special in GDScript strings)', () => {
+    expect(gdEscape('$var')).toBe('$var');
   });
 
   it('escapes double quote', () => {

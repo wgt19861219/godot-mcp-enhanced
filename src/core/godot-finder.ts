@@ -8,7 +8,25 @@ const execFileAsync = promisify(execFile);
 const WINDOWS_SEARCH_DIRS = [
   'C:\\Program Files\\Godot',
   'C:\\Program Files (x86)\\Godot',
+  // User-specific locations (resolved at runtime to avoid hardcoded usernames)
 ];
+
+/** Extra search directories from GODOT_MCP_SEARCH_PATHS env var (semicolon-separated). */
+function getExtraSearchDirs(): string[] {
+  const env = process.env.GODOT_MCP_SEARCH_PATHS;
+  if (!env) return [];
+  return env.split(';').filter(d => d.length > 0);
+}
+
+/** Resolve user-specific search directories (Downloads, Desktop, etc.). */
+function getUserSearchDirs(): string[] {
+  const home = process.env.USERPROFILE || process.env.HOME;
+  if (!home) return [];
+  return [
+    join(home, 'Downloads'),
+    join(home, 'Desktop'),
+  ];
+}
 
 const POSIX_CANDIDATES = [
   '/usr/bin/godot4',
@@ -84,7 +102,8 @@ export async function findGodot(): Promise<string> {
 
   // 3. Platform-specific search
   if (process.platform === 'win32') {
-    for (const dir of WINDOWS_SEARCH_DIRS) {
+    const allDirs = [...WINDOWS_SEARCH_DIRS, ...getUserSearchDirs(), ...getExtraSearchDirs()];
+    for (const dir of allDirs) {
       tried.push(`${dir}/Godot_v4*.exe`);
       const found = findInDirectory(dir);
       if (found) { godotPath = found; return found; }

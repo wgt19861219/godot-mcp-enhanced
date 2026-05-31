@@ -53,6 +53,8 @@ export function sanitizeResPath(raw: unknown, field: string): string {
 // as %% would become %%%% (harmless but unnecessary double-escaping).
 // Note: \uXXXX sequences are NOT escaped because GDScript does not support \u escapes
 // (only \xHH for hex and \UXXXXYYYY for unicode codepoints in StringName).
+// Note: $ is NOT escaped because GDScript double-quoted strings don't treat $ as special.
+// NodePath syntax like $Player works at the expression level, not inside string literals.
 export function gdEscape(s: string): string {
   return s
     .replace(/\r\n/g, '\n')
@@ -63,7 +65,6 @@ export function gdEscape(s: string): string {
     .replace(/"/g, '\\"')
     .replace(/\0/g, '')
     .replace(/%/g, '%%')
-    .replace(/\$/g, '\\$')
     .replace(/'/g, "\\'");
 }
 

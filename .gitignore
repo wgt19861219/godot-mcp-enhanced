@@ -11,3 +11,19 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Python cache (linting helpers)
+.ruff_cache/
+
+# Review reports
+.reviews/
+
+# Generated/temporary lists
+all_ecc_skills.txt
+closed_skills.txt
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo

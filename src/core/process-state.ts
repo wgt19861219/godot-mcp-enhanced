@@ -3,8 +3,11 @@
  *
  * @concurrent_safe false — Module-scoped mutable state (_runningProcess, _outputBuffer, etc.)
  * relies on Node.js single-threaded event loop for serialization. This is safe because MCP
- * communicates over stdio, which is inherently sequential. If Worker Threads or async parallel
- * tool calls are introduced in the future, this module will need synchronization primitives.
+ * communicates over stdio, which is inherently sequential (one tool call at a time).
+ *
+ * FUTURE: If MCP clients introduce parallel tool calls, this module will need either:
+ * (a) a mutex/queue wrapping each state-mutating operation, or
+ * (b) refactoring to per-request state objects instead of module singletons.
  */
 
 import type { ChildProcess } from 'child_process';
