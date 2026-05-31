@@ -52,7 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **C-1**: `scene.ts` query_scene_tree/inspect_node 进程槽泄漏 — 7 条退出路径（early return + timeout/close/error 回调）补充 `setProcessBusy(false)`，修复永久锁死
 - **I-4**: `recording.ts` 冗余动态 `await import('./game-bridge.js')` 统一为静态导入
 
-## [Unreleased]
+## [0.16.0] - 2026-05-31
 
 ### Security
 
