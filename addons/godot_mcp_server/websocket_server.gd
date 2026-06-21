@@ -33,7 +33,6 @@ func set_panel(panel: Control) -> void:
 		panel.set_cancel_callback(cancel_current_operation)
 
 func _ready() -> void:
-	super()  # IMP-4: Godot 4.x lifecycle convention
 	_crypto = Crypto.new()
 	_heartbeat = preload("heartbeat.gd").new()
 	add_child(_heartbeat)
@@ -355,7 +354,6 @@ func _constant_time_compare(a: String, b: String) -> bool:
 	return result == 0
 
 func _exit_tree() -> void:
-	super()  # IMP-4: Godot 4.x lifecycle convention
 	set_process(false)
 	if _heartbeat:
 		_heartbeat.timeout_detected.disconnect(_on_heartbeat_timeout)

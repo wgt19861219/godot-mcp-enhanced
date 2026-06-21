@@ -95,43 +95,35 @@ static func _try_safe_string_convert(val: String, target_type: int) -> bool:
 			return val.is_valid_int()
 		TYPE_FLOAT:
 			return val.is_valid_float() or val.is_valid_int()
-		TYPE_VECTOR2:
-			var parsed: Variant = Vector2.from_string(val)
-			return parsed != null and typeof(parsed) == TYPE_VECTOR2
-		TYPE_VECTOR2I:
-			var parsed: Variant = Vector2i.from_string(val)
-			return parsed != null and typeof(parsed) == TYPE_VECTOR2I
-		TYPE_VECTOR3:
-			var parsed: Variant = Vector3.from_string(val)
-			return parsed != null and typeof(parsed) == TYPE_VECTOR3
-		TYPE_VECTOR3I:
-			var parsed: Variant = Vector3i.from_string(val)
-			return parsed != null and typeof(parsed) == TYPE_VECTOR3I
 		TYPE_COLOR:
-			var parsed: Variant = Color.from_string(val)
-			return parsed != null and typeof(parsed) == TYPE_COLOR
-		TYPE_RECT2:
-			var parsed: Variant = Rect2(val)
-			return typeof(parsed) == TYPE_RECT2
-		TYPE_RECT2I:
-			var parsed: Variant = Rect2i(val)
-			return typeof(parsed) == TYPE_RECT2I
-		TYPE_PLANE:
-			var parsed: Variant = Plane(val)
-			return typeof(parsed) == TYPE_PLANE
-		TYPE_QUATERNION:
-			var parsed: Variant = Quaternion(val)
-			return typeof(parsed) == TYPE_QUATERNION
-		TYPE_AABB:
-			var parsed: Variant = AABB(val)
-			return typeof(parsed) == TYPE_AABB
+			# Valid if the parse ignores the supplied default (same result for two different defaults).
+			return Color.from_string(val, Color(0, 0, 0, 0)) == Color.from_string(val, Color(1, 1, 1, 1))
+		TYPE_VECTOR2, TYPE_VECTOR2I:
+			return _count_number_components(val) == 2
+		TYPE_VECTOR3, TYPE_VECTOR3I:
+			return _count_number_components(val) == 3
+		TYPE_RECT2, TYPE_RECT2I, TYPE_PLANE, TYPE_QUATERNION:
+			return _count_number_components(val) == 4
+		TYPE_AABB, TYPE_TRANSFORM2D:
+			return _count_number_components(val) == 6
 		TYPE_BASIS:
-			var parsed: Variant = Basis(val)
-			return typeof(parsed) == TYPE_BASIS
-		TYPE_TRANSFORM2D:
-			var parsed: Variant = Transform2D(val)
-			return typeof(parsed) == TYPE_TRANSFORM2D
+			return _count_number_components(val) == 9
 		TYPE_TRANSFORM3D:
-			var parsed: Variant = Transform3D(val)
-			return typeof(parsed) == TYPE_TRANSFORM3D
+			return _count_number_components(val) == 12
 	return false
+
+
+## Count comma-separated numeric components, ignoring surrounding brackets/parens/whitespace.
+## Returns -1 if any component is not a number. Safe replacement for str_to_var (C-02).
+static func _count_number_components(val: String) -> int:
+	var cleaned := val.strip_edges()
+	for ch in ["(", ")", "[", "]", "{", "}"]:
+		cleaned = cleaned.replace(ch, "")
+	if cleaned == "":
+		return 0
+	var parts := cleaned.split(",", false)
+	for p in parts:
+		var t := p.strip_edges()
+		if not (t.is_valid_float() or t.is_valid_int()):
+			return -1
+	return parts.size()

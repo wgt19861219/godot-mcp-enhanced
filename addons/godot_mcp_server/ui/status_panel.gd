@@ -6,7 +6,6 @@ var cancel_button: Button
 var _cancel_fn: Callable = Callable()  # C-02: set by websocket_server to avoid hardcoded path
 
 func _ready() -> void:
-	super()  # IMP-4: Godot 4.x lifecycle convention
 	status_label = Label.new()
 	status_label.text = "MCP: Disconnected"
 	add_child(status_label)
