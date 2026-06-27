@@ -2,6 +2,8 @@
 
 Enhanced MCP server for Godot game engine — designed for **closed-loop AI-assisted development**.
 
+> **Note:** This English version may lag behind the Chinese `README.md`. The Chinese version is authoritative.
+
 Fork of [godot-mcp](https://github.com/Coding-Solo/godot-mcp) with critical gaps filled: scene reading, script R/W, screenshots, testing, **dynamic GDScript execution**, and more.
 
 **[中文文档](README.md)**
