@@ -1,243 +1,95 @@
 # Godot MCP Enhanced
 
-增强版 Godot 引擎 MCP 服务器 — 为 **AI 辅助游戏开发闭环** 而设计。
+> 免费 · 开源 · 全功能 —— 截至 2026-06-27 调研,Godot MCP 赛道里
+> 罕见「免费 + 开源 + 128+ 工具」的方案。
 
-基于 [godot-mcp](https://github.com/Coding-Solo/godot-mcp) 二次开发，填补了关键能力空白：场景读取、脚本读写、截图、测试、**动态 GDScript 执行** 等。
+给 AI(Claude Code、Cursor 等 MCP 客户端)一个能真正读、写、跑、验证 Godot 项目的
+工具层:128+ 工具覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出,三层架构
+(headless + editor + game bridge)+ 路径白名单 / 注入防御 / sandbox 安全体系。
 
-**[English](README.en.md)**
+**[English](README.en.md)** · 工具描述为简体中文,服务中文 Godot 开发者社区;欢迎 i18n PR。
 
-## 与原版 godot-mcp 对比
+## 与同类方案对比
 
-| 功能 | godot-mcp | godot-mcp-enhanced |
-|------|:---------:|:------------------:|
-| 启动编辑器 | 支持 | 支持 |
-| 运行项目 | 支持 | 支持（+ 自动超时） |
-| 获取调试输出 | 支持（原始） | 支持（结构化：错误/警告/打印分类） |
-| 停止项目 | 支持 | 支持（+ 摘要） |
-| 获取版本 | 支持 | 支持 |
-| 列出项目 | 支持 | 支持 |
-| 项目信息 | 支持 | 支持（+ 文件统计） |
-| 创建场景 | 支持 | 支持 |
-| 添加节点 | 支持 | 支持 |
-| 加载精灵 | 支持 | 支持 |
-| 保存场景 | 支持 | 支持 |
-| **读取场景（解析 .tscn）** | **不支持** | **支持** |
-| **读取脚本（.gd）** | **不支持** | **支持** |
-| **写入脚本（.gd）** | **不支持** | **支持** |
-| **列出文件（带过滤）** | **不支持** | **支持** |
-| **读取项目配置** | **不支持** | **支持** |
-| **截图** | **不支持** | **支持** |
-| **运行单元测试（GUT）** | **不支持** | **支持** |
-| **执行任意 GDScript** | **不支持** | **支持** |
-| **运行时场景树查询** | **不支持** | **支持** |
-| **深度检查节点** | **不支持** | **支持** |
-| **批量添加节点** | **不支持** | **支持** |
-| **项目验证** | **不支持** | **支持** |
-| **资源导入** | **不支持** | **支持** |
-| **运行验证 + 场景树快照** | **不支持** | **支持** |
-| **编辑脚本（行范围替换）** | **不支持** | **支持** |
-| **Autoload 上下文执行** | **不支持** | **支持** |
-| **结构化错误分析** | **不支持** | **支持** |
-| **MCP 资源（godot://）** | **不支持** | **支持** |
-| **脚本语法验证** | **不支持** | **支持**（逐文件 Godot 解析器检查） |
-| **版本不一致检测** | **不支持** | **支持**（project.godot vs 二进制版本） |
-| **搜索替换编辑** | **不支持** | **支持**（search_and_replace，CRLF 安全） |
-| **截图自动重试** | **不支持** | **支持**（失败后 2x frameDelay 重试） |
-| **音频播放控制** | **不支持** | **支持**（播放/停止/参数/状态查询） |
-| **TileMap 编辑** | **不支持** | **支持**（读写/填充/复制粘贴/变换，兼容旧版 TileMap 与 TileMapLayer） |
-| **双模式架构** | **不支持** | **支持**（Headless CLI + Editor WebSocket JSON-RPC 2.0） |
-| **粒子系统** | **不支持** | **支持**（GPU 粒子创建/发射/处理/预设/材质，6 种预设效果） |
-| **导航系统** | **不支持** | **支持**（NavigationRegion3D/Agent/Link 创建与管理） |
-| **AnimationTree** | **不支持** | **支持**（状态机/混合树/混合空间创建与管理） |
-| **测试断言** | **不支持** | **支持**（场景树断言 + 压力测试） |
-| **导出管理** | **不支持** | **支持**（预设查询/导出构建） |
-| **材质与着色器** | **不支持** | **支持**（读写材质/着色器编辑/模板） |
-| **Game Bridge** | **不支持** | **支持**（运行时查询/输入/等待） |
-| **工作流引擎** | **不支持** | **支持**（dev_loop/场景快照/批量验证） |
-| **动画播放器控制** | **不支持** | **支持**（查询/播放/编辑动画） |
-| **性能分析** | **不支持** | **支持**（FPS/内存/绘制调用/物理统计） |
-| **3D 空间查询** | **不支持** | **支持**（transform/AABB/bounds/区域查找） |
+> **本项目不追求"工具数量第一"。** 赛道里,godot-mcp-pro 有 175 个工具但闭源收 $15;
+> 免费的 Coding-Solo 仅 13 个。真正稀缺的是「免费 + 开源 + 全功能 + 安全」的组合。
+> 数据截至 2026-06-27(stars / 工具数 / 价格均可能变化,详见各项目仓库)。
 
-## 核心亮点
+| 维度 | **本项目** | godot-mcp-pro | GDAI MCP | Coding-Solo/godot-mcp |
+|---|:---:|:---:|:---:|:---:|
+| 价格 | **免费** | $15 买断 [^p1] | $19 买断 [^p2] | 免费 [^p3] |
+| 开源 | **✅ MIT** | ❌ server 预编译闭源 [^p1] | ❌ [^p2] | ✅ [^p3] |
+| 工具数 | 128+ | 175 [^p1] | ~30 [^p1] | 13 [^p1] |
+| 安全特性 | **✅ 路径白名单 / 注入防御 / sandbox / 确认令牌 / 输出防伪** | — | — | — |
+| 架构 | **三层 headless + editor + bridge** | 单 editor WS [^p1] | stdio [^p1] | headless CLI [^p1] |
+| Godot 4.5–4.7 兼容矩阵 | **✅** | — | — | — |
+| 中文工具描述 | **✅** | — | — | ❌ |
 
-### 双模式架构
+[^p1]: https://github.com/youichi-uda/godot-mcp-pro README(含其自带竞品对比表),抓取 2026-06-27
+[^p2]: GDAI MCP,数据转引自 godot-mcp-pro 对比表,2026-06-27
+[^p3]: https://github.com/Coding-Solo/godot-mcp,抓取 2026-06-27
 
-v0.8.0 引入双模式架构，同时支持 **Headless CLI** 和 **Editor WebSocket** 两种连接方式：
+_"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;欢迎 PR 修正。_
 
-- **Headless 模式**（原有）：通过 `executeGdscript()` 在独立 Godot 进程中执行代码，所有工具继续支持
-- **Editor 模式**（新增）：通过 WebSocket JSON-RPC 2.0 连接编辑器内 GDScript 插件，实时操作打开的场景
-- **Editor 插件**：`addons/godot_mcp_server/` 提供 command_handler + 7 个命令模块（node/test/export/particle/nav/animtree/undo）
-- 自动检测编辑器连接状态，两种模式工具互不冲突
+## 安全体系
 
-### 动态 GDScript 执行
+截至 2026-06-27 调研,Godot MCP 赛道内少见提供系统化安全特性的方案。本项目内置多层防护,
+适合对可信边界有要求的开发场景:
 
-`execute_gdscript` 工具让 AI 可以在 headless 模式下执行任意 GDScript 代码：
-
-- **代码片段模式**：无需写 `extends`，输入的代码会被自动包装为完整的 `extends SceneTree` 脚本。支持 `func`/`var`/`const` 等声明（自动放在类级别）和语句行（放在 `_initialize()` 体内）
-- **结构化输出**：通过 `_mcp_output(key, value)` 返回键值对结果
-- **超时控制**：防止代码死循环卡住
-- **Autoload 上下文**：设置 `load_autoloads=true` 可在完整项目环境中运行，访问 DataRegistry、PlayerData 等全局单例
-- **结构化错误**：返回 `errors` 数组，包含错误类型、文件、行号、消息和修复建议
-
-### 批量操作
-
-`batch_add_nodes` 一次调用添加多个节点，只在最后做一次 pack+save，避免每个节点都启停 headless Godot，性能提升显著。
-
-### 项目验证
-
-`validate_project` 静态扫描项目，检查：
-- `.tscn` 文件中引用了不存在的资源
-- `.gd` 脚本中 `preload()`/`load()` 路径无效
-- 源资源已删除但 `.import` 文件残留
-
-### 资源导入
-
-`import_resources` 扫描目录批量注册资源（图片/音频/字体/3D模型），自动生成 `.import` 文件。
-
-## 闭环开发工作流
-
-```
-read_scene/read_script → 理解结构 → write_script → run_and_verify
-→ validate_project → batch_add_nodes → import_resources → 验证通过
-```
-
-## 安全边界
-
-本工具在受信任的本地开发环境中运行，具有以下安全特性：
-
-- **GDScript 动态执行**：`execute_gdscript` 等工具会在本地 Godot 进程中执行任意 GDScript 代码。GDScript 拥有完整的系统访问权限（文件读写、网络请求、进程创建）。**仅用于受信任的本地开发环境，不可暴露到不可信的远程连接。**
-- **⚠️ GDScript 沙箱仅为防误操作层**：内置的两阶段扫描器可检测常见的危险模式（如 `OS.execute`、`FileAccess.open(... WRITE)`）和字符串拼接绕过尝试，但**仍可通过间接方式绕过**（如 `call()` 动态分派、多步变量赋值构造 API 名等）。沙箱**不是安全边界**，仅用于防止 AI 意外调用危险 API。如需真正的沙箱隔离，请使用容器/VM 隔离 + `GODOT_MCP_ALLOW_UNSAFE=false`。可通过 `GODOT_MCP_SANDBOX=disabled` 关闭扫描，或通过 `GODOT_MCP_ALLOW_UNSAFE=true` 允许被阻止的操作（仅限开发环境）。
-- **路径访问控制**：通过 `ALLOWED_PROJECT_PATHS` 环境变量限制可访问的项目路径（分号分隔多个路径）。未配置时默认限制为 `process.cwd()` 及其子目录（deny-by-default）。可通过 `GODOT_MCP_UNRESTRICTED=true` 完全禁用路径限制（仅限本地开发环境）。
-- **确认令牌**：对危险操作（如删除节点）要求显式确认，防止 AI 误操作。
-- **输出标记防伪造**：每次执行使用随机生成的标记字符串，防止 GDScript 代码伪造 MCP 输出。
-
-**仅限本地使用**：本工具设计为 AI 与开发者在同一台机器上协作使用，不提供任何远程访问认证或加密机制。
-
-## 工具描述语言策略
-
-工具的 `description` 和参数说明使用**简体中文**，这是有意为之的设计决策：
-
-- 本项目主要服务于中文游戏开发者社区
-- AI 模型对中文工具描述的理解能力与英文相当
-- 如需国际化支持，欢迎提交 Issue 或 PR
-
-## 快速开始
-
-### 1 分钟配置（推荐）
-
-#### Claude Code — 全局安装（所有 Godot 项目自动可用）
-
-```bash
-claude mcp add -s user godot -- npx -y godot-mcp-enhanced
-```
-
-> **为什么用 `-s user`？** Godot MCP 是个人开发工具，你会在多个 Godot 项目中使用它。`-s user`（user scope）将配置写入 `~/.claude.json` 顶层，所有项目自动连接，无需每个项目重复安装。详见 [Claude Code MCP 文档](https://code.claude.com/docs/en/mcp#mcp-installation-scopes)。
-
-如果你只想在当前项目使用（不推荐，切项目会丢失）：
-
-```bash
-claude mcp add godot -- npx -y godot-mcp-enhanced  # local scope，仅当前项目
-```
-
-#### Cursor / Cline / 其他
-在项目的 `.cursor/mcp.json` 或 MCP 配置中添加：
-
-```json
-{
-  "mcpServers": {
-    "godot": {
-      "command": "npx",
-      "args": ["-y", "godot-mcp-enhanced"]
-    }
-  }
-}
-```
-
-> **注意：** Cursor 等客户端的项目级配置会跟随 git 仓库，团队成员 clone 后自动可用。如果你希望全局生效，请参考各客户端的全局配置文档。
-
-### 一键配置
-```bash
-npx godot-mcp-enhanced setup
-# 自动检测：Godot 路径 + AI 客户端 + 写入配置
-```
-
-### 首次使用
-
-连接 Godot 项目后，建议立即运行以下工具一键配置项目规则：
-
-```
-setup_project_rules(project_path="你的项目路径")
-```
-
-这会自动生成：
-- **`.claude/settings.json`**：PostToolUse hook，每次编辑 `.gd` 文件后自动提醒 AI 运行 `validate_scripts` 验证语法
-- **`CLAUDE.md`**：项目级规则，包含 GDScript 验证规则和发版门禁（`verify_delivery` 检查）
-
-如果已有配置想更新，使用 `force=true` 覆盖。如只需其中一项，用 `hooks=false` 或 `claude_md=false` 跳过。
-
-### 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `GODOT_PATH` | Godot 可执行文件路径 | 自动搜索（PATH/注册表/Scoop/Downloads） |
-| `GODOT_PROJECT_PATH` | 默认项目路径 | 自动检测 cwd（向上搜索 project.godot） |
-| `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 搜索目录（分号分隔） | 无 |
-| `DEBUG` | 启用详细日志 | `false` |
-
-> **注意：** 项目路径有 30 秒缓存。切换项目后等待 30 秒或重启 MCP server 使新路径生效。
-
-> **测试提示：** 仓库的 E2E 测试（`test/e2e-*.test.ts`）依赖真实 Godot 二进制。设置 `GODOT_PATH` 指向本地 Godot 以运行它们；未设置时这些测试被静默跳过（控制台打印 `[E2E-SKIP]` 告警），**CI 默认不验证真实 Godot 集成**——`npm test` 的"全部通过"仅覆盖 TS/GDScript 逻辑，不含真实 Godot 子进程行为。
-
-### 多版本 Godot 支持
-
-如果你使用 [godots](https://github.com/MakovWait/Godots) 等版本管理器管理多个 Godot 版本，可以为每个项目单独指定 Godot 二进制路径。
-
-**优先级**：工具参数 `godot_path` > 项目配置 > `GODOT_PATH` 环境变量 > PATH > 平台搜索
-
-#### 方式一：项目配置文件（推荐）
-
-在项目目录下创建 `.godot/mcp-godot.json`：
-
-```json
-{
-  "version": 1,
-  "godot_path": "/path/to/Godot_v4.6.3-stable_macos.arm64"
-}
-```
-
-#### 方式二：project.godot 配置段
-
-在 `project.godot` 末尾添加：
-
-```ini
-[godot_mcp]
-godot_path=/path/to/Godot_v4.6.3-stable_macos.arm64
-```
-
-#### 方式三：工具参数
-
-在 MCP 工具调用时传入 `godot_path` 参数（如 `run_project`、`execute_gdscript` 等 10 个核心工具均支持）。
-
-#### 方式四：godots 版本管理器自动检测
-
-在项目根目录创建 `.godot-version` 文件（内容为版本号，如 `4.6.3`），MCP server 会自动在 `~/.godots/versions/` 中查找对应版本。
-
-### 手动配置（高级用户）
+- **路径访问控制** — `ALLOWED_PROJECT_PATHS` 白名单(deny-by-default),防 junction / 符号链接绕过
+- **GDScript 注入防御** — 危险 API 模式扫描 + 字符串拼接绕过检测
+- **危险操作确认令牌** — 删节点等操作需显式确认
+- **输出标记防伪造** — 每次执行随机标记,防 GDScript 伪造 MCP 输出
+- **本地运行** — 无远程暴露,无第三方数据上传
 
 <details>
-<summary>展开查看手动安装步骤</summary>
+<summary><b>⚠️ 诚实的边界(展开必读)</b></summary>
 
-```bash
-git clone https://github.com/wgt19861219/godot-mcp-enhanced.git
-cd godot-mcp-enhanced
-npm install && npm run build
-```
+以上是**防误操作层**,不是不可绕过的安全边界。GDScript 拥有完整系统访问权限,
+沙箱可被间接方式绕过(`call()` 动态分派、多步变量构造 API 名等)。
 
-在 MCP 配置中指向 `build/index.js`，并设置所需环境变量。
+- 需真正隔离:容器 / VM + `GODOT_MCP_ALLOW_UNSAFE=false`
+- 关闭扫描:`GODOT_MCP_SANDBOX=disabled`(仅开发)
+- 本工具**仅限本地可信环境**,不提供远程认证或加密
 
 </details>
 
-## 工具列表（140+ 个）
+## 核心能力
+
+### 三层架构 — 静态编辑 / 实时调试 / 运行时验证
+
+不是单一连接,而是按场景分工的三层(自动检测,互不冲突):
+
+| 层 | 连接方式 | 适用场景 |
+|---|---|---|
+| **Headless CLI** | 独立 Godot 进程 | 文件读写、批量创建、一次性验证(默认) |
+| **Editor WebSocket** | 连接运行中的编辑器 | 实时操作当前场景、Undo、场景树同步 |
+| **Game Bridge** | TCP 连接运行中的游戏 | E2E 测试、运行时调试、输入模拟、状态验证 |
+
+### 动态 GDScript 执行
+
+`execute_gdscript` 让 AI 在 headless 模式执行任意 GDScript:代码片段模式(自动包装 `extends SceneTree`)、结构化输出(`_mcp_output`)、超时控制、Autoload 上下文(`load_autoloads=true`)、结构化错误(类型/文件/行号/修复建议)。
+
+### AI 开发闭环 — 不只是工具堆砌
+
+```
+read_scene / read_script → 理解结构 → write_script / edit_script
+→ run_and_verify(错误分析)→ validate_scripts → verify_delivery(交付门禁)
+```
+
+- **`verify_delivery`** — 端到端交付门禁:场景树完整性 + 脚本健康 + 性能 + 自定义断言
+- **`validate_scripts`** — 触发 Godot 完整编译(含跨文件依赖),捕获 headless 遗漏的 Parse Error
+- **`dev_loop`** — 执行 → 验证 → 截图一体化,支持 acceptance 验收标准
+
+闭环示例:AI 用 `read_scene` 理解 → `write_script` 改 → `run_and_verify(capture_tree=true)` 跑+分析 → `validate_project` 查资源 → `batch_add_nodes` 批建 → `import_resources` 注册 → 有问题回到改脚本。
+
+### 批量操作与资源管理
+
+- **`batch_add_nodes`** — 一次调用添加多个节点,只在最后做一次 pack+save,避免每个节点启停 headless Godot
+- **`validate_project`** — 静态扫描缺失资源、无效 `preload()`/`load()` 路径、孤立 `.import` 文件
+- **`import_resources`** — 扫描目录批量注册资源(图片/音频/字体/3D 模型),自动生成 `.import`
+
+## 工具一览(128+)
 
 ### 执行工具
 
@@ -518,6 +370,9 @@ npm install && npm run build
 | `editor_sync_start` | 启动场景树实时监听（推送 node_added/node_removed 事件） |
 | `editor_sync_stop` | 停止场景树监听 |
 
+> ⚠️ 运行时工具(物理 / 动画 / UI / 粒子 / TileMap / 材质等)仅在 headless 执行上下文生效,
+> **不持久化到 .tscn**;需持久化用 `add_node` + `save_scene`。
+
 ## MCP 资源（Resources）
 
 AI 客户端可通过 `godot://` URI 方案发现和读取项目上下文，无需显式工具调用。
@@ -552,36 +407,125 @@ Client: ReadResource("godot://scene/scenes/main.tscn") → 节点树摘要
 Client: ReadResource("godot://script/scripts/player.gd") → GDScript 源码
 ```
 
-## 闭环开发示例
+## 快速开始
+
+### 1 分钟配置（推荐）
+
+#### Claude Code — 全局安装（所有 Godot 项目自动可用）
+
+```bash
+claude mcp add -s user godot -- npx -y godot-mcp-enhanced
+```
+
+> **为什么用 `-s user`？** Godot MCP 是个人开发工具，你会在多个 Godot 项目中使用它。`-s user`（user scope）将配置写入 `~/.claude.json` 顶层，所有项目自动连接，无需每个项目重复安装。详见 [Claude Code MCP 文档](https://code.claude.com/docs/zh-CN/mcp#mcp-installation-scopes)。
+
+如果你只想在当前项目使用（不推荐，切项目会丢失）：
+
+```bash
+claude mcp add godot -- npx -y godot-mcp-enhanced  # local scope，仅当前项目
+```
+
+#### Cursor / Cline / Windsurf / 其他
+在项目的 `.cursor/mcp.json` 或 MCP 配置中添加：
+
+```json
+{
+  "mcpServers": {
+    "godot": {
+      "command": "npx",
+      "args": ["-y", "godot-mcp-enhanced"]
+    }
+  }
+}
+```
+
+#### 腾讯 CodeBuddy（国内用户）
+CodeBuddy 文档（2026-06-27 实测）支持外部 stdio MCP Server：**设置 → MCP 标签 → Add MCP**，粘贴与上面相同的 json。也可从其 MCP Market 一键安装（上架后）。
+> ⚠️ 端到端接入验证待补：配置方法基于 CodeBuddy MCP 文档，godot-mcp-enhanced 尚未在其内跑通。
+
+### 一键配置
+```bash
+npx godot-mcp-enhanced setup
+# 自动检测：Godot 路径 + AI 客户端 + 写入配置
+```
+
+### 首次使用
+
+连接 Godot 项目后，建议立即运行以下工具一键配置项目规则：
 
 ```
-1. AI: read_scene("scenes/player.tscn")
-   → 获取完整节点树，理解场景结构
-
-2. AI: read_script("scripts/player_controller.gd")
-   → 读取当前代码，确定需要修改的内容
-
-3. AI: write_script("scripts/player_controller.gd", updated_code)
-   → 写入修改
-
-4. AI: run_and_verify(project, capture_tree=true)
-   → headless 运行 + 错误分析 + 场景树快照
-
-5. AI: validate_project(project)
-   → 检查缺失资源、无效引用
-
-6. AI: batch_add_nodes(project, scene, nodes=[...])
-   → 一次添加多个 UI 元素
-
-7. AI: import_resources(project, directory="assets/ui")
-   → 注册新资源到项目
-
-8. 如果仍有问题 → 回到步骤 2
+setup_project_rules(project_path="你的项目路径")
 ```
+
+这会自动生成：
+- **`.claude/settings.json`**：PostToolUse hook，每次编辑 `.gd` 文件后自动提醒 AI 运行 `validate_scripts` 验证语法
+- **`CLAUDE.md`**：项目级规则，包含 GDScript 验证规则和发版门禁（`verify_delivery` 检查）
+
+如果已有配置想更新，使用 `force=true` 覆盖。如只需其中一项，用 `hooks=false` 或 `claude_md=false` 跳过。
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `GODOT_PATH` | Godot 可执行文件路径 | 自动搜索（PATH/注册表/Scoop/Downloads） |
+| `GODOT_PROJECT_PATH` | 默认项目路径 | 自动检测 cwd（向上搜索 project.godot） |
+| `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 搜索目录（分号分隔） | 无 |
+| `DEBUG` | 启用详细日志 | `false` |
+
+> **注意：** 项目路径有 30 秒缓存。切换项目后等待 30 秒或重启 MCP server 使新路径生效。
+
+### 多版本 Godot 支持
+
+如果你使用 [godots](https://github.com/MakovWait/Godots) 等版本管理器管理多个 Godot 版本，可以为每个项目单独指定 Godot 二进制路径。
+
+**优先级**：工具参数 `godot_path` > 项目配置 > `GODOT_PATH` 环境变量 > PATH > 平台搜索
+
+#### 方式一：项目配置文件（推荐）
+
+在项目目录下创建 `.godot/mcp-godot.json`：
+
+```json
+{
+  "version": 1,
+  "godot_path": "/path/to/Godot_v4.6.3-stable_macos.arm64"
+}
+```
+
+#### 方式二：project.godot 配置段
+
+在 `project.godot` 末尾添加：
+
+```ini
+[godot_mcp]
+godot_path=/path/to/Godot_v4.6.3-stable_macos.arm64
+```
+
+#### 方式三：工具参数
+
+在 MCP 工具调用时传入 `godot_path` 参数（如 `run_project`、`execute_gdscript` 等 10 个核心工具均支持）。
+
+#### 方式四：godots 版本管理器自动检测
+
+在项目根目录创建 `.godot-version` 文件（内容为版本号，如 `4.6.3`），MCP server 会自动在 `~/.godots/versions/` 中查找对应版本。
+
+### 手动配置（高级用户）
+
+<details>
+<summary>展开查看手动安装步骤</summary>
+
+```bash
+git clone https://github.com/wgt19861219/godot-mcp-enhanced.git
+cd godot-mcp-enhanced
+npm install && npm run build
+```
+
+在 MCP 配置中指向 `build/index.js`，并设置所需环境变量。
+
+</details>
 
 ## 致谢
 
-- [godot-mcp](https://github.com/Coding-Solo/godot-mcp) — 原始项目
+- [godot-mcp](https://github.com/Coding-Solo/godot-mcp) — 原始项目，本项目基于其二次开发（Copyright (c) 2025 Solomon Elias，MIT，见 [LICENSE](LICENSE)）
 - [Hastur Operation Plugin](https://github.com/rayxuln/hastur-operation-plugin) — 动态 GDScript 执行和结构化输出的灵感来源
 - [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) — 借鉴了以下功能概念：
   - **Hooks + Rules 体系** → `setup_project_rules` 自动生成 `.claude/settings.json`（PostToolUse hook 自动验证 GDScript）和 `CLAUDE.md`（项目编码标准）
@@ -598,7 +542,8 @@ Client: ReadResource("godot://script/scripts/player.gd") → GDScript 源码
 - Node.js >= 18
 - GUT 插件（用于 `run_tests` 工具）
 
-## 截图功能平台说明
+<details>
+<summary><b>截图功能平台说明</b></summary>
 
 `capture_screenshot` 工具根据平台使用不同的渲染策略：
 
@@ -610,9 +555,13 @@ Client: ReadResource("godot://script/scripts/player.gd") → GDScript 源码
 
 内置 `screenshot_capture.gd` 使用 `process_frame` 信号模式和 `call_deferred()` 确保场景加载和帧捕获的可靠性。
 
+> **测试提示：** 仓库的 E2E 测试（`test/e2e-*.test.ts`）依赖真实 Godot 二进制。设置 `GODOT_PATH` 指向本地 Godot 以运行它们；未设置时这些测试被静默跳过（控制台打印 `[E2E-SKIP]` 告警），**CI 默认不验证真实 Godot 集成**——`npm test` 的"全部通过"仅覆盖 TS/GDScript 逻辑，不含真实 Godot 子进程行为。
+
+</details>
+
 ## 许可证
 
-MIT
+[MIT](LICENSE) — 含上游 [Coding-Solo/godot-mcp](https://github.com/Coding-Solo/godot-mcp) 版权（Copyright (c) 2025 Solomon Elias）。
 
 ## 更新日志
 
