@@ -43,6 +43,14 @@ import {
   findAssociatedScenes,
 } from '../src/tools/delivery.js';
 
+// v0.25.0: delivery 输出改为双轨（人类可读文本 + 尾部 ---JSON--- JSON）。
+// parseDualTrack 容错解析：有分隔符取尾部 JSON，无分隔符（旧格式/错误路径）回退直接 parse。
+function parseDualTrack(text) {
+  const marker = '---JSON---\n';
+  const idx = text.lastIndexOf(marker);
+  return JSON.parse(idx >= 0 ? text.slice(idx + marker.length) : text);
+}
+
 const mockExecuteGdscript = executeGdscript;
 const mockBatchValidate = batchValidateScripts;
 
@@ -149,14 +157,14 @@ describe('delivery handleTool: input validation', () => {
 
   it('rejects missing project_path', async () => {
     const result = await handleTool('verify_delivery', { scope: 'full' }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('project_path must be a string');
   });
 
   it('rejects invalid scope', async () => {
     const result = await handleTool('verify_delivery', { project_path: tmpDir, scope: 'invalid' }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('scope must be one of');
   });
@@ -165,7 +173,7 @@ describe('delivery handleTool: input validation', () => {
     const noProjectDir = mkdtempSync(join(tmpdir(), 'delivery-noproj-'));
     try {
       const result = await handleTool('verify_delivery', { project_path: noProjectDir, scope: 'full' }, ctx);
-      const parsed = JSON.parse(result.content[0].text);
+      const parsed = parseDualTrack(result.content[0].text);
       expect(parsed.success).toBe(false);
       expect(parsed.error).toContain('Not a valid Godot project');
     } finally {
@@ -179,7 +187,7 @@ describe('delivery handleTool: input validation', () => {
       scope: 'scene',
       scene_path: '../../etc/passwd',
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('traversal');
   });
@@ -190,7 +198,7 @@ describe('delivery handleTool: input validation', () => {
       scope: 'script',
       script_path: '../../../etc/shadow',
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.success).toBe(false);
     expect(parsed.error).toContain('traversal');
   });
@@ -299,7 +307,7 @@ describe('delivery: scene_tree dimension', () => {
       scope: 'scene',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(false);
     expect(parsed.scene_tree.issues[0].message).toContain('scene_path required');
   });
@@ -321,7 +329,7 @@ describe('delivery: scene_tree dimension', () => {
       scope: 'script',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(false);
     expect(parsed.scene_tree.issues[0].message).toContain('script_path required');
   });
@@ -349,7 +357,7 @@ describe('delivery: scene_tree dimension', () => {
       script_path: 'scripts/player.gd',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // 修复前恒 passed:true；修复后关联场景被找到并检查 → 缺失纹理报 error → passed:false
     expect(parsed.scene_tree.passed).toBe(false);
     expect(parsed.scene_tree.issues.some(i => i.message.includes('missing_sprite.png'))).toBe(true);
@@ -368,7 +376,7 @@ describe('delivery: scene_tree dimension', () => {
       script_path: 'scripts/player.gd',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // NEW-3: preload 引用检查执行(修复前 :326 join 二次拼接 → existsSync false → continue 跳过)
     expect(parsed.script_health.issues.some(i => i.message.includes('missing.png'))).toBe(true);
     // NEW-2: batchValidate 收到正确绝对路径(修复前 :344 filter 用 join 二次拼接 → 绝对路径被滤掉 → 不调用)
@@ -387,7 +395,7 @@ describe('delivery: scene_tree dimension', () => {
       scope: 'full',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(true);
     // Should have checked both scenes (no issues)
     expect(parsed.scene_tree.issues).toHaveLength(0);
@@ -404,7 +412,7 @@ describe('delivery: scene_tree dimension', () => {
       scope: 'full',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // Should pass because skipped dirs are not scanned
     expect(parsed.scene_tree.passed).toBe(true);
   });
@@ -484,7 +492,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health.passed).toBe(true);
     expect(mockBatchValidate).toHaveBeenCalled();
   });
@@ -497,7 +505,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health.passed).toBe(true); // warnings only
     const warnings = parsed.script_health.issues.filter(i => i.severity === 'warning');
     expect(warnings.length).toBeGreaterThan(0);
@@ -514,7 +522,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // Should have a warning about the load reference
     const warnings = parsed.script_health.issues.filter(i => i.severity === 'warning');
     expect(warnings.some(w => w.message.includes('nonexistent.tscn'))).toBe(true);
@@ -532,7 +540,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // Only game.gd should be validated, not the ones in .godot/addons
     expect(mockBatchValidate).toHaveBeenCalledTimes(1);
     const validatedPaths = mockBatchValidate.mock.calls[0][2];
@@ -550,7 +558,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health.passed).toBe(true);
   });
 
@@ -560,7 +568,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'script',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(false);
     expect(parsed.scene_tree.issues[0].message).toContain('script_path required');
   });
@@ -577,7 +585,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health.passed).toBe(false);
     expect(parsed.script_health.issues[0].message).toContain('Syntax error');
   });
@@ -591,7 +599,7 @@ describe('delivery: script_health dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: true, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // Should still pass (just a warning about validation unavailable)
     expect(parsed.script_health.passed).toBe(true);
     const warnings = parsed.script_health.issues.filter(i => i.severity === 'warning');
@@ -632,7 +640,7 @@ describe('delivery: performance dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: true },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.performance.passed).toBe(true);
     expect(parsed.performance.metrics.orphan_node_count).toBe(5);
     expect(parsed.performance.metrics.static_memory_mb).toBe(50.0);
@@ -657,7 +665,7 @@ describe('delivery: performance dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: true },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.performance.passed).toBe(true); // warnings only, no errors
     const warnings = parsed.performance.issues.filter(i => i.severity === 'warning');
     expect(warnings.some(w => w.message.includes('orphan node'))).toBe(true);
@@ -681,7 +689,7 @@ describe('delivery: performance dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: true },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.performance.passed).toBe(true); // warnings only
     expect(parsed.performance.issues[0].message).toContain('unavailable');
   });
@@ -704,7 +712,7 @@ describe('delivery: performance dimension', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: true },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     // Should handle gracefully — raw value stored
     expect(parsed.performance.metrics.raw).toBe('not-valid-json');
   });
@@ -778,7 +786,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(true);
     expect(parsed.assertions.results).toHaveLength(1);
     expect(parsed.assertions.results[0].passed).toBe(true);
@@ -811,7 +819,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(false);
     expect(parsed.assertions.results[0].passed).toBe(false);
     expect(parsed.assertions.results[0].actual).toBe('false');
@@ -842,7 +850,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(false);
     expect(parsed.assertions.results[0].error).toContain('Unexpected indent');
   });
@@ -872,7 +880,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(false);
     expect(parsed.assertions.results[0].error).toContain('Division by zero');
   });
@@ -892,7 +900,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(false);
     expect(parsed.assertions.results[0].error).toContain('Process killed');
   });
@@ -913,7 +921,7 @@ describe('delivery: assertions dimension', () => {
         assertions,
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(false);
     expect(parsed.assertions.error).toContain('Too many assertions');
   });
@@ -943,7 +951,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.passed).toBe(true);
     expect(parsed.assertions.results[0].passed).toBe(true);
   });
@@ -973,7 +981,7 @@ describe('delivery: assertions dimension', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.results[0].actual).toBe('42');
     expect(parsed.assertions.results[0].passed).toBe(true);
   });
@@ -1015,7 +1023,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'full',
       checks: { scene_tree: true, script_health: false, performance: true },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.summary).toBeTruthy();
     expect(parsed.summary).toContain('/');
     expect(typeof parsed.passed).toBe('boolean');
@@ -1027,7 +1035,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.passed).toBe(true);
     expect(parsed.summary).toBe('0/0 dimensions passed');
   });
@@ -1038,7 +1046,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'scene',
       checks: { scene_tree: false, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree).toBeUndefined();
   });
 
@@ -1048,7 +1056,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health).toBeUndefined();
   });
 
@@ -1058,7 +1066,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.performance).toBeUndefined();
   });
 
@@ -1068,7 +1076,7 @@ describe('delivery: summary and combined checks', () => {
       scope: 'full',
       checks: { scene_tree: false, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions).toBeUndefined();
   });
 });
@@ -1109,7 +1117,7 @@ describe('delivery: edge cases', () => {
       project_path: tmpDir,
       scope: 'full',
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(true); // no scenes = no issues
     expect(parsed.script_health.passed).toBe(true); // no scripts = no issues
   });
@@ -1133,7 +1141,7 @@ describe('delivery: edge cases', () => {
       project_path: tmpDir,
       scope: 'full',
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.script_health.passed).toBe(true);
     expect(parsed.scene_tree.passed).toBe(true);
   });
@@ -1163,7 +1171,7 @@ describe('delivery: edge cases', () => {
         ],
       },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.assertions.results[0].description).toBe('unnamed assertion');
   });
 
@@ -1186,7 +1194,7 @@ describe('delivery: edge cases', () => {
       scope: 'full',
       checks: { scene_tree: true, script_health: false, performance: false },
     }, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.scene_tree.passed).toBe(true);
   });
 });

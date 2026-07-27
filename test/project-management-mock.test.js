@@ -31,6 +31,13 @@ import * as validation from '../src/tools/validation.js';
 import { createToolContext, createTempProject } from './helpers/tool-context.js';
 import { MINIMAL_PROJECT } from './helpers/fixtures.js';
 
+// v0.25.0: validation 输出改为双轨（人类可读文本 + 尾部 ---JSON--- JSON）
+function parseDualTrack(text) {
+  const marker = '---JSON---\n';
+  const idx = text.lastIndexOf(marker);
+  return JSON.parse(idx >= 0 ? text.slice(idx + marker.length) : text);
+}
+
 // Helper: call project.handleTool via merged tool name 'project' + action
 function callProject(action, extraArgs, ctx) {
   return project.handleTool('project', { action, ...extraArgs }, ctx);
@@ -89,7 +96,7 @@ describe('Level B: Project management', () => {
     }, ctx);
     expect(!result.isError).toBeTruthy();
     const text = result.content[0].text;
-    const parsed = JSON.parse(text);
+    const parsed = parseDualTrack(text);
     expect(parsed.valid !== false).toBeTruthy();
   });
 
@@ -118,7 +125,7 @@ describe('Level B: Project management', () => {
       scripts: [],
     }, ctx);
     expect(!result.isError).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(typeof parsed.validated === 'number').toBeTruthy();
   });
 });

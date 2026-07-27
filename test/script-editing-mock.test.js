@@ -33,6 +33,13 @@ import * as validation from '../src/tools/validation.js';
 import { createToolContext, createTempProject } from './helpers/tool-context.js';
 import { MINIMAL_PROJECT } from './helpers/fixtures.js';
 
+// v0.25.0: validation 输出改为双轨（人类可读文本 + 尾部 ---JSON--- JSON）
+function parseDualTrack(text) {
+  const marker = '---JSON---\n';
+  const idx = text.lastIndexOf(marker);
+  return JSON.parse(idx >= 0 ? text.slice(idx + marker.length) : text);
+}
+
 describe('Level B: Script editing', () => {
   const dirRef = { path: null };
   let ctx;
@@ -93,7 +100,7 @@ describe('Level B: Script editing', () => {
     }, ctx);
     expect(!result.isError).toBeTruthy();
     const text = result.content[0].text;
-    const parsed = JSON.parse(text);
+    const parsed = parseDualTrack(text);
     expect(parsed.validated > 0).toBeTruthy();
     expect(parsed.total_errors === 0 || parsed.total_errors === undefined).toBeTruthy();
   });

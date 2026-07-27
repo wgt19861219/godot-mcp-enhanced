@@ -7,6 +7,13 @@ import {
   TOOL_META,
 } from '../src/tools/validation.js';
 
+// v0.25.0: validation 输出改为双轨（人类可读文本 + 尾部 ---JSON--- JSON）
+function parseDualTrack(text) {
+  const marker = '---JSON---\n';
+  const idx = text.lastIndexOf(marker);
+  return JSON.parse(idx >= 0 ? text.slice(idx + marker.length) : text);
+}
+
 // ─── Mock executor ──────────────────────────────────────────────────────────
 
 vi.mock('../src/gdscript-executor.js', () => ({
@@ -160,7 +167,7 @@ describe('run_and_verify: spawnGodot path (V-01 fix)', () => {
     const ctx = makeCtx();
     const args = { action: 'run_and_verify', project_path: '/fake/project', timeout: 5 };
     const result = await handleTool('validation', args, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.summary).toContain('timed out');
   });
 
@@ -176,7 +183,7 @@ describe('run_and_verify: spawnGodot path (V-01 fix)', () => {
     const ctx = makeCtx();
     const args = { action: 'run_and_verify', project_path: '/fake/project' };
     const result = await handleTool('validation', args, ctx);
-    const parsed = JSON.parse(result.content[0].text);
+    const parsed = parseDualTrack(result.content[0].text);
     expect(parsed.summary).toContain('exited with code 1');
   });
 });

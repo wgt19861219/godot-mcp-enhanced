@@ -8,6 +8,8 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { opsErrorResult, validateTimeout } from './shared.js';
+import { formatIssues, dualTrackOutput } from './shared/issue-formatter.js';
+import type { NormalizedIssue } from './shared/issue-formatter.js';
 import { requireProjectPath, resolveWithinRoot, parseMcpScriptOutput, normalizeUserProjectPath, checkVersionMismatch, scanFiles } from '../helpers.js';
 import { analyzeOutput, type AnalysisResult, type AnalyzeOptions } from '../error-analyzer.js';
 import { lintGDScript } from './gdscript-lint.js';
@@ -92,6 +94,22 @@ interface ExtendedAnalysisResult extends AnalysisResult {
   precheck_errors?: BatchValidateResult[];
   scene_tree?: unknown;
   sample_window?: { timed_out: boolean; duration_seconds: number; coverage: string };
+}
+
+/** 把 AnalysisResult（run_and_verify / analyze_error）格式化为人类可读文本 */
+function formatAnalysisHuman(analysis: AnalysisResult): string {
+  const issues: NormalizedIssue[] = [];
+  for (const e of analysis.errors) {
+    const loc = [e.file, e.line !== undefined ? String(e.line) : ''].filter(Boolean).join(':');
+    issues.push({ severity: 'error', location: loc, message: e.message, suggestion: e.suggestion });
+  }
+  for (const w of analysis.warnings) {
+    const loc = [w.file, w.line !== undefined ? String(w.line) : ''].filter(Boolean).join(':');
+    issues.push({ severity: 'warning', location: loc, message: w.message });
+  }
+  return `Analysis: ${analysis.hasErrors ? '✗ has errors' : '✓ no errors'}\n` +
+    `Errors: ${analysis.errors.length} / Warnings: ${analysis.warnings.length}\n\n` +
+    formatIssues(issues, { truncate: 50 });
 }
 
 const execFileAsync = promisify(execFile);
@@ -629,7 +647,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         } catch (err) { getLogger().debug('validation', `capture scene tree: ${err instanceof Error ? err.message : err}`); }
       }
 
-      return textResult(JSON.stringify(analysis, null, 2));
+      return textResult(dualTrackOutput(formatAnalysisHuman(analysis), analysis));
     }
 
     case 'analyze_error': {
@@ -640,7 +658,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
       const lines = outputText.split('\n');
       const analysis = analyzeOutput(lines);
-      return textResult(JSON.stringify(analysis, null, 2));
+      return textResult(dualTrackOutput(formatAnalysisHuman(analysis), analysis));
     }
 
     case 'validate_project': {
@@ -657,7 +675,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       if (!existsSync(join(p, 'project.godot'))) {
         issues.push({ severity: 'critical', category: 'project', message: 'project.godot not found' });
-        return textResult(JSON.stringify({ valid: false, issue_count: issues.length, issues }, null, 2));
+        const earlySummary = { valid: false, issue_count: issues.length, issues };
+        const earlyText = `Project validation: ✗ has issues\n\n` +
+          formatIssues([{ severity: 'critical', location: '', message: '[project] project.godot not found' }]);
+        return textResult(dualTrackOutput(earlyText, earlySummary));
       }
 
       if (checkScenes) {
@@ -790,7 +811,16 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         issues: issues.slice(0, 100),
       };
 
-      return textResult(JSON.stringify(summary, null, 2));
+      // 双轨输出：人类可读 severity 分组（截断到每组 50 条）+ 尾部紧凑 JSON
+      const normalized: NormalizedIssue[] = issues.map(i => ({
+        severity: i.severity,
+        location: i.file ?? '',
+        message: i.category ? `[${i.category}] ${i.message}` : i.message,
+      }));
+      const humanText = `Project validation: ${summary.valid ? '✓ passed' : '✗ has issues'}\n` +
+        `Totals: ${summary.critical} critical / ${summary.errors} errors / ${summary.warnings} warnings / ${summary.info} info\n\n` +
+        formatIssues(normalized, { truncate: 50 });
+      return textResult(dualTrackOutput(humanText, summary));
     }
 
     case 'validate_scripts': {
@@ -959,7 +989,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const vWarn = await checkVersionMismatch(p, godot);
       if (vWarn) scriptsSummary.version_warning = vWarn;
 
-      return textResult(JSON.stringify(scriptsSummary, null, 2));
+      // 双轨输出：把 results 的 errors/warnings（string[]）归一化为 issue 列表
+      const scriptIssues: NormalizedIssue[] = [];
+      for (const r of [...results, ...shaderResults, ...sceneResults]) {
+        for (const err of r.errors ?? []) {
+          scriptIssues.push({ severity: 'error', location: r.file, message: err });
+        }
+        for (const w of r.warnings ?? []) {
+          scriptIssues.push({ severity: 'warning', location: r.file, message: w });
+        }
+      }
+      const scriptHuman = `${summaryMsg}\n\n` + formatIssues(scriptIssues, { truncate: 50 });
+      return textResult(dualTrackOutput(scriptHuman, scriptsSummary));
     }
 
     case 'import_resources': {

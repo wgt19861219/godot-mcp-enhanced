@@ -7,6 +7,8 @@ import { getLogger } from '../core/logger.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
 import { SCENE_TREE_HEADER, wrapAssertionCode, opsErrorResult } from './shared.js';
+import { formatIssues, dualTrackOutput } from './shared/issue-formatter.js';
+import type { NormalizedIssue } from './shared/issue-formatter.js';
 import { parseAsserts } from './frame-verify/assert-protocol.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative, isAbsolute } from 'path';
@@ -560,7 +562,35 @@ func _initialize():
   report.passed = dimensionResults.every(d => d.passed);
   report.summary = `${passedCount}/${totalCount} dimensions passed`;
 
-  return textResult(JSON.stringify(report, null, 2));
+  // 双轨输出：各维度 issue 归一化为统一列表 + 尾部紧凑 JSON
+  const dimLabels: Record<string, string> = {
+    scene_tree: 'Scene Tree', script_health: 'Script Health', performance: 'Performance',
+    assertions: 'Assertions', visual_proof: 'Visual Proof', gdd_standards: 'GDD Standards',
+  };
+  const allIssues: NormalizedIssue[] = [];
+  for (const [dim, label] of Object.entries(dimLabels)) {
+    const d = report[dim] as { passed?: boolean; issues?: Array<{ severity?: string; location?: string; message?: string; suggestion?: string } | string> | undefined } | undefined;
+    if (!d) continue;
+    const dimIssues = (d.issues ?? []).map((it): NormalizedIssue => {
+      if (typeof it === 'string') {
+        return { severity: 'warning', location: dim, message: it };
+      }
+      return {
+        severity: it.severity ?? 'warning',
+        location: it.location ?? dim,
+        message: it.message ?? '',
+        suggestion: it.suggestion,
+      };
+    });
+    for (const iss of dimIssues) {
+      allIssues.push({ ...iss, location: `[${label}] ${iss.location}` });
+    }
+  }
+  const header = `Delivery verification: ${report.passed ? '✓ passed' : '✗ failed'} (${report.summary})\n\n`;
+  const humanText = allIssues.length > 0
+    ? header + formatIssues(allIssues, { truncate: 50 })
+    : header + 'No issues found.';
+  return textResult(dualTrackOutput(humanText, report));
 }
 
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean }> = {

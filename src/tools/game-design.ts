@@ -265,6 +265,8 @@ export function chainOfVerification(verdict: string, context: string): CoVResult
 
 import { readFileSync } from "fs";
 import { opsErrorResult } from './shared.js';
+import { formatIssues, dualTrackOutput } from './shared/issue-formatter.js';
+import type { NormalizedIssue } from './shared/issue-formatter.js';
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ToolContext, ToolResult } from "../types.js";
 import { getErrorMessage } from '../types.js';
@@ -338,9 +340,15 @@ export async function handleTool(
         };
       }
       const result = validateGDD(content);
+      const gddIssues: NormalizedIssue[] = result.issues.map(i => ({
+        severity: i.severity, location: i.location, message: i.message, suggestion: i.suggestion,
+      }));
+      const gddText = `GDD validation: ${result.passed ? '✓ passed' : '✗ has issues'}\n` +
+        (result.sections_missing.length > 0 ? `Missing sections: ${result.sections_missing.join(', ')}\n\n` : '\n') +
+        formatIssues(gddIssues, { truncate: 50 });
       return {
         content: [
-          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          { type: "text" as const, text: dualTrackOutput(gddText, result) },
         ],
       };
     }
@@ -348,9 +356,14 @@ export async function handleTool(
       const verdict = args.verdict as string;
       const context = args.context as string;
       const result = chainOfVerification(verdict, context);
+      const covText = `Chain-of-Verification\n` +
+        `Verdict: ${result.original_verdict}\n` +
+        `Confidence: ${(result.confidence * 100).toFixed(0)}%\n` +
+        `Recommendation: ${result.recommendation}\n\n` +
+        `Challenge questions:\n${result.questions.map((q, i) => `  ${i + 1}. ${q}`).join('\n')}`;
       return {
         content: [
-          { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          { type: "text" as const, text: dualTrackOutput(covText, result) },
         ],
       };
     }
