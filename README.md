@@ -106,7 +106,62 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 - **`validate_project`** — 静态扫描缺失资源、无效 `preload()`/`load()` 路径、孤立 `.import` 文件
 - **`import_resources`** — 扫描目录批量注册资源(图片/音频/字体/3D 模型),自动生成 `.import`
 
+## Token 优化与 Profile
+
+本 server 默认暴露全部 34 个工具（~68KB ≈ 17K tokens 的 schema）。对于 token 敏感场景（长会话、上下文窗口小的模型、多 MCP server 共存），可以用 **profile** 控制默认加载的工具组,显著降低 token 开销。
+
+### Profile 一览
+
+| Profile | 含组 | 加载体积 | 适用场景 |
+|---------|------|---------|---------|
+| `full`（默认）| 全部 20 组 | ~68KB | 全功能开发,token 充裕 |
+| `lite` | core, bridge, animation, audio, signal, visual, code, test, profiler | ~44KB | 日常 2D/3D 开发,砍掉 ui/tilemap/nav/physics 等不常用组 |
+| `lean` | core, bridge, animation, audio, signal, code | ~31KB | **token 极敏感场景**的最小可用集,比 lite 再砍 visual/profiler |
+| `minimal` / `slim` | core | ~16KB | 仅做项目/场景/脚本基础操作 |
+| `bridge_dev` | core, bridge, profiler, test, dynamic | ~12KB | 专注 Game Bridge 运行时调试 |
+| `3d_dev` | core, animation, visual, physics, navigation | ~22KB | 3D 游戏开发专项 |
+
+### 配置方式
+
+三选一（优先级 CLI > env > 默认 `full`）：
+
+```bash
+# 方式 1：CLI 参数（直接启动时）
+node build/index.js --profile=lean
+
+# 方式 2：环境变量（推荐,适合 MCP 客户端 config）
+export GODOT_MCP_PROFILE=lean
+
+# 方式 3：MCP 客户端配置文件（以 Claude Code 为例）
+# ~/.claude/claude_desktop_config.json 或对应客户端的 mcp config
+{
+  "mcpServers": {
+    "godot": {
+      "command": "node",
+      "args": ["path/to/build/index.js"],
+      "env": { "GODOT_MCP_PROFILE": "lean" }
+    }
+  }
+}
+```
+
+也可传逗号分隔的组名自定义 profile：`--profile=core,bridge,animation`。
+
+### 运行时微调
+
+Profile 在**启动时一次性确定**,运行时不能切换 profile。但可用 `manage_tools` 工具在当前 profile 范围内启用/停用个别组：
+
+```
+manage_tools { action: "list_groups" }                          # 查看所有组及激活状态
+manage_tools { action: "deactivate", groups: ["audio"] }        # 停用某组（立即从 tools/list 移除）
+manage_tools { action: "activate", groups: ["audio"] }          # 重新启用
+```
+
+注意：`manage_tools activate` 只能启用**当前 profile 已包含**的组,无法突破 profile 边界。要加载 profile 外的组需重启 server 换 profile。`activeGroups` 状态不持久化,重启 server 回到该 profile 的默认全启用状态。
+
 ## 工具一览
+
+> 工具较多（默认 34 个,~68KB）？考虑用 `--profile=lean` 减少加载量到 ~31KB（详见上方「Token 优化与 Profile」）。
 
 > 共 28 个 MCP 工具(merged tool definition),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](docs/capability-matrix.md)。
 
@@ -497,6 +552,8 @@ setup_project_rules(project_path="你的项目路径")
 | `GODOT_PATH` | Godot 可执行文件路径 | 自动搜索（PATH/注册表/Scoop/Downloads） |
 | `GODOT_PROJECT_PATH` | 默认项目路径 | 自动检测 cwd（向上搜索 project.godot） |
 | `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 搜索目录（分号分隔） | 无 |
+| `GODOT_MCP_PROFILE` | **工具加载 profile**，控制默认暴露的工具组（影响 token 用量，详见下方「Token 优化与 Profile」）。可选值：`full`/`lite`/`lean`/`minimal`/`slim`/`bridge_dev`/`3d_dev` 或逗号分隔的组名 | `full` |
+| `GODOT_MCP_MODE` | 旧式 profile 开关（`minimal`/`lite`）或连接模式（`editor`）。新代码推荐用 `GODOT_MCP_PROFILE` | `headless` |
 | `DEBUG` | 启用详细日志 | `false` |
 
 > **注意：** 项目路径有 30 秒缓存。切换项目后等待 30 秒或重启 MCP server 使新路径生效。

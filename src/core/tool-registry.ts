@@ -195,11 +195,13 @@ export const TOOL_GROUPS: Record<string, ToolGroupDef> = {
   dynamic: { description: '动态工具（Godot 端注册但 MCP 侧未定义）', tools: ['godot_advanced_tool', 'godot_list_dynamic_routes'], requires: [] },
 };
 
-/** 6 preset profiles. Each maps to an array of group names. */
+/** 7 preset profiles. Each maps to an array of group names. */
 export const PROFILES: Record<string, string[]> = {
   full:        Object.keys(TOOL_GROUPS),
   // BREAKING CHANGE: lite now uses group-based expansion (matches current LITE_TOOLS content)
   lite:        ['core', 'bridge', 'animation', 'audio', 'signal', 'visual', 'code', 'test', 'profiler'],
+  // lean: token 极敏感场景的最小可用集；砍 visual/profiler/test，比 lite 再省 ~13KB（~31KB vs lite ~44KB）
+  lean:        ['core', 'bridge', 'animation', 'audio', 'signal', 'code'],
   minimal:     ['core'],
   slim:        ['core'],  // intentional alias of minimal - proxy tool is in core group,
   bridge_dev:  ['core', 'bridge', 'profiler', 'test', 'dynamic'],

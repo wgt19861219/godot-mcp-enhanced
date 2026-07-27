@@ -80,8 +80,8 @@ describe('tool-registry groups and profiles', () => {
   });
 
   describe('PROFILES', () => {
-    it('should define 6 profiles', () => {
-      expect(Object.keys(PROFILES)).toHaveLength(6);
+    it('should define 7 profiles', () => {
+      expect(Object.keys(PROFILES)).toHaveLength(7);
     });
 
     it('should have full profile include all 20 groups', () => {
@@ -96,6 +96,28 @@ describe('tool-registry groups and profiles', () => {
       const groupNames = Object.keys(TOOL_GROUPS);
       for (const g of PROFILES.lite) {
         expect(groupNames, `${g} should be a valid group name`).toContain(g);
+      }
+    });
+
+    // v0.25.0: lean profile — token 极敏感场景的最小可用集（比 lite 砍 visual/profiler/test）
+    it('should have lean profile with 6 groups (core/bridge/animation/audio/signal/code)', () => {
+      expect(PROFILES.lean).toEqual(['core', 'bridge', 'animation', 'audio', 'signal', 'code']);
+    });
+
+    it('should have lean profile use only valid group names', () => {
+      const groupNames = Object.keys(TOOL_GROUPS);
+      for (const g of PROFILES.lean) {
+        expect(groupNames, `${g} should be a valid group name`).toContain(g);
+      }
+    });
+
+    it('lean should be subset of lite (砍 visual/profiler/test)', () => {
+      const leanSet = new Set(PROFILES.lean);
+      for (const g of PROFILES.lite) {
+        // lite 的每个组要么在 lean 里，要么是被 lean 砍掉的 visual/profiler/test
+        if (!leanSet.has(g)) {
+          expect(['visual', 'profiler', 'test']).toContain(g);
+        }
       }
     });
 
@@ -156,6 +178,33 @@ describe('tool-registry groups and profiles', () => {
       expect(tools.has('animation')).toBe(true);    // animation
       expect(tools.has('material')).toBe(true);     // visual
       expect(tools.has('game')).toBe(false);        // bridge not included
+    });
+
+    // v0.25.0: lean profile resolveProfile 断言
+    it('should resolve lean profile (core+bridge+animation+audio+signal+code)', () => {
+      const tools = resolveProfile('lean');
+      // core 组工具
+      expect(tools.has('project')).toBe(true);
+      expect(tools.has('scene')).toBe(true);
+      expect(tools.has('script')).toBe(true);
+      expect(tools.has('validation')).toBe(true);
+      // bridge
+      expect(tools.has('game')).toBe(true);
+      // animation
+      expect(tools.has('animation')).toBe(true);
+      expect(tools.has('animtree')).toBe(true);
+      // audio / signal / code
+      expect(tools.has('audio')).toBe(true);
+      expect(tools.has('signal')).toBe(true);
+      expect(tools.has('docs')).toBe(true);
+      // 被砍的组工具不在
+      expect(tools.has('material')).toBe(false);   // visual 砍
+      expect(tools.has('screenshot')).toBe(false); // visual 砍
+      expect(tools.has('particles')).toBe(false);  // visual 砍
+      expect(tools.has('profiler')).toBe(false);   // profiler 砍
+      expect(tools.has('workflow')).toBe(false);   // profiler 砍
+      expect(tools.has('ui')).toBe(false);         // 不在 lean
+      expect(tools.has('physics')).toBe(false);    // 不在 lean
     });
 
     it('should support comma-separated group override', () => {

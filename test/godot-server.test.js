@@ -350,6 +350,41 @@ describe('GodotServer', () => {
       expect(liteNames.length).toBeLessThan(defaultNames.length);
     });
 
+    // v0.25.0: lean profile — 比 lite 更激进，砍 visual/profiler/test
+    it('lean mode filters to LEAN_TOOLS set only (v0.25.0)', async () => {
+      const handlers = createServerAndGetHandlers({ mode: 'lean' });
+      const names = await getToolNamesFromHandler(handlers);
+      const leanTools = [
+        'project', 'scene', 'script', 'runtime', 'validation', 'confirm_and_execute', 'godot_get_context',
+        'game',
+        'animation', 'animtree',
+        'audio',
+        'signal',
+        'docs', 'load_skill', 'cpp',
+      ];
+      for (const name of names) {
+        expect(leanTools).toContain(name);
+      }
+      for (const expected of leanTools) {
+        expect(names).toContain(expected);
+      }
+    });
+
+    it('lean mode has fewer tools than lite (v0.25.0)', async () => {
+      vi.clearAllMocks();
+      vi.mocked(StdioServerTransport).mockImplementation(function() { return {}; });
+      const liteHandlers = createServerAndGetHandlers({ mode: 'lite' });
+      const liteNames = await getToolNamesFromHandler(liteHandlers);
+
+      vi.clearAllMocks();
+      vi.mocked(StdioServerTransport).mockImplementation(function() { return {}; });
+      const leanHandlers = createServerAndGetHandlers({ mode: 'lean' });
+      const leanNames = await getToolNamesFromHandler(leanHandlers);
+
+      expect(leanNames.length).toBeLessThan(liteNames.length);
+    });
+
+
     it('combined readOnly and lite mode applies both filters', async () => {
       const handlers = createServerAndGetHandlers({ readOnly: true, mode: 'lite' });
       const names = await getToolNamesFromHandler(handlers);
