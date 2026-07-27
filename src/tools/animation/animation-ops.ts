@@ -15,7 +15,7 @@ const TOOL_NAMES = ['animation'] as const;
 const ACTIONS = [
   'list_players', 'get_info', 'get_details', 'get_keyframes', 'play', 'stop',
   'seek', 'blend', 'create', 'delete', 'update_props', 'add_track', 'remove_track',
-  'add_keyframe', 'remove_keyframe', 'update_keyframe', 'ik_modifier_create',
+  'add_keyframe', 'remove_keyframe', 'update_keyframe', 'set_curve', 'ik_modifier_create',
   'ik_modifier_get', 'ik_modifier_set', 'ik_list_bones',
 ] as const;
 
@@ -28,7 +28,7 @@ export function getToolDefinitions(): Tool[] {
     {
       name: 'animation',
       description:
-        '查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe。' +
+        '查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe, set_curve。' +
         NON_PERSIST,
       inputSchema: {
         type: 'object' as const,
@@ -65,6 +65,9 @@ export function getToolDefinitions(): Tool[] {
           blend_time: { type: 'number', description: '混合过渡时间（秒）（blend）' },
           speed: { type: 'number', description: '播放速度，默认 1.0（blend）' },
           load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          // ── Curve parameters (merged from animation-track.ts) ──
+          in_handle: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, description: '贝塞尔入控制柄坐标（set_curve）' },
+          out_handle: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } }, description: '贝塞尔出控制柄坐标（set_curve）' },
           // ── IK parameters (merged, v0.18.0) ──
           type: { type: 'string', enum: ['TwoBoneIK3D', 'FABRIK3D', 'CCDIK3D', 'SplineIK3D', 'JacobianIK3D'], description: 'IK：IK 类型' },
           bone_name: { type: 'string', description: 'IK：骨骼名' },
@@ -532,8 +535,11 @@ func _initialize():
 // Export genAnimationBlend for testing
 export { genAnimationBlend };
 
-// Re-export from animation-track for backward compatibility (tests)
-export {
+// Re-export from animation-track for backward compatibility (tests).
+// v0.25.0：6 个生成器定义仍留在 animation-track.ts（避免循环 import），
+// animation-ops.ts 既本地 import（handler 内 set_curve case 调用 genAnimationCurve）
+// 又 re-export（保持测试 import 路径不变）。
+import {
   genAnimationTrackAdd,
   genAnimationTrackRemove,
   genAnimationKeyframeAdd,
@@ -541,6 +547,14 @@ export {
   genAnimationKeyframeUpdate,
   genAnimationCurve,
 } from './animation-track.js';
+export {
+  genAnimationTrackAdd,
+  genAnimationTrackRemove,
+  genAnimationKeyframeAdd,
+  genAnimationKeyframeRemove,
+  genAnimationKeyframeUpdate,
+  genAnimationCurve,
+};
 
 // ─── Tool Handler ──────────────────────────────────────────────────────────
 
@@ -640,6 +654,22 @@ export async function handleTool(
               args.value,
               args.transition !== undefined ? ensureNumber(args.transition, 'transition') : undefined);
             break;
+          case 'set_curve': {
+            // ── set_curve (merged from animation-track.ts) ──
+            const scTrackIdx = args.track_index !== undefined ? ensureNumber(args.track_index, 'track_index') : -1;
+            const scKfIdx = args.keyframe_index !== undefined ? ensureNumber(args.keyframe_index, 'keyframe_index') : -1;
+            if (!nodePath || !animName || scTrackIdx < 0 || scKfIdx < 0) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, track_index, keyframe_index required');
+            const rawIn = args.in_handle as { x?: number; y?: number } | undefined;
+            const rawOut = args.out_handle as { x?: number; y?: number } | undefined;
+            const inHandle = rawIn && rawIn.x !== undefined && rawIn.y !== undefined
+              ? { x: ensureNumber(rawIn.x, 'in_handle.x'), y: ensureNumber(rawIn.y, 'in_handle.y') }
+              : undefined;
+            const outHandle = rawOut && rawOut.x !== undefined && rawOut.y !== undefined
+              ? { x: ensureNumber(rawOut.x, 'out_handle.x'), y: ensureNumber(rawOut.y, 'out_handle.y') }
+              : undefined;
+            code = genAnimationCurve(nodePath, animName, scTrackIdx, scKfIdx, inHandle, outHandle);
+            break;
+          }
           case 'blend': {
             if (!nodePath || !animName || args.blend_time === undefined) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, blend_time required');
             const blendTime = ensureNumber(args.blend_time, 'blend_time');
@@ -685,9 +715,12 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
     actionRisks: {
       list_players: 'read', get_info: 'read', get_details: 'read', get_keyframes: 'read',
       play: 'read', stop: 'read', seek: 'read', blend: 'read',
-      ik_modifier_get: 'read', ik_list_bones: 'read',
+      ik_modifier_get: 'read', ik_list_bones: 'read', set_curve: 'read',
       create: 'write', update_props: 'write', add_track: 'write', add_keyframe: 'write',
-      update_keyframe: 'write', ik_modifier_create: 'write', ik_modifier_set: 'write',
+      ik_modifier_create: 'write', ik_modifier_set: 'write',
+      // update_keyframe 改 destructive：对齐 animation-track.ts:378 同名操作，且实际改写关键帧值/时间
+      // 属破坏性，应触发确认门（animation-track.ts:369-372 注释意图）。
+      update_keyframe: 'destructive',
       delete: 'destructive', remove_track: 'destructive', remove_keyframe: 'destructive',
     } satisfies Record<typeof ACTIONS[number], RiskLevel>,
   },

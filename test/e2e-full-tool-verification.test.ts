@@ -485,8 +485,9 @@ describe.skipIf(!hasGodot || !hasProject)('E2E: Godot-dependent tools', { timeou
     expectHasText(r);
   });
 
-  it('animation_track: add_track returns result', async () => {
-    const r = await callTool('animation_track', {
+  // v0.25.0: animation_track 已合并进 animation，改调 animation 工具的 add_track action
+  it('animation add_track (merged from animation_track, v0.25.0): returns result', async () => {
+    const r = await callTool('animation', {
       action: 'add_track',
       scene_path: 'res://scenes/anim_test.tscn',
       node_path: 'AnimationPlayer',
@@ -695,9 +696,10 @@ describe.skipIf(!hasGodot || !hasRealProject)('L1 real-project: 领域工具真�
     expectSuccess(r, 'AnimPlayer');
   });
 
-  it('animation_track add_track: 真实加轨道', async () => {
+  // v0.25.0: animation_track 已合并进 animation
+  it('animation add_track (merged, v0.25.0): 真实加轨道', async () => {
     // fixture AnimPlayer 预定义 L1Anim animation(持久化,避免跨进程 create 丢失)
-    const r = await callToolReal('animation_track', {
+    const r = await callToolReal('animation', {
       action: 'add_track', scene_path: SCENE_2D, node_path: 'root/Main2D/AnimPlayer',
       animation_name: 'L1Anim', track_type: 'value', track_path: 'Camera2D:position:x',
     });

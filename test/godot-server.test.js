@@ -323,7 +323,7 @@ describe('GodotServer', () => {
       const liteTools = [
         'project', 'scene', 'script', 'runtime', 'validation', 'confirm_and_execute', 'godot_get_context',
         'game',
-        'animation', 'animtree', 'animation_track',
+        'animation', 'animtree',
         'audio',
         'signal',
         'material', 'screenshot', 'particles',

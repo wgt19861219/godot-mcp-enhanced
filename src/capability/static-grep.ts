@@ -10,7 +10,7 @@ export const GROUP_SOURCE_FILES: Record<string, string[]> = {
   core: ['project.ts', 'scene.ts', 'script.ts', 'runtime.ts', 'validation.ts', 'manage-tools.ts'],
   editor: ['editor-sync.ts'],
   bridge: ['game-bridge.ts'],
-  animation: ['animation/animation-ops.ts', 'animation/animation-track.ts', 'animtree.ts'],
+  animation: ['animation/animation-ops.ts', 'animtree.ts'],
   audio: ['audio-ops.ts'],
   visual: ['material-ops.ts', 'screenshot.ts', 'particles.ts'],
   physics: ['physics-ops.ts'],

@@ -15,7 +15,7 @@ registerAllModules();
  * 副作用（建目录/多文件、改 project.godot、写 .claude/settings.json+CLAUDE.md+rules、注入 hook），
  * 已标 'write' 触发确认；纯查询 action 仍 'read'。 */
 const GUARDED_KEYS = new Set([
-  'scene', 'script', 'animation', 'animation_track', 'tilemap', 'game', 'material', 'particles',
+  'scene', 'script', 'animation', 'tilemap', 'game', 'material', 'particles',
   'signal', 'nav', 'audio', 'ui', 'physics', 'runtime', 'android', 'workflow',
   'validation', 'manage_tools', 'project', 'cpp', 'csv_to_resources', 'asset',
   'blender',

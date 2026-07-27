@@ -17,140 +17,40 @@ const fakeCtx = { findGodot: async () => '/fake/godot' };
 // ─── TOOL_NAMES ──────────────────────────────────────────────────────────────
 
 describe('animation-track TOOL_NAMES', () => {
-  it('contains 3 tool names', () => {
-    expect(TOOL_NAMES.length).toBe(1);
+  // v0.25.0：animation_track 工具已合并进 animation，TOOL_NAMES 为空数组
+  it('is empty after merge into animation (v0.25.0)', () => {
+    expect(TOOL_NAMES.length).toBe(0);
   });
-  const expected = ['animation_track'];
-  for (const name of expected) {
-    it(`includes ${name}`, () => {
-      expect(TOOL_NAMES.includes(name)).toBeTruthy();
-    });
-  }
 });
 
 // ─── getToolDefinitions ──────────────────────────────────────────────────────
 
 describe('animation-track getToolDefinitions', () => {
-  it('returns non-empty array', () => {
+  // v0.25.0：合并后不再暴露工具，返回空数组
+  it('returns empty array after merge (v0.25.0)', () => {
     const defs = getToolDefinitions();
     expect(Array.isArray(defs)).toBeTruthy();
-    expect(defs.length).toBeGreaterThan(0);
-  });
-  it('returns 3 definitions', () => {
-    const defs = getToolDefinitions();
-    expect(defs.length).toBe(1);
-  });
-  it('each definition has name and inputSchema', () => {
-    for (const def of getToolDefinitions()) {
-      expect(def.name).toBeTruthy();
-      expect(def.inputSchema).toBeTruthy();
-      expect(def.inputSchema.type).toBe('object');
-    }
+    expect(defs.length).toBe(0);
   });
 });
 
 // ─── TOOL_META ───────────────────────────────────────────────────────────────
 
 describe('animation-track TOOL_META', () => {
-  it('has entries for all tool names', () => {
-    for (const name of TOOL_NAMES) {
-      expect(name in TOOL_META).toBeTruthy();
-    }
-  });
-  it('all tools are non-readonly and non-long-running', () => {
-    for (const name of TOOL_NAMES) {
-      expect(TOOL_META[name].readonly).toBe(false);
-      expect(TOOL_META[name].long_running).toBe(false);
-    }
+  // v0.25.0：合并后 TOOL_META 为空对象（risk 标注已迁入 animation-ops.ts）
+  it('is empty object after merge (v0.25.0)', () => {
+    expect(Object.keys(TOOL_META).length).toBe(0);
   });
 });
 
 // ─── handleTool ──────────────────────────────────────────────────────────────
 
 describe('animation-track handleTool', () => {
-  it('returns null for unknown tool', async () => {
-    const result = await handleTool('unknown_tool', {}, fakeCtx);
-    expect(result).toBe(null);
-  });
-
-  it('returns null for unrelated tool name', async () => {
-    const result = await handleTool('run_project', {}, fakeCtx);
-    expect(result).toBe(null);
-  });
-
-  it('animation_track rejects missing node_path', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      animation_name: 'idle',
-      action: 'add_track',
-      track_type: 'value',
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-  });
-
-  it('animation_track rejects missing track_type for add', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      node_path: 'root/AP',
-      animation_name: 'idle',
-      action: 'add_track',
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-  });
-
-  it('animation_track rejects missing track_index for remove', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      node_path: 'root/AP',
-      animation_name: 'idle',
-      action: 'remove_track',
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-  });
-
-  it('animation_keyframe rejects missing time for add', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      node_path: 'root/AP',
-      animation_name: 'idle',
-      action: 'add_keyframe',
-      track_index: 0,
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-  });
-
-  it('animation_keyframe rejects missing keyframe_index for remove', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      node_path: 'root/AP',
-      animation_name: 'idle',
-      action: 'remove_keyframe',
-      track_index: 0,
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
-  });
-
-  it('animation_curve rejects missing track_index', async () => {
-    const result = await handleTool('animation_track', {
-      project_path: '/fake/project',
-      node_path: 'root/AP',
-      animation_name: 'idle',
-      action: 'set_curve',
-      keyframe_index: 0,
-    }, fakeCtx);
-    expect(result).toBeTruthy();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.success).toBe(false);
+  // v0.25.0：合并后 handleTool 是 deprecated 空壳，永远返回 null
+  it('returns null for any input (deprecated shim, v0.25.0)', async () => {
+    expect(await handleTool('unknown_tool', {}, fakeCtx)).toBe(null);
+    expect(await handleTool('animation_track', { action: 'add_track' }, fakeCtx)).toBe(null);
+    expect(await handleTool('run_project', {}, fakeCtx)).toBe(null);
   });
 });
 

@@ -114,6 +114,15 @@ describe('animation-ops parameter validation', () => {
     const r = await handleTool('animation', { ...BASE_ARGS, action: 'update_keyframe', node_path: 'root/P', animation_name: 'i', track_index: 0 }, createMockCtx());
     expect(r.content[0].text).toContain('INVALID_PARAMS');
   });
+  // v0.25.0: set_curve 从 animation_track 合并进来
+  it('set_curve requires track_index and keyframe_index', async () => {
+    const r = await handleTool('animation', { ...BASE_ARGS, action: 'set_curve', node_path: 'root/P', animation_name: 'i', track_index: 0 }, createMockCtx());
+    expect(r.content[0].text).toContain('INVALID_PARAMS');
+  });
+  it('set_curve requires node_path and animation_name', async () => {
+    const r = await handleTool('animation', { ...BASE_ARGS, action: 'set_curve', track_index: 0, keyframe_index: 0 }, createMockCtx());
+    expect(r.content[0].text).toContain('INVALID_PARAMS');
+  });
   it('blend requires blend_time', async () => {
     const r = await handleTool('animation', { ...BASE_ARGS, action: 'blend', node_path: 'root/P', animation_name: 'i' }, createMockCtx());
     expect(r.content[0].text).toContain('INVALID_PARAMS');

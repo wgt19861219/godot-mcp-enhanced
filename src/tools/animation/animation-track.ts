@@ -1,67 +1,28 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { ToolContext, ToolResult } from '../../types.js';
+import type { ToolResult } from '../../types.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
-import { requireProjectPath } from '../../helpers.js';
-import { executeGdscript } from '../../gdscript-executor.js';
-import { normalizeNodePath, gdEscape } from '../shared.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from '../shared.js';
-import { TRACK_TYPES, ensureNumber, valueToGd, animErrorMapper } from './animation-shared.js';
+import { gdEscape } from '../shared.js';
+import { SCENE_TREE_HEADER } from '../shared.js';
+import { valueToGd } from './animation-shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const TOOL_NAMES = ['animation_track'] as const;
-
-export { TOOL_NAMES };
+/** @deprecated v0.25.0 — animation_track 工具已合并进 animation 工具。
+ * 6 个 GDScript 生成器定义保留在此文件（被 animation-ops.ts re-export 使用），
+ * 但工具本身不再注册。详见 animation-ops.ts 的 set_curve case。 */
+export const TOOL_NAMES = [] as const;
 
 // ─── Tool Definitions ──────────────────────────────────────────────────────
 
+/** @deprecated v0.25.0 — 已合并到 animation-ops。不再暴露工具。 */
 export function getToolDefinitions(): Tool[] {
-  return [
-    {
-      name: 'animation_track',
-      description:
-        '动画轨道与关键帧操作。轨道: add_track, remove_track。关键帧: add_keyframe, remove_keyframe, update_keyframe。曲线: set_curve。' +
-        NON_PERSIST,
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
-          action: {
-            type: 'string',
-            enum: ['add_track', 'remove_track', 'add_keyframe', 'remove_keyframe', 'update_keyframe', 'set_curve'],
-            description: '操作类型',
-          },
-          node_path: { type: 'string', description: 'AnimationPlayer 节点路径' },
-          animation_name: { type: 'string', description: '动画名称' },
-          track_type: {
-            type: 'string',
-            enum: [...TRACK_TYPES],
-            description: '轨道类型（add_track 时必填）',
-          },
-          track_path: { type: 'string', description: '轨道路径，如 "Sprite2D:frame"（add_track 时可选）' },
-          track_index: { type: 'number', description: '轨道索引' },
-          insert_at: { type: 'number', description: '轨道插入位置，-1 为末尾（add_track 时可选）' },
-          keyframe_index: { type: 'number', description: '关键帧索引（remove_keyframe/update_keyframe/set_curve 时必填）' },
-          time: { type: 'number', description: '关键帧时间（秒）（add_keyframe 时必填）' },
-          value: { description: '关键帧值（add_keyframe/update_keyframe）' },
-          transition: { type: 'number', description: '过渡曲线，1.0=线性' },
-          in_handle: {
-            type: 'object',
-            properties: { x: { type: 'number' }, y: { type: 'number' } },
-            description: '入控制柄坐标（set_curve）',
-          },
-          out_handle: {
-            type: 'object',
-            properties: { x: { type: 'number' }, y: { type: 'number' } },
-            description: '出控制柄坐标（set_curve）',
-          },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
-        },
-        required: ['action'],
-      },
-    },
-  ];
+  return [];
 }
+
+// ─── (legacy getToolDefinitions removed in v0.25.0 — generators below kept) ──
+// 原 animation_track 工具的 6 个 action（add_track/remove_track/add_keyframe/
+// remove_keyframe/update_keyframe/set_curve）及其 schema 已迁入 animation-ops.ts。
+// 本文件下方仅保留 6 个 GDScript 生成器定义，供 animation-ops.ts re-export 复用。
 
 
 
@@ -268,115 +229,16 @@ export {
   genAnimationCurve,
 };
 
-// ─── Tool Handler ──────────────────────────────────────────────────────────
+// ─── Tool Handler (deprecated shim) ────────────────────────────────────────
 
-export async function handleTool(
-  name: string,
-  args: Record<string, unknown>,
-  ctx: ToolContext,
-): Promise<ToolResult | null> {
-  if (!(TOOL_NAMES as readonly string[]).includes(name)) return null;
-
-  try {
-    const projectPath = requireProjectPath(args);
-    const loadAutoloads = (args.load_autoloads as boolean) !== false;
-    const godotPath = await ctx.findGodot();
-
-    let code: string;
-    const action = args.action as string;
-    if (!action) return opsErrorResult('INVALID_PARAMS', 'action is required');
-
-    const nodePath = normalizeNodePath((args.node_path as string) ?? '');
-    const animName = (args.animation_name as string) ?? '';
-
-    switch (action) {
-      case 'add_track': {
-        if (!nodePath || !animName) return opsErrorResult('INVALID_PARAMS', 'node_path and animation_name required');
-        if (!args.track_type) return opsErrorResult('INVALID_PARAMS', 'track_type required for add_track');
-        code = genAnimationTrackAdd(nodePath, animName, args.track_type as string, args.track_path as string | undefined,
-          args.insert_at !== undefined ? ensureNumber(args.insert_at, 'insert_at') : undefined);
-        break;
-      }
-      case 'remove_track': {
-        if (!nodePath || !animName) return opsErrorResult('INVALID_PARAMS', 'node_path and animation_name required');
-        if (args.track_index === undefined) return opsErrorResult('INVALID_PARAMS', 'track_index required for remove_track');
-        code = genAnimationTrackRemove(nodePath, animName, ensureNumber(args.track_index, 'track_index'));
-        break;
-      }
-      case 'add_keyframe': {
-        const trackIdx = args.track_index !== undefined ? ensureNumber(args.track_index, 'track_index') : -1;
-        if (!nodePath || !animName || trackIdx < 0) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, track_index required');
-        if (args.time === undefined) return opsErrorResult('INVALID_PARAMS', 'time required for add_keyframe');
-        code = genAnimationKeyframeAdd(nodePath, animName, trackIdx, ensureNumber(args.time, 'time'), args.value,
-          args.transition !== undefined ? ensureNumber(args.transition, 'transition') : undefined);
-        break;
-      }
-      case 'remove_keyframe': {
-        const trackIdx = args.track_index !== undefined ? ensureNumber(args.track_index, 'track_index') : -1;
-        if (!nodePath || !animName || trackIdx < 0) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, track_index required');
-        if (args.keyframe_index === undefined) return opsErrorResult('INVALID_PARAMS', 'keyframe_index required for remove_keyframe');
-        code = genAnimationKeyframeRemove(nodePath, animName, trackIdx, ensureNumber(args.keyframe_index, 'keyframe_index'));
-        break;
-      }
-      case 'update_keyframe': {
-        const trackIdx = args.track_index !== undefined ? ensureNumber(args.track_index, 'track_index') : -1;
-        if (!nodePath || !animName || trackIdx < 0) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, track_index required');
-        if (args.keyframe_index === undefined) return opsErrorResult('INVALID_PARAMS', 'keyframe_index required for update_keyframe');
-        code = genAnimationKeyframeUpdate(nodePath, animName, trackIdx, ensureNumber(args.keyframe_index, 'keyframe_index'),
-          args.value,
-          args.transition !== undefined ? ensureNumber(args.transition, 'transition') : undefined);
-        break;
-      }
-      case 'set_curve': {
-        const trackIdx = args.track_index !== undefined ? ensureNumber(args.track_index, 'track_index') : -1;
-        const kfIdx = args.keyframe_index !== undefined ? ensureNumber(args.keyframe_index, 'keyframe_index') : -1;
-        if (!nodePath || !animName || trackIdx < 0 || kfIdx < 0) return opsErrorResult('INVALID_PARAMS', 'node_path, animation_name, track_index, keyframe_index required');
-
-        const rawIn = args.in_handle as { x?: number; y?: number } | undefined;
-        const rawOut = args.out_handle as { x?: number; y?: number } | undefined;
-        const inHandle = rawIn && rawIn.x !== undefined && rawIn.y !== undefined
-          ? { x: ensureNumber(rawIn.x, 'in_handle.x'), y: ensureNumber(rawIn.y, 'in_handle.y') }
-          : undefined;
-        const outHandle = rawOut && rawOut.x !== undefined && rawOut.y !== undefined
-          ? { x: ensureNumber(rawOut.x, 'out_handle.x'), y: ensureNumber(rawOut.y, 'out_handle.y') }
-          : undefined;
-
-        code = genAnimationCurve(nodePath, animName, trackIdx, kfIdx, inHandle, outHandle);
-        break;
-      }
-      default:
-        return opsErrorResult('INVALID_ACTION', `Unknown action: ${action}`);
-    }
-
-    const result = await executeGdscript({
-      godotPath,
-      projectPath,
-      code,
-      timeout: 30,
-      loadAutoloads,
-    });
-
-    return parseGdscriptResult(result, [], animErrorMapper);
-  } catch (err) {
-    return opsErrorResult('INVALID_PARAMS', err instanceof Error ? err.message : String(err));
-  }
+/** @deprecated v0.25.0 — animation_track 工具已合并进 animation 工具。
+ * 此 handleTool 永远返回 null，仅保留签名以满足 ToolModule 接口。
+ * 实际 handler 在 animation-ops.ts:547 的 set_curve case 及同名 track/keyframe case。 */
+export async function handleTool(): Promise<ToolResult | null> {
+  return null;
 }
 
-export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean; actionRisks: Record<string, RiskLevel> }> = {
-  animation_track: {
-    readonly: false,
-    long_running: false,
-    // P0-2 (批次 E): remove_track/remove_keyframe/update_keyframe 是破坏性操作（删轨道/关键帧/改值），
-    // 对齐兄弟模块 animation-ops.ts:691（同名操作标 destructive）。原标 'read' 绕确认门（spec §4.1
-    // 零行为改变决策）是 bug——破坏性操作应确认。add_track/add_keyframe/set_curve 仍 read（非破坏）。
-    // risk-coverage GUARDED_KEYS 加 'animation_track' 允许非 read。
-    actionRisks: {
-      add_track: 'read',
-      remove_track: 'destructive',
-      add_keyframe: 'read',
-      remove_keyframe: 'destructive',
-      update_keyframe: 'destructive',
-      set_curve: 'read',
-    },
-  },
-};
+/** @deprecated v0.25.0 — 已无工具可登记，保留空对象满足 ToolModule 接口。
+ * animation_track 的 risk 标注已迁入 animation-ops.ts 的 TOOL_META.actionRisks。 */
+export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean; actionRisks?: Record<string, RiskLevel> }> = {};
+

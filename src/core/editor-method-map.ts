@@ -79,6 +79,19 @@ const MAP: Record<string, Record<string, EditorMethodEntry>> = {
   // GD 按 method 分 handler → 按 action 映射到不同 method + shortenAction 转短名。
   // 未登记时 method=animation_track 命中 GD :165 但 match 只认 add/remove → -32004 (非 -32601,
   // 不触发 headless 回退) → editor 模式 6 action 全失效。
+  //
+  // v0.25.0：animation_track 工具已合并进 animation，6 个 track/keyframe/curve action 现由
+  // animation 工具暴露。新增 animation 条目复用同一批 GD method（command_handler.gd 路由不变），
+  // 使合并后 editor 模式仍直走 GD handler 而非 fallback headless。animation_track 条目暂保留，
+  // 因 GD 端仍按这些 method 名路由，删除会触发 static-grep.test.ts 双向漂移检测。
+  animation: {
+    add_track: { method: 'animation_track', transformArgs: shortenAction('add') },
+    remove_track: { method: 'animation_track', transformArgs: shortenAction('remove') },
+    add_keyframe: { method: 'animation_keyframe', transformArgs: shortenAction('add') },
+    remove_keyframe: { method: 'animation_keyframe', transformArgs: shortenAction('remove') },
+    update_keyframe: { method: 'animation_keyframe', transformArgs: shortenAction('update') },
+    set_curve: { method: 'animation_curve' },
+  },
   animation_track: {
     add_track: { method: 'animation_track', transformArgs: shortenAction('add') },
     remove_track: { method: 'animation_track', transformArgs: shortenAction('remove') },

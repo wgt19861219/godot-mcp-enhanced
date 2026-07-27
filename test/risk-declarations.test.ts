@@ -32,9 +32,12 @@ describe('animation actionRisks', () => {
   const cases = {
     list_players: 'read', get_info: 'read', get_details: 'read', get_keyframes: 'read',
     play: 'read', stop: 'read', seek: 'read', blend: 'read',
-    ik_modifier_get: 'read', ik_list_bones: 'read',
+    ik_modifier_get: 'read', ik_list_bones: 'read', set_curve: 'read',
     create: 'write', update_props: 'write', add_track: 'write', add_keyframe: 'write',
-    update_keyframe: 'write', ik_modifier_create: 'write', ik_modifier_set: 'write',
+    ik_modifier_create: 'write', ik_modifier_set: 'write',
+    // v0.25.0: update_keyframe 从 'write' 修正为 'destructive'（对齐 animation-track 同名操作，
+    // 修复风险等级不一致 bug；合并自 animation_track 的 risk 标注）
+    update_keyframe: 'destructive',
     delete: 'destructive', remove_track: 'destructive', remove_keyframe: 'destructive',
   } as const;
   for (const [action, risk] of Object.entries(cases)) {

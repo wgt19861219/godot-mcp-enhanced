@@ -50,7 +50,7 @@ export const GODOT_MCP_RULES = `# Godot MCP 开发规则
 - 节点重命名/删除后检查关联信号连接
 
 ## 动画系统
-- animation / animation_track / animtree 操作为运行时操作
+- animation / animtree 操作为运行时操作
 - 动画名称须在 AnimationPlayer 中已存在
 
 ## 音频

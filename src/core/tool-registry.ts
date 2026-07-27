@@ -167,7 +167,7 @@ export const TOOL_GROUPS: Record<string, ToolGroupDef> = {
   core:       { description: '核心工具', tools: ['project', 'scene', 'script', 'runtime', 'validation', 'confirm_and_execute', 'godot_get_context'], requires: [], protected: true },
   editor:     { description: '编辑器', tools: ['editor'], requires: ['editor'] },
   bridge:     { description: 'Game Bridge', tools: ['game'], requires: ['bridge'] },
-  animation:  { description: '动画系统', tools: ['animation', 'animtree', 'animation_track'], requires: [] },
+  animation:  { description: '动画系统', tools: ['animation', 'animtree'], requires: [] },
   audio:      { description: '音频', tools: ['audio'], requires: [] },
   visual:     { description: '视觉', tools: ['material', 'screenshot', 'particles'], requires: [] },
   physics:    { description: '物理', tools: ['physics'], requires: [] },

@@ -33,23 +33,18 @@ describe('animation-ops TOOL_NAMES', () => {
 
 });
 
-// ─── animation-track TOOL_NAMES ──────────────────────────────────────────
+// ─── animation-track TOOL_NAMES (merged, v0.25.0) ───────────────────────
 
-describe('animation-track TOOL_NAMES', () => {
-  it('contains 3 tool names', () => {
-    expect(TRACK_TOOL_NAMES.length).toBe(1);
+describe('animation-track TOOL_NAMES (merged into animation, v0.25.0)', () => {
+  it('is empty after merge', () => {
+    expect(TRACK_TOOL_NAMES.length).toBe(0);
   });
-  it('includes animation_track', () => {
-    expect(TRACK_TOOL_NAMES.includes('animation_track')).toBeTruthy();
-  });
-
-
 });
 
 // ─── getToolDefinitions (animation-ops) ───────────────────────────────────
 
 describe('animation-ops getToolDefinitions', () => {
-  it('returns 2 tool definitions', () => {
+  it('returns 1 tool definition', () => {
     const defs = getAnimDefs();
     expect(defs.length).toBe(1);
   });
@@ -60,31 +55,28 @@ describe('animation-ops getToolDefinitions', () => {
       expect(def.inputSchema.required).toBeTruthy();
     }
   });
+  // v0.25.0：animation 工具吸收了 animation_track 的 6 个 action
+  it('animation action enum includes merged track/keyframe/curve actions', () => {
+    const defs = getAnimDefs();
+    const anim = defs.find(d => d.name === 'animation');
+    expect(anim).toBeTruthy();
+    const actionEnum = anim.inputSchema.properties.action.enum;
+    // 原 animation 已有
+    expect(actionEnum.includes('add_track')).toBeTruthy();
+    expect(actionEnum.includes('remove_track')).toBeTruthy();
+    expect(actionEnum.includes('add_keyframe')).toBeTruthy();
+    expect(actionEnum.includes('remove_keyframe')).toBeTruthy();
+    expect(actionEnum.includes('update_keyframe')).toBeTruthy();
+    // v0.25.0 从 animation_track 吸收
+    expect(actionEnum.includes('set_curve')).toBeTruthy();
+  });
 });
 
-// ─── getToolDefinitions (animation-track) ─────────────────────────────────
+// ─── getToolDefinitions (animation-track, merged v0.25.0) ─────────────────
 
-describe('animation-track getToolDefinitions', () => {
-  it('returns 3 tool definitions', () => {
-    const defs = getTrackDefs();
-    expect(defs.length).toBe(1);
-  });
-  it('animation_track has action enum with add_track and remove_track', () => {
-    const defs = getTrackDefs();
-    const track = defs.find(d => d.name === 'animation_track');
-    expect(track).toBeTruthy();
-    const actionEnum = track.inputSchema.properties.action.enum;
-    expect(actionEnum.includes('add_track')).toBeTruthy();
-    expect(actionEnum.includes('remove_track')).toBeTruthy();
-  });
-  it('animation_track has keyframe actions', () => {
-    const defs = getTrackDefs();
-    const kf = defs.find(d => d.name === 'animation_track');
-    expect(kf).toBeTruthy();
-    const actionEnum = kf.inputSchema.properties.action.enum;
-    expect(actionEnum.includes('add_track')).toBeTruthy();
-    expect(actionEnum.includes('remove_track')).toBeTruthy();
-    expect(actionEnum.includes('update_keyframe')).toBeTruthy();
+describe('animation-track getToolDefinitions (merged, v0.25.0)', () => {
+  it('returns empty array after merge', () => {
+    expect(getTrackDefs().length).toBe(0);
   });
 });
 

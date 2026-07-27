@@ -112,7 +112,7 @@
     {
       "name": "animation",
       "group": "animation",
-      "description": "查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe, set_curve。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -139,6 +139,7 @@
               "add_keyframe",
               "remove_keyframe",
               "update_keyframe",
+              "set_curve",
               "ik_modifier_create",
               "ik_modifier_get",
               "ik_modifier_set",
@@ -266,6 +267,30 @@
             "type": "boolean",
             "description": "是否加载 Autoload 上下文（默认 true）"
           },
+          "in_handle": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "description": "贝塞尔入控制柄坐标（set_curve）"
+          },
+          "out_handle": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "description": "贝塞尔出控制柄坐标（set_curve）"
+          },
           "type": {
             "type": "string",
             "enum": [
@@ -333,6 +358,8 @@
         "blend_time",
         "speed",
         "load_autoloads",
+        "in_handle",
+        "out_handle",
         "type",
         "bone_name",
         "target_nodepath",
@@ -345,9 +372,9 @@
       "guarded": true,
       "securityLevel": "guarded",
       "riskDistribution": {
-        "read": 10,
-        "write": 7,
-        "destructive": 3,
+        "read": 11,
+        "write": 6,
+        "destructive": 4,
         "process": 0
       },
       "groupRequires": [],
@@ -372,171 +399,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 334,
-        "schemaBytes": 3157,
-        "totalBytes": 3491
-      }
-    },
-    {
-      "name": "animation_track",
-      "group": "animation",
-      "description": "动画轨道与关键帧操作。轨道: add_track, remove_track。关键帧: add_keyframe, remove_keyframe, update_keyframe。曲线: set_curve。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "project_path": {
-            "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
-          },
-          "action": {
-            "type": "string",
-            "enum": [
-              "add_track",
-              "remove_track",
-              "add_keyframe",
-              "remove_keyframe",
-              "update_keyframe",
-              "set_curve"
-            ],
-            "description": "操作类型"
-          },
-          "node_path": {
-            "type": "string",
-            "description": "AnimationPlayer 节点路径"
-          },
-          "animation_name": {
-            "type": "string",
-            "description": "动画名称"
-          },
-          "track_type": {
-            "type": "string",
-            "enum": [
-              "value",
-              "position_3d",
-              "rotation_3d",
-              "scale_3d",
-              "blend_shape",
-              "method",
-              "bezier",
-              "audio",
-              "animation"
-            ],
-            "description": "轨道类型（add_track 时必填）"
-          },
-          "track_path": {
-            "type": "string",
-            "description": "轨道路径，如 \"Sprite2D:frame\"（add_track 时可选）"
-          },
-          "track_index": {
-            "type": "number",
-            "description": "轨道索引"
-          },
-          "insert_at": {
-            "type": "number",
-            "description": "轨道插入位置，-1 为末尾（add_track 时可选）"
-          },
-          "keyframe_index": {
-            "type": "number",
-            "description": "关键帧索引（remove_keyframe/update_keyframe/set_curve 时必填）"
-          },
-          "time": {
-            "type": "number",
-            "description": "关键帧时间（秒）（add_keyframe 时必填）"
-          },
-          "value": {
-            "description": "关键帧值（add_keyframe/update_keyframe）"
-          },
-          "transition": {
-            "type": "number",
-            "description": "过渡曲线，1.0=线性"
-          },
-          "in_handle": {
-            "type": "object",
-            "properties": {
-              "x": {
-                "type": "number"
-              },
-              "y": {
-                "type": "number"
-              }
-            },
-            "description": "入控制柄坐标（set_curve）"
-          },
-          "out_handle": {
-            "type": "object",
-            "properties": {
-              "x": {
-                "type": "number"
-              },
-              "y": {
-                "type": "number"
-              }
-            },
-            "description": "出控制柄坐标（set_curve）"
-          },
-          "load_autoloads": {
-            "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
-          }
-        },
-        "required": [
-          "action"
-        ]
-      },
-      "requiredParams": [
-        "action"
-      ],
-      "optionalParams": [
-        "project_path",
-        "node_path",
-        "animation_name",
-        "track_type",
-        "track_path",
-        "track_index",
-        "insert_at",
-        "keyframe_index",
-        "time",
-        "value",
-        "transition",
-        "in_handle",
-        "out_handle",
-        "load_autoloads"
-      ],
-      "readonly": false,
-      "longRunning": false,
-      "guarded": true,
-      "securityLevel": "guarded",
-      "riskDistribution": {
-        "read": 3,
-        "write": 0,
-        "destructive": 3,
-        "process": 0
-      },
-      "groupRequires": [],
-      "offlineCapable": false,
-      "needsGodot": true,
-      "needsEditor": false,
-      "gdScriptImpl": {
-        "headless": {
-          "exists": false,
-          "path": null
-        },
-        "editor": {
-          "exists": true,
-          "path": "addons/godot_mcp_server/commands/animation_commands.gd"
-        }
-      },
-      "relatedDefects": [],
-      "verification": {
-        "l1": "extracted",
-        "l2": "none",
-        "l3": "unverified",
-        "lastRun": null
-      },
-      "size": {
-        "descBytes": 241,
-        "schemaBytes": 1709,
-        "totalBytes": 1950
+        "descBytes": 345,
+        "schemaBytes": 3466,
+        "totalBytes": 3811
       }
     },
     {

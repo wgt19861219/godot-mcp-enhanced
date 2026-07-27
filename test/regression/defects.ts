@@ -1001,11 +1001,19 @@ export const FIXED_DEFECTS: DefectEntry[] = [
       countMatchesInFile('addons/godot_mcp_server/commands/asset/asset_placer.gd', /CommandHelpers\.has_path_traversal/),
   },
   // ─── 2026-07-24 批次 E P0-2 animation_track 破坏性操作确认门 ──
+  // v0.25.0 更新：animation_track 工具已合并进 animation，risk 标注迁入 animation-ops.ts TOOL_META。
+  // 原 detect 查 animation-track.ts 的字符串已失效（文件改为 re-export shim，TOOL_META 为空）。
+  // 新 detect 查 animation-ops.ts 的 TOOL_META 含 remove_track/remove_keyframe/update_keyframe destructive。
   { key: 'animation-track-destructive-confirmation', status: 'fixed', severity: 'IMPORTANT', dimension: 'Security',
     // P0-2: animation_track 的 remove_track/remove_keyframe/update_keyframe 原标 'read' 绕确认门（spec §4.1
-    // 零行为改变决策）,对齐兄弟 animation-ops.ts:691 destructive。detect: animation-track.ts 含
-    // remove_track: 'destructive' = fixed（复发 read 标注→1）。
-    detect: () => readSrc('src/tools/animation/animation-track.ts').includes("remove_track: 'destructive'") ? 0 : 1,
+    // 零行为改变决策）,对齐 destructive。v0.25.0 合并后检测迁移到 animation-ops.ts。
+    // detect: animation-ops.ts TOOL_META 含三个 destructive 标注 = fixed（复发 read 标注→1）。
+    detect: () => {
+      const f = readSrc('src/tools/animation/animation-ops.ts');
+      return f.includes("remove_track: 'destructive'")
+        && f.includes("remove_keyframe: 'destructive'")
+        && f.includes("update_keyframe: 'destructive'") ? 0 : 1;
+    },
   },
   { key: 'bridge-take-screenshot-null-crash-swallow', status: 'fixed', severity: 'IMPORTANT', dimension: 'Reliability',
     // Bridge take_screenshot 的 get_viewport().get_texture().get_image() 链无 null guard:

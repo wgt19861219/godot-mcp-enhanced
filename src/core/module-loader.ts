@@ -37,7 +37,9 @@ import * as uiOps from '../tools/ui-tools.js';
 // recording → merged into runtime (v0.18.0)
 // import * as recordingOps from '../tools/recording.js';
 import * as editorSync from '../tools/editor-sync.js';
-import * as animationTrack from '../tools/animation/animation-track.js';
+// animation-track → merged into animation-ops (v0.25.0)
+// 生成器定义仍保留在 animation-track.ts，由 animation-ops.ts re-export 使用
+// import * as animationTrack from '../tools/animation/animation-track.js';
 // delivery → merged into validation (v0.18.0)
 // import * as delivery from '../tools/delivery.js';
 // code-templates → merged into project (v0.18.0)
@@ -64,7 +66,7 @@ import * as selfUpdate from '../tools/self-update.js';
 const ALL_MODULES: ToolModule[] = [
   runtime, screenshot, project, scene, script, validation, docs,
   physicsOps, audioOps, tilemapOps, materialOps,
-  gameBridge, workflow, animationOps, animationTrack, profilerOps,
+  gameBridge, workflow, animationOps, /* animationTrack → animation-ops (v0.25.0) */ profilerOps,
   /* testFramework → validation */ animtreeOps, navigationOps, particlesOps,
   signalOps, /* batchTools → workflow */ uiOps, /* recordingOps → runtime */ editorSync,
   /* delivery → validation */ /* codeTemplates → project */ /* ikTools → animation-ops */ /* gameDesign → validation */ manageTools, instanceTools, advancedProxy,

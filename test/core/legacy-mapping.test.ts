@@ -18,7 +18,7 @@ describe('LEGACY_TOOL_MAP', () => {
   it('映射的目标工具名是有效工具', () => {
     const validTargets = new Set([
       'project', 'scene', 'script', 'runtime', 'validation', 'editor', 'game',
-      'animation', 'animtree', 'animation_track', 'audio', 'material', 'screenshot',
+      'animation', 'animtree', 'audio', 'material', 'screenshot',
       'particles', 'physics', 'nav', 'ui', 'tilemap', 'signal', 'profiler',
       'workflow', 'docs', 'manage_tools',
     ]);

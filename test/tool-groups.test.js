@@ -65,10 +65,11 @@ describe('tool-registry groups and profiles', () => {
       expect(TOOL_GROUPS.code.tools).not.toContain('game_design');
     });
 
-    it('should have animation group with animation+animtree+animation_track', () => {
+    // v0.25.0: animation_track 已合并进 animation 工具，group 现含 animation+animtree
+    it('should have animation group with animation+animtree (v0.25.0 merged animation_track)', () => {
       expect(TOOL_GROUPS.animation.tools).toContain('animation');
       expect(TOOL_GROUPS.animation.tools).toContain('animtree');
-      expect(TOOL_GROUPS.animation.tools).toContain('animation_track');
+      expect(TOOL_GROUPS.animation.tools).not.toContain('animation_track');
     });
 
     it('should not have overlapping tool names across groups', () => {

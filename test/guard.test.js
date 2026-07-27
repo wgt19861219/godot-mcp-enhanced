@@ -125,12 +125,11 @@ describe('requiresConfirmation', () => {
   // 非 GUARDED 工具零行为改变（Task 7 修复）：这些工具原不在 GUARDED 表中 →
   // requiresConfirmation 此前对所有 action 返回 false → 迁移后必须保持 false。
   // 锁定 spec §4.1：当前在 GUARDED 外的 action 一律标 read。
-  // P0-2 (批次 E): animation_track 的 remove_track/remove_keyframe/update_keyframe 改 destructive 需确认，
-  // 移出此「保持不确认」列表（见下方反向 it）。add_track/add_keyframe/set_curve 仍 read 不确认。
+  // v0.25.0: animation_track 已合并进 animation。set_curve 标 read 不确认。
+  // 注：add_track/add_keyframe 在 animation 工具中标 'write'（保留 animation 原标注，比 animation_track 的 read 更严），
+  // 会触发确认，不在此「保持 false」列表。
   it.each([
-    ['animation_track', 'add_track'],
-    ['animation_track', 'add_keyframe'],
-    ['animation_track', 'set_curve'],
+    ['animation', 'set_curve'],
     ['editor', 'sync_start'],
     ['editor', 'sync_stop'],
     ['animtree', 'animtree_create'],
@@ -149,11 +148,13 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation(tool, { action })).toBe(false);
   });
 
-  // P0-2 (批次 E): animation_track 破坏性操作（删轨道/关键帧/改值）现需确认（对齐 animation-ops:691 destructive）。
-  it('P0-2: animation_track 破坏性 action 需确认', () => {
-    expect(requiresConfirmation('animation_track', { action: 'remove_track' })).toBe(true);
-    expect(requiresConfirmation('animation_track', { action: 'remove_keyframe' })).toBe(true);
-    expect(requiresConfirmation('animation_track', { action: 'update_keyframe' })).toBe(true);
+  // v0.25.0: animation_track 已合并进 animation。破坏性操作（删轨道/关键帧/改值）现属 animation 工具，
+  // 标 destructive 触发确认（animation-ops.ts TOOL_META.actionRisks）。
+  // 注意 update_keyframe 从原 animation 的 'write' 修正为 'destructive'（修复风险等级不一致 bug）。
+  it('v0.25.0: animation 破坏性 action（原 animation_track）需确认', () => {
+    expect(requiresConfirmation('animation', { action: 'remove_track' })).toBe(true);
+    expect(requiresConfirmation('animation', { action: 'remove_keyframe' })).toBe(true);
+    expect(requiresConfirmation('animation', { action: 'update_keyframe' })).toBe(true);
   });
 
   // H-1: project 现为 GUARDED 工具——有真实副作用的 action 标 'write' 触发确认；
