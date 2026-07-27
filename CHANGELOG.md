@@ -17,6 +17,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Cherry Studio entry 含 `type:"stdio"`（schema enum 强制，唯一需 type 的 client）
 - 注：client adapter 是 CLI 侧配置，不进 capability-matrix（非 MCP 工具能力）
 
+## [0.25.0] - 2026-07-27
+
+### Tooling — 竞品调研驱动的 4 阶段改进（2026-07-27）
+
+基于 GitHub 热门 MCP 项目 + Godot MCP 竞品（hi-godot / better-godot-mcp / Coding-Solo）调研，完成 4 个阶段的改进：
+
+#### Stage 1 — animation_track 合并进 animation 工具
+
+- 工具数 35 → 34，token 预算 71,573B → 69,943B（省 1,630B ≈ 408 tokens）
+- animation 工具吸收 animation_track 的 6 个 action（含 set_curve）及 in_handle/out_handle 参数
+- animation-track.ts 改为 re-export shim（生成器定义保留）
+- 新增 animation 的 editor-method-map 路由（editor 模式 track/keyframe/curve 操作从 headless fallback 升级为直走 GD handler）
+- **修复 3 个长期不一致 bug**：update_keyframe 风险等级（write→destructive，对齐 animation-track）/ persist warning 包装不一致 / editor-method-map 不对称
+- 排除 oneOf schema 重构方向（browser-use #4211 证据：Claude 客户端报错）
+
+#### Stage 2 — lean profile + profile 文档化
+
+- 新增 `lean` profile（token 极敏感场景的最小可用集，~31KB vs full ~68KB）
+- 含组：core, bridge, animation, audio, signal, code（比 lite 再砍 visual/profiler/test）
+- **修复隐藏功能**：现有 lite profile（省 24KB）README 零文档覆盖，补全完整文档
+- README 新增「Token 优化与 Profile」小节（7 profile 对比表 + 配置方式 + 运行时微调）
+- 环境变量表加 GODOT_MCP_PROFILE / GODOT_MCP_MODE
+- 排除工具组懒加载方向（profile+activeGroups AND 关系 + 无持久化阻碍）
+
+#### Stage 3 — issue 报告双轨输出
+
+- validation/delivery/game-design 的 8 处 issue 报告输出从纯 pretty-JSON 改为双轨格式
+- 新增 `src/tools/shared/issue-formatter.ts`：formatIssues（severity 分组）+ dualTrackOutput + parseDualTrack
+- 人类可读文本（severity 分组 + 文件路径 + 截断提示）+ 尾部紧凑 JSON（程序/测试解析）
+- **补全 bug**：validate_project 的 issues.slice(0,100) 原无截断提示，现加「... and N more not shown」
+- 排除 MCP Apps 方向（Claude Code 不支持 / Desktop 握手失败 / Cursor 回归）
+
+#### Stage 4 — test_runner 工具（GUT 测试框架产品化闭环）
+
+- 新建第 35 个工具 test_runner，聚合测试能力为 AI 可调用的 write→run→report 闭环
+- 4 个 action：check_gut（GUT 预检）/ list_suites（扫描测试文件）/ run（运行+结构化报告）/ generate（生成+落盘）
+- 强依赖 GUT addon，复用 GUT 的 test/*.gd 文件格式做套件持久化（零新数据结构）
+- **修复 bug**：runtime.ts:337 GUT 输出解析返回字符串数组，test_runner 改为真数字
+- 对冲竞品 hi-godot 的主打卖点
+- 排除 Streamable HTTP 方向（15+ 模块级单例并发不安全 + 安全层零基础）
+
 ## [0.24.0] - 2026-07-25
 
 ### Added — Self-update（Godot AI 追赶 3/3）

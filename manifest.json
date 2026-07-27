@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "godot-mcp-enhanced",
   "display_name": "Godot MCP Enhanced",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Enhanced MCP server for Godot game engine — closed-loop AI-assisted development with scene reading, script R/W, screenshots, dynamic GDScript execution, and 130+ tools.",
   "long_description": "godot-mcp-enhanced provides 130+ MCP tools for Godot game development:\n\n- **Scene Operations**: Read/create/edit/save scenes, add/remove/inspect nodes\n- **Script R/W**: Read/write/edit GDScript with search-and-replace\n- **Dynamic Execution**: Execute GDScript snippets in headless Godot\n- **Screenshots**: Capture and analyze game scenes\n- **UI Layout**: CSS Flexbox/Grid to Godot Container tree\n- **TileMap**: Read/write/fill/copy tilemaps\n- **Animation**: Play/edit animations and AnimationTree\n- **Navigation**: Create regions, agents, links, query paths\n- **Physics**: Raycast, body info, collision overlay\n- **Audio**: Play/stop/set parameters\n- **Particles**: GPU particles with 6 presets\n- **Runtime Debug**: Game Bridge for live debugging, input simulation, signal watching\n- **Validation**: Script validation, project verification, delivery checks\n\nSupports Headless CLI, Editor WebSocket, and Game Bridge modes.",
   "author": {
