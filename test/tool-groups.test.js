@@ -55,8 +55,9 @@ describe('tool-registry groups and profiles', () => {
       expect(TOOL_GROUPS.navigation.tools).toContain('nav');
     });
 
-    it('should have test group empty (test+verify_delivery merged to validation, v0.18.0)', () => {
-      expect(TOOL_GROUPS.test.tools).toEqual([]);
+    // v0.25.0: test 组重新启用，含 test_runner 工具
+    it('should have test group with test_runner (v0.25.0)', () => {
+      expect(TOOL_GROUPS.test.tools).toEqual(['test_runner']);
     });
 
     it('should have code group with docs only (batch→workflow, game_design→validation, v0.18.0)', () => {

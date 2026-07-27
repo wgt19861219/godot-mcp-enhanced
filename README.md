@@ -347,6 +347,19 @@ manage_tools { action: "activate", groups: ["audio"] }          # 重新启用
 | `export_get_preset` | 获取导出预设详情 |
 | `export_build` | 执行导出构建 |
 
+#### test_runner — GUT 测试框架闭环（v0.25.0 新增）
+
+`test_runner` 把分散的测试能力聚合成 AI 可调用的 write→run→report 闭环，**强依赖 [GUT](https://github.com/bitwes/Gut) addon**。测试套件就是项目里的 `test/*.gd` 文件（GUT 格式），无需新数据结构。
+
+| action | 说明 |
+|--------|------|
+| `check_gut` | 检查项目是否安装 GUT，返回安装状态 + 安装指引 |
+| `list_suites` | 扫描 `test/` 目录列出测试文件及每个文件的 `test_*` 函数 |
+| `run` | 运行指定测试文件（或全量 `res://test/`），结构化报告（修复旧 run_tests 的字符串数组 bug，返回真数字） |
+| `generate` | 为指定脚本生成 GUT 测试骨架（`before_each`/`after_each`/`test_*`）并**直接落盘**到 `test/scripts/`（补全旧 generate_test 只返回文本不落盘的缺口） |
+
+典型 AI 工作流：`check_gut` →（无 GUT 则按指引安装）→ `generate` 为目标脚本生成测试 → `run` 运行 → 根据报告修改。
+
 ### 粒子系统工具（运行时）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。

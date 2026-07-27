@@ -329,6 +329,7 @@ describe('GodotServer', () => {
         'material', 'screenshot', 'particles',
         'docs', 'load_skill', 'cpp',
         'profiler', 'workflow',
+        'test_runner',  // v0.25.0: test 组重新启用
       ];
       for (const name of names) {
         expect(liteTools).toContain(name);

@@ -27,6 +27,7 @@ import * as animationOps from '../tools/animation/animation-ops.js';
 import * as profilerOps from '../tools/profiler-ops.js';
 // test-framework → merged into validation (v0.18.0)
 // import * as testFramework from '../tools/test-framework.js';
+import * as testRunner from '../tools/test-runner.js';
 import * as animtreeOps from '../tools/animtree.js';
 import * as navigationOps from '../tools/navigation.js';
 import * as particlesOps from '../tools/particles.js';
@@ -67,7 +68,7 @@ const ALL_MODULES: ToolModule[] = [
   runtime, screenshot, project, scene, script, validation, docs,
   physicsOps, audioOps, tilemapOps, materialOps,
   gameBridge, workflow, animationOps, /* animationTrack → animation-ops (v0.25.0) */ profilerOps,
-  /* testFramework → validation */ animtreeOps, navigationOps, particlesOps,
+  /* testFramework → validation */ testRunner, animtreeOps, navigationOps, particlesOps,
   signalOps, /* batchTools → workflow */ uiOps, /* recordingOps → runtime */ editorSync,
   /* delivery → validation */ /* codeTemplates → project */ /* ikTools → animation-ops */ /* gameDesign → validation */ manageTools, instanceTools, advancedProxy,
   loadSkill,

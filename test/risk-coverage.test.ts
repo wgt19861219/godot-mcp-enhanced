@@ -20,6 +20,7 @@ const GUARDED_KEYS = new Set([
   'validation', 'manage_tools', 'project', 'cpp', 'csv_to_resources', 'asset',
   'blender',
   'self_update',  // update action 非 read（check=read / update=write）
+  'test_runner',  // v0.25.0: run/generate action 非 read
 ]);
 
 /** 从 inputSchema.action.enum 提取某工具全部 action 名 */

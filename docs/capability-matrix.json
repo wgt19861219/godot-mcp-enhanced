@@ -3996,6 +3996,90 @@
       }
     },
     {
+      "name": "test_runner",
+      "group": "test",
+      "description": "测试框架产品化（强依赖 GUT addon）。check_gut: 检查 GUT 安装状态。list_suites: 列出 test/ 目录的测试文件及 test_ 函数。run: 运行指定测试文件（或全量），结构化报告。generate: 为指定脚本生成 GUT 测试骨架并落盘到 test/scripts/。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {
+            "type": "string",
+            "description": "Godot 项目目录路径"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "check_gut",
+              "list_suites",
+              "run",
+              "generate"
+            ],
+            "description": "操作类型"
+          },
+          "test_script": {
+            "type": "string",
+            "description": "run: 测试文件 res:// 路径（如 res://test/scripts/test_player.gd），不传则全量运行 res://test/"
+          },
+          "script_path": {
+            "type": "string",
+            "description": "generate: 要为之生成测试的目标脚本路径（如 scripts/player.gd）"
+          },
+          "timeout": {
+            "type": "number",
+            "description": "run: 超时秒数（默认 120）"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "requiredParams": [
+        "action"
+      ],
+      "optionalParams": [
+        "project_path",
+        "test_script",
+        "script_path",
+        "timeout"
+      ],
+      "readonly": false,
+      "longRunning": false,
+      "guarded": true,
+      "securityLevel": "guarded",
+      "riskDistribution": {
+        "read": 2,
+        "write": 2,
+        "destructive": 0,
+        "process": 0
+      },
+      "groupRequires": [],
+      "offlineCapable": false,
+      "needsGodot": true,
+      "needsEditor": false,
+      "gdScriptImpl": {
+        "headless": {
+          "exists": false,
+          "path": null
+        },
+        "editor": {
+          "exists": false,
+          "path": null
+        }
+      },
+      "relatedDefects": [],
+      "verification": {
+        "l1": "extracted",
+        "l2": "none",
+        "l3": "unverified",
+        "lastRun": null
+      },
+      "size": {
+        "descBytes": 294,
+        "schemaBytes": 601,
+        "totalBytes": 895
+      }
+    },
+    {
       "name": "tilemap",
       "group": "tilemap",
       "description": "TileMap/TileMapLayer 图块操作。读取: tilemap_read, tilemap_copy。写入: tilemap_set_cell, tilemap_erase_cell, tilemap_fill_rect, tilemap_clear, tilemap_paste, tilemap_set_transform。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",

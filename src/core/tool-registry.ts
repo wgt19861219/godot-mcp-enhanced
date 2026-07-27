@@ -176,7 +176,7 @@ export const TOOL_GROUPS: Record<string, ToolGroupDef> = {
   tilemap:    { description: 'TileMap', tools: ['tilemap'], requires: [] },
   signal:     { description: '信号', tools: ['signal'], requires: [] },
   profiler:   { description: '性能分析', tools: ['profiler', 'workflow'], requires: [] },
-  test:       { description: '测试（已并入 validation）', tools: [], requires: [] },
+  test:       { description: '测试框架（test_runner）', tools: ['test_runner'], requires: [] },
   code:       { description: '代码工具', tools: ['docs', 'load_skill', 'cpp'], requires: [] },
   // v0.18.0 合并说明:
   // ik → animation (ik_modifier_create/get/set/list_bones)
