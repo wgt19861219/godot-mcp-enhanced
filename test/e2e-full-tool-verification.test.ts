@@ -472,13 +472,11 @@ describe.skipIf(!hasGodot || !hasProject)('E2E: Godot-dependent tools', { timeou
     if (process.platform === 'win32') {
       expectSuccess(r, 'Screenshot saved');
     } else {
-      // Linux/macOS headless 无 GPU:成功或失败都可接受,但必须返回结构化文本
+      // Linux/macOS headless 无 GPU:PNG 可能不生成,底层返 success:false,但上层 textResult
+      // 不带 isError(screenshot.ts:117 用 textResult 非 errorResult),故 isError 恒 false。
+      // 成败都算通过,只验返回了结构化的 Screenshot 文本(saved 或 failed)。
       expectHasText(r);
-      if (r.isError) {
-        expect(r.text).toContain('Screenshot failed');
-      } else {
-        expect(r.text).toContain('Screenshot saved');
-      }
+      expect(r.text).toMatch(/Screenshot (saved|failed)/);
     }
   });
 
