@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — tilemap 支持 scene_path（对任意场景操作，不再局限主场景）
+
+- **`tilemap` 新增可选 `scene_path`**：传入时用 `_mcp_load_scene()` 加载指定场景、用 `_mcp_get_scene_node()` 在其中解析节点（自动剥离 `root/` 前缀与场景根节点名）；省略时行为完全不变，仍走 `_mcp_load_main_scene()` + `_mcp_get_node()`。此前 8 个生成器一律硬编码加载 `application/run/main_scene`，主场景是菜单的项目（很常见）无论怎么写 `node_path` 都只会拿到 `TILEMAP_NOT_FOUND`——工具没坏，只是没有办法指向别处。
+- 复用 `SCENE_TREE_HEADER` 里既有的 `_mcp_load_scene` / `_mcp_get_scene_node`，与 `src/tools/ui/*`、`src/tools/scene/*` 已采用的做法一致；`scene_path` 经 `resolveWithinRoot(normalizeUserProjectPath(...))` 归一，同 ui 工具。
+
 ## [0.32.1] - 2026-08-18
 
 ### Added — 原型翻译层 verify 层（style_verify + flow_verify，PR-2）

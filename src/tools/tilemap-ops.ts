@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from '../helpers.js';
 import { executeGdscript } from '../gdscript-executor.js';
 import { normalizeNodePath, gdEscape } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, appendRuntimePersistWarning } from './shared.js';
@@ -51,9 +51,22 @@ function layerArg(layer: number | undefined): string {
   return layer !== undefined ? `${layer}, ` : '0, ';
 }
 
-/** Generate the standard node-fetch + null-check preamble. */
-function nodePreamble(nodePath: string): string {
-  return `\tvar node = _mcp_get_node("${gdEscape(nodePath)}")\n\tif node == null:\n\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")\n\t\t_mcp_done()\n\t\treturn`;
+/**
+ * Generate the scene-load + node-fetch + null-check preamble.
+ *
+ * With `scenePath`, the named scene is instantiated and the node is resolved
+ * inside it (`_mcp_get_scene_node` strips the `root/` prefix and the scene root
+ * name). Without it, behaviour is unchanged: the project's main scene is loaded
+ * and the node is looked up from the tree root.
+ */
+function scenePreamble(nodePath: string, scenePath?: string): string {
+  const fetch = scenePath
+    ? `\tvar node = _mcp_get_scene_node("${gdEscape(nodePath)}")`
+    : `\tvar node = _mcp_get_node("${gdEscape(nodePath)}")`;
+  const load = scenePath
+    ? `\tif not _mcp_load_scene("${gdEscape(scenePath)}"):\n\t\t_mcp_done()\n\t\treturn`
+    : '\t_mcp_load_main_scene()';
+  return `${load}\n${fetch}\n\tif node == null:\n\t\t_mcp_output("error", "Node not found: ${gdEscape(nodePath)}")\n\t\t_mcp_done()\n\t\treturn`;
 }
 
 /** Generate `if TileMap: ... elif TileMapLayer: ... else: error` branch with early-return on else. */
@@ -80,7 +93,8 @@ function tilemapCall(method: string, args: string, layer: number | undefined): s
 // ─── GDScript Generators: TileMap ──────────────────────────────────────────
 
 export function genTilemapReadScript(
-  nodePath: string, region?: { x: number; y: number; w: number; h: number }, layer?: number
+  nodePath: string, region?: { x: number; y: number; w: number; h: number }, layer?: number,
+  scenePath?: string
 ): string {
   const la = layerArg(layer);
 
@@ -90,8 +104,7 @@ export function genTilemapReadScript(
 
     return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 ${tilemapBranch(readCellBody(la), readCellBody(''))}
 \t_mcp_done()
 `;
@@ -102,8 +115,7 @@ ${tilemapBranch(readCellBody(la), readCellBody(''))}
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 ${tilemapBranch(readUsedBody(la), readUsedBody(''))}
 \t_mcp_done()
 `;
@@ -112,12 +124,11 @@ ${tilemapBranch(readUsedBody(la), readUsedBody(''))}
 export function genTilemapSetCellScript(
   nodePath: string, coords: { x: number; y: number },
   sourceId: number, atlasCoords: { x: number; y: number },
-  alternativeTile: number, layer?: number
+  alternativeTile: number, layer?: number, scenePath?: string
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar coords = Vector2i(${coords.x}, ${coords.y})
 \tvar atlas = Vector2i(${atlasCoords.x}, ${atlasCoords.y})
 ${tilemapCall('set_cell', `coords, ${sourceId}, atlas, ${alternativeTile}`, layer)}
@@ -127,12 +138,11 @@ ${tilemapCall('set_cell', `coords, ${sourceId}, atlas, ${alternativeTile}`, laye
 }
 
 export function genTilemapEraseCellScript(
-  nodePath: string, coords: { x: number; y: number }, layer?: number
+  nodePath: string, coords: { x: number; y: number }, layer?: number, scenePath?: string
 ): string {
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar coords = Vector2i(${coords.x}, ${coords.y})
 ${tilemapCall('erase_cell', 'coords', layer)}
 \t_mcp_output("erased", {"coords": [${coords.x}, ${coords.y}]})
@@ -143,7 +153,7 @@ ${tilemapCall('erase_cell', 'coords', layer)}
 export function genTilemapFillRectScript(
   nodePath: string, region: { x: number; y: number; w: number; h: number },
   sourceId: number, atlasCoords: { x: number; y: number },
-  alternativeTile: number, layer?: number
+  alternativeTile: number, layer?: number, scenePath?: string
 ): string {
   const la = layerArg(layer);
   const fillBody = (prefix: string) =>
@@ -151,8 +161,7 @@ export function genTilemapFillRectScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar atlas = Vector2i(${atlasCoords.x}, ${atlasCoords.y})
 ${tilemapBranch(fillBody(la), fillBody(''))}
 \t_mcp_output("filled", {"region": {"x": ${region.x}, "y": ${region.y}, "w": ${region.w}, "h": ${region.h}}, "source_id": ${sourceId}})
@@ -161,13 +170,12 @@ ${tilemapBranch(fillBody(la), fillBody(''))}
 }
 
 export function genTilemapClearScript(
-  nodePath: string, layer?: number, clearAll?: boolean
+  nodePath: string, layer?: number, clearAll?: boolean, scenePath?: string
 ): string {
   const tileMapClear = clearAll ? '\t\tnode.clear()' : `\t\tnode.clear_layer(${layer ?? 0})`;
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 ${tilemapBranch(`${tileMapClear}\n`, '\t\tnode.clear()\n')}
 \t_mcp_output("cleared", {"node": "${gdEscape(nodePath)}"})
 \t_mcp_done()
@@ -175,7 +183,8 @@ ${tilemapBranch(`${tileMapClear}\n`, '\t\tnode.clear()\n')}
 }
 
 export function genTilemapCopyScript(
-  nodePath: string, sourceRegion: { x: number; y: number; w: number; h: number }, layer?: number
+  nodePath: string, sourceRegion: { x: number; y: number; w: number; h: number }, layer?: number,
+  scenePath?: string
 ): string {
   const la = layerArg(layer);
   const copyBody = (prefix: string) =>
@@ -183,8 +192,7 @@ export function genTilemapCopyScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar cells = []
 ${tilemapBranch(copyBody(la), copyBody(''))}
 \t_mcp_output("pattern", {"cells": cells, "size": {"w": ${sourceRegion.w}, "h": ${sourceRegion.h}}})
@@ -195,7 +203,7 @@ ${tilemapBranch(copyBody(la), copyBody(''))}
 export function genTilemapPasteScript(
   nodePath: string, targetCoords: { x: number; y: number },
   pattern: { cells: Array<{ coords: [number, number]; source_id: number; atlas_coords: [number, number]; alternative_tile: number }>; size: { w: number; h: number } },
-  layer?: number
+  layer?: number, scenePath?: string
 ): string {
   const patternJson = JSON.stringify(pattern);
   const la = layerArg(layer);
@@ -204,8 +212,7 @@ export function genTilemapPasteScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar pattern = JSON.parse_string("${gdEscape(patternJson)}")
 \tvar tx = ${targetCoords.x}
 \tvar ty = ${targetCoords.y}
@@ -217,7 +224,7 @@ ${tilemapBranch(pasteBody(la), pasteBody(''))}
 
 export function genTilemapSetTransformScript(
   nodePath: string, coords: { x: number; y: number },
-  flipH: boolean, flipV: boolean, transpose: boolean, layer?: number
+  flipH: boolean, flipV: boolean, transpose: boolean, layer?: number, scenePath?: string
 ): string {
   const la = layerArg(layer);
   const readTileBody = (prefix: string) =>
@@ -225,8 +232,7 @@ export function genTilemapSetTransformScript(
 
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\t_mcp_load_main_scene()
-${nodePreamble(nodePath)}
+${scenePreamble(nodePath, scenePath)}
 \tvar c = Vector2i(${coords.x}, ${coords.y})
 \tvar sid: int = -1
 \tvar ac: Vector2i = Vector2i(0, 0)
@@ -257,7 +263,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'tilemap',
-      description: `TileMap/TileMapLayer 图块操作。读取: tilemap_read, tilemap_copy。写入: tilemap_set_cell, tilemap_erase_cell, tilemap_fill_rect, tilemap_clear, tilemap_paste, tilemap_set_transform。${NON_PERSIST}`,
+      description: `TileMap/TileMapLayer 图块操作。读取: tilemap_read, tilemap_copy。写入: tilemap_set_cell, tilemap_erase_cell, tilemap_fill_rect, tilemap_clear, tilemap_paste, tilemap_set_transform。传 scene_path 可对任意场景操作，省略则用主场景。${NON_PERSIST}`,
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -267,7 +273,8 @@ export function getToolDefinitions(): Tool[] {
             enum: [...ACTIONS],
             description: '操作类型',
           },
-          node_path: { type: 'string', description: 'TileMap/TileMapLayer 节点路径（如 root/Level/TileMap）' },
+          node_path: { type: 'string', description: 'TileMap/TileMapLayer 节点路径（如 root/Level/TileMap）；配合 scene_path 时相对该场景解析，可省略 root/ 前缀和场景根节点名' },
+          scene_path: { type: 'string', description: '目标场景路径（相对项目路径，可选）。不传则加载 application/run/main_scene——主场景是菜单时其中不含 TileMap，会返回 TILEMAP_NOT_FOUND' },
           layer: { type: 'number', description: '图层索引（可选，默认 0）。tilemap_read/set_cell/erase_cell/fill_rect/copy/paste/set_transform 使用；tilemap_clear 不传则清除所有图层' },
           region: {
             type: 'object',
@@ -358,6 +365,10 @@ export async function handleTool(
     const projectPath = requireProjectPath(args);
     const godot = await ctx.findGodot();
     const loadAutoloads = args.load_autoloads !== false;
+    // Optional target scene. Omitted → main scene, preserving the previous behaviour.
+    const scenePath = args.scene_path
+      ? resolveWithinRoot(projectPath, normalizeUserProjectPath(args.scene_path as string))
+      : undefined;
     let script: string;
 
     switch (action) {
@@ -365,7 +376,7 @@ export async function handleTool(
         const nodePath = normalizeNodePath(args.node_path as string);
         const layer = args.layer as number | undefined;
         const region = args.region ? validateRect2i(args.region) : undefined;
-        script = genTilemapReadScript(nodePath, region, layer);
+        script = genTilemapReadScript(nodePath, region, layer, scenePath);
         break;
       }
       case 'tilemap_set_cell': {
@@ -378,14 +389,14 @@ export async function handleTool(
         const atlasCoords = validateCoords(args.atlas_coords);
         const alternativeTile = (args.alternative_tile as number) ?? 0;
         const layer = args.layer as number | undefined;
-        script = genTilemapSetCellScript(nodePath, coords, sourceId, atlasCoords, alternativeTile, layer);
+        script = genTilemapSetCellScript(nodePath, coords, sourceId, atlasCoords, alternativeTile, layer, scenePath);
         break;
       }
       case 'tilemap_erase_cell': {
         const nodePath = normalizeNodePath(args.node_path as string);
         const coords = validateCoords(args.coords);
         const layer = args.layer as number | undefined;
-        script = genTilemapEraseCellScript(nodePath, coords, layer);
+        script = genTilemapEraseCellScript(nodePath, coords, layer, scenePath);
         break;
       }
       case 'tilemap_fill_rect': {
@@ -398,21 +409,21 @@ export async function handleTool(
         const atlasCoords = validateCoords(args.atlas_coords);
         const alternativeTile = (args.alternative_tile as number) ?? 0;
         const layer = args.layer as number | undefined;
-        script = genTilemapFillRectScript(nodePath, region, sourceId, atlasCoords, alternativeTile, layer);
+        script = genTilemapFillRectScript(nodePath, region, sourceId, atlasCoords, alternativeTile, layer, scenePath);
         break;
       }
       case 'tilemap_clear': {
         const nodePath = normalizeNodePath(args.node_path as string);
         const layer = args.layer as number | undefined;
         const clearAll = layer === undefined;
-        script = genTilemapClearScript(nodePath, layer, clearAll);
+        script = genTilemapClearScript(nodePath, layer, clearAll, scenePath);
         break;
       }
       case 'tilemap_copy': {
         const nodePath = normalizeNodePath(args.node_path as string);
         const sourceRegion = validateRect2i(args.source_region);
         const layer = args.layer as number | undefined;
-        script = genTilemapCopyScript(nodePath, sourceRegion, layer);
+        script = genTilemapCopyScript(nodePath, sourceRegion, layer, scenePath);
         break;
       }
       case 'tilemap_paste': {
@@ -423,7 +434,7 @@ export async function handleTool(
           return opsErrorResult('INVALID_REGION', 'pattern must have a cells array');
         }
         const layer = args.layer as number | undefined;
-        script = genTilemapPasteScript(nodePath, target, pattern, layer);
+        script = genTilemapPasteScript(nodePath, target, pattern, layer, scenePath);
         break;
       }
       case 'tilemap_set_transform': {
@@ -433,7 +444,7 @@ export async function handleTool(
         const flipV = (args.flip_v as boolean) ?? false;
         const transpose = (args.transpose as boolean) ?? false;
         const layer = args.layer as number | undefined;
-        script = genTilemapSetTransformScript(nodePath, coords, flipH, flipV, transpose, layer);
+        script = genTilemapSetTransformScript(nodePath, coords, flipH, flipV, transpose, layer, scenePath);
         break;
       }
       default:

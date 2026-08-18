@@ -5263,7 +5263,7 @@
     {
       "name": "tilemap",
       "group": "tilemap",
-      "description": "TileMap/TileMapLayer 图块操作。读取: tilemap_read, tilemap_copy。写入: tilemap_set_cell, tilemap_erase_cell, tilemap_fill_rect, tilemap_clear, tilemap_paste, tilemap_set_transform。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "TileMap/TileMapLayer 图块操作。读取: tilemap_read, tilemap_copy。写入: tilemap_set_cell, tilemap_erase_cell, tilemap_fill_rect, tilemap_clear, tilemap_paste, tilemap_set_transform。传 scene_path 可对任意场景操作，省略则用主场景。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5287,7 +5287,11 @@
           },
           "node_path": {
             "type": "string",
-            "description": "TileMap/TileMapLayer 节点路径（如 root/Level/TileMap）"
+            "description": "TileMap/TileMapLayer 节点路径（如 root/Level/TileMap）；配合 scene_path 时相对该场景解析，可省略 root/ 前缀和场景根节点名"
+          },
+          "scene_path": {
+            "type": "string",
+            "description": "目标场景路径（相对项目路径，可选）。不传则加载 application/run/main_scene——主场景是菜单时其中不含 TileMap，会返回 TILEMAP_NOT_FOUND"
           },
           "layer": {
             "type": "number",
@@ -5475,6 +5479,7 @@
       "optionalParams": [
         "project_path",
         "node_path",
+        "scene_path",
         "layer",
         "region",
         "source_region",
@@ -5521,9 +5526,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 286,
-        "schemaBytes": 3228,
-        "totalBytes": 3514
+        "descBytes": 352,
+        "schemaBytes": 3540,
+        "totalBytes": 3892
       },
       "annotations": {
         "readOnlyHint": false,

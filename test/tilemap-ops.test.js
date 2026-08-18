@@ -165,3 +165,58 @@ describe('genTilemapReadScript empty region', () => {
     expect(script).toContain('node.get_class() == "TileMapLayer"');
   });
 });
+
+describe('scene_path targeting', () => {
+  const SCENE = '/proj/scenes/levels/TrackA.tscn';
+  // The shared header *defines* both loaders, so assertions must target the call
+  // inside _initialize, not the bare function name.
+  const MAIN_CALL = '\n\t_mcp_load_main_scene()\n';
+  const sceneCall = (p) => `if not _mcp_load_scene("${p}"):`;
+
+  it('defaults to the main scene when scenePath is omitted', () => {
+    const script = genTilemapReadScript('root/Ground');
+    expect(script).toContain(MAIN_CALL);
+    expect(script).toContain('var node = _mcp_get_node("root/Ground")');
+    expect(script).not.toContain(sceneCall(SCENE));
+  });
+
+  it('loads the named scene and resolves the node inside it', () => {
+    const script = genTilemapReadScript('root/Ground', undefined, undefined, SCENE);
+    expect(script).toContain(sceneCall(SCENE));
+    expect(script).toContain('var node = _mcp_get_scene_node("root/Ground")');
+    expect(script).not.toContain(MAIN_CALL);
+  });
+
+  it('keeps the node null-check on both paths', () => {
+    for (const script of [
+      genTilemapReadScript('root/Ground'),
+      genTilemapReadScript('root/Ground', undefined, undefined, SCENE),
+    ]) {
+      expect(script).toContain('Node not found: root/Ground');
+    }
+  });
+
+  it('escapes quotes in scenePath', () => {
+    const script = genTilemapReadScript('root/Ground', undefined, undefined, 'a"b.tscn');
+    expect(script).toContain('_mcp_load_scene("a\\"b.tscn")');
+  });
+
+  it('is honoured by every generator', () => {
+    const pattern = { cells: [{ coords: [0, 0], source_id: 1, atlas_coords: [0, 0], alternative_tile: 0 }], size: { w: 1, h: 1 } };
+    const scripts = [
+      genTilemapReadScript('root/M', undefined, 0, SCENE),
+      genTilemapSetCellScript('root/M', { x: 1, y: 1 }, 1, { x: 0, y: 0 }, 0, 0, SCENE),
+      genTilemapEraseCellScript('root/M', { x: 1, y: 1 }, 0, SCENE),
+      genTilemapFillRectScript('root/M', { x: 0, y: 0, w: 2, h: 2 }, 1, { x: 0, y: 0 }, 0, 0, SCENE),
+      genTilemapClearScript('root/M', 0, false, SCENE),
+      genTilemapCopyScript('root/M', { x: 0, y: 0, w: 2, h: 2 }, 0, SCENE),
+      genTilemapPasteScript('root/M', { x: 5, y: 5 }, pattern, 0, SCENE),
+      genTilemapSetTransformScript('root/M', { x: 1, y: 1 }, true, false, false, 0, SCENE),
+    ];
+    for (const script of scripts) {
+      expect(script).toContain(sceneCall(SCENE));
+      expect(script).toContain('var node = _mcp_get_scene_node("root/M")');
+      expect(script).not.toContain(MAIN_CALL);
+    }
+  });
+});
