@@ -354,4 +354,49 @@ describe.skipIf(!canRun)('e2e debug tools (editor): 断点链路 + A2 互斥 + P
     const mine2 = bps2.find((b) => b.path === BP_RES);
     expect(mine2 ?? { lines: [] }, 'clear 后该脚本不应再有断点行').toEqual(expect.objectContaining({ lines: [] }));
   }, 60_000);
+
+  // ─── 用例 4: 错过窗口回归(issue #63,2026-08-23)─────────────────────────────
+  it('错过窗口(issue #63): play 后不查询等 break 完成,首次 stack_trace 应拿到 frames', async () => {
+    // 根因(4.7 实测):引擎只在 break 瞬间请求一次 get_stack_dump → 面板只 emit 一次
+    // stack_dump 信号;若 set_breakpoint/play 到首次 stack_trace 之间面板信号未连接
+    // (CI editor 首次导入期首个请求可延迟数秒),信号永久丢失,frames 恒空 → 20s 超时
+    // (issue #63 的 CI 失败模式)。修复:set_breakpoint 提前 ensure_connected(层2)+
+    // stack_trace 的 refetch_stack 补拉(层1)。本用例确定性复现该窗口:play 后
+    // 刻意等 8s(>> 游戏 spawn+编译+首帧断点)不发任何 debug 查询,再首次查询。
+    const line = findBreakpointLine();
+
+    // 清场:用例 1-3 的游戏可能还在跑(循环断点),stop 后重新起干净一局
+    await exec!.execute('testing', {
+      project_path: REAL_PROJECT, action: 'run',
+      suite: 'debug_driver', test_name: 'stop_',
+    });
+
+    // 1. 设断点 —— 层2:此刻应已把面板 stack_dump 兜底信号连接好
+    const setRes = await execDebug('set_breakpoint', { path: BP_RES, line });
+    expect(setRes.isError, `set_breakpoint 不应失败: ${setRes.text}`).not.toBe(true);
+
+    // 2. play
+    const playRes = await exec!.execute('testing', {
+      project_path: REAL_PROJECT, action: 'run',
+      suite: 'debug_driver', test_name: 'play_and',
+    });
+    expect(playRes.isError, 'driver play 不应失败').not.toBe(true);
+
+    // 3. 【窗口模拟】8 秒内不发任何 stack_trace 类查询(不触发 ensure_connected
+    //    重试路径),让游戏 break + 一次性 stack_dump 信号在"无人监听"下 emit 完
+    await new Promise((r) => setTimeout(r, 8_000));
+
+    // 4. 首次 stack_trace:修复前此处 frames 恒空(信号已错过,不自愈);修复后
+    //    层2 已在 set_breakpoint 时连好信号(等待期接住),层1 补拉再兜底
+    const st = await execDebug('stack_trace');
+    expect(st.isError, `stack_trace 不应失败: ${st.text}`).not.toBe(true);
+    expect(st.parsed?.breaked, '8s 后游戏应已 break 在断点').toBe(true);
+    const frames = st.parsed?.frames;
+    expect(Array.isArray(frames) && frames.length > 0,
+      `首次查询 frames 应非空(一次性 stack_dump 信号未因错过而丢失): ${st.text}`).toBe(true);
+    expect(frameZeroLine(st.parsed), `frames[0].line 应为断点行 ${line}`).toBe(line);
+
+    // 清场:恢复运行(防 afterAll 停止时卡在 breaked)
+    try { await execDebug('continue'); } catch { /* best effort */ }
+  }, 120_000);
 });

@@ -193,6 +193,13 @@ func _toggle_breakpoint(path: String, line: int, enabled: bool) -> Dictionary:
 	var actual: bool = code_edit.is_line_breakpointed(line_0based)
 	if actual != enabled:
 		return {"error": {"code": -32003, "message": "Breakpoint gutter did not take the change (line %d of %s)" % [line, path]}}
+	# issue #63(2026-08-23):set_breakpoint 是 play 前最后一步,此处提前连接面板
+	# stack_dump 等兜底信号(ensure_connected 幂等),消除"游戏 break 瞬间信号尚未
+	# 连接 → 一次性 stack_dump 信号永久丢失"的错过窗口。找不到面板时静默,由后续
+	# debug 读取类 handler 的 refetch_stack 补拉兜底。
+	var br := _ensure_bridge()
+	if br.ok:
+		br.bridge.call("ensure_connected")
 	return {"result": {
 		"path": path,
 		"line": line,
@@ -270,7 +277,11 @@ func handle_stack_trace(params: Dictionary) -> Dictionary:
 			"note": "Game is not paused at a breakpoint. Use debug_pause or set a breakpoint first.",
 		}}
 
-	# 3. settle:等栈/变量落地(信号可能滞后 50-200ms)
+	# 3. 错过自愈(issue #63):breaked 但 has_stackdump=false = 一次性面板信号被错过
+	#    的症状,主动补拉一次 get_stack_dump(每 break 周期至多一次)再 settle
+	if not bool(state.get("has_stackdump", false)):
+		bridge.call("refetch_stack", state)
+	# 4. settle:等栈/变量落地(信号可能滞后 50-200ms)
 	state = await bridge.call("settle", state)
 
 	# 4. 从面板回读真实选中帧(防用户手点)
@@ -321,6 +332,12 @@ func handle_inspect_frame(params: Dictionary) -> Dictionary:
 	var state: Dictionary = rs["state"]
 	if not bool(state.get("breaked", false)):
 		return {"error": {"code": -32000, "message": "Game is not paused, so there is no frame to inspect. Set a breakpoint and pause first."}}
+
+	# 错过自愈(issue #63):frames 未见时先补拉一次再 settle —— select_frame 依赖
+	# 面板栈 Tree 已填充(Tree 由 stack_dump 消息驱动),frames 空则 select 必败
+	if not bool(state.get("has_stackdump", false)):
+		bridge.call("refetch_stack", state)
+		state = await bridge.call("settle", state)
 
 	# 切帧(触发编辑器自动拉该帧变量)
 	var sel_result: Dictionary = bridge.call("select_frame", state, frame_index)

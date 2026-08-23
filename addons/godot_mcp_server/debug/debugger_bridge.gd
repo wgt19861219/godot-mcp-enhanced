@@ -272,6 +272,31 @@ func active_sessions() -> Array:
 	return result
 
 
+## issue #63(2026-08-23):Godot 4.7 起 ScriptEditorDebugger._parse_message 是
+## handler-map 优先——stack_dump/stack_frame_vars 等内置消息走内置 handler,不再进
+## plugins_capture,本插件的 _capture 权威路径对这些消息恒不触发;frames/vars 数据
+## 唯一来源退化为面板信号兜底(_on_panel_stack_dump 等)。而引擎只在 break 瞬间请求
+## 一次 get_stack_dump → 面板只 emit 一次 stack_dump 信号:若此刻 ensure_connected
+## 尚未连接面板信号(play 后到首次 stack_trace 轮询之间的窗口,editor 首次导入期
+## 可能拉长到数秒),信号永久丢失,frames 恒空直至 continue 触发新 break。
+## 本方法经 session 主动补拉 get_stack_dump(游戏 break 循环内处理,无副作用),
+## 回包后面板会再次 emit stack_dump,已连接的兜底信号即可接住。
+## 调用频率由 handler 侧 settle(700ms)自然节流;break 态空消息无堆积风险。
+## 首次补拉时若面板信号仍没连上,回包会再次错过 —— 下次调用的 ensure_connected
+## 重试连上后本方法继续补拉,自愈闭环(故不做每周期一次的限制)。
+func refetch_stack(state: Dictionary) -> bool:
+	if not bool(state.get("breaked", false)):
+		return false
+	var rs: Dictionary = resolve_session()
+	if not bool(rs.get("ok", false)):
+		return false
+	var session = rs.get("session")
+	if session == null or not is_instance_valid(session) or not session.has_method("send_message"):
+		return false
+	session.send_message("get_stack_dump", [])
+	return true
+
+
 # ─── settle:轮询等栈/变量落地 ──────────────────────────────────────────────────
 
 func stack_landed(state: Dictionary) -> bool:

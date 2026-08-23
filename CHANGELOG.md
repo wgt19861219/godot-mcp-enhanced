@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed — editor debug 一次性 stack_dump 信号错过致 frames 恒空(issue #63)
+
+- **根因(4.7 源码实证 + 本地确定性复现)**:Godot 4.7 起 `ScriptEditorDebugger._parse_message` 为 handler-map 优先——`stack_dump`/`stack_frame_vars` 等内置消息走内置 handler,**不再进入 `plugins_capture`**,`debugger_bridge.gd` 的 `_capture` 权威路径对这些消息恒不触发;frames/vars 唯一来源退化为面板信号兜底(`_on_panel_stack_dump` 等)。而引擎只在 break 瞬间请求一次 `get_stack_dump` → 面板只 emit 一次 `stack_dump` 信号:**若此刻 `ensure_connected` 尚未连接面板信号**(play 返回到首次 stack_trace 轮询之间的窗口;CI editor 首次导入期首个请求可延迟数秒,晚于游戏起跑),信号永久丢失,frames 恒空直至 continue 触发新 break——`waitForBreaked` 只能超时,快照 `breaked:true, frames:[]`。weekly run 32609819861(2026-08-23)即此模式;同代码次日重跑全绿(run 32627102577)= 间歇性时序竞态。
+- **修复(两层防御)**:① 层 2 防错过——`_toggle_breakpoint`(set_breakpoint 是 play 前最后一步)成功路径提前 `ensure_connected()` 连接面板兜底信号,把错过窗口压到 play 之前;② 层 1 自愈——`debugger_bridge.gd` 新增 `refetch_stack(state)`:`handle_stack_trace`/`handle_inspect_frame` 在 `breaked && !has_stackdump`(错过症状)时经 `session.send_message("get_stack_dump")` 主动补拉(游戏 break 循环内处理,无副作用;回包后面板再次 emit stack_dump,已连接的兜底信号接住;settle 700ms 自然节流,不做每周期一次限制以保证"首次补拉时信号仍未连上"场景下次调用继续自愈)。inspect_frame 同步受益(select_frame 依赖面板栈 Tree 由 stack_dump 驱动填充,frames 空则必败)。
+- **验证**:新增 e2e 用例 4「错过窗口回归」确定性复现(play 后刻意 8s 不发任何查询再首查)——修复前必红且失败快照与 CI 逐字节一致(`breaked:true, frames:[]`),修复后绿(frames 含断点行落点);反向验证通过(回退修复→用例红→恢复→绿,非接线零验证)。本地 4.7.1 e2e 4 用例全绿(链路 3.3s 反而快于修复前 4.5s,提前连信号消除 settle 等待);`npm run check:gdscript` 零错;lint/build/test 全绿(6147 passed)。
+
 ## [0.32.11] - 2026-08-21
 
 ### Fixed — CI e2e 文件级并行竞态(端口随机化暴露)
