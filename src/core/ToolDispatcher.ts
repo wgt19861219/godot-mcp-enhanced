@@ -555,8 +555,10 @@ export class ToolDispatcher {
         // 真实执行经 confirm_and_execute → _auditConfirmedExecution 补审计(_confirmExecute 绕过 middleware)。
         if (isTokenRequestResult(result)) return result;
         // project_path fallback(elicitation 浅拷贝 footgun:after hook args.project_path 可能丢注入值)
+        // I-2(设计 §6):fallback 链中间插活跃桶——args.project_path 缺失时审计落活跃项目而非
+        // env 项目,防多桶并存下 runtime 域 risk='process' 操作(stop_project 等)审计归属漂移。
         const projectPath = (typeof ctx.args.project_path === 'string' && ctx.args.project_path)
-          ? ctx.args.project_path : resolveProjectPath();
+          ? ctx.args.project_path : (ps.getProjectDir() || resolveProjectPath());
         if (!projectPath) return result;
         const isError = result.isError === true || this.checkJsonSuccessFalse(result);
         const { files, batch } = inferChangedFiles(auditTool, auditAction, ctx.args, projectPath);
@@ -845,7 +847,7 @@ export class ToolDispatcher {
   ): Promise<ToolResult> {
     if (currentMode === 'editor' && currentExecutor) {
       const logger = getLogger();
-      const callId = logger.toolStart(toolName, args);
+      const callId = logger.toolStart(toolName, args, this._toolLogProject(args));
       const editorResult = await currentExecutor.execute(toolName, args);
       // isError 前置:只在 editor 报错时才检测 -32601,避免 plugin 成功响应顶层带数字 code
       // 被误判 unknown method 触发静默降级(见 ToolDispatcher.test「isError guard」负面用例)。
@@ -868,6 +870,14 @@ export class ToolDispatcher {
     return this.attachFallbackWarning(await this.dispatchTool(toolName, args, startTime, findGodotOverride, progressEmitter, taskAugmented));
   }
 
+  /** §4.6(设计):tool 日志的 project 归属——args.project_path 优先(runtime 域工具自然
+   *  携带),缺省活跃桶;均无则 undefined(logger 不写该字段,勿强造)。 */
+  private _toolLogProject(args: Record<string, unknown>): string | undefined {
+    const p = args.project_path;
+    if (typeof p === 'string' && p) return p;
+    return ps.getProjectDir() || undefined;
+  }
+
   private async dispatchTool(toolName: string, args: Record<string, unknown>, startTime: number, findGodotOverride?: ((projectPath?: string) => Promise<string>), progressEmitter?: ProgressEmitter, taskAugmented?: boolean): Promise<ToolResult> {
     let targetMod = getModuleForTool(toolName);
     let effectiveToolName = toolName;
@@ -888,7 +898,7 @@ export class ToolDispatcher {
     }
 
     const logger = getLogger();
-    const callId = logger.toolStart(effectiveToolName, effectiveArgs);
+    const callId = logger.toolStart(effectiveToolName, effectiveArgs, this._toolLogProject(effectiveArgs));
 
     let result: ToolResult | null;
     try {

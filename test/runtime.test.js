@@ -364,6 +364,34 @@ describe('runtime handleTool — stop_project', () => {
     expect(result.content[0].text).toContain('No project is currently running');
   });
 
+  // ─── Task 4 审查 Minor 修正:多项目提示文案(已传参不引导再传;未传参消除矛盾) ───
+
+  it('显式传 project_path 且目标无进程但其他项目在跑 → 报目标项目,不引导再传参', async () => {
+    // 建一个其他项目的活桶(真实 process-state)
+    const proc = mockProc();
+    setupSpawnMock(proc);
+    await handleTool('runtime', { action: 'run_project', project_path: '/other' }, createMockCtx());
+
+    const result = await handleTool('runtime', { action: 'stop_project', project_path: '/x' }, createMockCtx());
+    const text = result.content[0].text;
+    expect(text).toContain('Project /x has no running process');
+    expect(text).toContain('Other sessions');
+    expect(text).not.toContain('Pass project_path to target one');
+  });
+
+  it('未传参(活跃桶无进程)但其他项目在跑 → 保持引导句式,首句不再自相矛盾', async () => {
+    const proc = mockProc();
+    setupSpawnMock(proc);
+    await handleTool('runtime', { action: 'run_project', project_path: '/other' }, createMockCtx());
+
+    // ctx.projectDir='/fake/project'(无桶无进程)→ 缺省 stop 落活跃桶
+    const result = await handleTool('runtime', { action: 'stop_project' }, createMockCtx());
+    const text = result.content[0].text;
+    expect(text).toContain('Active project has no running process');
+    expect(text).toContain('Sessions still running');
+    expect(text).toContain('Pass project_path to target one');
+  });
+
   it('calls killOrphanGodotProcesses when no running process (orphan cleanup)', async () => {  // T10
     vi.clearAllMocks();
     const ctx = createMockCtx({ runningProcess: null });

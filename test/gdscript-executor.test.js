@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   escapeRegExp,
   detectAutoloadUsage,
@@ -10,6 +10,7 @@ import {
 import { writeFileSync, mkdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { EventEmitter } from 'events';
 
 const TMP = join(tmpdir(), 'autoload-test-' + process.pid);
 
@@ -322,5 +323,69 @@ describe('scanGdscriptSandbox', () => {
     process.env.GODOT_MCP_SANDBOX = 'disabled';
     const warnings = scanGdscriptSandbox('OS.execute("rm", ["-rf", "/"])');
     expect(warnings).toEqual([]);  // 双开关满足,沙箱关闭
+  });
+});
+// ─── I-3: executor 并发警告按目标桶判定(设计 §4.5,per-project 会话 Task 5) ──
+
+import { executeGdscript } from '../src/gdscript-executor.js';
+import { spawn } from 'child_process';
+import { setProjectDir, setRunSessionProc, resetState } from '../src/core/process-state.js';
+import { getLogger } from '../src/core/logger.js';
+
+// 隔离 mock(vitest 自动提升到 import 前):spawn 可控(import warmup 也走它,一并拦掉)。
+// I-4 统一策略:importOriginal 部分覆盖——forceKillTree 等依赖 child_process 其余导出(execFile),
+// 只 stub spawn,其余透传真实模块。
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, spawn: vi.fn() };
+});
+vi.mock('../src/tools/import-check.js', () => ({
+  needsImport: vi.fn(() => false),   // 跳过 import warmup(防 spawn 到 runGodotHeadless 挂起)
+  runImport: vi.fn(),
+}));
+
+describe('I-3: executor 并发警告按目标桶判定(设计 §4.5)', () => {
+  const GODOT_BIN = join(TMP, 'godot-fake.exe');
+  const fakeProc = () => {
+    const p = new EventEmitter();
+    p.pid = 4242;
+    p.killed = false;
+    p.stdout = new EventEmitter();
+    p.stderr = new EventEmitter();
+    p.stdin = { write: vi.fn(), end: vi.fn() };
+    return p;
+  };
+
+  let warnSpy;
+
+  beforeEach(() => {
+    resetState();
+    // existsSync(godotPath) 校验需要真实文件;basename 含 'godot'
+    writeFileSync(GODOT_BIN, '');
+    warnSpy = vi.spyOn(getLogger(), 'warn').mockImplementation(() => {});
+    spawn.mockImplementation(() => {
+      const p = fakeProc();
+      process.nextTick(() => p.emit('close', 0));
+      return p;
+    });
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    resetState();
+  });
+
+  it('目标桶有活进程(即使活跃桶是别的项目)→ 警告(修复前活跃桶判定漏报)', async () => {
+    setRunSessionProc('/proj/a', fakeProc());   // A 桶活进程
+    setProjectDir('/proj/b');                   // 活跃指针指向 B ≠ A
+    await executeGdscript({ godotPath: GODOT_BIN, projectPath: '/proj/a', code: 'var x = 1' });
+    expect(warnSpy).toHaveBeenCalledWith('gdscript', expect.stringContaining('is also being used by a running game process'));
+  });
+
+  it('目标桶无进程 + 活跃桶在跑其他项目 → 不警告(按目标桶,不按活跃桶)', async () => {
+    setRunSessionProc('/proj/b', fakeProc());   // 活跃桶 B 有进程
+    setProjectDir('/proj/b');
+    await executeGdscript({ godotPath: GODOT_BIN, projectPath: '/proj/a', code: 'var x = 1' });
+    expect(warnSpy).not.toHaveBeenCalledWith('gdscript', expect.stringContaining('is also being used'));
   });
 });

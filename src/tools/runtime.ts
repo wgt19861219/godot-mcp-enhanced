@@ -375,10 +375,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         if (orphanKilled > 0) {
           return textResult(`Cleaned up ${orphanKilled} orphaned Godot process(es) from this session.`);
         }
-        // 多项目提示:指定项目无活进程但其他项目在跑时,列会话引导显式 project_path
+        // 多项目提示(Task 4 审查 Minor 修正):显式传了 project_path 时目标已明确,不再
+        // 引导再传参;未传参(目标=活跃桶)保持引导句式,首句消除"无项目在跑"与"会话在跑"矛盾。
         const alive = listRunSessions().filter(x => isAliveStatus(x.status));
         if (alive.length > 0) {
-          return textResult(`No project is currently running. Sessions still running: ${alive.map(x => x.displayPath).join(', ')}. Pass project_path to target one.`);
+          const aliveList = alive.map(x => x.displayPath).join(', ');
+          const explicitStop = typeof rawStopPath === 'string' && rawStopPath.length > 0;
+          return textResult(explicitStop
+            ? `Project ${rawStopPath} has no running process. Other sessions: ${aliveList}.`
+            : `Active project has no running process. Sessions still running: ${aliveList}. Pass project_path to target one.`);
         }
         return textResult('No project is currently running.');
       }

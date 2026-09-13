@@ -131,14 +131,25 @@ describe('validation-tools: isErrorFalsePositive additional cases', () => {
   });
 });
 
-// ─── run_and_verify: spawnGodot path (V-01 fix) ─────────────────────────────
+// ─── run_and_verify: spawnGodot path (V-01 fix → §4.7 裁决收窄) ──────────────
 
-describe('run_and_verify: spawnGodot path (V-01 fix)', () => {
-  it('calls ctx.setProjectDir before spawnGodot', async () => {
+describe('run_and_verify: spawnGodot path (V-01 fix → §4.7)', () => {
+  it('does NOT call ctx.setProjectDir (设计 §4.7: validate_scripts 不再切活跃指针)', async () => {
     const ctx = makeCtx();
     const args = { action: 'run_and_verify', project_path: '/fake/project' };
     await handleTool('validation', args, ctx);
-    expect(ctx.setProjectDir).toHaveBeenCalledWith('/fake/project');
+    expect(ctx.setProjectDir).not.toHaveBeenCalled();
+  });
+
+  it('run_and_verify 后真实活跃指针保持旧值 (§4.7 行为级: getProjectDir 不被切走)', async () => {
+    const { resetState, setProjectDir: realSetProjectDir, getProjectDir } = await import('../src/core/process-state.js');
+    resetState();
+    realSetProjectDir('/proj/active');
+    // ctx.setProjectDir 绑定真实实现(模拟 server 注入),防 mock 掩盖行为
+    const ctx = makeCtx({ setProjectDir: vi.fn((d) => realSetProjectDir(d)) });
+    await handleTool('validation', { action: 'run_and_verify', project_path: '/fake/other' }, ctx);
+    expect(getProjectDir()).toBe('/proj/active');
+    resetState();
   });
 
   it('returns analysis with timed out message when spawnGodot times out', async () => {

@@ -18,11 +18,11 @@
 import { spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, renameSync } from 'fs';
 import { writeFile, mkdir, rm, readdir, lstat, mkdtemp } from 'fs/promises';
-import { join, basename, resolve } from 'path';
+import { join, basename } from 'path';
 import { tmpdir, userInfo } from 'os';
 import { randomUUID, createHash } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
-import { forceKillTree, getProjectDir, getRunningProcess, acquireShortRunningSlot, releaseShortRunningSlot, registerSpawnedGodotPid, unregisterSpawnedGodotPid } from './core/process-state.js';
+import { forceKillTree, getRunSessionProc, acquireShortRunningSlot, releaseShortRunningSlot, registerSpawnedGodotPid, unregisterSpawnedGodotPid } from './core/process-state.js';
 import { tokenize, classifyFirstArgument } from './core/gdscript-scanner.js';
 import { buildSafeEnv } from './helpers.js';
 import { MARKER_RESULT as MARKER_RESULT_SHARED, MARKER_ERROR as MARKER_ERROR_SHARED, GD_MCP_GET_ROOT, GD_MCP_GET_NODE, GD_MCP_LOAD_MAIN_SCENE, GD_MCP_OUTPUT } from './tools/shared.js';
@@ -1137,8 +1137,9 @@ export async function executeGdscript(
   }
 
   // Warn if same project is being used by a running game process
-  const activeProjectDir = getProjectDir();
-  if (activeProjectDir && getRunningProcess() && resolve(projectPath) === resolve(activeProjectDir)) {
+  // 设计 §4.5 I-3:按目标桶判定(getRunSessionProc 内部归一化 key)——原活跃桶判定
+  // (getProjectDir()+getRunningProcess())在活跃=B 时对运行中的 A 漏报 .godot/ 缓存冲突风险。
+  if (getRunSessionProc(projectPath)) {
     getLogger().warn('gdscript', `Warning: project ${projectPath} is also being used by a running game process. Headless execution should be safe but watch for .godot/ cache conflicts.`);
   }
 

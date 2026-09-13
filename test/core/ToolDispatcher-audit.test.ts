@@ -21,6 +21,9 @@ import { ToolDispatcher } from '../../src/core/ToolDispatcher.js';
 import type { ReadOnlyGuard } from '../../src/core/ReadOnlyGuard.js';
 import type { ToolResult } from '../../src/types.js';
 import { resolveProjectPath as _mockResolveProjectPath } from '../../src/core/path-utils.js';
+import * as ps from '../../src/core/process-state.js';
+import { skipProjectPath as _mockSkipProjectPath } from '../../src/core/tool-registry.js';
+import { getLogger } from '../../src/core/logger.js';
 import { AUDIT_LOG_REL, type AuditEntry } from '../../src/core/audit-log.js';
 import type { Mock } from 'vitest';
 
@@ -424,5 +427,60 @@ describe('ToolDispatcher audit middleware 集成', () => {
     expect(e.action).toBe('call_method');
     expect(e.risk).toBe('write');
     expect(e.details?.confirmed).toBe(true);
+  });
+
+  // ── 场景⑥(I-2,设计 §6): args.project_path 缺失 → audit 落活跃桶而非 env 项目 ──
+
+  it('场景⑥: args.project_path 缺失(注入豁免)→ audit projectPath 取活跃桶,非 env 项目', async () => {
+    // runtime.stop_project risk='process'(runtime 域无参操作的审计归属即本修复的目标场景)
+    mockGetActionRisk.mockImplementation((tool: string, action: string) =>
+      tool === 'runtime' && action === 'stop_project' ? 'process' : undefined,
+    );
+    stubModuleFor(['runtime']);
+    // 注入豁免:让 :312 的默认 project_path 注入跳过,ctx.args.project_path 保持缺失
+    (_mockSkipProjectPath as unknown as Mock).mockImplementation((n: string) => n === 'runtime');
+    // env 项目指向独立临时目录(修复前会落这里;也防失败形态写盘根垃圾路径)
+    const envTmp = mkdtempSync(join(tmpdir(), 'dispatcher-audit-env-'));
+    (_mockResolveProjectPath as unknown as Mock).mockReturnValue(envTmp);
+    // 活跃桶指向 tmpProject(经 process-state mock)
+    (ps.getProjectDir as unknown as Mock).mockReturnValue(tmpProject);
+    try {
+      const dispatcher = new ToolDispatcher(createOptions());
+      const res = await dispatcher.handleCall({
+        params: { name: 'runtime', arguments: { action: 'stop_project' } },
+      });
+      expect(res.isError).not.toBe(true);
+
+      // 落盘断言:活跃桶路径(tmpProject)有审计,env 项目(envTmp)无
+      const entries = readAuditEntries(tmpProject);
+      expect(entries.length).toBe(1);
+      expect(entries[0]!.tool).toBe('runtime');
+      expect(entries[0]!.action).toBe('stop_project');
+      expect(entries[0]!.project_path).toBe(tmpProject);
+      expect(existsSync(join(envTmp, ...AUDIT_LOG_REL))).toBe(false);
+    } finally {
+      rmSync(envTmp, { recursive: true, force: true });
+      (_mockSkipProjectPath as unknown as Mock).mockImplementation((n: string) => n === 'confirm_and_execute');
+      (ps.getProjectDir as unknown as Mock).mockReturnValue('');
+    }
+  });
+
+  // ── 场景⑦(§4.6): dispatcher toolStart 接线传 project 归属 ──
+
+  it('场景⑦: dispatchTool 的 toolStart 调用携带 project(§4.6 JSONL project 字段接线)', async () => {
+    stubWriteScriptRisk();
+    const startSpy = vi.spyOn(getLogger(), 'toolStart');
+    try {
+      const dispatcher = new ToolDispatcher(createOptions());
+      await dispatcher.handleCall({
+        params: {
+          name: 'script',
+          arguments: { action: 'write_script', project_path: tmpProject, script_path: 'res://proj.gd' },
+        },
+      });
+      expect(startSpy).toHaveBeenCalledWith('script', expect.objectContaining({ project_path: tmpProject }), tmpProject);
+    } finally {
+      startSpy.mockRestore();
+    }
   });
 });
