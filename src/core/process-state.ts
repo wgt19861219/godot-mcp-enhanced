@@ -215,21 +215,31 @@ function isEndedStatus(st: RunSessionStatus): boolean {
   return st === 'exited' || st === 'exited_early' || st === 'errored';
 }
 
-/** 桶进入 ended 态时登记 FIFO(同 key 重复结束移到队尾,防重复条目)并按需逐出。 */
-function markEndedAndEvict(key: string): void {
+/** 桶转 alive 态时摘除 FIFO 残留条目(审查 I-1):ended 后重跑同 key,order 里的
+ *  残留条目指向的桶已回 alive,不再是合法逐出候选——不摘除会被 shift 误删。 */
+function removeFromExitedOrder(key: string): void {
   const i = _exitedSessionOrder.indexOf(key);
   if (i !== -1) _exitedSessionOrder.splice(i, 1);
+}
+
+/** 桶进入 ended 态时登记 FIFO(同 key 重复结束移到队尾,防重复条目)并按需逐出。 */
+function markEndedAndEvict(key: string): void {
+  removeFromExitedOrder(key);
   _exitedSessionOrder.push(key);
   evictExitedIfNeeded();
 }
 
 /** 已结束桶上限 FIFO 逐出(设计 §4.1:默认 16,GODOT_MCP_MAX_FINISHED_SESSIONS 每调用读取;
- *  活跃桶永不逐出;order 残留条目(空桶重绑后遗留的 '',Task 1 交接点 1)delete 为 no-op,安全跳过)。 */
+ *  活跃桶永不逐出;审查 I-1 兜底:shift 后校验目标确为 ended 态桶才 delete——alive 桶或
+ *  Map 已无此桶(重绑残留 '',Task 1 交接点 1)跳过删除,不回塞数组,继续 shift 下一个
+ *  直到满足上限或循环完)。 */
 function evictExitedIfNeeded(): void {
   const max = Math.max(1, Number(process.env.GODOT_MCP_MAX_FINISHED_SESSIONS) || 16);
   while (_exitedSessionOrder.length > max) {
     const oldest = _exitedSessionOrder.shift();
-    if (oldest !== undefined && oldest !== activeKey()) _sessions.delete(oldest);
+    if (oldest === undefined || oldest === activeKey()) continue;
+    const s = _sessions.get(oldest);
+    if (s !== undefined && isEndedStatus(s.status)) _sessions.delete(oldest);
   }
 }
 
@@ -289,6 +299,7 @@ export function setRunSessionProc(projectPath: string, proc: ChildProcess | null
   if (proc) {
     s.status = 'running';
     s.processStartTime = Date.now();
+    removeFromExitedOrder(key);   // 审查 I-1:桶回 alive,摘除 FIFO 残留(重跑 ended 项目场景)
   } else {
     // status 仍为旧值(running/stopping 等)→ stashToSnapshot 内完整 early/exited 判定
     stashToSnapshot(key, s);
@@ -319,11 +330,13 @@ export function markSessionStopping(projectPath: string): void {
   if (s && (s.status === 'running' || s.status === 'starting')) s.status = 'stopping';
 }
 
-/** 直接设置桶状态(spawn 失败终态 'errored' 等);转 ended 态时登记 FIFO。 */
+/** 直接设置桶状态(spawn 失败终态 'errored' 等);转 ended 态时登记 FIFO;
+ *  转 alive 态时摘除 FIFO 残留(审查 I-1)。 */
 export function setSessionStatus(projectPath: string, status: RunSessionStatus): void {
   const key = normalizeProjectKey(projectPath);
   const s = getOrCreateSession(key);
   s.status = status;
+  if (isAliveStatus(status)) removeFromExitedOrder(key);
   if (isEndedStatus(status)) markEndedAndEvict(key);
 }
 
@@ -457,11 +470,15 @@ export function getBusyInfo(): { owner: string; startTime: number; projectDir: s
 
 /** Build a user-friendly error message when the long-running slot is occupied.
  *  Task 2 加可选 targetKey(设计 §4.2 M-1):多桶同时 busy 时报**目标桶**的持锁信息
- *  (owner/时长/项目路径取自该桶);缺省报活跃桶(兼容层)。 */
+ *  (owner/时长/项目路径取自该桶);缺省报活跃桶(兼容层)。
+ *  审查 M-2:错误消息构建属读路径,改 getSession 读侧不创建桶(getOrCreateSession 会把
+ *  未知 key 惰性建成空桶);目标桶不存在时回落活跃桶,仍无 busy 桶 → 空串。 */
 export function buildBusyErrorMessage(targetKey?: string): string {
-  const key = targetKey !== undefined ? normalizeProjectKey(targetKey) : activeKey();
-  const s = getOrCreateSession(key);
-  if (!s.busy) return '';
+  // 审查 M-2:错误消息构建属读路径,改 getSession 读侧不创建桶(getOrCreateSession 会把
+  // 未知 key 惰性建成空桶);目标桶不存在时回落活跃桶(getSession() 缺省语义,空活跃
+  // 指针下正确落到 '' 惰性桶而非 cwd),仍无 busy 桶 → 空串。
+  const s = (targetKey !== undefined ? getSession(targetKey) : undefined) ?? getSession();
+  if (!s || !s.busy) return '';
 
   const details: string[] = [];
   if (s.processStartTime > 0) {

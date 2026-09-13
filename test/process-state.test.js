@@ -1032,4 +1032,37 @@ describe('per-project sessions — 分桶核心(设计 §4.2/§7)', () => {
     expect(list[0].projectPath).toBe(normalizeProjectKey('/A'));
     expect(list[0].pid).not.toBeNull();
   });
+
+  it('审查 I-1 锁定:重跑队头 ended 桶转 running 后不被 FIFO 逐出,逐出顺延下一个 ended 桶', () => {
+    // 17 个 ended 桶稳态(默认上限 16):/proj-0 已逐,order=[/proj-1..16]
+    for (let i = 0; i < 17; i++) setSessionStatus(`/proj-${i}`, 'exited');
+    expect(getSession('/proj-0')).toBeUndefined();
+    // 重跑队头项目 /proj-1 → running:setRunSessionProc 摘除 order 残留条目
+    setRunSessionProc('/proj-1', makeMockProc({ pid: 111 }), true);
+    expect(getSession('/proj-1').status).toBe('running');
+    // 再结束 Y/Z 触发逐出(摘除后 order=15,需 push 2 个才超限 16):
+    // X(/proj-1)仍在且 running;被逐的是下一个 ended 桶 /proj-2
+    setSessionStatus('/proj-Y', 'exited');
+    setSessionStatus('/proj-Z', 'exited');
+    expect(getSession('/proj-1')).toBeDefined();
+    expect(getSession('/proj-1').status).toBe('running');
+    expect(getSession('/proj-2')).toBeUndefined();
+    // setSessionStatus 设 alive 态同样摘除残留(新队头 /proj-3 → starting)
+    setSessionStatus('/proj-3', 'starting');
+    for (let i = 0; i < 4; i++) setSessionStatus(`/fill-${i}`, 'exited');   // order 补满触发逐出
+    expect(getSession('/proj-4')).toBeUndefined();        // 逐出顺延 /proj-4
+    expect(getSession('/proj-3')).toBeDefined();
+    expect(getSession('/proj-3').status).toBe('starting');
+  });
+
+  it('审查 M-3 锁定:markSessionExited 判 errored 后,clearRunSession 的 stash 不冲掉 errored(ended 守卫)', () => {
+    setRunSessionProc('/late', makeMockProc(), true);                        // running,startTime=now
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/late'));
+    markSessionExited('/late', 1);                                           // 2s 外 code≠0 → errored
+    expect(getSession('/late').status).toBe('errored');
+    appendOutput(['late-output'], normalizeProjectKey('/late'));             // close 链时序:输出在 errored 后到
+    clearRunSession('/late');                                                // stashToSnapshot:ended 守卫不覆盖
+    expect(getSession('/late').status).toBe('errored');
+    expect(getSession('/late').lastFinishedRunOutput).toEqual(['late-output']);   // 快照仍挪入
+  });
 });
