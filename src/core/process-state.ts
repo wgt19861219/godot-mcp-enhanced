@@ -156,13 +156,15 @@ let _shortRunningCount = 0;
 
 // 仅长生命周期 / 可能挂起的 Godot 进程注册（崩溃残留或 close 时机错位需 orphan 兜底）：
 //   - run_project（runtime.ts:224，长生命周期游戏进程）
-//   - gdscript-executor spawn（B-T4，原 only-run_project 致挂起脚本 + close → 孤儿无兜底）
+//   - gdscript-executor spawn（B-T4，原 only-run-project 致挂起脚本 + close → 孤儿无兜底）
 // launch_editor 不注册（detached 编辑器，用户有意长期运行）。
-let _spawnedGodotPids: Set<number> = new Set();
+// Task 2 归属化(设计 §4.1):Set<number> → Map<number, projectKey>——orphan 清理链(§4.4)按
+// 桶归属排除全部活进程,防周期扫描误杀非活跃窗口;projectKey 缺省 ''(未归属,兼容旧调用)。
+let _spawnedGodotPids = new Map<number, string>();
 
-/** 记录本会话 spawn 的需要 orphan 兜底的 Godot 进程 PID（仅 run_project）。 */
-export function registerSpawnedGodotPid(pid: number): void {
-  if (pid && pid > 0) _spawnedGodotPids.add(pid);
+/** 记录本会话 spawn 的需要 orphan 兜底的 Godot 进程 PID(可选归属 project key)。 */
+export function registerSpawnedGodotPid(pid: number, projectKey?: string): void {
+  if (pid && pid > 0) _spawnedGodotPids.set(pid, projectKey ?? '');
 }
 
 /** 进程正常退出时移除（主动清理，避免集合累积死 PID）。 */
@@ -170,9 +172,9 @@ export function unregisterSpawnedGodotPid(pid: number): void {
   _spawnedGodotPids.delete(pid);
 }
 
-/** 测试用：读取当前集合。 */
+/** 测试用：读取当前 pid 集合(兼容层:返回 pid 数组,归属信息经 orphan ctx 内部消费)。 */
 export function getSpawnedGodotPids(): number[] {
-  return Array.from(_spawnedGodotPids);
+  return Array.from(_spawnedGodotPids.keys());
 }
 
 // ─── Per-project key normalization & lazy session access(设计 §4.1)─────────
@@ -193,10 +195,186 @@ export function getOrCreateSession(key: string): RunSession {
   let s = _sessions.get(key);
   if (!s) {
     s = newSession(key ? key : _projectDir);
-    if (key) s.displayPath = key;  // displayPath 首次用 key,后续 setProjectDir 刷新
+    if (key) s.displayPath = key;  // displayPath 首次用 key,后续 setProjectDir/setRunSessionProc 刷新
     _sessions.set(key, s);
   }
   return s;
+}
+
+// ─── Per-key run session API(设计 §4.2,Task 2)─────────────────────────────
+// 跨项目路径的状态操作(供 runtime.ts 守卫总纲使用):均为 per-key 状态操作,
+// 非依赖注入 setter,不违反 AGENTS.md「禁止新增模块级 setter 注入点」。
+
+/** 谓词(设计 §4.1,Supervisor 模式):isAlive=starting/running/stopping(canSignal 同集)。 */
+function isAliveStatus(st: RunSessionStatus): boolean {
+  return st === 'starting' || st === 'running' || st === 'stopping';
+}
+
+/** 谓词:ended 态(exited/exited_early/errored)——桶保留可查,进 FIFO 可逐出。 */
+function isEndedStatus(st: RunSessionStatus): boolean {
+  return st === 'exited' || st === 'exited_early' || st === 'errored';
+}
+
+/** 桶进入 ended 态时登记 FIFO(同 key 重复结束移到队尾,防重复条目)并按需逐出。 */
+function markEndedAndEvict(key: string): void {
+  const i = _exitedSessionOrder.indexOf(key);
+  if (i !== -1) _exitedSessionOrder.splice(i, 1);
+  _exitedSessionOrder.push(key);
+  evictExitedIfNeeded();
+}
+
+/** 已结束桶上限 FIFO 逐出(设计 §4.1:默认 16,GODOT_MCP_MAX_FINISHED_SESSIONS 每调用读取;
+ *  活跃桶永不逐出;order 残留条目(空桶重绑后遗留的 '',Task 1 交接点 1)delete 为 no-op,安全跳过)。 */
+function evictExitedIfNeeded(): void {
+  const max = Math.max(1, Number(process.env.GODOT_MCP_MAX_FINISHED_SESSIONS) || 16);
+  while (_exitedSessionOrder.length > max) {
+    const oldest = _exitedSessionOrder.shift();
+    if (oldest !== undefined && oldest !== activeKey()) _sessions.delete(oldest);
+  }
+}
+
+/** per-key 路径的快照挪移 + 进程结束态判定(设计 §4.1):
+ *  非空输出 → 挪入快照并按 2s 阈值判 exited_early/exited;无输出且曾运行(startTime>0)→ exited。
+ *  已是 ended 态(markSessionExited 先行的权威判定,含 errored)不覆盖——防 close 链中
+ *  markSessionExited → clearRunSession 的 errored 被 stash 冲掉。 */
+function stashToSnapshot(key: string, s: RunSession): void {
+  if (s.outputBuffer.length > 0) {
+    if (!isEndedStatus(s.status)) {
+      const early = s.processStartTime > 0 && Date.now() - s.processStartTime < 2_000;
+      s.status = early ? 'exited_early' : 'exited';
+      markEndedAndEvict(key);
+    }
+    s.lastFinishedRunOutput = s.outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
+    s.outputBuffer = [];
+  } else if (!isEndedStatus(s.status) && s.processStartTime > 0) {
+    s.status = 'exited';
+    markEndedAndEvict(key);
+  }
+}
+
+/** 读取指定项目桶(缺省=活跃桶);未创建/已逐出返回 undefined。 */
+export function getSession(projectPath?: string): RunSession | undefined {
+  const key = projectPath === undefined ? activeKey() : normalizeProjectKey(projectPath);
+  return _sessions.get(key);
+}
+
+/** 会话清单(设计 §4.1:'' 空桶不进列表;pid 无进程时为 null)。 */
+export function listRunSessions(): Array<{ projectPath: string; displayPath: string; status: RunSessionStatus; pid: number | null }> {
+  const out: Array<{ projectPath: string; displayPath: string; status: RunSessionStatus; pid: number | null }> = [];
+  for (const [key, s] of _sessions) {
+    if (key === '') continue;   // '' 空桶不进列表(设计 §4.1)
+    out.push({ projectPath: key, displayPath: s.displayPath, status: s.status, pid: s.proc?.pid ?? null });
+  }
+  return out;
+}
+
+/** 指定桶的进程(守卫身份校验用:getRunSessionProc(key) === proc)。 */
+export function getRunSessionProc(projectPath: string): ChildProcess | null {
+  return _sessions.get(normalizeProjectKey(projectPath))?.proc ?? null;
+}
+
+/** 按 key 写入 proc(设计 §4.2 C-1):forceKillTree 仅针对**该桶**旧 proc,绝不碰活跃桶
+ *  或其他桶——run_project 主流程必须用本函数,不得用活跃桶语义的 setRunningProcess。 */
+export function setRunSessionProc(projectPath: string, proc: ChildProcess | null, skipBusyCheck?: boolean): void {
+  const key = normalizeProjectKey(projectPath);
+  const s = getOrCreateSession(key);
+  if (s.displayPath === key) s.displayPath = projectPath;   // Task 1 交接点 2:首次用原始写法刷新
+  if (!skipBusyCheck && s.busy) {
+    throw new Error('Cannot replace process while another operation is using it');
+  }
+  if (s.proc && !s.proc.killed && proc !== s.proc) {
+    forceKillTree(s.proc);
+  }
+  s.proc = proc;
+  if (proc) {
+    s.status = 'running';
+    s.processStartTime = Date.now();
+  } else {
+    // status 仍为旧值(running/stopping 等)→ stashToSnapshot 内完整 early/exited 判定
+    stashToSnapshot(key, s);
+  }
+}
+
+/** 按 key 释放 busy(设计 §4.2 C-1):主流程 busy 释放显式传 key,不落活跃桶。 */
+export function releaseRunSessionBusy(projectPath: string): void {
+  const s = _sessions.get(normalizeProjectKey(projectPath));
+  if (s) { s.busy = false; s.busyOwner = ''; s.busySince = 0; }
+}
+
+/** 清 X 桶的 proc/busy/快照挪移(守卫体内动作用;不杀进程——killProcess 由调用方负责,
+ *  活跃指针不转移,设计 §5:被清桶保持可查询)。 */
+export function clearRunSession(projectPath: string): void {
+  const key = normalizeProjectKey(projectPath);
+  const s = _sessions.get(key);
+  if (!s) return;
+  s.busy = false; s.busyOwner = ''; s.busySince = 0;
+  if (s.proc) { s.proc = null; }
+  stashToSnapshot(key, s);
+  s.processStartTime = 0;
+}
+
+/** killProcess 前设 stopping 态(仅 running/starting 可转;ended 态不动)。 */
+export function markSessionStopping(projectPath: string): void {
+  const s = _sessions.get(normalizeProjectKey(projectPath));
+  if (s && (s.status === 'running' || s.status === 'starting')) s.status = 'stopping';
+}
+
+/** 直接设置桶状态(spawn 失败终态 'errored' 等);转 ended 态时登记 FIFO。 */
+export function setSessionStatus(projectPath: string, status: RunSessionStatus): void {
+  const key = normalizeProjectKey(projectPath);
+  const s = getOrCreateSession(key);
+  s.status = status;
+  if (isEndedStatus(status)) markEndedAndEvict(key);
+}
+
+/** close 判定(设计 §4.1 状态机,权威入口):2s 内退出=exited_early 优先于 code 判定;
+ *  2s 外 code≠0=errored;否则 exited。不创建桶(未知桶 no-op)。 */
+export function markSessionExited(projectPath: string, exitCode: number | null): void {
+  const key = normalizeProjectKey(projectPath);
+  const s = _sessions.get(key);
+  if (!s) return;
+  const early = s.processStartTime > 0 && Date.now() - s.processStartTime < 2_000;
+  s.status = early ? 'exited_early' : (exitCode !== null && exitCode !== 0 ? 'errored' : 'exited');
+  markEndedAndEvict(key);
+}
+
+/** orphan 清理链排除集合(设计 §4.4):全部桶内活进程——判据为"有管理中的 proc 对象"
+ *  (未 killed 且未退出),不做系统级 pid 探测(orphan 第一层自会 isPidAlive)。 */
+export function getActiveRunPids(): number[] {
+  const out: number[] = [];
+  for (const s of _sessions.values()) {
+    const p = s.proc;
+    if (p?.pid && !p.killed && p.exitCode == null) out.push(p.pid);
+  }
+  return out;
+}
+
+/** 杀全部桶活进程并清桶(GodotServer.close 用,设计 §5:不留孤儿)。 */
+export async function killAllRunSessions(): Promise<void> {
+  for (const [key, s] of _sessions) {
+    if (s.proc && !s.proc.killed) {
+      s.status = 'stopping';
+      await killProcess(s.proc);
+    }
+    s.proc = null;
+    s.busy = false; s.busyOwner = ''; s.busySince = 0;
+    stashToSnapshot(key, s);
+    s.processStartTime = 0;
+  }
+}
+
+/** 运行中上限检查(设计 §4.1:GODOT_MCP_MAX_SESSIONS 每调用读取,默认 4;同项目覆盖
+ *  不算新增名额;溢出拒绝并附在跑会话清单,提示先 stop——不自动逐出运行中进程)。 */
+export function ensureSessionCapacity(projectPath: string): void {
+  const max = Math.max(1, Number(process.env.GODOT_MCP_MAX_SESSIONS) || 4);
+  const alive = listRunSessions().filter(x => isAliveStatus(x.status));
+  const key = normalizeProjectKey(projectPath);
+  const alreadyRunning = alive.some(x => x.projectPath === key);
+  if (!alreadyRunning && alive.length >= max) {
+    throw new Error(
+      `GODOT_MCP_MAX_SESSIONS (${max}) reached. Sessions running: ${alive.map(x => x.displayPath).join(', ')}. Use stop_project first.`,
+    );
+  }
 }
 
 // ─── C-04: Async queue for serializing state mutations ────────────────────────
@@ -227,11 +405,14 @@ export function isProcessBusy(): boolean {
  * Serialized via enqueueAsync to prevent race conditions when MCP clients
  * issue parallel tool calls (e.g. run_project + execute_gdscript simultaneously).
  * Returns true if acquired, false if slot is busy.
+ * Task 2 加可选 projectPath(设计 §4.2):显式传参时锁**目标桶**——run_project 现状顺序是
+ * acquire 先于 setProjectDir,按活跃桶锁会锁错桶;缺省仍锁活跃桶(兼容层)。
  */
-export async function acquireProcessSlot(owner: string = ''): Promise<boolean> {
+export async function acquireProcessSlot(owner: string = '', projectPath?: string): Promise<boolean> {
+  const key = projectPath !== undefined ? normalizeProjectKey(projectPath) : activeKey();
   return enqueueAsync(() => {
-    // 临界区保持同步(禁 await,设计 §4.2 M-4);数据源=活跃桶字段
-    const s = getOrCreateSession(activeKey());
+    // 临界区保持同步(禁 await,设计 §4.2 M-4);数据源=目标桶字段
+    const s = getOrCreateSession(key);
     if (s.busy) {
       // I-06: 即时检查进程存活 — 仅在进程对象已注册时才检查
       if (s.proc && (s.proc.killed || s.proc.exitCode !== null)) {
@@ -274,23 +455,26 @@ export function getBusyInfo(): { owner: string; startTime: number; projectDir: s
   return { owner: s.busyOwner, startTime: s.processStartTime, projectDir: _projectDir };
 }
 
-/** Build a user-friendly error message when the long-running slot is occupied. */
-export function buildBusyErrorMessage(): string {
-  if (!getOrCreateSession(activeKey()).busy) return '';
-  const info = getBusyInfo();
+/** Build a user-friendly error message when the long-running slot is occupied.
+ *  Task 2 加可选 targetKey(设计 §4.2 M-1):多桶同时 busy 时报**目标桶**的持锁信息
+ *  (owner/时长/项目路径取自该桶);缺省报活跃桶(兼容层)。 */
+export function buildBusyErrorMessage(targetKey?: string): string {
+  const key = targetKey !== undefined ? normalizeProjectKey(targetKey) : activeKey();
+  const s = getOrCreateSession(key);
+  if (!s.busy) return '';
 
   const details: string[] = [];
-  if (info.startTime > 0) {
-    const elapsed = Math.round((Date.now() - info.startTime) / 1000);
+  if (s.processStartTime > 0) {
+    const elapsed = Math.round((Date.now() - s.processStartTime) / 1000);
     details.push(`running for ${elapsed}s`);
   }
-  if (info.projectDir) {
-    details.push(`project: ${info.projectDir}`);
+  if (s.displayPath) {
+    details.push(`project: ${s.displayPath}`);
   }
 
   let msg = 'Error: another Godot process is running';
-  if (info.owner) {
-    msg += ` (started by ${info.owner}`;
+  if (s.busyOwner) {
+    msg += ` (started by ${s.busyOwner}`;
     if (details.length > 0) msg += ', ' + details.join(', ');
     msg += ')';
   } else if (details.length > 0) {
@@ -435,7 +619,7 @@ export function resetState(): void {
   _exitedSessionOrder = [];
   _projectDir = '';
   _shortRunningCount = 0;
-  _spawnedGodotPids = new Set();
+  _spawnedGodotPids = new Map();
   _queueTail = Promise.resolve();
   resetOrphanScanTime();
 }
@@ -445,6 +629,8 @@ export { enqueueAsync };
 
 // P2-4: killOrphanGodotProcesses 薄包装(逻辑移至 orphan-cleanup.ts,ctx 注入破循环)。
 // importer 签名不变(仍 ps.killOrphanGodotProcesses(projectDir, options))。
+// Task 2(设计 §4.4):排除集合从"活跃桶单 pid"改为 activePids=全部桶内活进程,
+// 防周期 orphan 扫描误杀非活跃窗口;spawnedPids 同步为归属化 Map。
 export async function killOrphanGodotProcesses(
   projectDir?: string,
   options?: { fullSystemScan?: boolean },
@@ -452,7 +638,7 @@ export async function killOrphanGodotProcesses(
   return cleanupOrphanProcesses(
     {
       spawnedPids: _spawnedGodotPids,
-      runningPid: getOrCreateSession(activeKey()).proc?.pid,
+      activePids: getActiveRunPids(),
       isPidAlive,
       killPidTree,
     },

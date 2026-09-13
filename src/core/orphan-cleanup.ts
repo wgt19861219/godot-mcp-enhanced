@@ -25,10 +25,12 @@ function escapeShellArg(s: string): string {
   return s.replace(/'/g, "'\\''");
 }
 
-/** orphan 清理依赖的 process-state 状态/操作(参数注入破循环)。 */
+/** orphan 清理依赖的 process-state 状态/操作(参数注入破循环)。
+ *  Task 2(设计 §4.4):spawnedPids 归属化 Map(pid → projectKey);排除集合从
+ *  runningPid 单值改为 activePids(全部桶内活进程)——多桶并存时周期扫描不误杀非活跃窗口。 */
 export interface OrphanCleanupCtx {
-  spawnedPids: Set<number>;
-  runningPid: number | undefined;
+  spawnedPids: Map<number, string>;
+  activePids: number[];
   isPidAlive: (pid: number) => boolean;
   killPidTree: (pid: number) => void;
 }
@@ -63,8 +65,8 @@ export async function killOrphanGodotProcesses(
   let killed = 0;
 
   // 第一层(默认):本会话 PID 集合
-  for (const pid of Array.from(ctx.spawnedPids)) {
-    if (pid === ctx.runningPid) continue;  // 正在管理,跳过
+  for (const pid of Array.from(ctx.spawnedPids.keys())) {
+    if (ctx.activePids.includes(pid)) continue;  // 任一桶正在管理的活进程,跳过(设计 §4.4)
     if (!ctx.isPidAlive(pid)) { ctx.spawnedPids.delete(pid); continue; }  // 已退出,惰性移除
     ctx.killPidTree(pid);
     ctx.spawnedPids.delete(pid);
@@ -74,17 +76,17 @@ export async function killOrphanGodotProcesses(
   // 第二层(opt-in 崩溃恢复兜底,options.fullSystemScan 显式门控)。
   // 周期 orphan 扫描(GodotServer 定时器)和 stop_project 不传此参数,保持会话隔离。
   if (options?.fullSystemScan === true && projectDir) {
-    killed += await fullSystemScanGodot(projectDir, ctx.runningPid);
+    killed += await fullSystemScanGodot(projectDir, ctx.activePids);
   }
   return killed;
 }
 
 /**
  * V-01 全系统扫描(仅 fullSystemScan=true 时调用)。
- * 扫描命令行含 projectDir 的 Godot 进程并清理,跳过 excludePid(正在管理的进程)。
+ * 扫描命令行含 projectDir 的 Godot 进程并清理,跳过 excludePids(在管活进程,设计 §4.4)。
  * 保留 escapePsSingleQuote / escapeShellArg 转义(注入防护)。
  */
-async function fullSystemScanGodot(projectDir: string, excludePid?: number): Promise<number> {
+async function fullSystemScanGodot(projectDir: string, excludePids: number[]): Promise<number> {
   if (!projectDir) return 0;
   const normalizedDir = projectDir.replace(/\\/g, '/');
 
@@ -125,7 +127,7 @@ async function fullSystemScanGodot(projectDir: string, excludePid?: number): Pro
         clearTimeout(timer);
         if (settled) return;
         settled = true;
-        const pids = out.trim().split('\n').map(Number).filter(n => n > 0 && n !== excludePid);
+        const pids = out.trim().split('\n').map(Number).filter(n => n > 0 && !excludePids.includes(n));
         for (const pid of pids) {
           try {
             // P1: same async-error guard as forceKillTree — a spawn 'error' without
@@ -173,7 +175,7 @@ async function fullSystemScanGodot(projectDir: string, excludePid?: number): Pro
         if (settled) return;
         settled = true;
         const lines = out.trim().split('\n').filter(l => /^\d+$/.test(l.trim()));
-        const pids = lines.map(Number).filter(n => n > 0 && n !== excludePid);
+        const pids = lines.map(Number).filter(n => n > 0 && !excludePids.includes(n));
         for (const pid of pids) {
           try { process.kill(pid, 'SIGTERM'); } catch { /* best effort */ }
         }
