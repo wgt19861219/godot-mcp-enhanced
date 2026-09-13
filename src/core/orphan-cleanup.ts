@@ -13,7 +13,9 @@ const isWin = process.platform === 'win32';
 const ORPHAN_SCAN_INTERVAL_MS = 30_000;
 const ORPHAN_SCAN_TIMEOUT_MS = 15_000;
 
-let _lastOrphanScanTime = 0;
+// Task 3(设计 §4.4 M-5):节流 per-project 化——key=projectDir 参数(无项目上下文
+// 的调用以 '' 计)。旧全局单值会"A 的周期扫描节流 30s 内 B 的 stop_project orphan 分支"。
+const _lastOrphanScanAt = new Map<string, number>();
 
 /** Escape single quotes for PowerShell single-quoted strings (' → ''). */
 function escapePsSingleQuote(s: string): string {
@@ -35,9 +37,9 @@ export interface OrphanCleanupCtx {
   killPidTree: (pid: number) => void;
 }
 
-/** 测试隔离用:重置 30s 节流时间(由 process-state.resetState 调用)。 */
+/** 测试隔离用:重置 per-project 30s 节流表(由 process-state.resetState 调用)。 */
 export function resetOrphanScanTime(): void {
-  _lastOrphanScanTime = 0;
+  _lastOrphanScanAt.clear();
 }
 
 /**
@@ -52,15 +54,18 @@ export function resetOrphanScanTime(): void {
  *   走全系统扫描(清命令行含 projectDir 的所有 Godot,跳过 activePids)。
  *
  * IPC-R1/R5:显式 options 参数,不读 process.env(消除 env 全局状态竞态)。
- * 30s 节流。返回清理数。
+ * 30s 节流(per-project:按 projectDir 参数分 key,设计 §4.4 M-5——多桶并存时
+ * A 的周期扫描不节流 B 的 orphan 清理)。返回清理数。
  */
 export async function killOrphanGodotProcesses(
   ctx: OrphanCleanupCtx,
   projectDir?: string,
   options?: { fullSystemScan?: boolean },
 ): Promise<number> {
-  if (Date.now() - _lastOrphanScanTime < ORPHAN_SCAN_INTERVAL_MS) return 0;
-  _lastOrphanScanTime = Date.now();
+  const throttleKey = projectDir ?? '';
+  const lastScanAt = _lastOrphanScanAt.get(throttleKey) ?? 0;
+  if (Date.now() - lastScanAt < ORPHAN_SCAN_INTERVAL_MS) return 0;
+  _lastOrphanScanAt.set(throttleKey, Date.now());
 
   let killed = 0;
 

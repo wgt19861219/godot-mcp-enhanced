@@ -28,10 +28,12 @@ vi.mock('../src/core/logger.js', () => ({
   }),
 }));
 
-// Mock process-state to avoid dependency
-vi.mock('../src/core/process-state.js', () => ({
-  forceKillTree: vi.fn(),
-}));
+// Mock process-state: 仅 stub forceKillTree(godot-spawn 消费),其余导出透传真实模块
+// (Task 3/设计 §7 I-4 统一策略,根治新增导出缺透传的漂移)
+vi.mock('../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/process-state.js')>();
+  return { ...actual, forceKillTree: vi.fn() };
+});
 
 // Mock helpers (buildSafeEnv used in spawn options)
 vi.mock('../src/helpers.js', () => ({
