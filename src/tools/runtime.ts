@@ -5,7 +5,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { maybeWrapUntrusted } from '../core/untrusted-wrap.js';
 import { textResult, errorResult } from '../types.js';
-import { appendOutput, clearOutputBuffer, killProcess, forceKillTree, setProcessBusy, acquireProcessSlot, acquireShortRunningSlot, releaseShortRunningSlot, buildBusyErrorMessage, killOrphanGodotProcesses, registerSpawnedGodotPid, unregisterSpawnedGodotPid } from '../core/process-state.js';
+import { appendOutput, clearOutputBuffer, killProcess, forceKillTree, setProcessBusy, acquireProcessSlot, acquireShortRunningSlot, releaseShortRunningSlot, buildBusyErrorMessage, killOrphanGodotProcesses, registerSpawnedGodotPid, unregisterSpawnedGodotPid, getLastFinishedRunOutput } from '../core/process-state.js';
 import { requireProjectPath, checkVersionMismatch, buildSafeEnv } from '../helpers.js';
 import { isBridgeReady } from './game-bridge.js';
 import { detectGodotVersion } from '../core/godot-finder.js';
@@ -70,6 +70,18 @@ function classifyOutput(lines: string[]): {
   return { errors, warnings, prints };
 }
 
+// ─── B-1 修复:输出读取回落 ──────────────────────────────────────────────────
+// 当前输出缓冲非空、或有进程在跑 → 读当前缓冲;否则回落读最近结束运行的快照
+// (process-state._lastFinishedRunOutput)。游戏结束后(用户关窗/秒崩/被杀)
+// get_debug_output / stop_project 仍能报出该次运行的错误。
+function resolveReadableOutput(ctx: ToolContext): { lines: string[]; fromSnapshot: boolean } {
+  if (ctx.outputBuffer.length > 0 || ctx.runningProcess !== null) {
+    return { lines: ctx.outputBuffer, fromSnapshot: false };
+  }
+  const snapshot = getLastFinishedRunOutput();
+  return { lines: snapshot, fromSnapshot: snapshot.length > 0 };
+}
+
 // ─── Tool definitions ──────────────────────────────────────────────────────
 
 export function getToolDefinitions(): Tool[] {
@@ -90,6 +102,7 @@ export function getToolDefinitions(): Tool[] {
           wait_for_bridge: { type: 'boolean', default: false, description: 'true 时 spawn 后轮询 bridge 就绪(默认 false,向后兼容)' },
           profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置;之后用 profiler 工具 action=capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
           bridge_timeout: { type: 'number', default: 10, description: 'wait_for_bridge 轮询总预算(秒,默认 10)' },
+          preview: { type: 'boolean', default: false, description: '预览模式:禁用自动停止,游戏窗口常驻,用户关闭窗口即结束验证。适用于 AI 改完代码/场景后的人工视觉验证(替代打开编辑器)。默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则说明)' },
           test_script: { type: 'string', description: '测试脚本或目录路径（默认 res://test/）', default: 'res://test/' },
           quit_flag: { type: 'string', enum: ['gquit', 'gexit'], default: 'gquit', description: 'run_tests 的 GUT 退出标志。默认 gquit(GUT ≤9.5);GUT 9.6+ 移除 -gquit(报 Unknown arguments: -gquit)时切 gexit' },
           // ── Recording parameters (merged, v0.18.0) ──
@@ -145,6 +158,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const waitForBridge = args.wait_for_bridge === true;
       const bridgeTimeout = Math.max(1, Number(args.bridge_timeout) || 10);
       const timeout = computeRunTimeout(args.timeout, bridgeTimeout, waitForBridge);
+      const preview = args.preview === true;
       const godot = await ctx.findGodot();
 
       // Version mismatch warning
@@ -217,7 +231,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       // Auto-stop after timeout
       let autoStopTimer: ReturnType<typeof setTimeout> | undefined;
-      if (timeout > 0) {
+      if (timeout > 0 && !preview) {
         autoStopTimer = setTimeout(() => {
           if (ctx.runningProcess === proc) {
             setProcessBusy(false);
@@ -277,7 +291,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // P1-6 关联修复(2026-08-21 七维度审核): "Bridge ready." 是 bridge-session.ts /
         // qa/runner.ts 的 load-bearing 判据(子串匹配),仅在真的探测过 isBridgeReady 后
         // 才宣称——此前 wait_for_bridge=false(默认)时也无条件假宣称,误导直接调工具的 AI。
+        if (preview) {
+          return textResult(warnPrefix + 'Preview mode: bridge ready, game window open at ' + p + ', no auto-stop. It stays open until the user closes the window. After the user closes it, call get_debug_output to check for runtime errors.');
+        }
         return textResult(warnPrefix + 'Bridge ready. ' + `Running project at ${p} (timeout: ${timeout}s). Use get_debug_output or stop_project to check.`);
+      }
+      if (preview) {
+        return textResult(warnPrefix + 'Preview mode: game window is now open at ' + p + '. It stays open until the user closes the window (no auto-stop). After the user closes it, call get_debug_output to check for runtime errors.');
       }
       return textResult(warnPrefix + `Running project at ${p} (timeout: ${timeout}s; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.`);
     }
@@ -297,34 +317,38 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       setProcessBusy(false);
       ctx.setRunningProcess(null);
 
-      const classified = classifyOutput(ctx.outputBuffer);
+      const { lines: stopLines, fromSnapshot: stopFromSnapshot } = resolveReadableOutput(ctx);
+      const classified = classifyOutput(stopLines);
       // I-10: Guard against processStartTime=0 producing absurd runtime values
       const runtimeMs = ctx.processStartTime > 0 ? Date.now() - ctx.processStartTime : 0;
       const result = {
         status: 'stopped',
+        source: stopFromSnapshot ? 'last_finished_run' : 'current_run',
         runtime: `${(runtimeMs / 1000).toFixed(1)}s`,
         errors: classified.errors,
         warnings: classified.warnings,
         prints: classified.prints.slice(-50),
-        total_lines: ctx.outputBuffer.length,
+        total_lines: stopLines.length,
       };
       clearOutputBuffer();
       return textResult(maybeWrapUntrusted('runtime.stop_output', 'godot-process', JSON.stringify(result, null, 2)))
     }
 
     case 'get_debug_output': {
-      if (ctx.outputBuffer.length === 0 && !ctx.runningProcess) {
+      const { lines, fromSnapshot } = resolveReadableOutput(ctx);
+      if (lines.length === 0 && !ctx.runningProcess) {
         return textResult('No debug output available. Run a project first.');
       }
-      const classified = classifyOutput(ctx.outputBuffer);
+      const classified = classifyOutput(lines);
       const debugRuntimeMs = ctx.processStartTime > 0 ? Date.now() - ctx.processStartTime : 0;
       const result = {
         running: ctx.runningProcess !== null,
         runtime: `${(debugRuntimeMs / 1000).toFixed(1)}s`,
+        source: fromSnapshot ? 'last_finished_run' : 'current_run',
         errors: classified.errors,
         warnings: classified.warnings,
         prints: classified.prints.slice(-50),
-        total_lines: ctx.outputBuffer.length,
+        total_lines: lines.length,
       };
       // P1-1: 引擎/游戏输出 nonce 信封(prints/errors/warnings 含项目 print 任意文本,输出侧防注入)
       return textResult(maybeWrapUntrusted('runtime.debug_output', 'godot-process', JSON.stringify(result, null, 2)));

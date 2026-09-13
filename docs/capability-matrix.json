@@ -1,5 +1,5 @@
 {
-  "version": "0.33.1",
+  "version": "0.33.2",
   "tools": [
     {
       "name": "analysis",
@@ -4329,6 +4329,11 @@
             "default": 10,
             "description": "wait_for_bridge 轮询总预算(秒,默认 10)"
           },
+          "preview": {
+            "type": "boolean",
+            "default": false,
+            "description": "预览模式:禁用自动停止,游戏窗口常驻,用户关闭窗口即结束验证。适用于 AI 改完代码/场景后的人工视觉验证(替代打开编辑器)。默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则说明)"
+          },
           "test_script": {
             "type": "string",
             "description": "测试脚本或目录路径（默认 res://test/）",
@@ -4377,6 +4382,7 @@
         "wait_for_bridge",
         "profiling",
         "bridge_timeout",
+        "preview",
         "test_script",
         "quit_flag",
         "events_json",
@@ -4418,8 +4424,8 @@
       },
       "size": {
         "descBytes": 98,
-        "schemaBytes": 2153,
-        "totalBytes": 2251
+        "schemaBytes": 2468,
+        "totalBytes": 2566
       },
       "annotations": {
         "readOnlyHint": false,

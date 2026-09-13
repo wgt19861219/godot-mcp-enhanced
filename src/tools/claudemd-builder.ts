@@ -87,7 +87,7 @@ export const GODOT_MCP_RULES = `# Godot MCP 开发规则
 - TwoBoneIK3D 推荐指定 bone_name 参数
 
 ## 运行时管理
-- run_project 有超时设置，长时间运行需调整
+- run_project 有超时设置，长时间运行需调整；preview=true 时无自动超时（窗口常驻至用户关闭，用于改后视觉验证）
 - launch_editor 启动编辑器 GUI，stop_project 终止运行中的进程
 - dev_loop 可执行任意 GDScript 代码
 

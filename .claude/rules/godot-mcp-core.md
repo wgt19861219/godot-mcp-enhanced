@@ -95,6 +95,20 @@ LuoxuanLove 移植：MCP server 直连 Godot editor 自带 DAP server（Debug Ad
 - **手动组合**：run_project + get_debug_output + stop_project。适合需要精细控制运行时长的场景。
   - `run_project` 支持 `wait_for_bridge` 参数（默认 false）：true 时等待 Bridge 就绪再返回（用 `game-bridge.isBridgeReady` 零接触探测）。
   - `run_project` 支持 `bridge_timeout` 参数（默认 10 秒）：等待 Bridge 就绪的最大超时时间。
+  - `run_project` 支持 `preview` 参数（默认 false）：true 时禁用自动停止，游戏窗口常驻，用户关闭窗口即结束——用于 AI 改完视觉内容后的收尾验证（见下「视觉改动收尾流程」）。
+
+### 视觉改动收尾流程（preview 预览模式）
+
+AI 改动涉及用户需要看到效果才能验收的内容（`.tscn` / UI 脚本 / 样式 / 场景结构等）后，收尾动作不是让用户打开编辑器：
+
+1. `validate_scripts` 快速语法验证（避免弹一个崩溃的窗口）；
+2. `run_project(preview=true)` 弹出常驻游戏窗口；
+3. 告知用户"游戏窗口已弹出，请确认效果，关闭窗口即验证结束"；
+4. 用户关窗后 `get_debug_output` 检查运行时错误并汇报（运行结束后输出仍可读，`source` 标注 `last_finished_run`）。
+
+- 纯逻辑 / 测试 / 文档改动不弹窗。
+- preview **默认不传 `wait_for_bridge`**：bridge 未就绪会终止游戏进程，窗口会在用户眼前闪现即逝；仅当确实需要 bridge 查询运行时状态且项目 bridge 就绪快时才组合。
+- 新一轮 `run_project` 会先停旧进程再起新窗口；旧输出经快照自动留档，换窗前可先 `get_debug_output` 保存上一轮错误。
 
 ## 运行时 vs 持久化
 
