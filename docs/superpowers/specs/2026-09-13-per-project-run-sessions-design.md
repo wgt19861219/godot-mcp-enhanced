@@ -86,7 +86,7 @@ _projectDir: string;                 // 语义升级:活跃项目(最近一次 r
 | `appendOutput(lines, projectKey?)` | **加可选 projectKey**:缺省=活跃桶(兼容既有调用方);**游戏输出流 handler 必须显式传桶 key**(§4.3 坑 1 修复,防串桶) |
 | `getLastFinishedRunOutput()` | 活跃桶的快照 |
 | `acquireProcessSlot(owner, projectPath?)` | **按目标项目**(显式传参)上 busy 锁;缺省=活跃桶。⚠️ 必须加可选参数:run_project 现状顺序是 acquire(:176)先于 setProjectDir(:180),acquire 时活跃指针还指向上一个项目——按"活跃桶"锁会锁错桶 |
-| `getProjectDir()`/`setProjectDir(d)` | 活跃指针本身;**写入方仅限 run_project 与显式切换点**(§4.6 裁决) |
+| `getProjectDir()`/`setProjectDir(d)` | 活跃指针本身;**写入方仅限 run_project 与显式切换点**(§4.7 裁决) |
 | `getBusyInfo()`/`buildBusyErrorMessage()` | 数据来源改为**持锁桶**的项目/pid/时长(多桶下报活跃项目会张冠李戴) |
 | acquireProcessSlot 的死进程自愈检查(现状 `process-state.ts:193-208` 读全局 `_runningProcess`) | 读**目标桶**的 proc |
 
@@ -109,7 +109,7 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 | 工具 | 行为 |
 |------|------|
 | `run_project(project_path=X)` | ① 运行中进程达上限→报错+列出在跑会话;② X 桶有活进程→杀之(同项目互杀,语义保持);③ X 桶为已结束桶→覆盖(旧快照由 stash 语义自然接管);④ spawn 后 setProjectDir(X) 切活跃;⑤ preview/TTL/wait_for_bridge 语义 per-project 不变。**⚠️ 实现要点**:"Stop existing" 段(现状 `runtime.ts:169-173` 读 `ctx.runningProcess`=活跃桶)必须改为 `ps.getRunSessionProc(X)`——活跃是 A 时 run_project(B) 应杀 **B 桶**旧进程,A 不动;busy 锁同理按 X 上锁(见 §4.2) |
-| 输出流 handler(现状 `runtime.ts:225-230` 无参 `appendOutput()`) | **闭包捕获本次 spawn 的 projectKey**,改 `appendOutput(lines, key)`——活跃指针切走后 A 的输出继续写 A 桶(坑 1:串桶修复) |
+| 输出流 handler(现状 `runtime.ts:225-230` 无参 `appendOutput()`) | **闭包捕获本次 spawn 的 projectKey**,改 `appendOutput(lines, key)`——活跃指针切走后 A 的输出继续写 A 桶(坑 1:串桶修复)。**`:221`(spawn 同步 catch)与 `:268`(error handler)两处 `appendOutput` 同样必须传 key**——尤其 :268 的崩溃错误行是 exited_early/errored 态最需要的输出,写错桶即丢失 |
 | **四组守卫的判断与体内动作都按 spawn 时捕获的 key**(坑 4/5/6 修复) | close handler(:253-254)/error handler(:263-264)/autoStopTimer(:236-239)/bridge 未就绪清理(:285-287)与 wait_for_bridge 的 `isCancelled`(:279):**判断**改 `ps.getRunSessionProc(key) === proc`;**体内清理**(setProcessBusy(false)+setRunningProcess(null))改 `ps.clearRunSession(key)`——不可用活跃桶语义,否则非活跃桶的 close 会清掉活跃桶的 busy(双进程)或泄漏本桶 busy |
 | `stop_project(project_path?)` | 缺省=活跃桶;指定 X=杀 X 的活进程并返回其输出(快照回落不变);orphan 分支按 X 的 key 对照 pid 注册表归属清理(准确语义见 §4.4 勘误) |
 | `get_debug_output(project_path?)` | 缺省=活跃桶;指定 X=X 桶当前输出或快照(source 标注不变) |
