@@ -129,8 +129,8 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 **守卫总纲(PM2/Erodenn 先例,审查坑 3/4/5/6 + 第三轮 C-1 统一解法)**:run_project 为本次 spawn 生成闭包级 `sessionKey`(归一化后的 X),**该次执行的全部状态读写——同步主流程与异步回调——都只认 sessionKey,不读活跃指针**:
 
 - **异步回调**(输出 handler/close/error/autoStop/bridge 轮询):判断用 `getRunSessionProc(key)`,清理用 `clearRunSession(key)`
-- **同步主流程**(第三轮 C-1 修复):`clearOutputBuffer(key)`(:181)/busy 获取与释放 `acquireProcessSlot(owner, X)`·`releaseRunSessionBusy(X)`(:182/:203/:218)/`setRunSessionProc(key, proc, true)`(:271)——尤其 :271,`setRunningProcess` 内部的 forceKillTree 在"活跃已被并发方切走"时(`:195` profiling 路径的 `await DebuggerProfiler.create()` 让出事件循环,是真实互杀窗口)会杀错窗/写错桶;非 profiling 路径当前恰因 :180→:271 无 await 而安全,但这是脆弱不变量,一律显式传 key 消除
-- **spawn 同步 catch**(:217-223):`releaseRunSessionBusy(key)` + `setSessionStatus(key, 'errored')`(桶终态,不滞留 starting)
+- **同步主流程**(第三轮 C-1 修复):`clearOutputBuffer(key)`(:181)/`setProcessStartTime` per-key(:182)/busy 释放 `releaseRunSessionBusy(X)`(:170 Stop existing 段/:203 profiler 失败/:218 spawn catch)/`setRunSessionProc(key, proc, true)`(:271)——尤其 :271,`setRunningProcess` 内部的 forceKillTree 在"活跃已被并发方切走"时(`:195` profiling 路径的 `await DebuggerProfiler.create()` 让出事件循环,是真实互杀窗口)会杀错窗/写错桶;非 profiling 路径当前恰因 :180→:271 无 await 而安全,但这是脆弱不变量,一律显式传 key 消除
+- **spawn 同步 catch**(:217-223):`releaseRunSessionBusy(key)` + `setSessionStatus(key, 'errored')`(桶终态,不滞留 starting);**`:219` 的 `ctx.setRunningProcess(null)` 一并删除**(proc 从未 setRunSessionProc,X 桶无需清;总禁令已兜底,此处点名防清单对照式实现漏改)
 
 活跃指针只服务"缺省参数的工具调用"这一层(playwright-mcp 当前 tab 模式),以及 spawn 成功后的一次 `setProjectDir(X)` 切换。
 
@@ -145,8 +145,8 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 
 ### 4.5 bridge/profiler:单选跟随活跃项目
 
-- `bridge-client` 的 `setBridgeProjectDir`/`ctx.functionProfiler` 全局单份——**保持不动**,跟随活跃指针;规则文档写明"bridge 查询/输入模拟对最近 run_project 的项目生效,要操作其他项目先 run_project 切换"。
-- **profiler 单选 ≠ 可被非属主销毁(第三轮 I-1 修复)**:现状两处会销毁非本次 spawn 的 profiler——`runtime.ts:188-191`(新 run 无条件 close 现有 profiler)与 close handler 守卫外的 profiler 清理段(`:245-250`,B 进程退出会断 A 的 debugger listener)。修复:profiler 创建时记录其所属 sessionKey(弱关联,存 runtime.ts 闭包/局部);`:188-191` 改为"仅当现有 profiler 的属主 key === 本次 X 才关闭";close handler 清理段并入 sessionKey 身份守卫(仅清本桶属主的 profiler)。
+- `bridge-client` 的 `setBridgeProjectDir` 全局单份——**保持不动**,跟随活跃指针;规则文档写明"bridge 查询/输入模拟对最近 run_project 的项目生效,要操作其他项目先 run_project 切换"。
+- **profiler 语义(第三轮 I-1 + 复核 N-4 精确化)**:`ctx.functionProfiler` 保留**最近一次 profiling 会话**且**不被无关 run 销毁**(属主 sessionKey 守卫)——即 A(profiling)运行 + run B 后,`capture_functions` 采的仍是 A 而非活跃项目 B(行为合理且更有用);规则双副本措辞需与此一致("profiler 跟随最近一次 profiling 会话",非"跟随活跃项目")。现状两处销毁点修复:`runtime.ts:188-191`(新 run 无条件 close 现有 profiler)改"仅当现有 profiler 的属主 key === 本次 X 才关闭";close handler 清理段(`:245-250`)并入 sessionKey 身份守卫(仅清本桶属主的 profiler)。
 - **multi_instance 声明(第三轮 M-6)**:`GodotServer.ts:413` 仅启动时读一次活跃指针(此时必为 `''`),与分桶运行期生命周期无交叠,无冲突。
 - **gdscript-executor 并发警告(第三轮 I-3 修复)**:`gdscript-executor.ts:1140-1142` 的"目标项目有游戏在跑"警告现读 `getProjectDir()+getRunningProcess()`(活跃桶)——改为 `getRunSessionProc(目标项目路径) != null`(按目标桶判定),防活跃=B 时对运行中的 A 漏报 .godot/ 缓存冲突风险。
 - 已知扩展点(本批不做):bridge"每请求建成、无持久连接"模型(`godot_get_context` 实测)使 per-project 路由天然可行,未来按 projectPath 定位端口/secret 即可。
@@ -192,7 +192,7 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 ## 7. 测试策略
 
 - `test/process-state.test.js` 重构+扩充:分桶核心(多桶并存/同桶互杀/活跃切换/关窗只清本桶/上限拒绝/FIFO 逐出/exited_early/陈旧 exit 身分校验/归一化 key/pid 注册表归属/orphan 排除集合)/单项目回归(现有用例语义不变——依赖 §4.1 惰性创建硬性要求,零改动通过)。
-- `test/runtime.test.js`:跨项目并存用例(A run→B run→A 仍活)、stop/get_debug_output 带 project_path、**活跃切走后关旧窗清理**(守卫专项)、**活跃切走后 A 输出仍写 A 桶**(坑 1 专项)、上限溢出报错、preview per-project、wait_for_bridge 并发不误报(坑 6)。
+- `test/runtime.test.js`:跨项目并存用例(A run→B run→A 仍活)、stop/get_debug_output 带 project_path、**活跃切走后关旧窗清理**(守卫专项)、**活跃切走后 A 输出仍写 A 桶**(坑 1 专项)、上限溢出报错、preview per-project、wait_for_bridge 并发不误报(坑 6)。**C-1/I-1 行为锁定用例(第三轮复核 N-5)**:①mock `DebuggerProfiler.create` 延迟 resolve 制造 await 窗口,并发 run_project(A+B) 断言互不杀、proc 各归各桶;②A(profiling)运行中 run B / B 秒退,断言 A 的 profiler 未被销毁。
 - **mock 双基建(第三轮 I-4 扩面)**:①ctx(现有 setRunningProcess 副作用模拟对齐活跃桶语义);②**process-state vi.mock 工厂——grep 实测全仓 15 个文件**,非仅 runtime.test.js:GodotServer 将 import `killAllRunSessions`,`test/godot-server.test.js:69-86`、`test/k-subscribe-setlevel.test.ts:79`、`test/import-check.test.ts:32`、`test/editor-fallback-integration.test.js:54`、`test/core/godot-server-oninitialized.test.ts:55` 等工厂缺新导出 → close() 时 TypeError。统一策略:全部 mock 工厂改 `vi.mock(importOriginal)` 部分覆盖(仅覆盖测试真正需要 stub 的函数,新导出透传真实模块),一次根治补导出漂移。
 - 手动验收:双 fixture 项目真并行弹窗(A/B 两窗口同时活 >30s 周期扫描)→ 关 A 查 A 快照 → B 不受影响。
 
@@ -202,7 +202,7 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 - `src/core/orphan-cleanup.ts`:~15 行(排除集合 + 节流 per-project 化)
 - `src/tools/runtime.ts`:~150 行(Stop existing/输出 handler/五组守卫(含 profiler 段)按 sessionKey;主流程同步写入点全 per-key 化;stop/get_debug_output 加 project_path + 字段读数;上限检查;消息)
 - `src/tools/validation.ts`:~3 行(§4.7 裁决,不再写活跃指针)
-- `src/tools/gdscript-executor.ts`:~3 行(§4.5 I-3 警告改按目标桶)
+- `src/gdscript-executor.ts`:~3 行(§4.5 I-3 警告改按目标桶)
 - `src/core/logger.ts`:~15 行(project 字段经 pendingTools 配对)
 - `src/core/ToolDispatcher.ts`:~3 行(audit projectPath fallback 插入活跃桶,§6 I-2)
 - `src/core/GodotServer.ts`:~5 行(close 链换 killAllRunSessions)
