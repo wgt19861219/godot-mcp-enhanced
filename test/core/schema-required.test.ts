@@ -1,16 +1,22 @@
 import { describe, it, expect } from 'vitest';
 
 // Mock dependencies that tool modules import
-vi.mock('../../src/core/process-state.js', () => ({
-  getRunningProcess: vi.fn().mockReturnValue(null),
-  setRunningProcess: vi.fn(),
-  getOutputBuffer: vi.fn().mockReturnValue([]),
-  setOutputBuffer: vi.fn(),
-  getProcessStartTime: vi.fn().mockReturnValue(0),
-  setProcessStartTime: vi.fn(),
-  getProjectDir: vi.fn().mockReturnValue(''),
-  setProjectDir: vi.fn(),
-}));
+// I-4 统一策略(设计 §7):importOriginal 部分覆盖——仅 stub 防副作用的 getter/setter,
+// 新导出透传真实模块,防补导出漂移。
+vi.mock('../../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/process-state.js')>();
+  return {
+    ...actual,
+    getRunningProcess: vi.fn().mockReturnValue(null),
+    setRunningProcess: vi.fn(),
+    getOutputBuffer: vi.fn().mockReturnValue([]),
+    setOutputBuffer: vi.fn(),
+    getProcessStartTime: vi.fn().mockReturnValue(0),
+    setProcessStartTime: vi.fn(),
+    getProjectDir: vi.fn().mockReturnValue(''),
+    setProjectDir: vi.fn(),
+  };
+});
 
 vi.mock('../../src/helpers.js', () => ({
   isPathInAllowedRoots: vi.fn().mockReturnValue(true),
