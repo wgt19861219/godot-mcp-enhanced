@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.33.2] - 2026-09-13
+
+> 规则模板门禁触发的 patch bump（`check-rules-version-bump.mjs` 硬门禁）；npm publish / tag 待用户指令。
+
+### Added
+- `run_project` 新增 `preview` 参数：禁用自动停止，游戏窗口常驻至用户关闭，用于 AI 改完视觉内容后的收尾验证（替代开编辑器）。规则模板双副本新增「视觉改动收尾流程」，`claudemd-builder` 措辞同步。
+
+### Fixed
+- 输出快照机制（设计审阅 B-1）：游戏进程结束（关窗/被杀/秒崩）后 `get_debug_output` 仍可读取该次运行输出（`source: "last_finished_run"` 标注）——修复 `setRunningProcess(null)` 连带清空输出缓冲导致"运行结束后查错不可达"。
+- 顺带修复现存 bug：`stop_project` 在 `killProcess` 返回后输出缓冲已被 close handler 清空，停止报告的 errors/warnings 实际一直为空；现走快照回落。
+
 ## [0.33.1] - 2026-09-13
 
 > **合并说明**:本段内容来自 2026-09-01 完成的「竞品启发加固批」(分支 feat/competitor-inspired-hardening,
