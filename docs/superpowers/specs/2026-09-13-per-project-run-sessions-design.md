@@ -1,7 +1,7 @@
 # per-project 运行会话分桶 — 设计文档
 
 - **日期**:2026-09-13
-- **状态**:v2(第三方审阅 4 Blocking + 2 Important + 9 Nits 全部落实,见 §10)
+- **状态**:v3(第三轮全新视角审阅 1C+5I+7M 全落实,见 §10.3)
 - **分支**:feat/per-project-run-sessions(基于 master@d840d1e3,含预览模式 0.33.2)
 - **类型**:feature(架构级:process-state 进程槽分桶)
 - **前置 feature**:[2026-09-13-run-project-preview-mode-design.md](2026-09-13-run-project-preview-mode-design.md)(preview/快照机制,本设计将其 per-project 化)
@@ -73,7 +73,9 @@ _projectDir: string;                 // 语义升级:活跃项目(最近一次 r
 - **pid 注册表归属化**:`_spawnedGodotPids` 从 `Set<number>` 改为 `Map<number, projectKey>`——orphan 清理链(§4.4)按桶归属排除全部活进程,防周期扫描误杀非活跃窗口。
 - **运行中进程上限**:`GODOT_MCP_MAX_SESSIONS`(默认 4,≥1),溢出报错并列出在跑会话提示先 stop。
 - **谓词**(Supervisor 模式):`isAlive(s)`(starting/running)、`canSignal(s)`(isAlive+stopping)、`hasSnapshot(s)`。`exited_early`=启动后 2s 内退出(Godot 秒退常见,单独成态防丢信息);`errored`=close code 非 0 且非 early;`stopping` 由 stop_project/killAllRunSessions 在 killProcess 前设置。
-- **活跃桶惰性创建(硬性实现要求)**:任何写操作到达时若活跃 key 无桶,创建空桶(key 仍为 `_projectDir` 当前值,初始 `''`)——现有 77 个 process-state 用例在无 setProjectDir 前提下依赖此语义。
+- **活跃桶惰性创建(硬性实现要求)**:任何写操作到达时若活跃 key 无桶,创建空桶(key 仍为 `_projectDir` 当前值,初始 `''`)——现有 77 个 process-state 用例在无 setProjectDir 前提下依赖此语义。**惰性空桶钉死语义(第三轮 I-5)**:status 一律 `'exited'`(进 FIFO 可逐出、**不占 MAX_SESSIONS 的 isAlive 名额**);key 为 `''` 的桶**不进 listRunSessions**;首次 setProjectDir(X) 后空 '' 桶即废弃(FIFO 自然逐出)。
+- **状态机转移补全(第三轮)**:starting→running 由"spawn 成功且 proc.pid 存在"触发(run_project 主流程);**spawn 同步失败**(catch 路径)→ 桶终态 `'errored'`(proc=null,不滞留 starting);close 判定顺序:2s 内退出 → `exited_early` 优先于 close code 判定,2s 外 close code≠0 → `errored`,否则 `exited`。
+- **上限 env 读取时机(第三轮 M-2)**:`GODOT_MCP_MAX_SESSIONS`/`GODOT_MCP_MAX_FINISHED_SESSIONS` **每次调用时读取**(非启动快照),resetState 可重置——便于测试与运行时调整。
 
 ### 4.2 兼容层(零改动的关键)
 
@@ -82,25 +84,33 @@ _projectDir: string;                 // 语义升级:活跃项目(最近一次 r
 | 现有函数 | 新语义 |
 |---------------------|--------|
 | `getRunningProcess()`/`setRunningProcess(p,skip)` | 活跃桶的 proc;setRunningProcess(null) 只清**活跃桶**(快照挪入) |
-| `getOutputBuffer()`/`clearOutputBuffer()` | 活跃桶的缓冲 |
+| `getOutputBuffer()`/`clearOutputBuffer(projectKey?)` | 活跃桶的缓冲;**加可选 key**(run_project 主流程清 X 桶时显式传) |
 | `appendOutput(lines, projectKey?)` | **加可选 projectKey**:缺省=活跃桶(兼容既有调用方);**游戏输出流 handler 必须显式传桶 key**(§4.3 坑 1 修复,防串桶) |
 | `getLastFinishedRunOutput()` | 活跃桶的快照 |
 | `acquireProcessSlot(owner, projectPath?)` | **按目标项目**(显式传参)上 busy 锁;缺省=活跃桶。⚠️ 必须加可选参数:run_project 现状顺序是 acquire(:176)先于 setProjectDir(:180),acquire 时活跃指针还指向上一个项目——按"活跃桶"锁会锁错桶 |
 | `getProjectDir()`/`setProjectDir(d)` | 活跃指针本身;**写入方仅限 run_project 与显式切换点**(§4.7 裁决) |
-| `getBusyInfo()`/`buildBusyErrorMessage()` | 数据来源改为**持锁桶**的项目/pid/时长(多桶下报活跃项目会张冠李戴) |
+| `getBusyInfo()`/`buildBusyErrorMessage(targetKey?)` | **按目标 key 参数化**(第三轮 M-1):多桶同时 busy 时报目标桶的持锁信息;数据来源为持锁桶的项目/pid/时长 |
+| `setRunSessionProc(projectKey, proc, skipBusyCheck?)` | **(第三轮 C-1 修复)按 key 写入 proc**:内部 forceKillTree 仅针对该桶旧 proc;run_project 主流程 `:271` 必须用它,不得用活跃桶语义的 `setRunningProcess`(其内部对"当前活跃 proc"的 forceKillTree 在并发+活跃切换下会杀错窗) |
+| `releaseRunSessionBusy(projectKey)` | **(第三轮 C-1)按 key 释放 busy**:主流程 `:182/:203/:218` 的 busy 释放显式传 key |
 | acquireProcessSlot 的死进程自愈检查(现状 `process-state.ts:193-208` 读全局 `_runningProcess`) | 读**目标桶**的 proc |
+| enqueueAsync(C-04 全局串行队列) | **保持全局**(临界区同步判断,只影响吞吐不影响语义,无假忙碌);**硬性约束(第三轮 M-4):临界区内不得引入 await**——否则跨项目锁申请被串行阻塞成假忙碌 |
 
 新增导出(供 runtime.ts 的跨项目路径使用;均为 per-key 状态操作,非依赖注入 setter,不违反 AGENTS.md「禁止新增模块级 setter 注入点」):
 
 ```ts
 getSession(projectPath?: string): RunSession | undefined;        // 缺省=活跃桶
-listRunSessions(): Array<{ projectPath: string; displayPath: string; status: string; pid: number | null }>;
+listRunSessions(): Array<{ projectPath: string; displayPath: string; status: string; pid: number | null }>;  // 不含 '' 空桶
 getRunSessionProc(projectPath: string): ChildProcess | null;      // 守卫判断用
+setRunSessionProc(projectPath: string, proc: ChildProcess | null, skipBusyCheck?: boolean): void;  // 主流程写入用(C-1)
+releaseRunSessionBusy(projectPath: string): void;                  // 主流程 busy 释放用(C-1)
 clearRunSession(projectPath: string): void;                        // 守卫体内动作用:清 X 桶的 proc/busy(活跃则同步指针)/快照挪移
 markSessionStopping(projectPath: string): void;                    // killProcess 前设 stopping 态
+setSessionStatus(projectPath: string, status: RunSessionStatus): void;  // spawn 失败终态等
 getActiveRunPids(): number[];                                      // orphan 清理链排除集合(§4.4)
 killAllRunSessions(): Promise<void>;                               // GodotServer.close 用
 ```
+
+⚠️ **第三轮 C-1 关键约束**:`setRunningProcess(p, skip)` 这个活跃桶语义的导出**保留**(ToolDispatcher ctx 兼容层消费),但 **run_project 主流程一律禁用**——主流程全部写入走上面 per-key API(见 §4.3 守卫总纲扩展)。
 
 **ToolDispatcher ctx 接口零改动**(`ToolDispatcher.ts:104-116` 直通层不变)——qa/gif/bridge-session 等全部现有消费方不动。
 
@@ -112,10 +122,17 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 | 输出流 handler(现状 `runtime.ts:225-230` 无参 `appendOutput()`) | **闭包捕获本次 spawn 的 projectKey**,改 `appendOutput(lines, key)`——活跃指针切走后 A 的输出继续写 A 桶(坑 1:串桶修复)。**`:221`(spawn 同步 catch)与 `:268`(error handler)两处 `appendOutput` 同样必须传 key**——尤其 :268 的崩溃错误行是 exited_early/errored 态最需要的输出,写错桶即丢失 |
 | **四组守卫的判断与体内动作都按 spawn 时捕获的 key**(坑 4/5/6 修复) | close handler(:253-254)/error handler(:263-264)/autoStopTimer(:236-239)/bridge 未就绪清理(:285-287)与 wait_for_bridge 的 `isCancelled`(:279):**判断**改 `ps.getRunSessionProc(key) === proc`;**体内清理**(setProcessBusy(false)+setRunningProcess(null))改 `ps.clearRunSession(key)`——不可用活跃桶语义,否则非活跃桶的 close 会清掉活跃桶的 busy(双进程)或泄漏本桶 busy |
 | `stop_project(project_path?)` | 缺省=活跃桶;指定 X=杀 X 的活进程并返回其输出(快照回落不变);orphan 分支按 X 的 key 对照 pid 注册表归属清理(准确语义见 §4.4 勘误) |
+| **stop/get_debug_output 指定 X 时的字段读取(第三轮 M-3)** | `runtime.ts:323/:343` 的 `processStartTime` 与 `resolveReadableOutput` helper 现读 `ctx.*`(活跃桶)——指定 X 时全部改读 X 桶(`getSession(X)`) |
 | `get_debug_output(project_path?)` | 缺省=活跃桶;指定 X=X 桶当前输出或快照(source 标注不变) |
 | 返回消息 | 新增多项目提示:run_project 成功消息附当前在跑会话数(如 `(2 sessions running)`);超限错误列会话清单 |
 
-**守卫总纲(PM2/Erodenn 先例,审查坑 3/4/5/6 统一解法)**:run_project 为本次 spawn 生成闭包级 `sessionKey`(归一化后的 X),**该次 spawn 生命周期内的全部异步回调(输出 handler/close/error/autoStop/bridge 轮询)都只认 sessionKey,不读活跃指针**——判断用 `getRunSessionProc(key)`,清理用 `clearRunSession(key)`。活跃指针只服务"缺省参数的工具调用"这一层(playwright-mcp 当前 tab 模式)。
+**守卫总纲(PM2/Erodenn 先例,审查坑 3/4/5/6 + 第三轮 C-1 统一解法)**:run_project 为本次 spawn 生成闭包级 `sessionKey`(归一化后的 X),**该次执行的全部状态读写——同步主流程与异步回调——都只认 sessionKey,不读活跃指针**:
+
+- **异步回调**(输出 handler/close/error/autoStop/bridge 轮询):判断用 `getRunSessionProc(key)`,清理用 `clearRunSession(key)`
+- **同步主流程**(第三轮 C-1 修复):`clearOutputBuffer(key)`(:181)/busy 获取与释放 `acquireProcessSlot(owner, X)`·`releaseRunSessionBusy(X)`(:182/:203/:218)/`setRunSessionProc(key, proc, true)`(:271)——尤其 :271,`setRunningProcess` 内部的 forceKillTree 在"活跃已被并发方切走"时(`:195` profiling 路径的 `await DebuggerProfiler.create()` 让出事件循环,是真实互杀窗口)会杀错窗/写错桶;非 profiling 路径当前恰因 :180→:271 无 await 而安全,但这是脆弱不变量,一律显式传 key 消除
+- **spawn 同步 catch**(:217-223):`releaseRunSessionBusy(key)` + `setSessionStatus(key, 'errored')`(桶终态,不滞留 starting)
+
+活跃指针只服务"缺省参数的工具调用"这一层(playwright-mcp 当前 tab 模式),以及 spawn 成功后的一次 `setProjectDir(X)` 切换。
 
 ### 4.4 orphan/周期清理链纳入分桶(审查坑 2 修复)
 
@@ -123,12 +140,16 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 
 - `process-state.ts:378` 传 `runningPid: _runningProcess?.pid`(单值)→ `orphan-cleanup.ts:67` 第一层只跳过这一个 pid——非活跃桶 A 的活进程在 `_spawnedGodotPids` 集合中且 pid≠runningPid → `GodotServer.ts:531` 的 **30s 周期扫描**与 stop_project orphan 分支(`runtime.ts:306-313`)会 taskkill 它。
 - **修复**:①`_spawnedGodotPids` 改 `Map<number, projectKey>`(§4.1);②`killOrphanGodotProcesses` 的排除集合改为 `getActiveRunPids()`(全部桶内活进程);③`registerSpawnedGodotPid(pid)` 加可选 projectKey 参数(runtime.ts 传本次 sessionKey),保留"非托管 pid"的孤儿语义不变。
+- **orphan 30s 节流 per-project 化(第三轮 M-5)**:现状节流(`orphan-cleanup.ts:60-61`)是模块级全局——A 的周期扫描会节流 30s 内 B 的 stop_project orphan 分支。改为 `Map<projectKey, lastScanAt>` 按 key 节流。
 - ⚠️ 勘误(v1 §4.3 错误描述):orphan 第一层过滤是**按 pid 集合**遍历,与 projectDir 无关;projectDir 只用于 `fullSystemScan` 兜底层。"orphan 清理按指定项目过滤"的准确语义=stop_project 的 orphan 分支以被停项目的 key 对照注册表归属,只清"曾由该项目 run 出、现已脱离管理"的进程。
 
 ### 4.5 bridge/profiler:单选跟随活跃项目
 
 - `bridge-client` 的 `setBridgeProjectDir`/`ctx.functionProfiler` 全局单份——**保持不动**,跟随活跃指针;规则文档写明"bridge 查询/输入模拟对最近 run_project 的项目生效,要操作其他项目先 run_project 切换"。
-- 已知扩展点(本批不做):bridge"每请求建连、无持久连接"模型(`godot_get_context` 实测)使 per-project 路由天然可行,未来按 projectPath 定位端口/secret 即可。
+- **profiler 单选 ≠ 可被非属主销毁(第三轮 I-1 修复)**:现状两处会销毁非本次 spawn 的 profiler——`runtime.ts:188-191`(新 run 无条件 close 现有 profiler)与 close handler 守卫外的 profiler 清理段(`:245-250`,B 进程退出会断 A 的 debugger listener)。修复:profiler 创建时记录其所属 sessionKey(弱关联,存 runtime.ts 闭包/局部);`:188-191` 改为"仅当现有 profiler 的属主 key === 本次 X 才关闭";close handler 清理段并入 sessionKey 身份守卫(仅清本桶属主的 profiler)。
+- **multi_instance 声明(第三轮 M-6)**:`GodotServer.ts:413` 仅启动时读一次活跃指针(此时必为 `''`),与分桶运行期生命周期无交叠,无冲突。
+- **gdscript-executor 并发警告(第三轮 I-3 修复)**:`gdscript-executor.ts:1140-1142` 的"目标项目有游戏在跑"警告现读 `getProjectDir()+getRunningProcess()`(活跃桶)——改为 `getRunSessionProc(目标项目路径) != null`(按目标桶判定),防活跃=B 时对运行中的 A 漏报 .godot/ 缓存冲突风险。
+- 已知扩展点(本批不做):bridge"每请求建成、无持久连接"模型(`godot_get_context` 实测)使 per-project 路由天然可行,未来按 projectPath 定位端口/secret 即可。
 
 ### 4.6 事件显式标识(为子项目 2 铺路)
 
@@ -164,6 +185,7 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 | claudemd-builder | 「运行时管理」段同步多项目措辞(手工清单,无门禁) |
 | 生成产物 | inputSchema 加 `project_path` 参数(stop_project/get_debug_output)→ gen:tool-docs + build-matrix + check:budget(**顺序:build → build-matrix → gen:tool-docs**,gen 消费 matrix 产物——上批教训) |
 | README | 工具表行 + 版本表行 |
+| **audit 审计归属(第三轮 I-2)** | `ToolDispatcher.ts:558-559` 的 audit projectPath fallback 链 `args.project_path → resolveProjectPath()(env)` 中间插入 `ps.getProjectDir()`(活跃桶)——runtime 域 risk='process' 操作(stop_project 等)无参时审计落活跃项目而非 env 项目,防多桶审计归属漂移。~3 行 |
 | AGENTS.md 对照 | ①新增导出为 per-key 状态操作、非依赖注入 setter,不违反「禁止新增模块级 setter 注入点」(§4.2 已声明);②实施完成后产出 `docs/reviews/` 第三方审查文档(「完成前强制检查」§8) |
 | 测试策略 | §7 |
 
@@ -171,20 +193,22 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 
 - `test/process-state.test.js` 重构+扩充:分桶核心(多桶并存/同桶互杀/活跃切换/关窗只清本桶/上限拒绝/FIFO 逐出/exited_early/陈旧 exit 身分校验/归一化 key/pid 注册表归属/orphan 排除集合)/单项目回归(现有用例语义不变——依赖 §4.1 惰性创建硬性要求,零改动通过)。
 - `test/runtime.test.js`:跨项目并存用例(A run→B run→A 仍活)、stop/get_debug_output 带 project_path、**活跃切走后关旧窗清理**(守卫专项)、**活跃切走后 A 输出仍写 A 桶**(坑 1 专项)、上限溢出报错、preview per-project、wait_for_bridge 并发不误报(坑 6)。
-- **mock 双基建**:①ctx(现有 setRunningProcess 副作用模拟对齐活跃桶语义);②`runtime.test.js:22-36` 的 process-state vi.mock 工厂**必须补全部新导出**(getRunSessionProc/clearRunSession/markSessionStopping/getActiveRunPids/listRunSessions/killAllRunSessions + appendOutput/acquireProcessSlot/registerSpawnedGodotPid 的新参数形态),否则现有用例直接 TypeError。
+- **mock 双基建(第三轮 I-4 扩面)**:①ctx(现有 setRunningProcess 副作用模拟对齐活跃桶语义);②**process-state vi.mock 工厂——grep 实测全仓 15 个文件**,非仅 runtime.test.js:GodotServer 将 import `killAllRunSessions`,`test/godot-server.test.js:69-86`、`test/k-subscribe-setlevel.test.ts:79`、`test/import-check.test.ts:32`、`test/editor-fallback-integration.test.js:54`、`test/core/godot-server-oninitialized.test.ts:55` 等工厂缺新导出 → close() 时 TypeError。统一策略:全部 mock 工厂改 `vi.mock(importOriginal)` 部分覆盖(仅覆盖测试真正需要 stub 的函数,新导出透传真实模块),一次根治补导出漂移。
 - 手动验收:双 fixture 项目真并行弹窗(A/B 两窗口同时活 >30s 周期扫描)→ 关 A 查 A 快照 → B 不受影响。
 
-## 8. 改动量估计
+## 8. 改动量估计(第三轮 M-7 校正)
 
-- `src/core/process-state.ts`:~250 行(单例组→Map 分桶重构 + 新导出 7 个 + pid 注册表归属化)
-- `src/core/orphan-cleanup.ts`:~10 行(排除集合改 getActiveRunPids)
-- `src/tools/runtime.ts`:~110 行(Stop existing/输出 handler/四组守卫按 sessionKey;stop/get_debug_output 加 project_path;上限检查;消息)
+- `src/core/process-state.ts`:~300-350 行(逐函数盘点约 20 个导出受动:6 个模块变量收进 RunSession + busy/缓冲/时间/目录/pid 注册/acquire/resetState + 新导出 9 个 + FIFO/上限/归一化)
+- `src/core/orphan-cleanup.ts`:~15 行(排除集合 + 节流 per-project 化)
+- `src/tools/runtime.ts`:~150 行(Stop existing/输出 handler/五组守卫(含 profiler 段)按 sessionKey;主流程同步写入点全 per-key 化;stop/get_debug_output 加 project_path + 字段读数;上限检查;消息)
 - `src/tools/validation.ts`:~3 行(§4.7 裁决,不再写活跃指针)
+- `src/tools/gdscript-executor.ts`:~3 行(§4.5 I-3 警告改按目标桶)
 - `src/core/logger.ts`:~15 行(project 字段经 pendingTools 配对)
-- `src/core/ToolDispatcher.ts`:0(兼容红利)
+- `src/core/ToolDispatcher.ts`:~3 行(audit projectPath fallback 插入活跃桶,§6 I-2)
 - `src/core/GodotServer.ts`:~5 行(close 链换 killAllRunSessions)
+- 测试 mock 工厂:15 个文件改 `vi.mock(importOriginal)` 部分覆盖(§7)
 - 规则双副本/claudemd-builder/README/CHANGELOG:~25 行 × 若干
-- 测试:~350 行(重构+新增)
+- 测试:~400 行(重构+新增)
 - 版本链:0.33.2 → 0.33.3
 
 ## 9. 开放问题
@@ -211,3 +235,17 @@ killAllRunSessions(): Promise<void>;                               // GodotServe
 1. "兼容层语义重定向活跃桶"模式中,**每个读活跃指针的位置都是独立坑点**——盘点必须覆盖守卫判断、守卫体内动作、输出写入回调、异步轮询闭包(isCancelled)四类,不能只盯守卫(v1 漏掉 6 个中的 4 个皆因此)。
 2. 模块级单例分桶改造前,必须 grep 单例 setter 的**全部写入方**而非只看主流程(setProjectDir 的第二写入方 validation.ts 直接推翻设计核心定义)。
 3. orphan/周期清理链是"多实例并存"设计的隐形杀手:任何"只跳过单个当前 pid"的排除逻辑都会周期性击杀并行实例——多路并存设计必须把清理链纳入边界表。
+
+### 10.3 第三轮全新视角审阅(2026-09-13,feature-dev:code-reviewer 独立实例,不背前两轮发现)
+
+**v2.1 判定:BLOCKING(1C+5I+7M) → 本文档 v3 全部落实**:
+
+- **C-1(Critical,90%)** 守卫总纲漏覆盖**主流程同步写入点**:`setRunningProcess(proc,true)`(runtime.ts:271)内部 forceKillTree 对"当前活跃 proc"生效——并发 run_project(profiling 路径 `:195 await` 是真实互杀窗口)下 A 写 procA 进 B 桶并杀 B;`:203/:218` busy 释放同病;缺按 key 写入 API → §4.2 补 `setRunSessionProc`/`releaseRunSessionBusy`/`setSessionStatus`,§4.3 守卫总纲扩为"同步主流程与异步回调都只认 sessionKey"。
+- **I-1(85%)** close handler 守卫外的 profiler 清理段(:245-250)+ 新 run 无条件 close profiler(:188-191):B 退出/B 启动会销毁 A 的 profiler(单选≠可被非属主销毁) → §4.5 profiler 属主 key 弱关联 + 两处守卫化。
+- **I-2(85%)** audit 审计 projectPath fallback 走 env 而非活跃桶,多桶审计归属漂移(安全护城河问题) → §6 补 ToolDispatcher audit fallback 修复。
+- **I-3(80%)** gdscript-executor:1140-1142 游戏进程并发警告读活跃指针,多桶漏报 → §4.5 改按目标桶判定。
+- **I-4(85%)** process-state vi.mock 工厂 grep 实测 **15 个文件**(v2 只点 1 个),GodotServer 相关 5 个缺新导出会 TypeError → §7 统一 `vi.mock(importOriginal)` 部分覆盖策略。
+- **I-5(80%)** 惰性空桶 status 初始值/'' 桶生命周期未定义 → §4.1 钉死(status='exited'/不占名额/不进列表/废弃即 FIFO)。
+- **M-1~M-7 全落实**:buildBusyErrorMessage 按 targetKey 参数化(§4.2)/env 每调用读取(§4.1)/stop·get_debug_output 指定 X 时 processStartTime+resolveReadableOutput 改读 X 桶(§4.3)/enqueueAsync 临界区禁 await(§4.2)/orphan 节流 per-project(§4.4)/multi_instance 无交叠声明(§4.5)/改动量校正(§8)。
+- **审查确认项**:12 类时序场景中 8 类已被 v2 覆盖(关窗×stop 竞态双向安全/stash move 语义/autoStop/wait_for_bridge/GodotServer.close/run_tests 等价/bridge 残留切换无问题);77 用例计数准确;qa/gif/bridge-session/'Bridge ready' 判据不受影响;enqueueAsync 与 per-project busy 无假忙碌(临界区同步);设计骨架(竞品依据/分桶模型/身份守卫/orphan 链/§4.7 裁决)实测均成立。
+- **新教训(并入 §10.2 主题)**:"盘点读点"的姊妹版——**主流程同步写入点(setRunningProcess/setProcessBusy/clearOutputBuffer)同样必须逐个过 key 化**,且 setRunningProcess 这类"写 API 内嵌 kill 副作用"的函数是并发下最危险的写入点。
