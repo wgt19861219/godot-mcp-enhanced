@@ -73,7 +73,7 @@ _projectDir: string;                 // 语义升级:活跃项目(最近一次 r
 - **pid 注册表归属化**:`_spawnedGodotPids` 从 `Set<number>` 改为 `Map<number, projectKey>`——orphan 清理链(§4.4)按桶归属排除全部活进程,防周期扫描误杀非活跃窗口。
 - **运行中进程上限**:`GODOT_MCP_MAX_SESSIONS`(默认 4,≥1),溢出报错并列出在跑会话提示先 stop。
 - **谓词**(Supervisor 模式):`isAlive(s)`(starting/running)、`canSignal(s)`(isAlive+stopping)、`hasSnapshot(s)`。`exited_early`=启动后 2s 内退出(Godot 秒退常见,单独成态防丢信息);`errored`=close code 非 0 且非 early;`stopping` 由 stop_project/killAllRunSessions 在 killProcess 前设置。
-- **活跃桶惰性创建(硬性实现要求)**:任何写操作到达时若活跃 key 无桶,创建空桶(key 仍为 `_projectDir` 当前值,初始 `''`)——现有 77 个 process-state 用例在无 setProjectDir 前提下依赖此语义。**惰性空桶钉死语义(第三轮 I-5)**:status 一律 `'exited'`(进 FIFO 可逐出、**不占 MAX_SESSIONS 的 isAlive 名额**);key 为 `''` 的桶**不进 listRunSessions**;首次 setProjectDir(X) 后空 '' 桶即废弃(FIFO 自然逐出)。
+- **活跃桶惰性创建(硬性实现要求)**:任何写操作到达时若活跃 key 无桶,创建空桶(key 仍为 `_projectDir` 当前值,初始 `''`)——现有 77 个 process-state 用例在无 setProjectDir 前提下依赖此语义。**惰性空桶钉死语义(第三轮 I-5)**:status 一律 `'exited'`(进 FIFO 可逐出、**不占 MAX_SESSIONS 的 isAlive 名额**);key 为 `''` 的桶**不进 listRunSessions**;〔Task 1 实施修正 2026-09-13:空 '' 桶随首次 setProjectDir **重绑**至新 key(而非废弃)——77 用例之一断言 busy/startTime 跨 setProjectDir 存续,重绑是单例时代语义的等价保持;重绑严格限定"从未承载真实运行"的空桶(proc=null/无输出/无快照),真实桶永不迁移〕。
 - **状态机转移补全(第三轮)**:starting→running 由"spawn 成功且 proc.pid 存在"触发(run_project 主流程);**spawn 同步失败**(catch 路径)→ 桶终态 `'errored'`(proc=null,不滞留 starting);close 判定顺序:2s 内退出 → `exited_early` 优先于 close code 判定,2s 外 close code≠0 → `errored`,否则 `exited`。
 - **上限 env 读取时机(第三轮 M-2)**:`GODOT_MCP_MAX_SESSIONS`/`GODOT_MCP_MAX_FINISHED_SESSIONS` **每次调用时读取**(非启动快照),resetState 可重置——便于测试与运行时调整。
 
