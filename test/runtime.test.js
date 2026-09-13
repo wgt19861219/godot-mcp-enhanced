@@ -22,6 +22,7 @@ vi.mock('child_process', () => ({
 vi.mock('../src/core/process-state.js', () => ({
   appendOutput: vi.fn(),
   clearOutputBuffer: vi.fn(),
+  getLastFinishedRunOutput: vi.fn(() => []),
   killProcess: vi.fn(async () => {}),
   forceKillTree: vi.fn(),
   setProcessBusy: vi.fn(),
@@ -68,7 +69,7 @@ import {
   TOOL_META,
 } from '../src/tools/runtime.js';
 import { spawn } from 'child_process';
-import { killProcess, clearOutputBuffer, setProcessBusy, registerSpawnedGodotPid, unregisterSpawnedGodotPid, killOrphanGodotProcesses } from '../src/core/process-state.js';
+import { killProcess, clearOutputBuffer, setProcessBusy, registerSpawnedGodotPid, unregisterSpawnedGodotPid, killOrphanGodotProcesses, getLastFinishedRunOutput } from '../src/core/process-state.js';
 import { isBridgeReady } from '../src/tools/game-bridge.js';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ function createMockCtx(overrides = {}) {
     opsScript: '/fake/ops.gd',
     findGodot: vi.fn(async () => '/fake/godot'),
     runningProcess: null,
-    setRunningProcess: vi.fn(),
+    setRunningProcess: vi.fn(function (p) { this.runningProcess = p; }),
     outputBuffer: [],
     setOutputBuffer: vi.fn(),
     processStartTime: Date.now() - 5000,
@@ -582,5 +583,105 @@ describe('run_project — Imp-4 process replacement guard', () => {
     expect(ctx.setRunningProcess).not.toHaveBeenCalled();
     // ADVISORY-3（final review Minor-4）：error handler 同理，守卫外 unregister 执行（runtime.ts:218）。
     expect(unregisterSpawnedGodotPid).toHaveBeenCalledWith(54321);
+  });
+});
+
+// ─── run_project preview 模式 + 快照回落(B-1) ───────────────────────────────
+
+function resultText(r) { return (r?.content?.[0]?.text) ?? ''; }
+
+describe('run_project — preview 模式', () => {
+  it('preview=true 不设 autoStopTimer:快进超时时间进程不被杀', async () => {
+    vi.useFakeTimers();
+    try {
+      const procA = mockProc();
+      setupSpawnMock(procA);
+      const ctx = createMockCtx();
+      await handleTool('runtime', { action: 'run_project', project_path: '/p', timeout: 5, preview: true }, ctx);
+      ctx.runningProcess = procA;
+      killProcess.mockClear();
+      vi.advanceTimersByTime(6000);
+      expect(killProcess).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('对照组:非 preview 时 timer 到点杀进程', async () => {
+    vi.useFakeTimers();
+    try {
+      const procA = mockProc();
+      setupSpawnMock(procA);
+      const ctx = createMockCtx();
+      await handleTool('runtime', { action: 'run_project', project_path: '/p', timeout: 5 }, ctx);
+      ctx.runningProcess = procA;
+      killProcess.mockClear();
+      vi.advanceTimersByTime(6000);
+      expect(killProcess).toHaveBeenCalledWith(procA);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preview=true 返回消息含预览语义且不含 timeout 秒数', async () => {
+    setupSpawnMock(mockProc());
+    const ctx = createMockCtx();
+    const r = await handleTool('runtime', { action: 'run_project', project_path: '/p', timeout: 30, preview: true }, ctx);
+    const t = resultText(r);
+    expect(t).toContain('Preview mode');
+    expect(t).toContain('no auto-stop');
+    expect(t).not.toContain('timeout: 30s');
+  });
+
+  it('preview + wait_for_bridge 成功分支:含 Preview mode 且不含 timeout 秒数', async () => {
+    setupSpawnMock(mockProc());
+    isBridgeReady.mockResolvedValue({ ready: true, reason: '' });
+    const ctx = createMockCtx();
+    const r = await handleTool('runtime', { action: 'run_project', project_path: '/p', preview: true, wait_for_bridge: true, bridge_timeout: 10 }, ctx);
+    const t = resultText(r);
+    expect(t).toContain('Preview mode');
+    expect(t).not.toContain('timeout: 40s');
+    expect(t).toContain('bridge ready');
+  });
+});
+
+describe('get_debug_output / stop_project — 快照回落(B-1)', () => {
+  afterEach(() => {
+    getLastFinishedRunOutput.mockReturnValue([]);
+  });
+
+  it('buffer 空 + 无运行进程 + 快照非空 → 读快照并标注 last_finished_run', async () => {
+    getLastFinishedRunOutput.mockReturnValue(['SCRIPT ERROR: boom']);
+    const ctx = createMockCtx();
+    const r = await handleTool('runtime', { action: 'get_debug_output' }, ctx);
+    const t = resultText(r);
+    expect(t).toContain('boom');
+    expect(t).toContain('last_finished_run');
+  });
+
+  it('buffer 非空 → 优先当前 buffer,不读快照', async () => {
+    getLastFinishedRunOutput.mockReturnValue(['OLD-SNAPSHOT-LINE']);
+    const ctx = createMockCtx({ outputBuffer: ['CURRENT LINE'] });
+    const r = await handleTool('runtime', { action: 'get_debug_output' }, ctx);
+    const t = resultText(r);
+    expect(t).toContain('CURRENT LINE');
+    expect(t).not.toContain('OLD-SNAPSHOT-LINE');
+  });
+
+  it('stop_project 在进程结束后仍能报出错误(现存 bug 修复)', async () => {
+    const procA = mockProc();
+    setupSpawnMock(procA);
+    const ctx = createMockCtx({ runningProcess: procA });
+    getLastFinishedRunOutput.mockReturnValue(['SCRIPT ERROR: late-crash']);
+    const r = await handleTool('runtime', { action: 'stop_project' }, ctx);
+    const t = resultText(r);
+    expect(t).toContain('late-crash');
+  });
+
+  it('全空仍返回 No debug output', async () => {
+    getLastFinishedRunOutput.mockReturnValue([]);
+    const ctx = createMockCtx();
+    const r = await handleTool('runtime', { action: 'get_debug_output' }, ctx);
+    expect(resultText(r)).toContain('No debug output available');
   });
 });
