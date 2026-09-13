@@ -88,6 +88,7 @@ export const GODOT_MCP_RULES = `# Godot MCP 开发规则
 
 ## 运行时管理
 - run_project 有超时设置，长时间运行需调整；preview=true 时无自动超时（窗口常驻至用户关闭，用于改后视觉验证）
+- 多项目可并行运行（多窗口并存，上限 GODOT_MCP_MAX_SESSIONS 默认 4）；查错/停止其他项目用 stop_project、get_debug_output 的 project_path 参数
 - launch_editor 启动编辑器 GUI，stop_project 终止运行中的进程
 - dev_loop 可执行任意 GDScript 代码
 

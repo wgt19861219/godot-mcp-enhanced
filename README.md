@@ -220,7 +220,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | 工具 | 说明 |
 |------|------|
 | `launch_editor` | 启动 Godot 编辑器 GUI |
-| `run_project` | 以调试模式运行项目（自动超时；`preview=true` 时窗口常驻至用户关闭，用于改后视觉验证） |
+| `run_project` | 以调试模式运行项目（自动超时；`preview=true` 时窗口常驻至用户关闭，用于改后视觉验证；多项目并行多窗口并存，查错/停止其他项目用 `stop_project`/`get_debug_output` 的 `project_path`） |
 | `stop_project` | 停止运行中的项目，返回结构化输出 |
 | `get_debug_output` | 获取分类调试输出（错误/警告/打印） |
 | `screenshot` | 截图三件套:`capture` 截取游戏画面（Windows 默认窗口模式，Linux/macOS 自动降级）/ `analyze` AI 分析截图内容（元素识别、缺陷检测）/ `diff` 像素级双图对比 |
@@ -734,6 +734,7 @@ npm install && npm run build
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| **v0.33.3** | 2026-09-14 | **per-project 运行会话分桶**：`run_project` 多项目并行（多窗口并存，上限 `GODOT_MCP_MAX_SESSIONS` 默认 4；同项目重复 run 先停旧进程）；`stop_project`/`get_debug_output` 加 `project_path` 跨项目查错（快照 per-project，关窗后仍可查）；修并发互杀（C-1 主流程 per-key 写入）/orphan 30s 扫描误杀非活跃窗（排除集合改全部活进程+节流分桶）/profiler 被无关 run 销毁（跟随最近 profiling 会话）/FIFO 残留误逐出活跃桶；audit 归属活跃桶 + logger JSONL 加 `project` 字段。规则模板补多项目说明。 |
 | **v0.33.2** | 2026-09-13 | **预览模式**：`run_project(preview)` 禁自动停止、弹常驻游戏窗口（AI 改完视觉验证，替代开编辑器）+ 输出快照（`get_debug_output` 关窗后仍可查错，`source` 标注；顺带修 `stop_project` 报告空 bug）。规则模板加「视觉改动收尾流程」。 |
 | **v0.33.1** | 2026-09-13 | **竞品启发加固批(2026-09-01 完成延迟合并)**:①monitor 输出可解释性(对标 satelliteoflove)——properties 返回过滤后实际监控列表+`dropped_blocked` 逐个点名被滤属性+数值极值摘要 summary(min/max 及发生帧/时刻,仅数值属性)接入 stop/poll 三出口,UTF-8 跨 chunk 免疫固化;②GODOT_PATH 指向目录显性报错(对标 godot-ai),替代静默 fallback 掩盖配置错误;③fs-atomic 共享原子写上移 core(对标官方 servers)——三份重复实现收口+七处高危覆盖点接入(save_scene/quick_scene/edit_script/scene-instance/translation/game-bridge/overrides),覆盖用户资产的自写 tmp+rename 清零。冲突融合:monitor 字段与 P0 游戏时间调度三路合流/rules 双副本同款融合/overrides 保 L-1 缓冲落盘+原子写/scene 保 P1 FileGuard+writeAtomic。规则模板变更触发 bump。46 工具/271 action。 |
 | **v0.33.0** | 2026-09-13 | **全仓功能审查修复批(patch→minor 口径归位)**:4 分域审查代理+主审横扫 46 工具/271 action(报告 `docs/reviews/2026-09-12-全仓功能审查.md`)——2 BLOCKING(S-B1 project_replace 写 .gd 绕过沙箱扫描→批量原子检查整批拒;G-B1 step_until 完成判定嵌循环体→AND 语义破坏+双 remove 越界中断 _process/误删相邻条目)+ 14 IMPORTANT(dap output 200 条稳态永久静默失效/DAP 断连重建绕过+断点簿记路径规范化/game_wait 单 probe 超时烧光总预算/sync_state 丢 truncated 标志/未认证空行保活 DoS/websocket_server 标量 JSON 崩溃瘫痪 WS/collect_state freed 守卫/cmdline 标记窃取链拦截/协程 quiesce 失真等)+ 13 MINOR,22 修+10 备案;S-I1 scrub 修复撤销(固定常量是 C-09 公开契约——契约 vs 漏洞判定教训)。版本号自本批起按变更性质判级:P0-P10 功能批次归位 minor 边界(此前 patch 链为规则模板硬门禁机械触发)。46 工具/271 action。 |

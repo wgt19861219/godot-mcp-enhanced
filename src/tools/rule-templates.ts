@@ -123,6 +123,9 @@ AI 改动涉及用户需要看到效果才能验收的内容（\`.tscn\` / UI �
 - 纯逻辑 / 测试 / 文档改动不弹窗。
 - preview **默认不传 \`wait_for_bridge\`**：bridge 未就绪会终止游戏进程，窗口会在用户眼前闪现即逝；仅当确实需要 bridge 查询运行时状态且项目 bridge 就绪快时才组合。
 - 新一轮 \`run_project\` 会先停旧进程再起新窗口；旧输出经快照自动留档，换窗前可先 \`get_debug_output\` 保存上一轮错误。
+- 多项目并存：\`run_project\` 可并行运行多个项目（窗口并存，上限 \`GODOT_MCP_MAX_SESSIONS\` 默认 4）；
+  同项目重复 run 会先停旧进程。查错/停止其他项目用 \`stop_project\`、\`get_debug_output\` 的 \`project_path\` 参数。
+- bridge 查询/输入模拟对最近 \`run_project\` 的项目生效；profiler 采样最近一次 profiling 会话（不被无关 run 销毁）。
 
 ## 运行时 vs 持久化
 
