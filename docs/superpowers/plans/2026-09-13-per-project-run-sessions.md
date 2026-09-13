@@ -333,6 +333,7 @@ export function markSessionExited(projectPath: string, exitCode: number | null):
   const early = s.processStartTime > 0 && Date.now() - s.processStartTime < 2_000;
   s.status = early ? 'exited_early' : (exitCode !== null && exitCode !== 0 ? 'errored' : 'exited');
 }
+```
 
 配套(完整):
 
@@ -349,7 +350,7 @@ function stashToSnapshot(s: RunSession): void {
   }
 }
 ```
-(errored 判定由 close code 传入路径——runtime.ts close handler 调 `setSessionStatus` 前,若 close code≠0 且非 early 则设 'errored';process-state 提供 `markSessionExited(projectPath, exitCode)` 一并实现:内部按 2s/code 双判据。)
+注:stashToSnapshot 与 markSessionExited 的分工——markSessionExited 由 close handler 显式调用(带 exitCode,能判 errored);stashToSnapshot 在 clearRunSession/killAllRunSessions 等无 code 路径兜底(仅 ended 守卫挪快照,不覆盖已判定的 errored/exited_early)。
 
 ```ts
 /** 运行中上限检查(设计 §4.1:每调用读 env,拒绝并附会话清单)。 */
