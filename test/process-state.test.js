@@ -42,6 +42,7 @@ import {
   unregisterSpawnedGodotPid,
   getSpawnedGodotPids,
   killOrphanGodotProcesses,
+  getLastFinishedRunOutput,
 } from '../src/core/process-state.js';
 
 function makeMockProc({ killed = false, pid = 12345 } = {}) {
@@ -682,5 +683,56 @@ describe('killOrphanGodotProcesses', () => {
     }));
     const count = await killOrphanGodotProcesses('/some/project', { fullSystemScan: true });
     expect(count).toBe(0);
+  });
+});
+
+// ─── output snapshot — B-1 修复(_lastFinishedRunOutput) ──────────────────────
+
+describe('output snapshot — B-1 修复(_lastFinishedRunOutput)', () => {
+  beforeEach(() => {
+    resetState();
+  });
+
+  it('setRunningProcess(null) 把非空 buffer 挪入快照并清空当前 buffer', () => {
+    appendOutput(['line1', 'SCRIPT ERROR: boom']);
+    setRunningProcess(null);
+    expect(getLastFinishedRunOutput()).toEqual(['line1', 'SCRIPT ERROR: boom']);
+    expect(getOutputBuffer()).toEqual([]);
+  });
+
+  it('clearOutputBuffer 同样把非空内容挪入快照', () => {
+    appendOutput(['a', 'b']);
+    clearOutputBuffer();
+    expect(getLastFinishedRunOutput()).toEqual(['a', 'b']);
+    expect(getOutputBuffer()).toEqual([]);
+  });
+
+  it('空清空不覆盖既有快照(换窗时序:close handler 先存,run_project 开头 clear 时 buffer 已空)', () => {
+    appendOutput(['old-run-output']);
+    setRunningProcess(null);   // close handler 路径:存快照 + 清 buffer
+    clearOutputBuffer();       // 新 run_project 开头(:167):buffer 已空
+    expect(getLastFinishedRunOutput()).toEqual(['old-run-output']);
+  });
+
+  it('快照超过 5000 行时截断保留最近内容', () => {
+    for (let i = 0; i < 3; i++) {
+      appendOutput(Array.from({ length: 2000 }, (_, k) => `line-${i}-${k}`));
+    }
+    setRunningProcess(null);
+    const snap = getLastFinishedRunOutput();
+    expect(snap.length).toBe(5000);
+    // 简报原断言 toContain('line-1-') 系算术错误:6000 行截最后 5000 行只丢最早 1000 行
+    // (line-0-0..line-0-999),line-0 共 2000 行不可能整段消失;line-1 从第 2001 行起。
+    // node 独立模拟验证:first=line-0-1000 last=line-2-1999。改为精确断言截断边界。
+    expect(snap[0]).toBe('line-0-1000');
+    expect(snap[snap.length - 1]).toBe('line-2-1999');
+  });
+
+  it('resetState 清空快照(测试隔离)', () => {
+    appendOutput(['x']);
+    setRunningProcess(null);
+    expect(getLastFinishedRunOutput().length).toBe(1);
+    resetState();
+    expect(getLastFinishedRunOutput()).toEqual([]);
   });
 });

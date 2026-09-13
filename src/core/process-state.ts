@@ -120,6 +120,11 @@ export function killProcess(proc: ChildProcess): Promise<void> {
 // For true per-project isolation, run a separate MCP server process per project.
 let _runningProcess: ChildProcess | null = null;
 let _outputBuffer: string[] = [];
+// B-1 修复(2026-09-13 预览模式设计):最近一次已结束运行会话的输出快照。
+// setRunningProcess(null)/clearOutputBuffer 清空 _outputBuffer 前把非空内容挪入此处
+// (move 语义;空清空不覆盖旧快照——换窗时序下 close handler 先存,run_project 开头
+// 的 clearOutputBuffer 时 buffer 已空,不能把刚存的快照冲掉)。
+let _lastFinishedRunOutput: string[] = [];
 let _processStartTime = 0;
 let _projectDir = '';
 
@@ -288,6 +293,7 @@ export function setRunningProcess(proc: ChildProcess | null, skipBusyCheck = fal
   }
   _runningProcess = proc;
   if (!proc) {
+    stashOutputBuffer();
     _outputBuffer = [];
     _processStartTime = 0;
   }
@@ -305,7 +311,20 @@ export function appendOutput(lines: string[]): void {
 }
 
 export function clearOutputBuffer(): void {
+  stashOutputBuffer();
   _outputBuffer = [];
+}
+
+/** B-1 修复:输出缓冲被清空前,非空内容挪入最近结束运行快照。@internal */
+function stashOutputBuffer(): void {
+  if (_outputBuffer.length > 0) {
+    _lastFinishedRunOutput = _outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
+  }
+}
+
+/** 最近一次已结束运行会话的输出快照(get_debug_output 在当前缓冲为空且无运行进程时回落读取)。 */
+export function getLastFinishedRunOutput(): string[] {
+  return _lastFinishedRunOutput;
 }
 
 export function setOutputBuffer(buf: string[]): void {
@@ -332,6 +351,7 @@ export function setProjectDir(d: string): void {
 export function resetState(): void {
   _runningProcess = null;
   _outputBuffer = [];
+  _lastFinishedRunOutput = [];
   _processStartTime = 0;
   _projectDir = '';
   _processBusy = false;
