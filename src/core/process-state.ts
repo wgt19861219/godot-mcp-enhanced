@@ -9,6 +9,7 @@
 
 import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
+import { resolve as pathResolve } from 'path';
 import { getLogger } from './logger.js';
 import { killOrphanGodotProcesses as cleanupOrphanProcesses, resetOrphanScanTime } from './orphan-cleanup.js';
 
@@ -102,12 +103,12 @@ export function killProcess(proc: ChildProcess): Promise<void> {
 }
 
 // ─── Module-level mutable state ─────────────────────────────────────────────
-// Intentional design: module-scoped "singleton" state accessed exclusively
-// through the getter/setter functions below. This avoids class instantiation
-// overhead while still providing encapsulation — consumers never touch these
+// Intentional design: module-scoped state accessed exclusively through the
+// getter/setter functions below. This avoids class instantiation overhead
+// while still providing encapsulation — consumers never touch these
 // variables directly. Use resetState() for test isolation.
 //
-// ⚠️ CONCURRENCY / MULTI-INSTANCE LIMITATION (CR-3): This singleton state is
+// ⚠️ CONCURRENCY / MULTI-INSTANCE LIMITATION (CR-3): The shared state below is
 // shared across all callers within one MCP server process. In the default
 // single-instance mode, acquireProcessSlot (serialized via enqueueAsync) plus
 // the long-running lock implicitly bound cross-talk — a second run_project fails
@@ -118,20 +119,37 @@ export function killProcess(proc: ChildProcess): Promise<void> {
 //   (a) GODOT_MCP_MULTI_INSTANCE=true mixing local headless + remote instances,
 //   (b) the window between long-lock release and the next setProjectDir.
 // For true per-project isolation, run a separate MCP server process per project.
-let _runningProcess: ChildProcess | null = null;
-let _outputBuffer: string[] = [];
-// B-1 修复(2026-09-13 预览模式设计):最近一次已结束运行会话的输出快照。
-// setRunningProcess(null)/clearOutputBuffer 清空 _outputBuffer 前把非空内容挪入此处
-// (move 语义;空清空不覆盖旧快照——换窗时序下 close handler 先存,run_project 开头
-// 的 clearOutputBuffer 时 buffer 已空,不能把刚存的快照冲掉)。
-let _lastFinishedRunOutput: string[] = [];
-let _processStartTime = 0;
-let _projectDir = '';
+//
+// ─── Per-project run sessions (设计 v3.1 §4.1) ──────────────────────────────
+// 分桶语义:游戏进程/输出/快照/busy 按 project key 分桶存于 _sessions,兼容层
+// 导出函数语义重定向到"活跃桶"。
+// 活跃指针 = _projectDir(最近一次 run_project 写入;写入方收窄见设计 §4.7)。
+// key='' 空桶 = 惰性兼容桶(无项目上下文时的读写落点;不进 listRunSessions、
+// FIFO 可逐出;首次 setProjectDir(X) 后由惰性空桶重绑/废弃接管,设计 §4.1)。
 
-// Long-running lock: run_project only (game process that persists for seconds/minutes)
-let _processBusy = false;
-let _busyOwner = '';
-let _busySince = 0;
+export type RunSessionStatus = 'starting' | 'running' | 'stopping' | 'exited' | 'exited_early' | 'errored';
+
+export interface RunSession {
+  proc: ChildProcess | null;
+  status: RunSessionStatus;
+  outputBuffer: string[];
+  lastFinishedRunOutput: string[];
+  processStartTime: number;
+  busy: boolean;
+  busyOwner: string;
+  busySince: number;
+  displayPath: string;   // 显示用原始路径(key 仅供索引)
+}
+
+function newSession(displayPath: string): RunSession {
+  // 惰性空桶钉死语义(设计 §4.1):status='exited'——不占 MAX_SESSIONS isAlive 名额、进 FIFO 可逐出
+  return { proc: null, status: 'exited', outputBuffer: [], lastFinishedRunOutput: [],
+            processStartTime: 0, busy: false, busyOwner: '', busySince: 0, displayPath };
+}
+
+let _sessions = new Map<string, RunSession>();
+let _exitedSessionOrder: string[] = [];   // 已结束桶 FIFO(逐出最旧;登记于 setRunningProcess(null),逐出消费后续任务接入)
+let _projectDir = '';                     // 语义升级:活跃项目(最近一次 run_project)
 
 // Short-running counter: query_scene_tree / inspect_node (seconds-level operations)
 let _shortRunningCount = 0;
@@ -157,6 +175,30 @@ export function getSpawnedGodotPids(): number[] {
   return Array.from(_spawnedGodotPids);
 }
 
+// ─── Per-project key normalization & lazy session access(设计 §4.1)─────────
+
+/** 项目 key 归一化(设计 §4.1):resolve + win 下 lowercase;仅供 Map 索引。 */
+export function normalizeProjectKey(p: string): string {
+  const r = pathResolve(p);
+  return process.platform === 'win32' ? r.toLowerCase() : r;
+}
+
+/** 活跃桶 key:活跃指针非空时归一化,否则 ''(惰性兼容桶)。 */
+export function activeKey(): string {
+  return _projectDir ? normalizeProjectKey(_projectDir) : '';
+}
+
+/** 惰性获取/创建活跃桶(硬性实现要求,设计 §4.1——77 个现有用例依赖此语义)。 */
+export function getOrCreateSession(key: string): RunSession {
+  let s = _sessions.get(key);
+  if (!s) {
+    s = newSession(key ? key : _projectDir);
+    if (key) s.displayPath = key;  // displayPath 首次用 key,后续 setProjectDir 刷新
+    _sessions.set(key, s);
+  }
+  return s;
+}
+
 // ─── C-04: Async queue for serializing state mutations ────────────────────────
 let _queueTail: Promise<void> = Promise.resolve();
 
@@ -177,7 +219,7 @@ function enqueueAsync<T>(fn: () => (Promise<T> | T)): Promise<T> {
 // ─── Long-running process lock ──────────────────────────────────────────────
 
 export function isProcessBusy(): boolean {
-  return _processBusy;
+  return getOrCreateSession(activeKey()).busy;
 }
 
 /**
@@ -188,49 +230,53 @@ export function isProcessBusy(): boolean {
  */
 export async function acquireProcessSlot(owner: string = ''): Promise<boolean> {
   return enqueueAsync(() => {
-    if (_processBusy) {
+    // 临界区保持同步(禁 await,设计 §4.2 M-4);数据源=活跃桶字段
+    const s = getOrCreateSession(activeKey());
+    if (s.busy) {
       // I-06: 即时检查进程存活 — 仅在进程对象已注册时才检查
-      if (_runningProcess && (_runningProcess.killed || _runningProcess.exitCode !== null)) {
-        getLogger().warn('process-state', `Process slot held by "${_busyOwner}", process dead — auto-releasing`);
-        _processBusy = false;
-        _busyOwner = '';
-        _busySince = 0;
-      } else if (_busySince > 0 && Date.now() - _busySince > 300_000) {
-        const processDead = !_runningProcess || _runningProcess.killed || _runningProcess.exitCode !== null;
+      if (s.proc && (s.proc.killed || s.proc.exitCode !== null)) {
+        getLogger().warn('process-state', `Process slot held by "${s.busyOwner}", process dead — auto-releasing`);
+        s.busy = false;
+        s.busyOwner = '';
+        s.busySince = 0;
+      } else if (s.busySince > 0 && Date.now() - s.busySince > 300_000) {
+        const processDead = !s.proc || s.proc.killed || s.proc.exitCode !== null;
         if (processDead) {
-          getLogger().warn('process-state', `Process slot held by "${_busyOwner}" for >5min, process dead — auto-releasing`);
-          _processBusy = false;
-          _busyOwner = '';
-          _busySince = 0;
+          getLogger().warn('process-state', `Process slot held by "${s.busyOwner}" for >5min, process dead — auto-releasing`);
+          s.busy = false;
+          s.busyOwner = '';
+          s.busySince = 0;
         } else {
-          getLogger().warn('process-state', `Process slot held by "${_busyOwner}" for >5min, process still alive — not releasing`);
+          getLogger().warn('process-state', `Process slot held by "${s.busyOwner}" for >5min, process still alive — not releasing`);
         }
       }
-      if (_processBusy) return false;
+      if (s.busy) return false;
     }
-    _processBusy = true;
-    _busyOwner = owner;
-    _busySince = Date.now();
+    s.busy = true;
+    s.busyOwner = owner;
+    s.busySince = Date.now();
     return true;
   });
 }
 
 export function setProcessBusy(busy: boolean): void {
-  _processBusy = busy;
+  const s = getOrCreateSession(activeKey());
+  s.busy = busy;
   if (!busy) {
-    _busyOwner = '';
-    _busySince = 0;
+    s.busyOwner = '';
+    s.busySince = 0;
   }
 }
 
 /** Get info about what is currently holding the long-running lock. */
 export function getBusyInfo(): { owner: string; startTime: number; projectDir: string } {
-  return { owner: _busyOwner, startTime: _processStartTime, projectDir: _projectDir };
+  const s = getOrCreateSession(activeKey());
+  return { owner: s.busyOwner, startTime: s.processStartTime, projectDir: _projectDir };
 }
 
 /** Build a user-friendly error message when the long-running slot is occupied. */
 export function buildBusyErrorMessage(): string {
-  if (!_processBusy) return '';
+  if (!getOrCreateSession(activeKey()).busy) return '';
   const info = getBusyInfo();
 
   const details: string[] = [];
@@ -269,74 +315,85 @@ export function getShortRunningCount(): number {
   return _shortRunningCount;
 }
 
-// ─── Running process management ─────────────────────────────────────────────
+// ─── Running process management(兼容层:语义重定向活跃桶,签名不变)─────────
 
 export function getRunningProcess(): ChildProcess | null {
-  return _runningProcess;
+  return getOrCreateSession(activeKey()).proc;
 }
 
 export function setRunningProcess(proc: ChildProcess | null, skipBusyCheck = false): void {
-  if (!skipBusyCheck && _processBusy && proc !== null) {
+  const s = getOrCreateSession(activeKey());
+  if (!skipBusyCheck && s.busy && proc !== null) {
     throw new Error('Cannot replace process while another operation is using it');
   }
   // Clearing the process always clears busy state
   if (proc === null) {
-    if (_processBusy) {
-      getLogger().debug('process-state', `setRunningProcess(null) called while process is busy (owner: ${_busyOwner || '(unknown)'}). This bypasses acquire/release semantics.`);
+    if (s.busy) {
+      getLogger().debug('process-state', `setRunningProcess(null) called while process is busy (owner: ${s.busyOwner || '(unknown)'}). This bypasses acquire/release semantics.`);
     }
-    _processBusy = false;
-    _busyOwner = '';
-    _busySince = 0;
+    s.busy = false;
+    s.busyOwner = '';
+    s.busySince = 0;
   }
-  if (_runningProcess && !_runningProcess.killed && proc !== _runningProcess) {
-    forceKillTree(_runningProcess);
+  // forceKillTree 段保持"活跃桶旧 proc"语义(Task 2 加 per-key API setRunSessionProc 后 runtime.ts 停用本函数)
+  if (s.proc && !s.proc.killed && proc !== s.proc) {
+    forceKillTree(s.proc);
   }
-  _runningProcess = proc;
+  s.proc = proc;
   if (!proc) {
-    stashOutputBuffer();
-    _outputBuffer = [];
-    _processStartTime = 0;
+    // 该桶运行结束:快照挪入本桶 + 登记 FIFO(设计 §4.1 已结束桶序,逐出消费后续任务接入)
+    stashOutputBuffer(s);
+    s.outputBuffer = [];
+    s.processStartTime = 0;
+    const key = activeKey();
+    if (!_exitedSessionOrder.includes(key)) _exitedSessionOrder.push(key);
   }
 }
 
 export function getOutputBuffer(): string[] {
-  return _outputBuffer;
+  return getOrCreateSession(activeKey()).outputBuffer;
 }
 
-export function appendOutput(lines: string[]): void {
-  _outputBuffer.push(...lines);
-  if (_outputBuffer.length > MAX_OUTPUT_BUFFER_SIZE) {
-    _outputBuffer = _outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
+export function appendOutput(lines: string[], projectKey?: string): void {
+  const s = getOrCreateSession(projectKey ?? activeKey());
+  s.outputBuffer.push(...lines);
+  if (s.outputBuffer.length > MAX_OUTPUT_BUFFER_SIZE) {
+    s.outputBuffer = s.outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
   }
 }
 
-export function clearOutputBuffer(): void {
-  stashOutputBuffer();
-  _outputBuffer = [];
+export function clearOutputBuffer(projectKey?: string): void {
+  const s = getOrCreateSession(projectKey ?? activeKey());
+  stashOutputBuffer(s);
+  s.outputBuffer = [];
 }
 
-/** B-1 修复:输出缓冲被清空前,非空内容挪入最近结束运行快照。@internal */
-function stashOutputBuffer(): void {
-  if (_outputBuffer.length > 0) {
-    _lastFinishedRunOutput = _outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
+/** B-1 修复(2026-09-13 预览模式设计,分桶版):桶输出缓冲被清空前,非空内容
+ *  挪入该桶最近结束运行快照(move 语义;空清空不覆盖旧快照——换窗时序下
+ *  close handler 先存,run_project 开头的 clearOutputBuffer 时 buffer 已空,
+ *  不能把刚存的快照冲掉)。@internal */
+function stashOutputBuffer(s: RunSession): void {
+  if (s.outputBuffer.length > 0) {
+    s.lastFinishedRunOutput = s.outputBuffer.slice(-MAX_OUTPUT_BUFFER_SIZE);
   }
 }
 
-/** 最近一次已结束运行会话的输出快照(get_debug_output 在当前缓冲为空且无运行进程时回落读取)。 */
+/** 最近一次已结束运行会话的输出快照(活跃桶;get_debug_output 在当前缓冲为
+ *  空且无运行进程时回落读取)。 */
 export function getLastFinishedRunOutput(): string[] {
-  return _lastFinishedRunOutput;
+  return getOrCreateSession(activeKey()).lastFinishedRunOutput;
 }
 
-export function setOutputBuffer(buf: string[]): void {
-  _outputBuffer = buf;
+export function setOutputBuffer(buf: string[], key?: string): void {
+  getOrCreateSession(key ?? activeKey()).outputBuffer = buf;
 }
 
 export function getProcessStartTime(): number {
-  return _processStartTime;
+  return getOrCreateSession(activeKey()).processStartTime;
 }
 
-export function setProcessStartTime(t: number): void {
-  _processStartTime = t;
+export function setProcessStartTime(t: number, key?: string): void {
+  getOrCreateSession(key ?? activeKey()).processStartTime = t;
 }
 
 export function getProjectDir(): string {
@@ -344,19 +401,39 @@ export function getProjectDir(): string {
 }
 
 export function setProjectDir(d: string): void {
+  const oldKey = activeKey();
   _projectDir = d;
+  const newKey = activeKey();
+  if (newKey === oldKey) {
+    const existing = _sessions.get(newKey);
+    if (existing) existing.displayPath = d;
+    return;
+  }
+  const existing = _sessions.get(newKey);
+  if (existing) {
+    existing.displayPath = d;  // 已有桶:仅刷新显示路径,不覆盖该桶既有数据
+    return;
+  }
+  const old = _sessions.get(oldKey);
+  // 惰性空桶跟随重绑(兼容层,设计 §4.1 惰性创建的补全):单例时代 setProjectDir
+  // 只换目录标签、状态全保留;分桶后,从未承载真实运行(proc=null/无输出/无快照)的
+  // 惰性空桶里的状态(startTime/busy 等"无项目上下文"写入)随活跃声明归属新项目。
+  // 已承载真实运行数据的桶(有 proc/输出/快照)不迁移,留在 Map 中等待 FIFO 逐出。
+  if (old && old.proc === null && old.status === 'exited'
+    && old.outputBuffer.length === 0 && old.lastFinishedRunOutput.length === 0) {
+    _sessions.delete(oldKey);
+    old.displayPath = d;
+    _sessions.set(newKey, old);
+  } else {
+    _sessions.set(newKey, newSession(d));
+  }
 }
 
 /** Reset all module-level state — for test isolation. */
 export function resetState(): void {
-  _runningProcess = null;
-  _outputBuffer = [];
-  _lastFinishedRunOutput = [];
-  _processStartTime = 0;
+  _sessions = new Map();
+  _exitedSessionOrder = [];
   _projectDir = '';
-  _processBusy = false;
-  _busyOwner = '';
-  _busySince = 0;
   _shortRunningCount = 0;
   _spawnedGodotPids = new Set();
   _queueTail = Promise.resolve();
@@ -375,7 +452,7 @@ export async function killOrphanGodotProcesses(
   return cleanupOrphanProcesses(
     {
       spawnedPids: _spawnedGodotPids,
-      runningPid: _runningProcess?.pid,
+      runningPid: getOrCreateSession(activeKey()).proc?.pid,
       isPidAlive,
       killPidTree,
     },
