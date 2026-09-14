@@ -5,6 +5,9 @@ config_version=5
 [application]
 
 config/name="Analysis Fixture"
+; Task 7 双项目运行验收(0.33.3):补主场景声明,使 run_project 可弹窗驻留
+; (静态扫描测试不读此键,见 test/analysis.test.ts)
+run/main_scene="res://scenes/main.tscn"
 
 ; P0-2 (2026-09-11): dual-key file logging off — concurrent instances share user://logs,
 ; RotatedFileLogger rotate race makes abort look like engine_crashed (aigengame pit).
