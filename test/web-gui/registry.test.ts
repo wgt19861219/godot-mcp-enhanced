@@ -44,6 +44,11 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     expect(readdirSync(dir).filter(f => f.endsWith('.json'))).toHaveLength(0);
   });
 
+  it('registry 目录不存在时 listRegistrations 返回空数组不抛', async () => {
+    const list = await listRegistrations({ dir: join(dir, 'no-such-sub'), isPidAlive: ALIVE });
+    expect(list).toEqual([]);
+  });
+
   it.skipIf(process.platform === 'win32')('登记文件权限 0o600(Linux/macOS)', async () => {
     await writeRegistration({ pid: 111, port: 9550, token: 'secret', startedAt: 't' }, { dir });
     const mode = statSync(join(dir, '111.json')).mode & 0o777;

@@ -23,6 +23,12 @@ function defaultOpener(url: string): void {
   });
 }
 
+/** 菜单行文本 → 选择编号:trim → parseInt → 整数且 1..count 返回数字,否则 null(空行取消/无效输入)。 */
+export function parseChooseLine(line: string, count: number): number | null {
+  const n = Number.parseInt(line.trim(), 10);
+  return Number.isInteger(n) && n >= 1 && n <= count ? n : null;
+}
+
 async function defaultChoose(entries: WebGuiRegistration[]): Promise<WebGuiRegistration | null> {
   console.log('检测到多个运行中的 MCP server:');
   entries.forEach((e, i) => {
@@ -33,8 +39,8 @@ async function defaultChoose(entries: WebGuiRegistration[]): Promise<WebGuiRegis
   const rl = createInterface({ input: process.stdin });
   const line: string = await new Promise((resolve) => rl.once('line', resolve));
   rl.close();
-  const n = Number.parseInt(line.trim(), 10);
-  return Number.isInteger(n) && n >= 1 && n <= entries.length ? entries[n - 1]! : null;
+  const n = parseChooseLine(line, entries.length);
+  return n === null ? null : entries[n - 1]!;
 }
 
 export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise<number> {

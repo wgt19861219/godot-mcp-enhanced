@@ -116,7 +116,9 @@ export const INDEX_HTML: string = `<!doctype html>
   function renderLogs() {
     var filter = $('logFilter').value.toLowerCase();
     var level = $('logLevel').value;
-    var host = $('logList'); host.textContent = '';
+    var host = $('logList');
+    var stick = host.scrollHeight - host.scrollTop - host.clientHeight < 30;   // 贴底判断:用户上翻查历史时不拽回
+    host.textContent = '';
     var shown = state.logs.filter(function (e) {
       if (level !== 'ALL' && e.level.toUpperCase() !== level) return false;
       if (!filter) return true;
@@ -129,7 +131,7 @@ export const INDEX_HTML: string = `<!doctype html>
       div.appendChild(t); div.appendChild(document.createTextNode(e.msg || ''));
       frag.appendChild(div);
     });
-    host.appendChild(frag); host.scrollTop = host.scrollHeight;
+    host.appendChild(frag); if (stick) host.scrollTop = host.scrollHeight;
     $('logCount').textContent = state.logs.length + ' 条';
   }
 
