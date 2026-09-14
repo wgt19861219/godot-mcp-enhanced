@@ -40,6 +40,10 @@ export const INDEX_HTML: string = `<!doctype html>
   .bar .calls { background: #2f4b6e; border-radius: 2px 2px 0 0; }
   .bar .errors { background: var(--red); border-radius: 0 0 2px 2px; }
   .empty { color: var(--dim); padding: 16px; text-align: center; }
+  .ctl { background: var(--bg); color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; font: 11px "Segoe UI", system-ui, sans-serif; cursor: pointer; }
+  .ctl:hover { color: var(--fg); border-color: var(--dim); }
+  .ctl.stop:hover { color: var(--red); border-color: var(--red); }
+  .ctl:disabled { opacity: .4; cursor: default; }
 </style>
 </head>
 <body>
@@ -95,6 +99,36 @@ export const INDEX_HTML: string = `<!doctype html>
     $('connInfo').textContent = payload.stats && payload.stats.mode ? ('mode: ' + payload.stats.mode) : '';
   }
 
+  // 面板控制(2026-09-14):alive 态(starting/running/stopping)→「停止」;
+  // ended 态(exited/exited_early/errored)→「清理」。成功后按钮禁用,等 SSE
+  // sessions 帧(500ms 周期)刷新状态;失败非 2xx → statusBar 显示前 80 字符。
+  var ALIVE_STATUS = { starting: 1, running: 1, stopping: 1 };
+
+  function sessionControl(s) {
+    var alive = ALIVE_STATUS[s.status] === 1;
+    var btn = document.createElement('button');
+    btn.className = 'ctl' + (alive ? ' stop' : '');
+    btn.textContent = alive ? '停止' : '清理';
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      fetch(alive ? '/api/sessions/stop' : '/api/sessions/remove', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-gui-token': token },
+        body: JSON.stringify({ projectPath: s.projectPath })
+      }).then(function (r) {
+        if (!r.ok) {
+          btn.disabled = false;
+          return r.text().then(function (t) { $('statusBar').textContent = '操作失败: ' + t.slice(0, 80); });
+        }
+        /* 成功:按钮保持禁用,SSE sessions 帧刷新后行随新状态重绘 */
+      }).catch(function () {
+        btn.disabled = false;
+        $('statusBar').textContent = '操作失败: network error';
+      });
+    });
+    return btn;
+  }
+
   function renderSessions() {
     var host = $('sessions'); host.textContent = '';
     if (!state.sessions.length) { var d = document.createElement('div'); d.className = 'empty'; d.textContent = '暂无会话'; host.appendChild(d); return; }
@@ -102,7 +136,7 @@ export const INDEX_HTML: string = `<!doctype html>
     var thead = document.createElement('thead');
     thead.textContent = '';
     var htr = document.createElement('tr');
-    ['项目', '状态', 'pid', 'busy', '输出行'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
+    ['项目', '状态', 'pid', 'busy', '输出行', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
     thead.appendChild(htr);
     var tbody = document.createElement('tbody');
     state.sessions.forEach(function (s) {
@@ -112,7 +146,8 @@ export const INDEX_HTML: string = `<!doctype html>
       var td3 = document.createElement('td'); td3.textContent = String(s.pid == null ? '-' : s.pid);
       var td4 = document.createElement('td'); td4.textContent = s.busy ? '🔒 ' + s.busyOwner : '';
       var td5 = document.createElement('td'); td5.textContent = String(s.outputLines);
-      tr.append(td1, td2, td3, td4, td5); tbody.appendChild(tr);
+      var td6 = document.createElement('td'); td6.appendChild(sessionControl(s));
+      tr.append(td1, td2, td3, td4, td5, td6); tbody.appendChild(tr);
     });
     tbl.append(thead, tbody); host.appendChild(tbl);
   }
