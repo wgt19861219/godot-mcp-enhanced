@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
+
+### Fixed
+- dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
+
 ## [0.33.3] - 2026-09-14
 
 > per-project 运行会话分桶（设计 `docs/superpowers/specs/2026-09-13-per-project-run-sessions-design.md`，三轮独立审阅 1C+5I+7M 全落实）；规则模板门禁触发的 patch bump；npm publish / tag 待用户指令。
