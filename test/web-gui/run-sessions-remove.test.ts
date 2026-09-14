@@ -34,17 +34,23 @@ describe('removeRunSession(面板清理:ended 桶移除,alive 拒绝)', () => {
     expect(ps.getSession('D:/projA')).toBeUndefined();
   });
 
-  it('FIFO 摘除(间接效应):remove 后触发逐出不误删后继桶', () => {
+  it('FIFO 摘除(间接效应):remove 最新桶后 end C 不误删存活桶 A', () => {
     process.env.GODOT_MCP_MAX_FINISHED_SESSIONS = '2';
     endSession('D:/fifoA', 121);
     endSession('D:/fifoB', 122);
-    expect(ps.removeRunSession('D:/fifoA')).toEqual({ ok: true });
-    // FIFO 摘除正确 → [B];结束 C → [B,C] ≤ 上限 2 不逐出。
-    // 若 remove 未摘 FIFO → [A,B,C] 超上限触发逐出:shift A(Map 无此桶跳过)继续 shift → B 被误删。
+    // remove 最新桶 B(不能用最旧桶 A:那两种实现下 while-shift 每轮恰删一个,摘/不摘
+    // FIFO 结果相同,无区分力——reviewer I-1 反事实已证明)。区分性推演:
+    //  - 正确实现(摘 FIFO):remove(B) 删桶+摘 order → order=[A];end C →
+    //    markEndedAndEvict(C) push → order=[A,C] ≤ max=2 不逐出 → 最终桶 {A,C}。
+    //  - 反事实(未摘 FIFO):remove(B) 只删桶不动 order → order 仍 [A,B];end C →
+    //    push C → order=[A,B,C] 超 max=2 → evictExitedIfNeeded shift A(A≠activeKey('')
+    //    且 Map 有 A 桶、status=exited → delete A)→ length=2 退出 → 最终桶 {C}。
+    //  差异 = A 的存活:{A,C} vs {C},即本用例断言的区分点。
+    expect(ps.removeRunSession('D:/fifoB')).toEqual({ ok: true });
     endSession('D:/fifoC', 123);
     const keys = ps.listRunSessions().map(x => x.projectPath).sort();
     expect(keys).toEqual([
-      ps.normalizeProjectKey('D:/fifoB'),
+      ps.normalizeProjectKey('D:/fifoA'),
       ps.normalizeProjectKey('D:/fifoC'),
     ]);
   });
