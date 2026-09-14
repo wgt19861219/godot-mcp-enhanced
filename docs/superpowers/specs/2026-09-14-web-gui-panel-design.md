@@ -1,7 +1,7 @@
 # 子项目 2：Web GUI 监控面板 — 设计文档
 
 - **日期**: 2026-09-14
-- **状态**: v3（v1 审阅 2B+6I+7M、v2 全新视角审阅 3B+4I+8M 全部裁决落实，见 §14 修订记录）
+- **状态**: v3.1（两轮审阅全部落实 + 复核 APPROVED WITH REVISIONS：14 PASS/1 PARTIAL，复核新发现 N-1 门禁引用失实与 N-2~N-5 已修，见 §14）
 - **上游依赖**: 子项目 1「per-project 运行会话分桶」（`feat/per-project-run-sessions`，18 commits，READY WITH FOLLOW-UPS）——本设计的运行会话面板直接消费 `RunSession` 模型与 `logger.project` 字段
 - **决策链**: 用户在 brainstorming 中确认——独立 Web GUI（吸收 dashboard TUI 全部功能、跨平台）→ 宿主嵌 MCP server 进程 + 默认开 → 工具统计/时序按项目分组 → 方案 A（零依赖单 HTML + `node:http` + SSE + Inspector 安全壳）
 
@@ -30,7 +30,7 @@
 7. `src/core/logger.ts` 最小侵入：`LogEntry` 新增可选 `srv` 字段（进程标识，见 §3.3.1）——与 `project` 字段同模式（可选、向后兼容、dashboard 聚合器不破）
 8. **既有死逻辑/时区修复（继承自 TUI 的 bug，Web GUI 将其提升为核心数据流故必须修）**：`src/dashboard/log-reader.ts` 的 `getTodayFile()` 改用**本地日期**与 logger `todayStr()` 对齐（现用 UTC——东八区每日 00:00-08:00 启动的进程 watch 错文件、面板断流最长 8 小时；改 LogReader 侧，不动 logger 存量文件名语义，TUI 同受益）
 9. `src/dashboard/launcher.ts` **仅允许加一处入口 guard**（web-gui 激活时短路返回，不碰渲染与平台分支——理由见 §3.2 第二触发点）
-10. 连带文档：① AGENTS.md `src/` 结构表新增 `src/web-gui/` 行 + dashboard 段措辞澄清（"独立只读 CLI 进程"描述仅指 TUI；web-gui 是 server 内嵌监控面，无设置项影响 server 行为的红线仍守住）；② `src/cli/router.ts` showHelp 的 dashboard 行补 `--web` 用法（受 `check:command-docs-drift` 门禁约束，命令文档同步）；③ CHANGELOG `[Unreleased]`
+10. 连带文档：① AGENTS.md `src/` 结构表新增 `src/web-gui/` 行 + dashboard 段措辞澄清（"独立只读 CLI 进程"描述仅指 TUI；web-gui 是 server 内嵌监控面，无设置项影响 server 行为的红线仍守住）；② `src/cli/router.ts` showHelp 的 dashboard 行补 `--web` 用法（**无机械门禁覆盖 showHelp——`check:command-docs-drift` 只检测 GD 插件命令文档与 inputSchema 的参数 drift，与此无关；靠本清单自查**）；③ CHANGELOG `[Unreleased]`
 
 ### 范围外（明确不做）
 
@@ -59,7 +59,7 @@
 
 - `GodotServer.run()` 流程内创建 `WebGuiServer`，**启动结果（成功 listen / 禁用 / 失败三态）记录在 server 实例上**（如 `webGuiActive: boolean` 属性）——这是 `src/index.ts` TUI 决策的同步查询点（run() 完成后状态已定，无时序竞态）
 - **auto-launch TUI 抑制（双保险，覆盖两个触发点）**：
-  - 触发点 1 `src/index.ts:164-166`：TUI 决策从"与 `server.run()` 并行的动态 import"改为**在 `server.run()` 完成后查询 `webGuiActive` 再决定**——激活则跳过，禁用/失败则照旧弹
+  - 触发点 1 `src/index.ts:164-166`：TUI 决策从"与 `server.run()` 并行的动态 import"改为**在 `server.run()` 完成后查询 `webGuiActive` 再决定**——激活则跳过，禁用/失败则照旧弹。**行为微变（改善）**：run() reject 路径下 TUI 不再弹出（原并行 import 会给已死的 server 弹一个监控窗）
   - 触发点 2 `src/tools/game-bridge.ts:69`（`setOnBridgeConnected(() => launchDashboardOnce())`——bridge 首连回调，v2 遗漏的第二触发点）：在 `launchDashboardOnce()` **入口加 guard**——`isWebGuiActive()` 为真即短路返回（launcher.ts 唯一允许的改动，见 §2.9；不在 tools 层引入 web-gui 耦合）。注意 `launcher.ts:31-39` 的 `_launched` 标志只在真执行后置位，仅靠 index.ts 跳过调用挡不住此触发点
 - `GodotServer.close()` 安全链新增 `stopWebGui` 步骤（插入位置实现时定，处于 killAllRunSessions 同层；按 §3.1 关闭顺序：SSE 全连接 end + `closeAllConnections()` + HTTP close + 删除自己的 per-pid 登记文件）
 - 配置：**纯 env 开关**（与 TUI 的 `GODOT_MCP_NO_DASHBOARD` 同一模式）——
@@ -75,7 +75,7 @@
    - 后续如需毫秒级实时再考虑 logger 实例级 subscribe，本期不做
 2. **运行会话**：调 `process-state` **新增导出 `listRunSessionsDetailed()`**（返回 §4.1 白名单全字段；**不改动**既有 `listRunSessions()` 的四字段 DTO 契约与既有测试；**实现必须直接遍历 `_sessions`（同 `listRunSessions()` 现模式），禁止经 `getOrCreateSession` 触发惰性建桶**——否则空桶进 `_sessions` 与 FIFO 逐出序，污染分桶语义），序列化时挑字段：`displayPath` / `status` / pid / `processStartTime` / busy 三件组（busy/busyOwner/busySince）/ 输出缓冲行数（**两态语义**：运行中 = `outputBuffer.length`，已结束 = `lastFinishedRunOutput.length`）。**`proc`（ChildProcess 引用）不外泄**。（背景：v1 审 B-2——原设计声明的 7 字段中 4 字段不在 `listRunSessions()` 实际 DTO 上）
 3. **推送**：SSE 事件三类——
-   - `hello`（**每次连接建立都发**，含 EventSource 自动重连：幂等全量 = 会话列表 + 统计快照 + 最近日志尾部；客户端收到 hello 即整体重置本地状态后续增量——这是断线恢复的唯一机制。**去重键**：hello 回放与 in-flight log 帧可能短暂重叠，前端按稳定键（`ts` + `call_id` + 会话内序号）去重）
+   - `hello`（**每次连接建立都发**，含 EventSource 自动重连：幂等全量 = 会话列表 + 统计快照 + 最近日志尾部；客户端收到 hello 即整体重置本地状态后续增量——这是断线恢复的唯一机制。**去重键**：hello 回放与 in-flight log 帧可能短暂重叠，前端按稳定键去重——键来源全部取自服务端数据（`ts` + `call_id` + `msg` 摘要），不用前端接收序号）
    - `log`（增量日志批量，按 500ms 聚合帧）
    - `sessions` / `stats`（快照推送，节流 500ms / 1s）
    - `/api/sessions`、`/api/stats` 按需 GET 端点降级为**非 SSE 备用/调试**（断线恢复不依赖它们）
@@ -160,7 +160,8 @@
 - **集成**：真起 HTTP——`GET /` 回 HTML（含 nosniff/CSP 头）、`/api/sessions` 回白名单字段（断言无 `proc` 键、含两态输出行数语义）、SSE 首连 `hello`、**断开重连后再次收到 `hello` 且状态恢复一致**、错 token 401、写入日志后 500ms 内收到 `log` 事件（带 `srv` 过滤）、**GUI 开启下进程 close 无残留句柄挂起**
 - **既有测试隔离**：`GodotServer` 被大量既有测试构造，web-gui 默认开会真 listen + 写真实 `~/.godot-mcp/`——**`test/setup.js` 全局设 `GODOT_MCP_WEB_GUI=0`**，web-gui 专属测试显式开 env（隔离用户 home 与端口竞争）
 - **前端**：不写单测（原生 JS 无构建链），API 契约测试锁字段 + 真机人工验收
-- **门禁**：标准 `npm run lint` + `npm run build` + `npm test`；不改工具清单 → 不跑 build-matrix；不涉 `.claude/rules` → 无版本 bump 硬门禁（变更进 CHANGELOG `[Unreleased]`）；showHelp 补 `--web` 行后跑 `check:command-docs-drift`
+- **门禁**：标准 `npm run lint` + `npm run build` + `npm test`；不改工具清单 → 不跑 build-matrix；不涉 `.claude/rules` → 无版本 bump 硬门禁（变更进 CHANGELOG `[Unreleased]`）
+- **测试复位与 env 卫生**：`isWebGuiActive()` 的模块级状态在测试间复位**经真实实例 start/stop 驱动**（如确需 `@internal reset` 则仅供测试文件 import，不作为公开导出——防踩"模块级 setter"红线）；显式开 `GODOT_MCP_WEB_GUI=1` 的测试须 `afterEach` 还原 env（进程级污染同 worker 后续文件，仓库存量 `check:env-isolation` 门禁兜底）
 
 ## 10. 验收标准（真机）
 
@@ -217,3 +218,9 @@
   - M-7：端口清单补 DAP 6006（§3.2）
   - M-8：活跃 SSE socket 逐个 unref（§3.1）
   - M-6：stopWebGui 插入位置实现时定，已在 §3.2 注明
+- **v3 → v3.1**（2026-09-14，v2 审阅者复核 v3 后微修。复核结论：15 项 14 PASS + 1 PARTIAL、交叉矛盾检查全闭环、无架构级返工项）：
+  - N-1（Important）：删除失实的 `check:command-docs-drift` 门禁引用（该门禁只检测 GD 插件命令文档与 inputSchema 的参数 drift，与 CLI showHelp 零关系）——§2.10 改为"无机械门禁覆盖 showHelp，靠本清单自查"，§9 相应句删除
+  - N-2：§9 补 isWebGuiActive 测试复位机制（真实实例 start/stop 驱动；@internal reset 仅供测试，不公开导出防踩红线）
+  - N-3：§9 补显式开 env 测试的 afterEach 还原 + check:env-isolation 兜底
+  - N-4：§3.2 注明 run() reject 路径 TUI 不再弹出的行为微变（改善）
+  - N-5：§3.3.3 去重键来源定死为服务端数据（ts + call_id + msg 摘要），弃前端接收序号
