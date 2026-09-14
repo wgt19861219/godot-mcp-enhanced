@@ -30,6 +30,15 @@ export interface DashboardState {
   recentLogs: RingBuffer<LogEntry>;
 }
 
+/** per-project 聚合体(Web GUI 设计 §8.1):与全局统计同构的独立累积结构。 */
+interface ProjectAggregate {
+  totalCalls: number;
+  totalErrors: number;
+  toolStats: Map<string, ToolStats>;
+  timeSeriesBuf: RingBuffer<TimeSeriesBucket>;
+  timeSeriesMap: Map<string, TimeSeriesBucket>;
+}
+
 const RECENT_LOGS_CAPACITY = 500;
 const TIME_SERIES_MAX_BUCKETS = 30;
 
@@ -51,6 +60,18 @@ export class Aggregator {
   private mode = 'unknown';
   private projectPath = '';
   private startTime = new Date().toISOString();
+  private byProject = new Map<string, ProjectAggregate>();
+
+  private projectAggregate(project: string): ProjectAggregate {
+    let p = this.byProject.get(project);
+    if (!p) {
+      p = { totalCalls: 0, totalErrors: 0, toolStats: new Map(),
+            timeSeriesBuf: new RingBuffer<TimeSeriesBucket>(TIME_SERIES_MAX_BUCKETS),
+            timeSeriesMap: new Map() };
+      this.byProject.set(project, p);
+    }
+    return p;
+  }
 
   process(entry: LogEntry): void {
     this.recentLogs.push(entry);
@@ -62,11 +83,11 @@ export class Aggregator {
       else if (msg.includes('bridge')) this.mode = 'bridge';
     }
 
-    if (!this.projectPath && entry.type === 'tool_start' && entry.meta) {
-      const pp = entry.meta.project_path;
-      if (typeof pp === 'string' && pp.length > 0) {
-        this.projectPath = pp;
-      }
+    // 死逻辑修复(Task 3):原读 meta.project_path,但 logger.toolStart 的 meta 只有
+    // arg_keys,project_path 从不出现 → 恒 miss。Task 1 起真实路径在 entry.project。
+    const projectKey = entry.project && entry.project.length > 0 ? entry.project : 'unknown';
+    if (!this.projectPath && projectKey !== 'unknown') {
+      this.projectPath = projectKey;
     }
 
     if (entry.type !== 'tool_end') return;
@@ -116,6 +137,50 @@ export class Aggregator {
       this.timeSeriesBuf.push(bucket);
       this.timeSeriesMap.set(key, bucket);
     }
+
+    // ---- per-project 同构统计(追加式;与上方全局统计逻辑同构,不抽公共函数以免重构既有路径)----
+    const pa = this.projectAggregate(projectKey);
+    pa.totalCalls++;
+    if (isError) pa.totalErrors++;
+
+    const existingPStats = pa.toolStats.get(tool);
+    if (existingPStats) {
+      existingPStats.calls++;
+      existingPStats.errors += isError ? 1 : 0;
+      existingPStats.totalDurationMs += durationMs;
+      existingPStats.minDurationMs = Math.min(existingPStats.minDurationMs, durationMs);
+      existingPStats.maxDurationMs = Math.max(existingPStats.maxDurationMs, durationMs);
+      existingPStats.lastCalled = entry.ts;
+    } else {
+      pa.toolStats.set(tool, {
+        tool,
+        calls: 1,
+        errors: isError ? 1 : 0,
+        totalDurationMs: durationMs,
+        minDurationMs: durationMs,
+        maxDurationMs: durationMs,
+        lastCalled: entry.ts,
+      });
+    }
+
+    const pKey = minuteKey(entry.ts);
+    const existingPBucket = pa.timeSeriesMap.get(pKey);
+    if (existingPBucket) {
+      existingPBucket.calls++;
+      existingPBucket.errors += isError ? 1 : 0;
+      existingPBucket.totalDurationMs += durationMs;
+      existingPBucket.count++;
+    } else {
+      const pBucket: TimeSeriesBucket = {
+        minute: pKey,
+        calls: 1,
+        errors: isError ? 1 : 0,
+        totalDurationMs: durationMs,
+        count: 1,
+      };
+      pa.timeSeriesBuf.push(pBucket);
+      pa.timeSeriesMap.set(pKey, pBucket);
+    }
   }
 
   getState(): DashboardState {
@@ -134,6 +199,31 @@ export class Aggregator {
       totalErrors: this.totalErrors,
       toolStats: this.toolStats,
       timeSeries: this.timeSeriesBuf.toArray(),
+      recentLogs: this.recentLogs,
+    };
+  }
+
+  getProjectKeys(): string[] {
+    return [...this.byProject.keys()];
+  }
+
+  /** per-project 视图(设计 §8.1):结构与 getState() 同构(含 A-12 幽灵清理)。
+   *  recentLogs 共享全局日志流(不按项目复制,省内存)。 */
+  getStateFor(project: string): DashboardState {
+    const p = this.projectAggregate(project);
+    const active = p.timeSeriesBuf.toArray();
+    const activeKeys = new Set(active.map(b => b.minute));
+    for (const key of p.timeSeriesMap.keys()) {
+      if (!activeKeys.has(key)) p.timeSeriesMap.delete(key);
+    }
+    return {
+      startTime: this.startTime,
+      mode: this.mode,
+      projectPath: project === 'unknown' ? '' : project,
+      totalCalls: p.totalCalls,
+      totalErrors: p.totalErrors,
+      toolStats: p.toolStats,
+      timeSeries: active,
       recentLogs: this.recentLogs,
     };
   }
