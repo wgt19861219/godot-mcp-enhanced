@@ -3,6 +3,7 @@ import { LogReader, resolveRotationTarget } from '../../src/dashboard/log-reader
 import { writeFileSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { todayStr } from '../../src/core/logger.js';
 
 const TEST_DIR = join(tmpdir(), 'godot-mcp-test-log-reader');
 
@@ -18,8 +19,9 @@ function writeJsonlLine(filePath: string, obj: Record<string, unknown>): void {
 }
 
 function todayFile(): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return join(TEST_DIR, `${today}.jsonl`);
+  // 与 logger/LogReader 同款本地日期(原 toISOString 是 UTC——东八区 00:00-08:00
+  // 写 UTC"昨天"文件,LogReader 修复后按本地"今天"定位会导致回归)
+  return join(TEST_DIR, `${todayStr()}.jsonl`);
 }
 
 function makeEntry(msg: string): Record<string, unknown> {
