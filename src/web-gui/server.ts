@@ -100,9 +100,9 @@ export class WebGuiServer {
     // 注册顺序 logFlush→sessions→stats 保证同 tick 内 log 帧先于快照写出(SSE 消费方帧序稳定)。
     this.logFlushTimer = setInterval(() => this.flushLogFrame(), 500);
     this.logFlushTimer.unref?.();
-    this.sessionsTimer = setInterval(() => this.broadcastSnapshot('sessions', 500), 500);
+    this.sessionsTimer = setInterval(() => this.broadcastSnapshot('sessions'), 500);
     this.sessionsTimer.unref?.();
-    this.statsTimer = setInterval(() => this.broadcastSnapshot('stats', 1000), 1000);
+    this.statsTimer = setInterval(() => this.broadcastSnapshot('stats'), 1000);
     this.statsTimer.unref?.();
   }
 
@@ -259,7 +259,7 @@ export class WebGuiServer {
     for (const res of this.sseClients) this.sendEvent(res, 'log', { entries });
   }
 
-  private broadcastSnapshot(event: 'sessions' | 'stats', _throttleMs: number): void {
+  private broadcastSnapshot(event: 'sessions' | 'stats'): void {
     if (this.sseClients.size === 0) return;
     const data = event === 'sessions' ? this.opts.getSessions() : this.statsSnapshot();
     for (const res of this.sseClients) this.sendEvent(res, event, data);
