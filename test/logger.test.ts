@@ -189,6 +189,45 @@ describe('tool 配对', () => {
     expect(warns.length).toBeGreaterThanOrEqual(1);
   });
 
+  // ─── §4.6: tool_start/tool_end 条目 project 字段(子项目 2 Web GUI 数据基础) ───
+
+  it('toolStart 第三参 project → tool_start/tool_end 均携带 project 字段', () => {
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const callId = logger.toolStart('run_project', { project_path: '/tmp/a' }, '/tmp/a');
+    logger.toolEnd(callId, 'run_project', 80);
+    logger.flush();
+    const entries = readJsonl();
+    const start = entries.find(e => e.type === 'tool_start');
+    const end = entries.find(e => e.type === 'tool_end');
+    expect(start?.project).toBe('/tmp/a');
+    expect(end?.project).toBe('/tmp/a');
+  });
+
+  it('未传 project → 不写 project 字段(向后兼容,dashboard 聚合器不破)', () => {
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const callId = logger.toolStart('read_scene', { scene_path: 'main.tscn' });
+    logger.toolEnd(callId, 'read_scene', 10);
+    logger.flush();
+    const entries = readJsonl();
+    const start = entries.find(e => e.type === 'tool_start');
+    const end = entries.find(e => e.type === 'tool_end');
+    expect('project' in start!).toBe(false);
+    expect('project' in end!).toBe(false);
+  });
+
+  it('60s 超时的 tool_end 也带 project(pendingTools 配对携带)', () => {
+    vi.useFakeTimers();
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const callId = logger.toolStart('slow_tool', { a: 1 }, '/tmp/b');
+    vi.advanceTimersByTime(61_000);
+    logger.flush();
+    const entries = readJsonl();
+    const timeoutEntry = entries.find(e => e.type === 'tool_end' && e.error === 'timeout');
+    expect(timeoutEntry?.project).toBe('/tmp/b');
+    expect(timeoutEntry?.call_id).toBe(callId);
+    vi.useRealTimers();
+  });
+
   it('60s 超时 → 自动写 tool_end error: timeout', () => {
     vi.useFakeTimers();
     const logger = getLogger({ logDir: TEST_LOG_DIR });

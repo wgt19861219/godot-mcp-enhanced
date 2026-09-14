@@ -1,5 +1,5 @@
 {
-  "version": "0.33.2",
+  "version": "0.33.3",
   "tools": [
     {
       "name": "analysis",
@@ -4307,7 +4307,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶"
           },
           "timeout": {
             "type": "number",
@@ -4424,8 +4424,8 @@
       },
       "size": {
         "descBytes": 98,
-        "schemaBytes": 2468,
-        "totalBytes": 2566
+        "schemaBytes": 2680,
+        "totalBytes": 2778
       },
       "annotations": {
         "readOnlyHint": false,

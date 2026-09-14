@@ -21,9 +21,12 @@ vi.mock('child_process', async (importOriginal) => {
   return { ...actual, spawn: mockSpawn };
 });
 
-vi.mock('../../src/core/process-state.js', () => ({
-  forceKillTree: mockForceKillTree,
-}));
+// I-4 统一策略:importOriginal 部分覆盖——forceKillTree 是断言目标保留 stub,
+// 其余导出透传真实模块(防 Task 系列新增导出后 mock 工厂缺导出 TypeError)。
+vi.mock('../../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/process-state.js')>();
+  return { ...actual, forceKillTree: mockForceKillTree };
+});
 
 import { runBlenderHeadless } from '../../src/core/blender-spawn.js';
 

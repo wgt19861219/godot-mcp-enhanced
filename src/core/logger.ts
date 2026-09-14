@@ -28,6 +28,9 @@ export interface LogEntry {
   error?: string;
   type?: 'tool_start' | 'tool_end' | 'rotation';
   call_id?: string;
+  /** §4.6(设计):工具调用归属项目路径——子项目 2 Web GUI 的数据基础。
+   *  可选字段:调用方未提供时不写(向后兼容,dashboard 聚合器不破)。 */
+  project?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -43,7 +46,7 @@ export interface Logger {
   info(module: string, msg: string, meta?: Record<string, unknown>): void;
   warn(module: string, msg: string, meta?: Record<string, unknown>): void;
   error(module: string, msg: string, meta?: Record<string, unknown>): void;
-  toolStart(tool: string, args?: Record<string, unknown>): string;
+  toolStart(tool: string, args?: Record<string, unknown>, project?: string): string;
   toolEnd(callId: string, tool: string, durationMs: number, error?: string): void;
   flush(): void;
   pendingCount(): number;
@@ -221,6 +224,8 @@ function formatStderr(entry: LogEntry): string {
 interface PendingTool {
   tool: string;
   startTime: number;
+  /** §4.6:toolStart 时记录的项目归属,toolEnd/超时配对携带(调用方不重传)。 */
+  project?: string;
 }
 
 interface LoggerImpl extends Logger {
@@ -377,6 +382,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
         duration_ms: now - pending.startTime,
         error: 'timeout',
       };
+      if (pending.project) entry.project = pending.project;
       buffer.push(entry);
     }
   }
@@ -413,10 +419,10 @@ function createLogger(opts: LoggerOptions = {}): Logger {
 
   // ---- tool 配对 ----
 
-  function toolStart(tool: string, args?: Record<string, unknown>): string {
+  function toolStart(tool: string, args?: Record<string, unknown>, project?: string): string {
     const id = nanoid8();
     const callId = `${tool}:${id}`;
-    pendingTools.set(callId, { tool, startTime: Date.now() });
+    pendingTools.set(callId, { tool, startTime: Date.now(), project });
 
     const entry: LogEntry = {
       v: 1,
@@ -428,6 +434,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       type: 'tool_start',
       call_id: callId,
     };
+    if (project) entry.project = project;
     if (args && Object.keys(args).length > 0) {
       entry.meta = { arg_keys: Object.keys(args) };
     }
@@ -455,6 +462,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       call_id: callId,
       duration_ms: durationMs,
     };
+    if (pending.project) entry.project = pending.project;
     if (err) entry.error = sanitizeMsg(err);
     writeEntry(entry);
   }

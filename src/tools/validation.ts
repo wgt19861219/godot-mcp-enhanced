@@ -571,8 +571,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         }
       } catch (err) { getLogger().debug('validation', `precheck scripts: ${err instanceof Error ? err.message : err}`); }
 
-      // V-01 fix: setProjectDir so stop_project orphan scan can find project path
-      ctx.setProjectDir(projectPath);
+      // V-01 fix → §4.7 裁决收窄(2026-09-13):不再调 ctx.setProjectDir——活跃指针写入方
+      // 仅限 run_project 与显式切换点,validate_scripts 不得切桶(否则 getRunningProcess() 变
+      // null、游戏输出写错桶)。orphan 兜底语义(stop_project 无参时需知项目)由 runtime 侧
+      // 读活跃桶(ctx.projectDir)覆盖;本链路仅消费局部 projectPath,不写活跃指针。
 
       const result = await spawnGodot(godot, cmdArgs, { timeoutMs: timeout * 1000 });
       const allOutput = [...result.stdout.split('\n'), ...result.stderr.split('\n')];

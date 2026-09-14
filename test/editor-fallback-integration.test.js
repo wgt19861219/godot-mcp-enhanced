@@ -50,18 +50,23 @@ vi.mock('../src/core/editor-auth.js', () => ({
   waitForEditorSecret: (...args) => mockWaitForEditorSecret(...args),
 }));
 
-// ─── Mock process-state (避真实进程管理) ─────────────────────────────────────
-vi.mock('../src/core/process-state.js', () => ({
-  getRunningProcess: vi.fn().mockReturnValue(null),
-  setRunningProcess: vi.fn(),
-  getOutputBuffer: vi.fn().mockReturnValue([]),
-  setOutputBuffer: vi.fn(),
-  getProcessStartTime: vi.fn().mockReturnValue(0),
-  setProcessStartTime: vi.fn(),
-  getProjectDir: vi.fn().mockReturnValue(''),
-  setProjectDir: vi.fn(),
-  killProcess: vi.fn().mockResolvedValue(undefined),
-}));
+// ─── Mock process-state (避真实进程管理;Task 3/设计 §7 I-4:importOriginal ────
+//     部分覆盖——仅 stub 测试需要的函数,新导出(killAllRunSessions 等)透传真实模块) ──
+vi.mock('../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getRunningProcess: vi.fn().mockReturnValue(null),
+    setRunningProcess: vi.fn(),
+    getOutputBuffer: vi.fn().mockReturnValue([]),
+    setOutputBuffer: vi.fn(),
+    getProcessStartTime: vi.fn().mockReturnValue(0),
+    setProcessStartTime: vi.fn(),
+    getProjectDir: vi.fn().mockReturnValue(''),
+    setProjectDir: vi.fn(),
+    killProcess: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 // ─── 不 mock EditorConnection / EditorToolExecutor / HealthMonitor ───────────
 // 真实接线是本集成测试的核心价值（现有 godot-server.test.js 用 mock 绕过真实重连）。

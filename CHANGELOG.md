@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.33.3] - 2026-09-14
+
+> per-project 运行会话分桶（设计 `docs/superpowers/specs/2026-09-13-per-project-run-sessions-design.md`，三轮独立审阅 1C+5I+7M 全落实）；规则模板门禁触发的 patch bump；npm publish / tag 待用户指令。
+
+### Added
+- **per-project 会话分桶**：`process-state` 模块级单例改为 `Map<projectKey, RunSession>`（六态状态机 starting/running/stopping/exited/exited_early/errored；运行中上限 `GODOT_MCP_MAX_SESSIONS` 默认 4，溢出拒绝并列出在跑会话；已结束桶快照留档、FIFO 上限 16）——`run_project` 可并行运行多个项目（**多窗口并存**），同项目重复 run 仍先停旧进程；77 个既有 process-state 用例经惰性空桶 + 兼容层语义重定向活跃桶零改动通过。
+- `stop_project` / `get_debug_output` 新增可选 `project_path` 参数：缺省操作活跃项目（最近 `run_project`），指定则跨项目停止/查错（快照 per-project，关窗后带 `project_path` 仍可查）。
+- audit 归属（I-2）：`ToolDispatcher` 审计 projectPath fallback 链插入活跃桶——runtime 域 risk='process' 操作无参时审计落活跃项目而非 env 项目，防多桶审计归属漂移。
+- logger JSONL `tool_start`/`tool_end` 新增 `project` 字段（`pendingTools` 配对携带），为会话面板按 key 归属铺路。
+- 规则模板双副本「视觉改动收尾流程」新增多项目说明（多窗口并存/`project_path` 查错/上限/bridge 跟随活跃）；`claudemd-builder`「运行时管理」段同步多项目措辞。
+
+### Fixed
+- **并发互杀（C-1，Critical）**：`run_project` 主流程同步写入点（proc 写入/busy 释放/缓冲清理）全部改走 per-key API——`setRunningProcess` 内嵌 forceKillTree 在活跃指针被并发切走时（profiling 路径 `await` 是真实互杀窗口）会杀错窗/写错桶，现该导出对主流程禁用。
+- **orphan 误杀非活跃窗**：pid 注册表改 `Map<number, projectKey>`，30s 周期扫描与 stop orphan 分支的排除集合改全部桶内活进程（`getActiveRunPids()`），orphan 节流 per-project 化——项目 B 的 run/stop 不再击杀项目 A 常驻中的 preview 窗口。
+- **profiler 误销毁（I-1）**：`capture_functions` 采样最近一次 profiling 会话且不被无关 run 销毁（新 run 无条件 close profiler 改仅同 key 才关；close handler 清理段并入 sessionKey 身份守卫）。
+- **FIFO 残留**：FIFO 逐出集合只收已结束桶，活跃/存活桶永不误逐出；busy 错误消息按目标 key 参数化并消除读侧创建副作用（M-1）。
+- 输出串桶：游戏输出流 handler 闭包捕获 spawn 时 sessionKey（`appendOutput(lines, key)`），活跃指针切走后输出仍写原桶；spawn 秒退（<2s）单独 `exited_early` 态，快照仍留档可查崩溃原因。
+- 活跃指针单写入方收窄（`validate_scripts` 链路改只读，§4.7 裁决）；`gdscript-executor` 游戏进程并发警告改按目标桶判定（I-3，防活跃=B 时对运行中的 A 漏报）；`GodotServer.close()` 走 `killAllRunSessions()` 清全部桶不留孤儿。
+
 ## [0.33.2] - 2026-09-13
 
 > 规则模板门禁触发的 patch bump（`check-rules-version-bump.mjs` 硬门禁）；npm publish / tag 待用户指令。

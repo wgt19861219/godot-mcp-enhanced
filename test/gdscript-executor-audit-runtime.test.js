@@ -47,16 +47,22 @@ vi.mock('fs', async (importOriginal) => {
 // ─── mock process-state：避开 slot/PID 管理（聚焦 audit + spawn 回填）────────
 // gdscript-executor:25 import { forceKillTree, getProjectDir, getRunningProcess,
 // acquireShortRunningSlot, releaseShortRunningSlot }。slot 系统状态可能致 :1063 提前 return。
-vi.mock('../src/core/process-state.js', () => ({
-  acquireShortRunningSlot: () => true,
-  releaseShortRunningSlot: () => {},
-  getRunningProcess: () => null,
-  getProjectDir: () => '',
-  forceKillTree: () => {},
-  // B-T4: spawn 注册/注销 PID（无需真实跟踪，no-op 即可）
-  registerSpawnedGodotPid: () => {},
-  unregisterSpawnedGodotPid: () => {},
-}));
+// I-4 统一策略(设计 §7):importOriginal 部分覆盖——仅 stub 上述防副作用项,
+// 新导出(getRunSessionProc/killAllRunSessions 等)透传真实模块,防补导出漂移。
+vi.mock('../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    acquireShortRunningSlot: () => true,
+    releaseShortRunningSlot: () => {},
+    getRunningProcess: () => null,
+    getProjectDir: () => '',
+    forceKillTree: () => {},
+    // B-T4: spawn 注册/注销 PID（无需真实跟踪，no-op 即可）
+    registerSpawnedGodotPid: () => {},
+    unregisterSpawnedGodotPid: () => {},
+  };
+});
 
 // ─── mock fs/promises.readdir 返空：跳过 cleanupOldSessions 扫描 ────────────
 // executeGdscript 每次调用都 cleanupOldSessions（gdscript-executor.ts:1104）扫 BASE_TMP_DIR，

@@ -51,7 +51,6 @@ import { buildAuthHeaders } from './core/instance-api-auth.js';
 import { InstanceHttpServer } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
-import { killProcess } from './core/process-state.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
 import { setProgressSender, setProgressClientReady } from './core/progress.js';
 import { setElicitServer } from './core/elicit.js';
@@ -690,15 +689,11 @@ export class GodotServer {
         this.editorMgr = null;
         await safeStep('editorMgr.close', () => mgr.close());
       }
-      const proc = ps.getRunningProcess();
-      if (proc && !proc.killed) {
-        await safeStep('killProcess(running Godot)', async () => {
-          await killProcess(proc);
-          ps.setProcessBusy(false);
-          ps.setRunningProcess(null);
-          log('Running Godot process killed');
-        });
-      }
+      // Task 3(设计 §5):close 走 killAllRunSessions——杀全部桶活进程并清桶
+      // (per-project 分桶后非活跃桶的进程也一并收尾,不留孤儿)。等价旧逻辑
+      // (killProcess 活跃 proc + setProcessBusy(false) + setRunningProcess(null))
+      // 的 per-key 超集:status→stopping、killProcess、快照挪移均由其内部承接。
+      await safeStep('killAllRunSessions', () => ps.killAllRunSessions());
       // B-T4: 清理 in-flight short-running gdscript spawn（gdscript-executor 注册）。
       // 原 close 只 kill run_project 长进程,挂起脚本 + close → 孤儿无兜底。
       // getSpawnedGodotPids 此时通常已空（exit/error/timeout 三路径均 unregister），

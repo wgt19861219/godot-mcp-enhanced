@@ -38,15 +38,20 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 // mock process-state:slot/PID 管理避开,unregister/release 设 spy 以断言 timer 调用
-vi.mock('../src/core/process-state.js', () => ({
-  acquireShortRunningSlot: () => true,
-  releaseShortRunningSlot: releaseSpy,
-  getRunningProcess: () => null,
-  getProjectDir: () => '',
-  forceKillTree: () => {},
-  registerSpawnedGodotPid: () => {},
-  unregisterSpawnedGodotPid: unregisterSpy,
-}));
+// I-4 统一策略(设计 §7):importOriginal 部分覆盖——stub 项保留,新导出透传真实模块。
+vi.mock('../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/process-state.js')>();
+  return {
+    ...actual,
+    acquireShortRunningSlot: () => true,
+    releaseShortRunningSlot: releaseSpy,
+    getRunningProcess: () => null,
+    getProjectDir: () => '',
+    forceKillTree: () => {},
+    registerSpawnedGodotPid: () => {},
+    unregisterSpawnedGodotPid: unregisterSpy,
+  };
+});
 
 // mock fs/promises.readdir:跳过 cleanupOldSessions 扫描(避免残留目录致卡死,见 A-07)
 vi.mock('fs/promises', async (importOriginal) => {

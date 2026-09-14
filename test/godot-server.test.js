@@ -66,31 +66,40 @@ vi.mock('../src/core/EditorToolExecutor.js', () => ({
 }));
 
 // ─── Mock process-state to avoid real process management ────────────────────
-vi.mock('../src/core/process-state.js', () => ({
-  getRunningProcess: vi.fn().mockReturnValue(null),
-  setRunningProcess: vi.fn(),
-  setProcessBusy: vi.fn(),
-  getOutputBuffer: vi.fn().mockReturnValue([]),
-  setOutputBuffer: vi.fn(),
-  getProcessStartTime: vi.fn().mockReturnValue(0),
-  setProcessStartTime: vi.fn(),
-  getProjectDir: vi.fn().mockReturnValue(''),
-  setProjectDir: vi.fn(),
-  killProcess: vi.fn().mockResolvedValue(undefined),
-  // B-T4: close() 清理 in-flight gdscript spawn（默认空集，无 orphan）
-  getSpawnedGodotPids: vi.fn().mockReturnValue([]),
-  killPidTree: vi.fn(),
-  unregisterSpawnedGodotPid: vi.fn(),
-  // 报告②P0/P1：周期 orphan 扫描 + 启动清理调用此函数
-  killOrphanGodotProcesses: vi.fn().mockResolvedValue(0),
-}));
+// Task 3(设计 §7 I-4):vi.mock(importOriginal) 部分覆盖——仅 stub 测试真正需要的
+// 函数,其余导出(含 Task 2 新增 killAllRunSessions/getActiveRunPids 等)透传真实模块,
+// 根治"新增导出缺透传 → close() 时 TypeError"的补导出漂移。
+vi.mock('../src/core/process-state.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getRunningProcess: vi.fn().mockReturnValue(null),
+    setRunningProcess: vi.fn(),
+    setProcessBusy: vi.fn(),
+    getOutputBuffer: vi.fn().mockReturnValue([]),
+    setOutputBuffer: vi.fn(),
+    getProcessStartTime: vi.fn().mockReturnValue(0),
+    setProcessStartTime: vi.fn(),
+    getProjectDir: vi.fn().mockReturnValue(''),
+    setProjectDir: vi.fn(),
+    killProcess: vi.fn().mockResolvedValue(undefined),
+    // B-T4: close() 清理 in-flight gdscript spawn（默认空集，无 orphan）
+    getSpawnedGodotPids: vi.fn().mockReturnValue([]),
+    killPidTree: vi.fn(),
+    unregisterSpawnedGodotPid: vi.fn(),
+    // 报告②P0/P1：周期 orphan 扫描 + 启动清理调用此函数
+    killOrphanGodotProcesses: vi.fn().mockResolvedValue(0),
+    // Task 3: close() 逐进程清理段换 killAllRunSessions(下述 G-2 用例断言其被调)
+    killAllRunSessions: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 // ─── Import SUT (after mocks) ────────────────────────────────────────────────
 import { GodotServer, clearGodotPathCache, getCachedGodotPath } from '../src/GodotServer.js';
 import { handleTool as instanceHandleTool, setInstanceManager, setInstanceRouter } from '../src/tools/instance-tools.js';
 import * as bridgeMod from '../src/tools/game-bridge.js';
 import { dynamicSchema } from '../src/core/dynamic-schema.js';
-import { getRunningProcess, killProcess } from '../src/core/process-state.js';
+import { killAllRunSessions } from '../src/core/process-state.js';
 import { EditorConnection } from '../src/core/EditorConnection.js';
 import { EditorToolExecutor } from '../src/core/EditorToolExecutor.js';
 
@@ -248,12 +257,12 @@ describe('GodotServer', () => {
         }
       });
 
-      it('editorMgr.close() 抛错 → 后续 killProcess 仍执行(单点错不阻断清理链)', async () => {
-        vi.mocked(getRunningProcess).mockReturnValue({ killed: false, pid: 4321 });
+      it('editorMgr.close() 抛错 → 后续 killAllRunSessions 仍执行(单点错不阻断清理链)', async () => {
         const server = new GodotServer('/fake/ops.gd');
         server.editorMgr = { close: () => { throw new Error('editor close boom'); }, getProjectPath: () => null };
         await expect(server.close()).resolves.toBeUndefined();  // 整体不抛
-        expect(killProcess).toHaveBeenCalled();  // 早抛的 editorMgr 不阻断 killProcess(孤儿 Godot 兜底)
+        // Task 3: close 逐进程清理段换 killAllRunSessions(杀全部桶活进程,孤儿 Godot 兜底)
+        expect(killAllRunSessions).toHaveBeenCalled();  // 早抛的 editorMgr 不阻断孤儿清理
         expect(mockServerClose).toHaveBeenCalled();  // server.close 仍执行
       });
 

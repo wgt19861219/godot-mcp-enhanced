@@ -43,6 +43,20 @@ import {
   getSpawnedGodotPids,
   killOrphanGodotProcesses,
   getLastFinishedRunOutput,
+  // Task 2: per-key 会话 API(设计 §4.2)
+  normalizeProjectKey,
+  getSession,
+  listRunSessions,
+  getRunSessionProc,
+  setRunSessionProc,
+  releaseRunSessionBusy,
+  clearRunSession,
+  markSessionStopping,
+  setSessionStatus,
+  markSessionExited,
+  ensureSessionCapacity,
+  getActiveRunPids,
+  killAllRunSessions,
 } from '../src/core/process-state.js';
 
 function makeMockProc({ killed = false, pid = 12345 } = {}) {
@@ -734,5 +748,321 @@ describe('output snapshot — B-1 修复(_lastFinishedRunOutput)', () => {
     expect(getLastFinishedRunOutput().length).toBe(1);
     resetState();
     expect(getLastFinishedRunOutput()).toEqual([]);
+  });
+});
+
+// ─── per-project sessions — 分桶核心(设计 §4.2/§7,Task 2)──────────────────
+
+describe('per-project sessions — 分桶核心(设计 §4.2/§7)', () => {
+  beforeEach(() => { resetState(); });
+
+  it('多桶并存:A/B 各自 proc,互不影响', () => {
+    const pA = makeMockProc({ pid: 111 });
+    const pB = makeMockProc({ pid: 222 });
+    setProjectDir('/proj/A'); setRunSessionProc('/proj/A', pA, true);
+    setProjectDir('/proj/B'); setRunSessionProc('/proj/B', pB, true);
+    expect(getRunSessionProc('/proj/A')).toBe(pA);
+    expect(getRunSessionProc('/proj/B')).toBe(pB);
+    expect(listRunSessions().length).toBe(2);
+    expect(getActiveRunPids()).toContain(pA.pid);
+    expect(getActiveRunPids()).toContain(pB.pid);
+  });
+
+  it('setRunSessionProc 只 forceKillTree 该桶旧 proc,不碰其他桶(设计 C-1)', () => {
+    const procA1 = makeMockProc({ pid: 111 });
+    const procA2 = makeMockProc({ pid: 112 });
+    const procB = makeMockProc({ pid: 222 });
+    setProjectDir('/A'); setRunSessionProc('/A', procA1, true);
+    setProjectDir('/B'); setRunSessionProc('/B', procB, true);
+    spawn.mockClear();   // 只清 taskkill 调用记录(proc mock 的 vi.fn 不受影响)
+    setRunSessionProc('/A', procA2, true);
+    expect(getRunSessionProc('/B')).toBe(procB);          // B 不受影响
+    expect(getRunSessionProc('/A')).toBe(procA2);
+    if (process.platform === 'win32') {
+      // A 桶旧 procA1 被杀,B 桶 procB 未被 taskkill
+      expect(spawn).toHaveBeenCalledWith('taskkill', ['/F', '/T', '/PID', '111'], { stdio: 'ignore' });
+      expect(spawn).not.toHaveBeenCalledWith('taskkill', ['/F', '/T', '/PID', '222'], { stdio: 'ignore' });
+    } else {
+      expect(procA1.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(procB.kill).not.toHaveBeenCalled();
+    }
+  });
+
+  it('clearRunSession 只清目标桶:busy 释放+proc 清空+快照挪移(B 的 busy/proc 完好)', () => {
+    const procA = makeMockProc({ pid: 111 });
+    const procB = makeMockProc({ pid: 222 });
+    setProjectDir('/A'); setRunSessionProc('/A', procA, true);
+    appendOutput(['A-output'], normalizeProjectKey('/A'));
+    setProjectDir('/B'); setRunSessionProc('/B', procB, true);   // 活跃切到 B
+    clearRunSession('/A');
+    expect(getRunSessionProc('/A')).toBeNull();
+    expect(getSession('/A').busy).toBe(false);
+    expect(getSession('/A').lastFinishedRunOutput).toEqual(['A-output']);  // 快照挪入
+    expect(getRunSessionProc('/B')).toBe(procB);                 // B 的 proc 完好
+    expect(getSession('/B').proc).toBe(procB);
+  });
+
+  it('运行中上限 GODOT_MCP_MAX_SESSIONS:达上限拒绝并列出会话(设计 §4.1)', () => {
+    process.env.GODOT_MCP_MAX_SESSIONS = '2';
+    try {
+      setProjectDir('/A'); setRunSessionProc('/A', makeMockProc({ pid: 111 }), true);
+      setProjectDir('/B'); setRunSessionProc('/B', makeMockProc({ pid: 222 }), true);
+      expect(() => ensureSessionCapacity('/C')).toThrow(/MAX_SESSIONS|sessions running/);
+      // 同项目已在跑:覆盖不算新增名额
+      expect(() => ensureSessionCapacity('/A')).not.toThrow();
+      // 已结束桶不占 isAlive 名额
+      setRunSessionProc('/B', null, true);   // B → exited
+      expect(() => ensureSessionCapacity('/C')).not.toThrow();
+    } finally {
+      delete process.env.GODOT_MCP_MAX_SESSIONS;
+    }
+  });
+
+  it('ensureSessionCapacity 默认上限 4,溢出报错附在跑会话清单(英文,设计 §4.1)', () => {
+    for (let i = 0; i < 4; i++) {
+      setProjectDir(`/p${i}`);
+      setRunSessionProc(`/p${i}`, makeMockProc({ pid: 100 + i }), true);
+    }
+    let msg = '';
+    try { ensureSessionCapacity('/p5'); } catch (e) { msg = e.message; }
+    expect(msg).toMatch(/GODOT_MCP_MAX_SESSIONS/);
+    expect(msg).toContain('Sessions running');
+    expect(msg).toContain('/p0');            // 会话清单含 displayPath
+    expect(msg).toContain('stop_project');
+  });
+
+  it('已结束桶 FIFO 超限逐出最旧(默认 16),活跃桶永不逐出;逐出后 getSession 返回 undefined(设计 §4.1)', () => {
+    // 默认上限 16:造 17 个 exited 桶,最旧(/proj-0)被逐
+    for (let i = 0; i < 17; i++) {
+      setSessionStatus(`/proj-${i}`, 'exited');
+    }
+    expect(getSession('/proj-0')).toBeUndefined();   // 最旧被逐
+    expect(getSession('/proj-1')).toBeDefined();
+    expect(getSession('/proj-16')).toBeDefined();
+    // 活跃桶即使 ended 也永不逐出
+    setProjectDir('/proj-active');
+    setSessionStatus('/proj-active', 'exited');
+    for (let i = 17; i < 20; i++) setSessionStatus(`/proj-${i}`, 'exited');   // 连续触发逐出
+    expect(getSession('/proj-active')).toBeDefined();
+  });
+
+  it('FIFO 逐出:shift 到活跃桶跳过删除(活跃桶排 order 队头场景)', () => {
+    process.env.GODOT_MCP_MAX_FINISHED_SESSIONS = '2';
+    try {
+      setProjectDir('/active');
+      setSessionStatus('/active', 'exited');    // 活跃桶 ended,排 FIFO 队头
+      setSessionStatus('/e1', 'exited');
+      setSessionStatus('/e2', 'exited');        // 超限 → shift active(活跃,跳过不删)
+      expect(getSession('/active')).toBeDefined();
+      setSessionStatus('/e3', 'exited');        // shift e1(非活跃,删除)
+      expect(getSession('/e1')).toBeUndefined();
+      expect(getSession('/active')).toBeDefined();
+    } finally {
+      delete process.env.GODOT_MCP_MAX_FINISHED_SESSIONS;
+    }
+  });
+
+  it('FIFO 逐出防御 order 残留条目(空桶重绑后残留 "",Task 1 审查交接点 1)', () => {
+    process.env.GODOT_MCP_MAX_FINISHED_SESSIONS = '2';
+    try {
+      setProcessStartTime(1);            // 创建 '' 空桶
+      setRunningProcess(null);           // '' 登记 order(Task 1 行为)
+      setProjectDir('/A');               // '' 空桶重绑 → Map 已无 '' 但 order 残留
+      setSessionStatus('/x1', 'exited');
+      setSessionStatus('/x2', 'exited'); // order=['',x1,x2] 超限 → shift ''(Map 无此桶,安全 no-op)
+      expect(getSession('/x1')).toBeDefined();
+      expect(getSession('/x2')).toBeDefined();
+    } finally {
+      delete process.env.GODOT_MCP_MAX_FINISHED_SESSIONS;
+    }
+  });
+
+  it('状态机:markSessionStopping/setSessionStatus;close 判定顺序 exited_early(<2s)优先(设计 §4.1)', () => {
+    // setSessionStatus:通用状态设置(含 spawn 失败终态)
+    setSessionStatus('/X', 'starting');
+    expect(getSession('/X').status).toBe('starting');
+    setSessionStatus('/X', 'errored');           // spawn 同步失败终态(不滞留 starting)
+    expect(getSession('/X').status).toBe('errored');
+    // markSessionStopping:running/starting→stopping;ended 态不改
+    setProjectDir('/S'); setRunSessionProc('/S', makeMockProc(), true);   // → running
+    markSessionStopping('/S');
+    expect(getSession('/S').status).toBe('stopping');
+    setSessionStatus('/E', 'exited');
+    markSessionStopping('/E');
+    expect(getSession('/E').status).toBe('exited');   // ended 不改
+    // markSessionExited:2s 内退出 → exited_early 优先(即使 code≠0)
+    setRunSessionProc('/early', makeMockProc(), true);        // processStartTime=now
+    markSessionExited('/early', 1);
+    expect(getSession('/early').status).toBe('exited_early');
+    // 2s 外 code≠0 → errored
+    setRunSessionProc('/late', makeMockProc(), true);
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/late'));
+    markSessionExited('/late', 1);
+    expect(getSession('/late').status).toBe('errored');
+    // 2s 外 code=0 → exited;code=null(无信息)→ exited
+    setRunSessionProc('/ok', makeMockProc(), true);
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/ok'));
+    markSessionExited('/ok', 0);
+    expect(getSession('/ok').status).toBe('exited');
+    markSessionExited('/ok', null);
+    expect(getSession('/ok').status).toBe('exited');
+    // setRunSessionProc(X, null) 路径:2s 内且有输出 → exited_early + 快照留档
+    setRunSessionProc('/fast', makeMockProc(), true);
+    appendOutput(['crash-line'], normalizeProjectKey('/fast'));
+    setRunSessionProc('/fast', null, true);
+    expect(getSession('/fast').status).toBe('exited_early');
+    expect(getSession('/fast').lastFinishedRunOutput).toEqual(['crash-line']);
+    // 2s 外有输出 → exited
+    setRunSessionProc('/slow', makeMockProc(), true);
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/slow'));
+    appendOutput(['normal-end'], normalizeProjectKey('/slow'));
+    setRunSessionProc('/slow', null, true);
+    expect(getSession('/slow').status).toBe('exited');
+    // markSessionExited 未知桶 no-op(不创建桶)
+    expect(() => markSessionExited('/unknown', 0)).not.toThrow();
+    expect(getSession('/unknown')).toBeUndefined();
+  });
+
+  it('acquireProcessSlot(owner, X) 锁 X 桶而非活跃桶(设计 C-1 前半)', async () => {
+    setProjectDir('/B');   // 活跃是 B(空)
+    expect(await acquireProcessSlot('run_project', '/A')).toBe(true);
+    expect(getSession('/A').busy).toBe(true);        // 锁在 A
+    expect(getSession('/B').busy).toBe(false);
+    // 多桶锁并存:B 仍可被另一操作锁住
+    expect(await acquireProcessSlot('other', '/B')).toBe(true);
+    expect(getSession('/B').busy).toBe(true);
+    // A 重复锁失败(目标桶语义)
+    expect(await acquireProcessSlot('again', '/A')).toBe(false);
+  });
+
+  it('getActiveRunPids = 全部桶内活进程(orphan 排除集合,设计 §4.4)', () => {
+    const pA = makeMockProc({ pid: 111 });
+    const pB = makeMockProc({ pid: 222 });
+    const pDead = makeMockProc({ pid: 333, killed: true });
+    setProjectDir('/A'); setRunSessionProc('/A', pA, true);
+    setProjectDir('/B'); setRunSessionProc('/B', pB, true);
+    setProjectDir('/C'); setRunSessionProc('/C', pDead, true);   // killed 进程不在集合
+    const pids = getActiveRunPids();
+    expect(pids).toContain(111);
+    expect(pids).toContain(222);
+    expect(pids).not.toContain(333);
+    expect(pids.length).toBe(2);
+    // 桶退出(proc=null)后不再在集合
+    setRunSessionProc('/B', null, true);
+    expect(getActiveRunPids()).toEqual([111]);
+  });
+
+  it('orphan 排除集合 = 全部桶活进程:非活跃桶活进程不被当孤儿(设计 §4.4 接口)', async () => {
+    // process.pid 是真实存活进程;只要任一桶持有它即跳过(不再只看活跃桶单值)
+    const pB = makeMockProc({ pid: process.pid });
+    setProjectDir('/A');                       // 活跃 = A(无进程)
+    setRunSessionProc('/B', pB, true);         // 非活跃桶 B 持有活进程
+    registerSpawnedGodotPid(process.pid);
+    const count = await killOrphanGodotProcesses();
+    expect(count).toBe(0);                     // 在排除集合 → 跳过不计 kill
+    expect(getSpawnedGodotPids()).toEqual([process.pid]);   // 跳过未清
+  });
+
+  it('killAllRunSessions 杀全部桶活进程并清桶(GodotServer.close 用,设计 §4.2)', async () => {
+    vi.useFakeTimers();
+    try {
+      const pA = makeMockProc({ pid: 111 });
+      const pB = makeMockProc({ pid: 222 });
+      setProjectDir('/A'); setRunSessionProc('/A', pA, true);
+      setProjectDir('/B'); setRunSessionProc('/B', pB, true);
+      appendOutput(['B-out'], normalizeProjectKey('/B'));
+      const p = killAllRunSessions();
+      await vi.advanceTimersByTimeAsync(10_000);   // killProcess 5s 兜底 timer ×2(mock 不触发 close)
+      await p;
+      expect(getRunSessionProc('/A')).toBeNull();
+      expect(getRunSessionProc('/B')).toBeNull();
+      expect(getSession('/B').busy).toBe(false);
+      expect(getSession('/B').lastFinishedRunOutput).toEqual(['B-out']);   // 快照挪入
+      expect(getSession('/A').status).toBe('exited');
+      expect(getActiveRunPids()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releaseRunSessionBusy(X) 只释放 X 桶 busy(设计 C-1)', async () => {
+    await acquireProcessSlot('runA', '/A');
+    await acquireProcessSlot('runB', '/B');
+    releaseRunSessionBusy('/A');
+    expect(getSession('/A').busy).toBe(false);
+    expect(getSession('/A').busyOwner).toBe('');
+    expect(getSession('/B').busy).toBe(true);     // B 不受影响
+    releaseRunSessionBusy('/unknown');            // 无桶 no-op 不炸
+  });
+
+  it('buildBusyErrorMessage(targetKey) 报目标桶的持锁信息(设计 M-1)', async () => {
+    setProjectDir('/B');
+    await acquireProcessSlot('owner-A', '/A');
+    const msg = buildBusyErrorMessage('/A');
+    expect(msg).toContain('owner-A');
+    expect(msg).toContain('stop_project');
+    expect(buildBusyErrorMessage('/B')).toBe('');   // B 桶不 busy → 空串
+  });
+
+  it('registerSpawnedGodotPid(pid, projectKey) 归属化;getSpawnedGodotPids 兼容返回 pid 数组(设计 §4.1)', () => {
+    registerSpawnedGodotPid(123, normalizeProjectKey('/A'));
+    registerSpawnedGodotPid(456, normalizeProjectKey('/B'));
+    expect(getSpawnedGodotPids()).toEqual([123, 456]);
+    unregisterSpawnedGodotPid(123);
+    expect(getSpawnedGodotPids()).toEqual([456]);
+  });
+
+  it('setRunSessionProc 首次将 displayPath 刷新为原始 projectPath 写法(Task 1 审查交接点 2)', () => {
+    const raw = 'D:\\Proj\\MyGame';   // win 归一化 → 小写;displayPath 保留原始写法
+    setRunSessionProc(raw, makeMockProc(), true);
+    const s = getSession(raw);
+    expect(s.displayPath).toBe(raw);
+    const list = listRunSessions();
+    expect(list[0].projectPath).toBe(normalizeProjectKey(raw));
+    expect(list[0].displayPath).toBe(raw);
+  });
+
+  it('getSession 缺省返回活跃桶;listRunSessions 不含 "" 空桶', () => {
+    appendOutput(['x']);   // 无 setProjectDir → 写入 '' 惰性空桶
+    setProjectDir('/A'); setRunSessionProc('/A', makeMockProc(), true);
+    expect(getSession()).toBe(getSession('/A'));          // 缺省=活跃桶(同一引用)
+    expect(getSession('/unknown')).toBeUndefined();
+    const list = listRunSessions();
+    expect(list.length).toBe(1);                          // '' 空桶不进列表
+    expect(list[0].projectPath).toBe(normalizeProjectKey('/A'));
+    expect(list[0].pid).not.toBeNull();
+  });
+
+  it('审查 I-1 锁定:重跑队头 ended 桶转 running 后不被 FIFO 逐出,逐出顺延下一个 ended 桶', () => {
+    // 17 个 ended 桶稳态(默认上限 16):/proj-0 已逐,order=[/proj-1..16]
+    for (let i = 0; i < 17; i++) setSessionStatus(`/proj-${i}`, 'exited');
+    expect(getSession('/proj-0')).toBeUndefined();
+    // 重跑队头项目 /proj-1 → running:setRunSessionProc 摘除 order 残留条目
+    setRunSessionProc('/proj-1', makeMockProc({ pid: 111 }), true);
+    expect(getSession('/proj-1').status).toBe('running');
+    // 再结束 Y/Z 触发逐出(摘除后 order=15,需 push 2 个才超限 16):
+    // X(/proj-1)仍在且 running;被逐的是下一个 ended 桶 /proj-2
+    setSessionStatus('/proj-Y', 'exited');
+    setSessionStatus('/proj-Z', 'exited');
+    expect(getSession('/proj-1')).toBeDefined();
+    expect(getSession('/proj-1').status).toBe('running');
+    expect(getSession('/proj-2')).toBeUndefined();
+    // setSessionStatus 设 alive 态同样摘除残留(新队头 /proj-3 → starting)
+    setSessionStatus('/proj-3', 'starting');
+    for (let i = 0; i < 4; i++) setSessionStatus(`/fill-${i}`, 'exited');   // order 补满触发逐出
+    expect(getSession('/proj-4')).toBeUndefined();        // 逐出顺延 /proj-4
+    expect(getSession('/proj-3')).toBeDefined();
+    expect(getSession('/proj-3').status).toBe('starting');
+  });
+
+  it('审查 M-3 锁定:markSessionExited 判 errored 后,clearRunSession 的 stash 不冲掉 errored(ended 守卫)', () => {
+    setRunSessionProc('/late', makeMockProc(), true);                        // running,startTime=now
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/late'));
+    markSessionExited('/late', 1);                                           // 2s 外 code≠0 → errored
+    expect(getSession('/late').status).toBe('errored');
+    appendOutput(['late-output'], normalizeProjectKey('/late'));             // close 链时序:输出在 errored 后到
+    clearRunSession('/late');                                                // stashToSnapshot:ended 守卫不覆盖
+    expect(getSession('/late').status).toBe('errored');
+    expect(getSession('/late').lastFinishedRunOutput).toEqual(['late-output']);   // 快照仍挪入
   });
 });
