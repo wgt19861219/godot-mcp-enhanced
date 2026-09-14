@@ -140,10 +140,24 @@ export class WebGuiServer {
   // ─── 鉴权(设计 §5) ────────────────────────────────────────────────────────
 
   private extractToken(req: IncomingMessage, url: URL): string | null {
+    // 优先级:query > X-GUI-Token 头 > cookie(空值一律视为未提供,继续走下一通道)
     const q = url.searchParams.get('token');
     if (q) return q;
     const h = req.headers['x-gui-token'];
-    return typeof h === 'string' ? h : null;
+    if (typeof h === 'string' && h) return h;
+    // 第三通道:HttpOnly cookie(/api/auth 握手种下),免疫 URL query 被隐私扩展
+    // 剥除/截断——真机事件 2026-09-14:用户浏览器 query 丢失导致面板全断。
+    const cookie = req.headers.cookie;
+    if (typeof cookie === 'string' && cookie) {
+      for (const part of cookie.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq > 0 && part.slice(0, eq).trim() === 'gui-token') {
+          const v = part.slice(eq + 1).trim();
+          if (v) return v;
+        }
+      }
+    }
+    return null;
   }
 
   private originAllowed(req: IncomingMessage): boolean {
@@ -170,6 +184,18 @@ export class WebGuiServer {
           'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
         });
         res.end(this.opts.getIndexHtml());
+        return;
+      }
+      // cookie 双通道握手端点(须在 authorized 之前注册:自身鉴权只用 query token):
+      // 对 token → 200 + Set-Cookie 种 HttpOnly cookie,此后 EventSource/fetch 免 query
+      // 也能过鉴权(免疫 URL query 被隐私扩展剥除/截断);错/缺 token → 401 不种 cookie。
+      if (url.pathname === '/api/auth') {
+        if (url.searchParams.get('token') !== this.token) { res.writeHead(401).end(); return; }
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'set-cookie': `gui-token=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
+        });
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
       if (!this.authorized(req, url)) {
