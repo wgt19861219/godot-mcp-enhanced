@@ -73,6 +73,17 @@ export class Aggregator {
     return p;
   }
 
+  /** A-12 幽灵清理同源:桶被 RingBuffer 挤出后 map 仍持引用,后续同 key 条目会并入
+   *  幽灵桶(增量不回 buf),读取侧清理时整桶丢失。除 getState/getStateFor 读取侧外,
+   *  process 写入侧也前置调用(Task 7 交接注意 c),保证"挤出后再撞同 key"落新桶。
+   *  O(30) 开销可忽略;顺带保证 map 规模受 buf 容量约束(无读取时也不无界增长)。 */
+  private evictGhostTimeSeries(buf: RingBuffer<TimeSeriesBucket>, map: Map<string, TimeSeriesBucket>): void {
+    const activeKeys = new Set(buf.toArray().map(b => b.minute));
+    for (const key of map.keys()) {
+      if (!activeKeys.has(key)) map.delete(key);
+    }
+  }
+
   process(entry: LogEntry): void {
     this.recentLogs.push(entry);
 
@@ -120,6 +131,7 @@ export class Aggregator {
     }
 
     const key = minuteKey(entry.ts);
+    this.evictGhostTimeSeries(this.timeSeriesBuf, this.timeSeriesMap);
     const existingBucket = this.timeSeriesMap.get(key);
     if (existingBucket) {
       existingBucket.calls++;
@@ -164,6 +176,7 @@ export class Aggregator {
     }
 
     const pKey = minuteKey(entry.ts);
+    this.evictGhostTimeSeries(pa.timeSeriesBuf, pa.timeSeriesMap);
     const existingPBucket = pa.timeSeriesMap.get(pKey);
     if (existingPBucket) {
       existingPBucket.calls++;
@@ -186,11 +199,7 @@ export class Aggregator {
   getState(): DashboardState {
     // A-12: 每次 getState 都清理幽灵条目（O(30) 开销可忽略）
     // 防止 map 中残留已被 RingBuffer 覆盖的旧 bucket
-    const active = this.timeSeriesBuf.toArray();
-    const activeKeys = new Set(active.map(b => b.minute));
-    for (const key of this.timeSeriesMap.keys()) {
-      if (!activeKeys.has(key)) this.timeSeriesMap.delete(key);
-    }
+    this.evictGhostTimeSeries(this.timeSeriesBuf, this.timeSeriesMap);
     return {
       startTime: this.startTime,
       mode: this.mode,
@@ -211,11 +220,7 @@ export class Aggregator {
    *  recentLogs 共享全局日志流(不按项目复制,省内存)。 */
   getStateFor(project: string): DashboardState {
     const p = this.projectAggregate(project);
-    const active = p.timeSeriesBuf.toArray();
-    const activeKeys = new Set(active.map(b => b.minute));
-    for (const key of p.timeSeriesMap.keys()) {
-      if (!activeKeys.has(key)) p.timeSeriesMap.delete(key);
-    }
+    this.evictGhostTimeSeries(p.timeSeriesBuf, p.timeSeriesMap);
     return {
       startTime: this.startTime,
       mode: this.mode,
@@ -223,7 +228,7 @@ export class Aggregator {
       totalCalls: p.totalCalls,
       totalErrors: p.totalErrors,
       toolStats: p.toolStats,
-      timeSeries: active,
+      timeSeries: p.timeSeriesBuf.toArray(),
       recentLogs: this.recentLogs,
     };
   }
