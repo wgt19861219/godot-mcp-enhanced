@@ -31,6 +31,9 @@ export interface LogEntry {
   /** §4.6(设计):工具调用归属项目路径——子项目 2 Web GUI 的数据基础。
    *  可选字段:调用方未提供时不写(向后兼容,dashboard 聚合器不破)。 */
   project?: string;
+  /** §3.3.1(设计):进程标识——Web GUI 多 server 共写同一日志文件时的过滤键。
+   *  可选字段,模块级 getServerId() 惰性生成一次,5 个写点全覆盖写入。 */
+  srv?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -73,6 +76,13 @@ function nanoid8(): string {
   return randomUUID().replace(/-/g, '').substring(0, 8);
 }
 
+/** 进程标识(Web GUI §3.3.1):惰性生成一次;resetLogger 不清——同一进程重启 logger 语义不变。 */
+let _serverId: string | null = null;
+export function getServerId(): string {
+  if (!_serverId) _serverId = randomUUID();
+  return _serverId;
+}
+
 /** 确定日志目录 — XDG 标准路径 */
 export function resolveLogDir(override?: string): string {
   if (override) return override;
@@ -90,8 +100,9 @@ export function resolveLogDir(override?: string): string {
   return join(xdg, 'godot-mcp', 'logs');
 }
 
-/** 当天日期字符串 YYYY-MM-DD */
-function todayStr(): string {
+/** 当天日期字符串 YYYY-MM-DD
+ *  导出供 log-reader 对齐本地日期命名(设计 §2.8 时区修复)。 */
+export function todayStr(): string {
   const d = new Date();
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -272,6 +283,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
           module: 'logger',
           msg: 'Rotating log file',
           type: 'rotation',
+          srv: getServerId(),
           meta: { new_file: `${today}.jsonl` },
         };
         const line = JSON.stringify(rotationEntry) + '\n';
@@ -383,6 +395,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
         error: 'timeout',
       };
       if (pending.project) entry.project = pending.project;
+      entry.srv = getServerId();
       buffer.push(entry);
     }
   }
@@ -398,6 +411,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       module,
       msg: sanitizeMsg(msg),
     };
+    entry.srv = getServerId();
     if (meta && Object.keys(meta).length > 0) {
       entry.meta = sanitizeMeta(meta);
     }
@@ -435,6 +449,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       call_id: callId,
     };
     if (project) entry.project = project;
+    entry.srv = getServerId();
     if (args && Object.keys(args).length > 0) {
       entry.meta = { arg_keys: Object.keys(args) };
     }
@@ -464,6 +479,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
     };
     if (pending.project) entry.project = pending.project;
     if (err) entry.error = sanitizeMsg(err);
+    entry.srv = getServerId();
     writeEntry(entry);
   }
 

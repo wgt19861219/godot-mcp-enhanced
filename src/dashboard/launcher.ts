@@ -5,6 +5,7 @@ import { spawn, spawnSync, type SpawnOptions } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { buildSafeEnv } from '../helpers.js';
+import { isWebGuiActive } from '../web-gui/server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -30,6 +31,11 @@ function spawnDetached(cmd: string, args: readonly string[], opts: SpawnOptions)
  */
 export function launchDashboardOnce(): void {
   if (_launched) return;
+
+  // Web GUI 激活时抑制 TUI(设计 §3.2 双保险):功能被 Web 面板全覆盖,双开纯冗余。
+  // 守在此入口统一覆盖两个触发点(index.ts 启动决策 + game-bridge.ts:69 bridge 首连回调)。
+  // 不置位 _launched——web-gui 关闭/失败后的下一次调用仍可正常弹 TUI。
+  if (isWebGuiActive()) return;
 
   // 环境变量禁用开关
   if (process.env.GODOT_MCP_NO_DASHBOARD === '1' || process.env.GODOT_MCP_NO_DASHBOARD === 'true') {

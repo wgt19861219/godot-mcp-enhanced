@@ -278,6 +278,41 @@ export function listRunSessions(): Array<{ projectPath: string; displayPath: str
   return out;
 }
 
+/** 会话详单(Web GUI §3.3.2):白名单字段序列化,proc 不外泄;直接遍历 _sessions
+ *  (同 listRunSessions 模式),禁止 getOrCreateSession——读路径不得建桶污染 FIFO 语义。 */
+export interface RunSessionDetailed {
+  projectPath: string;
+  displayPath: string;
+  status: RunSessionStatus;
+  pid: number | null;
+  processStartTime: number;
+  busy: boolean;
+  busyOwner: string;
+  busySince: number;
+  /** 两态输出行数:运行中=outputBuffer.length,已结束=lastFinishedRunOutput.length */
+  outputLines: number;
+}
+
+export function listRunSessionsDetailed(): RunSessionDetailed[] {
+  const out: RunSessionDetailed[] = [];
+  for (const [key, s] of _sessions) {
+    if (key === '') continue;   // '' 空桶不进列表(同 listRunSessions)
+    const ended = isEndedStatus(s.status);
+    out.push({
+      projectPath: key,
+      displayPath: s.displayPath,
+      status: s.status,
+      pid: s.proc?.pid ?? null,
+      processStartTime: s.processStartTime,
+      busy: s.busy,
+      busyOwner: s.busyOwner,
+      busySince: s.busySince,
+      outputLines: ended ? s.lastFinishedRunOutput.length : s.outputBuffer.length,
+    });
+  }
+  return out;
+}
+
 /** 指定桶的进程(守卫身份校验用:getRunSessionProc(key) === proc)。 */
 export function getRunSessionProc(projectPath: string): ChildProcess | null {
   return _sessions.get(normalizeProjectKey(projectPath))?.proc ?? null;

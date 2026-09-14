@@ -93,11 +93,13 @@ describe('Aggregator', () => {
   });
 
   it('should extract project path from tool_start entries', () => {
+    // Task 3 死逻辑修复:projectPath 读 entry.project(Task 1 起 logger 写入),
+    // 原 meta.project_path 从不出现(logger.toolStart 的 meta 只有 arg_keys)属恒 miss 死逻辑。
     agg.process(makeEntry({
       type: 'tool_start',
       tool: 'read_scene',
       call_id: 'read_scene:abc',
-      meta: { arg_keys: ['project_path', 'scene_path'], project_path: 'D:/game' },
+      project: 'D:/game',
     }));
     const state = agg.getState();
     expect(state.projectPath).toBe('D:/game');

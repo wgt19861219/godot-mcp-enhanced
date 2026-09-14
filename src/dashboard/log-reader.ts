@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { watch, existsSync, statSync, openSync, closeSync, readSync } from 'node:fs';
 import { join, resolve, sep, basename, dirname } from 'node:path';
 import type { LogEntry } from '../core/logger.js';
+import { todayStr } from '../core/logger.js';
 
 export interface LogReaderOptions {
   pollIntervalMs?: number;
@@ -108,8 +109,9 @@ class LogReader extends EventEmitter {
   }
 
   private getTodayFile(): string {
-    const today = new Date().toISOString().slice(0, 10);
-    return join(this.logDir, `${today}.jsonl`);
+    // 设计 §2.8 时区修复:与 logger 共用同一本地日期函数,消除 UTC/本地错位
+    // (原 toISOString() 是 UTC——东八区每日 00:00-08:00 定位到"昨天"文件,面板断流)。
+    return join(this.logDir, `${todayStr()}.jsonl`);
   }
 
   private startWatch(): void {

@@ -152,21 +152,26 @@ export async function startMcpServer(args: string[]): Promise<void> {
   // signal on both a pipe and a TTY — treat it the same as a shutdown signal.
   process.stdin.on('end', () => gracefulShutdown('stdin-end'));
 
-  server.run().catch((error: unknown) => {
+  server.run().then(() => {
+    // Web GUI 三态已定(设计 §3.2 触发点 1):激活则跳过 TUI(guard 见 launcher 入口);
+    // 禁用/失败照旧弹。行为微变(改善):run() reject 时不再给已死 server 弹监控窗。
+    if (server.webGuiActive) {
+      getLogger().info('godot-mcp', 'Web GUI active — skipping Dashboard TUI auto-launch');
+      return;
+    }
+    import('./dashboard/launcher.js').then(({ launchDashboardOnce }) => {
+      getLogger().info('godot-mcp', 'Auto-launching Dashboard TUI...');
+      launchDashboardOnce();
+    }).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      getLogger().warn('godot-mcp', `Dashboard auto-launch skipped: ${msg}`);
+    });
+  }).catch((error: unknown) => {
     const msg = error instanceof Error ? error.message : 'Unknown error';
     getLogger().error('godot-mcp', 'Failed to run server', { error: msg });
     // I-CQ-01: Graceful cleanup before exit
     getLogger().close();
     process.exit(1);
-  });
-
-  // Auto-launch Dashboard TUI in a new terminal window
-  import('./dashboard/launcher.js').then(({ launchDashboardOnce }) => {
-    getLogger().info('godot-mcp', 'Auto-launching Dashboard TUI...');
-    launchDashboardOnce();
-  }).catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    getLogger().warn('godot-mcp', `Dashboard auto-launch skipped: ${msg}`);
   });
 
   // self-update: 异步查 npm 最新版，有更新 stderr 提示（失败静默，不阻塞 stdio 握手）
