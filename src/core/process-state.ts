@@ -318,6 +318,19 @@ export function getRunSessionProc(projectPath: string): ChildProcess | null {
   return _sessions.get(normalizeProjectKey(projectPath))?.proc ?? null;
 }
 
+/** 面板清理(2026-09-14 批准设计):移除 ended 态桶(alive 拒绝);直接操作
+ *  _sessions + FIFO 摘除。activeKey 桶删除无特殊限制——活跃指针是路径字符串,
+ *  桶删了下次 setProjectDir 重建。 */
+export function removeRunSession(projectPath: string): { ok: boolean; reason?: 'alive' | 'not_found' } {
+  const key = normalizeProjectKey(projectPath);
+  const s = _sessions.get(key);
+  if (!s) return { ok: false, reason: 'not_found' };
+  if (isAliveStatus(s.status)) return { ok: false, reason: 'alive' };   // 不动桶
+  _sessions.delete(key);
+  removeFromExitedOrder(key);
+  return { ok: true };
+}
+
 /** 按 key 写入 proc(设计 §4.2 C-1):forceKillTree 仅针对**该桶**旧 proc,绝不碰活跃桶
  *  或其他桶——run_project 主流程必须用本函数,不得用活跃桶语义的 setRunningProcess。 */
 export function setRunSessionProc(projectPath: string, proc: ChildProcess | null, skipBusyCheck?: boolean): void {

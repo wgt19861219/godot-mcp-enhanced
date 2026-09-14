@@ -537,6 +537,19 @@ export class GodotServer {
         this.webGuiServer = new WebGuiServer({
           getSessions: () => ps.listRunSessionsDetailed(),
           getIndexHtml: () => INDEX_HTML,
+          // 面板控制(2026-09-14 批准设计):stop 与 runtime.ts stop_project 核心三步一致
+          // (markSessionStopping → killProcess → releaseRunSessionBusy);killProcess 后
+          // 退出钩子自动走 markSessionExited + clearRunSession 快照挪移(分桶批已建)。
+          stopSession: async (projectPath) => {
+            const key = ps.normalizeProjectKey(projectPath);
+            const proc = ps.getRunSessionProc(key);
+            if (!proc) return { ok: false, reason: 'not_found' };
+            ps.markSessionStopping(key);
+            await ps.killProcess(proc);
+            ps.releaseRunSessionBusy(key);
+            return { ok: true };
+          },
+          removeSession: (projectPath) => ps.removeRunSession(projectPath),
         });
         await this.webGuiServer.start();
         this.webGuiActive = true;

@@ -24,6 +24,10 @@ export interface WebGuiServerOptions {
   registryDir?: string;
   /** 日志目录注入(测试隔离);缺省 resolveLogDir()(logger 同款平台路径) */
   logDir?: string;
+  /** 面板控制(2026-09-14 批准设计):POST /api/sessions/stop 回调;未注入时端点 503。 */
+  stopSession?: (projectPath: string) => Promise<{ ok: boolean; reason?: string }>;
+  /** 面板控制:POST /api/sessions/remove 回调(移除 ended 态桶);未注入时端点 503。 */
+  removeSession?: (projectPath: string) => { ok: boolean; reason?: 'alive' | 'not_found' };
 }
 
 /** /api/stats 与 SSE stats 快照形态(html.ts 契约,设计 §3.3.4)。 */
@@ -175,6 +179,16 @@ export class WebGuiServer {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.portValue}`);
+      // 面板控制写路径(2026-09-14):POST 先于 GET-only 拦截分发;未知 POST path → 405
+      // (原"非 GET 一律 405"语义对未知组合保持,仅放行两条已注册控制路径)。
+      if (req.method === 'POST') {
+        if (url.pathname === '/api/sessions/stop' || url.pathname === '/api/sessions/remove') {
+          void this.handleSessionControl(req, res, url);
+          return;
+        }
+        res.writeHead(405).end();
+        return;
+      }
       if (req.method !== 'GET') { res.writeHead(405).end(); return; }
       if (url.pathname === '/') {
         // 静态 HTML 无 token 要求(本体不含 token;token 经 CLI 打开的 URL query 进入)
@@ -220,6 +234,55 @@ export class WebGuiServer {
       res.writeHead(404).end();
     } catch {
       res.writeHead(500).end();
+    }
+  }
+
+  // ─── 面板控制写路径(2026-09-14 批准设计)──────────────────────────────────
+  // POST /api/sessions/stop + /api/sessions/remove:body { projectPath } → 构造器注入
+  // 回调。鉴权复用 authorized()(浏览器 POST 恒带 Origin 须匹配;cookie SameSite=Strict
+  // 防跨站自动携带;无 Origin 的 curl 凭 token 放行)——写路径语义与读路径一致,不放松。
+
+  private async handleSessionControl(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      if (!this.authorized(req, url)) {
+        res.writeHead(this.extractToken(req, url) === this.token ? 403 : 401).end();
+        return;
+      }
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      let parsed: { projectPath?: unknown };
+      try {
+        parsed = JSON.parse(body) as { projectPath?: unknown };
+      } catch {
+        return json(400, { error: 'bad json' });
+      }
+      if (typeof parsed.projectPath !== 'string' || parsed.projectPath.length === 0) {
+        return json(400, { error: 'projectPath required' });
+      }
+      if (url.pathname === '/api/sessions/stop') {
+        const fn = this.opts.stopSession;
+        if (!fn) return json(503, { error: 'not configured' });
+        try {
+          const r = await fn(parsed.projectPath);
+          if (r.ok) return json(200, { ok: true });
+          if (r.reason === 'not_found') return json(404, { error: 'not found' });
+          return json(500, { error: r.reason ?? 'stop failed' });
+        } catch (err) {
+          return json(500, { error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      const rm = this.opts.removeSession;
+      if (!rm) return json(503, { error: 'not configured' });
+      const r = rm(parsed.projectPath);
+      if (r.ok) return json(200, { ok: true });
+      if (r.reason === 'alive') return json(409, { error: 'session is still running' });
+      return json(404, { error: 'not found' });
+    } catch {
+      if (!res.headersSent) res.writeHead(500).end();
     }
   }
 
