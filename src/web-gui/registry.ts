@@ -27,6 +27,8 @@ export function webGuiRegistryDir(): string {
 }
 
 function defaultIsPidAlive(pid: number): boolean {
+  // pid<=0 守卫对齐 instance-manager.ts:307-315 原版语义(0/负数不进 process.kill)
+  if (!pid || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
@@ -37,6 +39,9 @@ function hardenFilePermissionsWindows(filePath: string): void {
     const username = userInfo().username;
     if (username && /^[A-Za-z0-9_-]+$/.test(username)) {
       execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:F`], { stdio: 'ignore' });
+    } else {
+      // 对齐 instance-manager.ts:100-102:username 异常字符时显式 warn(而非静默跳过)
+      getLogger().warn('web-gui', `Username "${username}" has unexpected chars, skipping ACL restriction for ${filePath}`);
     }
   } catch {
     getLogger().warn('web-gui', `ACL restriction failed for ${filePath}, file may inherit default permissions`);
@@ -74,9 +79,11 @@ export async function listRegistrations(opts: RegistryOpts = {}): Promise<WebGui
     if (!f.endsWith('.json')) continue;
     try {
       const raw = JSON.parse(await readFile(join(dir, f), 'utf-8')) as WebGuiRegistration;
-      if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string') continue;
+      // token 格式校验:字母数字下划线连字符集——无 shell 元字符即安全等价(关掉 defaultOpener exec 注入残余面)
+      if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) continue;
       if (!isPidAlive(raw.pid)) {
-        await removeRegistration(raw.pid, { dir });   // 死条目顺手清(SIGKILL 残留)
+        // 死条目顺手清(SIGKILL 残留);按当前文件名删——文件名与内容 pid 不一致的异常残留文件也能清掉
+        await unlink(join(dir, f)).catch(() => {});
         continue;
       }
       out.push(raw);

@@ -3,7 +3,7 @@
 //
 // 另含 Task 9 review 交接的正式断言补齐(覆盖缺口:一次性验收脚本已删):
 // 1. isWebGuiActive() 与真实 WebGuiServer 实例 start/stop 的同步关系;
-// 2. writeRegistration 失败(ENOTDIR)降级:start() reject → catch+stop(生产 GodotServer.run
+// 2. writeRegistration 失败(ENOTDIR/EEXIST 按平台)降级:start() reject → catch+stop(生产 GodotServer.run
 //    同款清理模式)后 isWebGuiActive()=false 且端口无泄漏(同 portStart 再起能成功)。
 // GodotServer 层 env 门(GODOT_MCP_WEB_GUI='0' 不构造)在 env-gate.test.ts(vi.mock server.js)。
 
@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
-import { openWebDashboard } from '../../src/web-gui/open.js';
+import { openWebDashboard, parseChooseLine } from '../../src/web-gui/open.js';
 import { writeRegistration } from '../../src/web-gui/registry.js';
 import { WebGuiServer, isWebGuiActive } from '../../src/web-gui/server.js';
 
@@ -58,7 +58,7 @@ describe('dashboard --web(设计 §6)', () => {
 
 // ─── Task 9 review 交接:webGuiActive 三态传播正式断言(真实实例驱动) ──────────
 
-/** listen(0) 借一个空闲端口后立即释放(测试确定性:ENOTDIR 用例要固定 portStart)。 */
+/** listen(0) 借一个空闲端口后立即释放(测试确定性:写失败用例要固定 portStart)。 */
 function borrowFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
@@ -99,7 +99,7 @@ describe('webGuiActive 三态传播(Task 9 review 交接断言)', () => {
     expect(isWebGuiActive()).toBe(false);
   });
 
-  it('writeRegistration 失败(ENOTDIR):start() reject,catch+stop 降级后 active=false 且端口无泄漏', async () => {
+  it('writeRegistration 失败(ENOTDIR/EEXIST 按平台):start() reject,catch+stop 降级后 active=false 且端口无泄漏', async () => {
     const port = await borrowFreePort();
     // registryDir 指向一个文件而非目录 → mkdir 递归失败 → writeRegistration 抛错
     const notADir = join(dir, 'occupier.txt');
@@ -137,5 +137,27 @@ describe('webGuiActive 三态传播(Task 9 review 交接断言)', () => {
     expect(gui2.port).toBe(port);
     await gui2.stop();
     expect(isWebGuiActive()).toBe(false);
+  });
+});
+
+// ─── follow-up: parseChooseLine 纯函数(defaultChoose 行文本解析) ──────────────
+
+describe('parseChooseLine(菜单行文本 → 编号)', () => {
+  it('有效数字:范围内返回数字(带空白容忍)', () => {
+    expect(parseChooseLine('1', 3)).toBe(1);
+    expect(parseChooseLine(' 2 ', 3)).toBe(2);
+    expect(parseChooseLine('3', 3)).toBe(3);
+  });
+  it('越界:超出 1..count 返回 null', () => {
+    expect(parseChooseLine('0', 3)).toBeNull();
+    expect(parseChooseLine('4', 3)).toBeNull();
+  });
+  it('空行:回车取消返回 null', () => {
+    expect(parseChooseLine('', 3)).toBeNull();
+    expect(parseChooseLine('   ', 3)).toBeNull();
+  });
+  it('非数字:无法解析返回 null', () => {
+    expect(parseChooseLine('abc', 3)).toBeNull();
+    expect(parseChooseLine('#2', 3)).toBeNull();
   });
 });
