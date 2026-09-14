@@ -51,6 +51,8 @@ import { buildAuthHeaders } from './core/instance-api-auth.js';
 import { InstanceHttpServer } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
+import { WebGuiServer } from './web-gui/server.js';
+import { INDEX_HTML } from './web-gui/html.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
 import { setProgressSender, setProgressClientReady } from './core/progress.js';
 import { setElicitServer } from './core/elicit.js';
@@ -107,6 +109,10 @@ export class GodotServer {
   // 与 watch_start/monitor_start push 模式文档"client 需订阅 resources/subscribe 才能收到"。
   // stdio 单客户端:断连即进程退出,无跨连接泄漏;close() 仍 clear 以支持热重启/测试隔离。
   private resourceSubscriptions = new Set<string>();
+  // Web GUI(spec 2026-09-14 §3.2):server 进程内嵌监控面板;附属功能,启动失败降级禁用。
+  private webGuiServer: WebGuiServer | null = null;
+  /** run() 完成后已定(设计 B-2):index.ts 的 TUI 决策查询点。 */
+  webGuiActive = false;
 
   constructor(opsScript: string, options: ServerOptions = {}) {
     this.opsScript = opsScript;
@@ -524,6 +530,28 @@ export class GodotServer {
     await this.server.connect(transport);
     log('Godot MCP Enhanced server running on stdio');
 
+    // Web GUI(设计 §3.2):connect 后即起,run() resolve 前三态已定(消除 index.ts 决策竞态)。
+    // env=0 关闭(与 GODOT_MCP_NO_DASHBOARD 同模式);任何异常降级禁用,绝不拖垮主流程。
+    if (process.env.GODOT_MCP_WEB_GUI !== '0') {
+      try {
+        this.webGuiServer = new WebGuiServer({
+          getSessions: () => ps.listRunSessionsDetailed(),
+          getIndexHtml: () => INDEX_HTML,
+        });
+        await this.webGuiServer.start();
+        this.webGuiActive = true;
+      } catch (err) {
+        // Task 6 review 交接:start() 在 writeRegistration 抛错时残留半激活态
+        // (HTTP 已监听 + _active=true 但 start() reject)——必须补调 stop() 清理,
+        // 防 isWebGuiActive 误报 + 端口泄漏(stop 幂等,清理再失败仅吞)。
+        const gui = this.webGuiServer;
+        this.webGuiServer = null;
+        this.webGuiActive = false;
+        if (gui) { try { await gui.stop(); } catch { /* best-effort 清理 */ } }
+        getLogger().warn('godot-mcp', `Web GUI disabled: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
     // 报告②P0：周期性 orphan 扫描。killOrphanGodotProcesses 内部有 30s 节流，故 60s 间隔保证每次
     // tick 真正扫描。第一层只扫本会话 _spawnedGodotPids（不误杀用户 Godot）。unref 不阻塞退出。
     this.orphanScanTimer = setInterval(() => {
@@ -642,6 +670,13 @@ export class GodotServer {
     try {
       // P4-3: 清本进程 in-flight 记录文件(正常退出不留孤儿;异常死亡才留 → 下个启动报丧)
       await safeStep('clearInflight', () => clearAllInflight());
+      // Web GUI 停机(设计 §3.2):SSE end → closeAllConnections → close → 删登记(顺序在 WebGuiServer.stop 内)
+      if (this.webGuiServer) {
+        const gui = this.webGuiServer;
+        this.webGuiServer = null;
+        this.webGuiActive = false;
+        await safeStep('stopWebGui', () => gui.stop());
+      }
       // P2-1: 自动卸载 overrides(graceful shutdown 时清理,防半装状态)。
       // 仅对已知项目路径卸载(editorProjectPath);headless 模式下项目路径不持久化,
       // agent 须手动调 uninstall_override action。
