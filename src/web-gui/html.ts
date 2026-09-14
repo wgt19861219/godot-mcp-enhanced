@@ -64,6 +64,10 @@ export const INDEX_HTML: string = `<!doctype html>
   var qs = new URLSearchParams(location.search);
   var token = qs.get('token') || sessionStorage.getItem('gui-token') || '';
   if (token) { sessionStorage.setItem('gui-token', token); history.replaceState(null, '', location.pathname); }
+  // cookie 双通道握手:用手头 token 换 HttpOnly cookie,此后请求 cookie 自动携带——
+  // 免疫 URL query 被隐私扩展剥除/截断(query 丢失导致面板全断的真机事件)。
+  // 失败不阻塞:query 通道兜底,哪个通用哪个;响应体无需处理。
+  if (token) { fetch('/api/auth?token=' + encodeURIComponent(token)).catch(function () { /* 握手失败不阻塞:query 通道兜底 */ }); }
   var $ = function (id) { return document.getElementById(id); };
   var state = { logs: [], stats: null, sessions: [], dedup: new Set() };
   var stopped = false;

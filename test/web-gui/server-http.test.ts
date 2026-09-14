@@ -88,3 +88,47 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     expect(isWebGuiActive()).toBe(false);
   });
 });
+
+describe('cookie 双通道(/api/auth 握手 Set-Cookie + cookie 通道鉴权)', () => {
+  let active: WebGuiServer | null = null;
+  afterEach(async () => { if (active) { await active.stop(); active = null; } });
+
+  beforeAll(async () => {
+    // 复用模块级 registryDir(上个 describe 的 afterAll 已 rm,这里重开隔离目录)
+    registryDir = await mkdtemp(join(tmpdir(), 'web-gui-cookie-test-'));
+  });
+  afterAll(async () => {
+    if (registryDir) await rm(registryDir, { recursive: true, force: true });
+  });
+
+  it('/api/auth 对 token → 200 {ok:true} + set-cookie(gui-token=/HttpOnly/SameSite=Strict)', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const res = await fetch(`${t.base}/api/auth?token=${t.token}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    const sc = res.headers.get('set-cookie');
+    expect(sc).toContain('gui-token=');
+    expect(sc).toContain('HttpOnly');
+    expect(sc).toContain('SameSite=Strict');
+    expect(sc).toContain('Path=/');
+  });
+
+  it('/api/auth 错 token / 缺 token → 401 且无 set-cookie', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const bad = await fetch(`${t.base}/api/auth?token=wrong`);
+    expect(bad.status).toBe(401);
+    expect(bad.headers.get('set-cookie')).toBeNull();
+    const none = await fetch(`${t.base}/api/auth`);
+    expect(none.status).toBe(401);
+    expect(none.headers.get('set-cookie')).toBeNull();
+  });
+
+  it('cookie 通道鉴权:对 cookie(无 query 无 X-GUI-Token)访问 /api/sessions → 200;错 cookie 值 → 401', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const ok = await fetch(`${t.base}/api/sessions`, { headers: { cookie: `gui-token=${t.token}` } });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as RunSessionDetailed[])[0]!.pid).toBe(42);
+    const bad = await fetch(`${t.base}/api/sessions`, { headers: { cookie: 'gui-token=deadbeef' } });
+    expect(bad.status).toBe(401);
+  });
+});
