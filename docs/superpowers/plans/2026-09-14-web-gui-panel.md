@@ -371,8 +371,8 @@ interface ProjectAggregate {
 
 ```ts
     const projectKey = entry.project && entry.project.length > 0 ? entry.project : 'unknown';
-    if (!this.projectPath && entry.type === 'tool_start') {
-      this.projectPath = projectKey !== 'unknown' ? projectKey : '';
+    if (!this.projectPath && projectKey !== 'unknown') {
+      this.projectPath = projectKey;   // 首个非 unknown 观察(不限 type;正常流中 tool_start 先到,与旧语义一致)
     }
 ```
 
