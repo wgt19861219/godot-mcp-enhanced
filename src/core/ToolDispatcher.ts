@@ -140,6 +140,10 @@ export class ToolDispatcher {
     return this.healthMonitor;
   }
 
+  /** Web GUI 面板注入用(spec 2026-09-15 §6):只读暴露真实 ToolContext——
+   *  面板直调 executeRunProject 复用真实链路(findGodot/setProjectDir 活跃指针等),零复刻。 */
+  getContext(): ToolContext { return this.ctx; }
+
   getFilteredTools(): Tool[] {
     let allTools = getAllToolDefinitions();
 

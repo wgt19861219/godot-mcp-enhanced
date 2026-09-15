@@ -205,8 +205,9 @@ export function getOrCreateSession(key: string): RunSession {
 // 跨项目路径的状态操作(供 runtime.ts 守卫总纲使用):均为 per-key 状态操作,
 // 非依赖注入 setter,不违反 AGENTS.md「禁止新增模块级 setter 注入点」。
 
-/** 谓词(设计 §4.1,Supervisor 模式):isAlive=starting/running/stopping(canSignal 同集)。 */
-function isAliveStatus(st: RunSessionStatus): boolean {
+/** 谓词(设计 §4.1,Supervisor 模式):isAlive=starting/running/stopping(canSignal 同集)。
+ *  导出供 Web GUI 项目面板等运行时消费方复用(Web GUI spec 2026-09-15 Task 1)。 */
+export function isAliveStatus(st: RunSessionStatus): boolean {
   return st === 'starting' || st === 'running' || st === 'stopping';
 }
 

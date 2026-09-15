@@ -146,6 +146,202 @@ export function computeRunTimeout(rawTimeout: unknown, bridgeTimeout: number, wa
   return waitForBridge ? Math.max(bridgeTimeout + 10, base) : base;
 }
 
+/** run_project 核心链(Web GUI 项目面板 spec §6:工具与面板双消费)。
+ *  行为零变:case 体逐字搬入;含 requireProjectPath(第二层白名单防线,PathError 由调用方转 403)。
+ *  依赖面:ctx.findGodot/ctx.setProjectDir(真实活跃指针)/ctx.functionProfiler(可选);
+ *  模块级 profilerOwnerKey 同文件共享(I-1 属主弱关联)。 */
+export async function executeRunProject(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | null> {
+  const p = requireProjectPath(args);
+  if (!existsSync(join(p, 'project.godot'))) {
+    return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
+  }
+  const waitForBridge = args.wait_for_bridge === true;
+  const bridgeTimeout = Math.max(1, Number(args.bridge_timeout) || 10);
+  const timeout = computeRunTimeout(args.timeout, bridgeTimeout, waitForBridge);
+  const preview = args.preview === true;
+  const godot = await ctx.findGodot();
+
+  // Version mismatch warning
+  const versionWarning = await checkVersionMismatch(p, godot);
+  const warnPrefix = versionWarning ? versionWarning + '\n' : '';
+
+  // ── 守卫总纲(设计 §4.3,坑 1/4/5/6 + C-1 统一解法)───────────────────
+  // 本次执行的全部状态读写——同步主流程与异步回调——都只认闭包级 sessionKey,
+  // 不读活跃指针;活跃指针仅服务"缺省参数的工具调用"层的一次 setProjectDir 切换。
+  const sessionKey = normalizeProjectKey(p);
+
+  // 运行中进程上限(设计 §4.1:同项目覆盖豁免——ensureSessionCapacity 内部处理;
+  // 溢出拒绝并列出在跑会话,不自动逐出)
+  try {
+    ensureSessionCapacity(p);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return textResult(`Error: ${msg}`);
+  }
+
+  // Stop existing:只杀 X 桶旧进程(设计 §4.3)——活跃是 A 时 run_project(B)
+  // 只杀 B 桶旧进程,A 不动(单项目场景 X=活跃,语义与改造前一致)。
+  const existingProc = getRunSessionProc(p);
+  if (existingProc) {
+    markSessionStopping(p);
+    releaseRunSessionBusy(p);
+    await killProcess(existingProc);
+    clearRunSession(p);
+  }
+
+  // Atomically acquire the process slot after clearing any existing process
+  // (显式传 p 锁目标桶——acquire 先于 setProjectDir,按活跃桶锁会锁错桶,设计 §4.2)
+  if (!await acquireProcessSlot('run_project', p)) {
+    return textResult(buildBusyErrorMessage(sessionKey));
+  }
+
+  ctx.setProjectDir(p);   // 活跃指针切换(唯一切换点)
+  clearOutputBuffer(sessionKey);
+  // processStartTime 由 setRunSessionProc 写入桶(设计 §4.3)
+
+  // P2 (2026-09-11) 函数级 profiling:spawn 前绑端口(顺序关键——引擎启动后回拨),
+  // --remote-debug 必须在命令行上,attach/已运行会话无此通道。实例挂 ctx(长寿命,
+  // 进程 close 时清理),profiler 工具 capture_functions 从 ctx 读。
+  // I-1(设计 §4.5):仅当现有 profiler 的属主 key === 本次 key 才关闭——
+  // A(profiling)运行中 run B 不得销毁 A 的 profiler(单选跟随 ≠ 可被非属主销毁)。
+  const profiling = args.profiling === true;
+  if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
+    ctx.functionProfiler.close();
+    ctx.functionProfiler = undefined;
+  }
+  let proc: ChildProcess;
+  if (profiling) {
+    try {
+      const profiler = await DebuggerProfiler.create();
+      ctx.functionProfiler = profiler;
+      profilerOwnerKey = sessionKey;   // 属主弱关联(I-1)
+      const dbgArgs = ['--path', p, '--debug', '--remote-debug', `tcp://127.0.0.1:${profiler.port}`];
+      proc = spawn(godot, dbgArgs, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: buildSafeEnv(),
+      });
+    } catch (err) {
+      releaseRunSessionBusy(sessionKey);   // C-1:按 key 释放(不落活跃桶)
+      if (profilerOwnerKey === sessionKey) {
+        ctx.functionProfiler?.close();  // N-1(审查): spawn 同步抛异常时释放已绑端口
+        ctx.functionProfiler = undefined;
+      }
+      setSessionStatus(sessionKey, 'errored');
+      const msg = err instanceof Error ? err.message : String(err);
+      return textResult(`Error: failed to bind profiler debugger port: ${msg}`);
+    }
+  } else {
+  // P1.1: spawn() 同步抛异常时,'error' handler 尚未注册 → 必须主动释放槽,
+  // 否则 acquireProcessSlot 获取的 busy 槽永久泄漏,后续 run_project 永远 busy。
+  // C-1:按 key 释放 + 桶终态 errored;:219 的 ctx.setRunningProcess(null) 已删除
+  // (proc 从未 setRunSessionProc,X 桶无需清——设计 §4.3 点名)。
+  try {
+    proc = spawn(godot, ['--path', p, '--debug'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: buildSafeEnv(),
+    });
+  } catch (err) {
+    releaseRunSessionBusy(sessionKey);
+    setSessionStatus(sessionKey, 'errored');
+    const msg = err instanceof Error ? err.message : String(err);
+    appendOutput([`Spawn error: ${msg}`], sessionKey);
+    return textResult(`Error: failed to spawn Godot: ${msg}`);
+  }
+  }
+  // 坑 1(设计 §4.3):输出流 handler 闭包捕获 sessionKey——活跃指针切走后
+  // A 的输出继续写 A 桶,不串桶。
+  proc.stdout?.on('data', (data: Buffer) => {
+    appendOutput(data.toString().split('\n'), sessionKey);
+  });
+  proc.stderr?.on('data', (data: Buffer) => {
+    appendOutput(data.toString().split('\n'), sessionKey);
+  });
+
+  // Auto-stop after timeout(坑 5:守卫判断按 key)
+  let autoStopTimer: ReturnType<typeof setTimeout> | undefined;
+  if (timeout > 0 && !preview) {
+    autoStopTimer = setTimeout(() => {
+      if (getRunSessionProc(sessionKey) === proc) {
+        releaseRunSessionBusy(sessionKey);
+        markSessionStopping(p);
+        void killProcess(proc);
+        clearRunSession(sessionKey);
+      }
+      if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外：该 proc 退出即移除自身 pid
+    }, timeout * 1000);
+  }
+
+  proc.on('close', (code) => {
+    // P2 + I-1: profiling 进程退出 → 关 debugger listener(捕获结果已可读,
+    // close 只释放 socket)——属主守卫:仅清本桶属主的 profiler。
+    if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
+      ctx.functionProfiler.close();
+      ctx.functionProfiler = undefined;
+    }
+    // Imp-4 (2026-06-24 审查): 守卫同 autoStopTimer,按桶内 proc 身份比对,
+    // 避免进程被替换后误清新进程的桶状态(坑 4:判断与体内动作都按 sessionKey)
+    if (getRunSessionProc(sessionKey) === proc) {
+      markSessionExited(p, code);   // exited_early/errored/exited 判定(设计 §4.1)
+      clearRunSession(sessionKey);  // 快照挪移 + busy 释放,桶保留可查
+    }
+    if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外（ADVISORY-3）：旧 proc 被替换时守卫 false 但仍需移除
+    if (autoStopTimer) clearTimeout(autoStopTimer);
+  });
+
+  proc.on('error', (err) => {
+    // Imp-4: 同上守卫(坑 4)
+    if (getRunSessionProc(sessionKey) === proc) {
+      setSessionStatus(sessionKey, 'errored');
+      clearRunSession(sessionKey);
+    }
+    if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外
+    if (autoStopTimer) clearTimeout(autoStopTimer);
+    appendOutput([`Spawn error: ${err.message}`], sessionKey);   // 坑 1(:268 error 路径):错误行写本桶
+  });
+
+  // C-1 核心:按 key 写入 proc(禁用 ctx.setRunningProcess——其 forceKillTree
+  // 对"活跃桶旧 proc"生效,并发+活跃切换下杀错窗;setRunSessionProc 仅杀本桶旧 proc)。
+  // 传原始 p(内部 normalize 到同 key):setRunSessionProc 顺带把桶 displayPath
+  // 刷新为原始写法,供上限/会话清单显示(设计 §4.1 displayPath)。
+  setRunSessionProc(p, proc, true); // skip busy check — slot acquired via acquireProcessSlot above
+  if (proc.pid) registerSpawnedGodotPid(proc.pid, sessionKey);   // 归属化(设计 §4.4)
+
+  // 多项目提示(设计 §4.3):成功消息附当前在跑会话数(N>1 时)
+  const running = listRunSessions().filter(x => isAliveStatus(x.status)).length;
+  const sessionNote = running > 1 ? ` (${running} sessions running)` : '';
+
+  if (waitForBridge) {
+    // M3: 显式命名 ms(isBridgeReady 接收 ms;bridgeTimeout 是秒)
+    const bridgeTimeoutMs = bridgeTimeout * 1000;
+    const r = await isBridgeReady(p, bridgeTimeoutMs, {
+      proc,
+      isCancelled: () => getRunSessionProc(sessionKey) !== proc,   // 坑 6:按 key
+    });
+    if (!r.ready) {
+      // 问题 2 修复:bridge 未就绪 → isError(此前 textResult isError:false 误报,
+      // 到 game_query ping 才暴露 BRIDGE_NOT_CONNECTED)。清理进程(游戏无 bridge 无用)。
+      if (getRunSessionProc(sessionKey) === proc) {
+        markSessionStopping(p);
+        releaseRunSessionBusy(sessionKey);
+        void killProcess(proc);
+        clearRunSession(sessionKey);
+      }
+      return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. timeout=${timeout}s, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.`);
+    }
+    // P1-6 关联修复(2026-08-21 七维度审核): "Bridge ready." 是 bridge-session.ts /
+    // qa/runner.ts 的 load-bearing 判据(子串匹配),仅在真的探测过 isBridgeReady 后
+    // 才宣称——此前 wait_for_bridge=false(默认)时也无条件假宣称,误导直接调工具的 AI。
+    if (preview) {
+      return textResult(warnPrefix + 'Preview mode: bridge ready, game window open at ' + p + ', no auto-stop. It stays open until the user closes the window. After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
+    }
+    return textResult(warnPrefix + 'Bridge ready. ' + `Running project at ${p} (timeout: ${timeout}s). Use get_debug_output or stop_project to check.` + sessionNote);
+  }
+  if (preview) {
+    return textResult(warnPrefix + 'Preview mode: game window is now open at ' + p + '. It stays open until the user closes the window (no auto-stop). After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
+  }
+  return textResult(warnPrefix + `Running project at ${p} (timeout: ${timeout}s; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.` + sessionNote);
+}
+
 // ─── Tool handler ───────────────────────────────────────────────────────────
 
 export async function handleTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | null> {
@@ -168,197 +364,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       return textResult(`Launched Godot editor for project: ${p}`);
     }
 
-    case 'run_project': {
-      const p = requireProjectPath(args);
-      if (!existsSync(join(p, 'project.godot'))) {
-        return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
-      }
-      const waitForBridge = args.wait_for_bridge === true;
-      const bridgeTimeout = Math.max(1, Number(args.bridge_timeout) || 10);
-      const timeout = computeRunTimeout(args.timeout, bridgeTimeout, waitForBridge);
-      const preview = args.preview === true;
-      const godot = await ctx.findGodot();
-
-      // Version mismatch warning
-      const versionWarning = await checkVersionMismatch(p, godot);
-      const warnPrefix = versionWarning ? versionWarning + '\n' : '';
-
-      // ── 守卫总纲(设计 §4.3,坑 1/4/5/6 + C-1 统一解法)───────────────────
-      // 本次执行的全部状态读写——同步主流程与异步回调——都只认闭包级 sessionKey,
-      // 不读活跃指针;活跃指针仅服务"缺省参数的工具调用"层的一次 setProjectDir 切换。
-      const sessionKey = normalizeProjectKey(p);
-
-      // 运行中进程上限(设计 §4.1:同项目覆盖豁免——ensureSessionCapacity 内部处理;
-      // 溢出拒绝并列出在跑会话,不自动逐出)
-      try {
-        ensureSessionCapacity(p);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return textResult(`Error: ${msg}`);
-      }
-
-      // Stop existing:只杀 X 桶旧进程(设计 §4.3)——活跃是 A 时 run_project(B)
-      // 只杀 B 桶旧进程,A 不动(单项目场景 X=活跃,语义与改造前一致)。
-      const existingProc = getRunSessionProc(p);
-      if (existingProc) {
-        markSessionStopping(p);
-        releaseRunSessionBusy(p);
-        await killProcess(existingProc);
-        clearRunSession(p);
-      }
-
-      // Atomically acquire the process slot after clearing any existing process
-      // (显式传 p 锁目标桶——acquire 先于 setProjectDir,按活跃桶锁会锁错桶,设计 §4.2)
-      if (!await acquireProcessSlot('run_project', p)) {
-        return textResult(buildBusyErrorMessage(sessionKey));
-      }
-
-      ctx.setProjectDir(p);   // 活跃指针切换(唯一切换点)
-      clearOutputBuffer(sessionKey);
-      // processStartTime 由 setRunSessionProc 写入桶(设计 §4.3)
-
-      // P2 (2026-09-11) 函数级 profiling:spawn 前绑端口(顺序关键——引擎启动后回拨),
-      // --remote-debug 必须在命令行上,attach/已运行会话无此通道。实例挂 ctx(长寿命,
-      // 进程 close 时清理),profiler 工具 capture_functions 从 ctx 读。
-      // I-1(设计 §4.5):仅当现有 profiler 的属主 key === 本次 key 才关闭——
-      // A(profiling)运行中 run B 不得销毁 A 的 profiler(单选跟随 ≠ 可被非属主销毁)。
-      const profiling = args.profiling === true;
-      if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
-        ctx.functionProfiler.close();
-        ctx.functionProfiler = undefined;
-      }
-      let proc: ChildProcess;
-      if (profiling) {
-        try {
-          const profiler = await DebuggerProfiler.create();
-          ctx.functionProfiler = profiler;
-          profilerOwnerKey = sessionKey;   // 属主弱关联(I-1)
-          const dbgArgs = ['--path', p, '--debug', '--remote-debug', `tcp://127.0.0.1:${profiler.port}`];
-          proc = spawn(godot, dbgArgs, {
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: buildSafeEnv(),
-          });
-        } catch (err) {
-          releaseRunSessionBusy(sessionKey);   // C-1:按 key 释放(不落活跃桶)
-          if (profilerOwnerKey === sessionKey) {
-            ctx.functionProfiler?.close();  // N-1(审查): spawn 同步抛异常时释放已绑端口
-            ctx.functionProfiler = undefined;
-          }
-          setSessionStatus(sessionKey, 'errored');
-          const msg = err instanceof Error ? err.message : String(err);
-          return textResult(`Error: failed to bind profiler debugger port: ${msg}`);
-        }
-      } else {
-      // P1.1: spawn() 同步抛异常时,'error' handler 尚未注册 → 必须主动释放槽,
-      // 否则 acquireProcessSlot 获取的 busy 槽永久泄漏,后续 run_project 永远 busy。
-      // C-1:按 key 释放 + 桶终态 errored;:219 的 ctx.setRunningProcess(null) 已删除
-      // (proc 从未 setRunSessionProc,X 桶无需清——设计 §4.3 点名)。
-      try {
-        proc = spawn(godot, ['--path', p, '--debug'], {
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: buildSafeEnv(),
-        });
-      } catch (err) {
-        releaseRunSessionBusy(sessionKey);
-        setSessionStatus(sessionKey, 'errored');
-        const msg = err instanceof Error ? err.message : String(err);
-        appendOutput([`Spawn error: ${msg}`], sessionKey);
-        return textResult(`Error: failed to spawn Godot: ${msg}`);
-      }
-      }
-      // 坑 1(设计 §4.3):输出流 handler 闭包捕获 sessionKey——活跃指针切走后
-      // A 的输出继续写 A 桶,不串桶。
-      proc.stdout?.on('data', (data: Buffer) => {
-        appendOutput(data.toString().split('\n'), sessionKey);
-      });
-      proc.stderr?.on('data', (data: Buffer) => {
-        appendOutput(data.toString().split('\n'), sessionKey);
-      });
-
-      // Auto-stop after timeout(坑 5:守卫判断按 key)
-      let autoStopTimer: ReturnType<typeof setTimeout> | undefined;
-      if (timeout > 0 && !preview) {
-        autoStopTimer = setTimeout(() => {
-          if (getRunSessionProc(sessionKey) === proc) {
-            releaseRunSessionBusy(sessionKey);
-            markSessionStopping(p);
-            void killProcess(proc);
-            clearRunSession(sessionKey);
-          }
-          if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外：该 proc 退出即移除自身 pid
-        }, timeout * 1000);
-      }
-
-      proc.on('close', (code) => {
-        // P2 + I-1: profiling 进程退出 → 关 debugger listener(捕获结果已可读,
-        // close 只释放 socket)——属主守卫:仅清本桶属主的 profiler。
-        if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
-          ctx.functionProfiler.close();
-          ctx.functionProfiler = undefined;
-        }
-        // Imp-4 (2026-06-24 审查): 守卫同 autoStopTimer,按桶内 proc 身份比对,
-        // 避免进程被替换后误清新进程的桶状态(坑 4:判断与体内动作都按 sessionKey)
-        if (getRunSessionProc(sessionKey) === proc) {
-          markSessionExited(p, code);   // exited_early/errored/exited 判定(设计 §4.1)
-          clearRunSession(sessionKey);  // 快照挪移 + busy 释放,桶保留可查
-        }
-        if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外（ADVISORY-3）：旧 proc 被替换时守卫 false 但仍需移除
-        if (autoStopTimer) clearTimeout(autoStopTimer);
-      });
-
-      proc.on('error', (err) => {
-        // Imp-4: 同上守卫(坑 4)
-        if (getRunSessionProc(sessionKey) === proc) {
-          setSessionStatus(sessionKey, 'errored');
-          clearRunSession(sessionKey);
-        }
-        if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外
-        if (autoStopTimer) clearTimeout(autoStopTimer);
-        appendOutput([`Spawn error: ${err.message}`], sessionKey);   // 坑 1(:268 error 路径):错误行写本桶
-      });
-
-      // C-1 核心:按 key 写入 proc(禁用 ctx.setRunningProcess——其 forceKillTree
-      // 对"活跃桶旧 proc"生效,并发+活跃切换下杀错窗;setRunSessionProc 仅杀本桶旧 proc)。
-      // 传原始 p(内部 normalize 到同 key):setRunSessionProc 顺带把桶 displayPath
-      // 刷新为原始写法,供上限/会话清单显示(设计 §4.1 displayPath)。
-      setRunSessionProc(p, proc, true); // skip busy check — slot acquired via acquireProcessSlot above
-      if (proc.pid) registerSpawnedGodotPid(proc.pid, sessionKey);   // 归属化(设计 §4.4)
-
-      // 多项目提示(设计 §4.3):成功消息附当前在跑会话数(N>1 时)
-      const running = listRunSessions().filter(x => isAliveStatus(x.status)).length;
-      const sessionNote = running > 1 ? ` (${running} sessions running)` : '';
-
-      if (waitForBridge) {
-        // M3: 显式命名 ms(isBridgeReady 接收 ms;bridgeTimeout 是秒)
-        const bridgeTimeoutMs = bridgeTimeout * 1000;
-        const r = await isBridgeReady(p, bridgeTimeoutMs, {
-          proc,
-          isCancelled: () => getRunSessionProc(sessionKey) !== proc,   // 坑 6:按 key
-        });
-        if (!r.ready) {
-          // 问题 2 修复:bridge 未就绪 → isError(此前 textResult isError:false 误报,
-          // 到 game_query ping 才暴露 BRIDGE_NOT_CONNECTED)。清理进程(游戏无 bridge 无用)。
-          if (getRunSessionProc(sessionKey) === proc) {
-            markSessionStopping(p);
-            releaseRunSessionBusy(sessionKey);
-            void killProcess(proc);
-            clearRunSession(sessionKey);
-          }
-          return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. timeout=${timeout}s, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.`);
-        }
-        // P1-6 关联修复(2026-08-21 七维度审核): "Bridge ready." 是 bridge-session.ts /
-        // qa/runner.ts 的 load-bearing 判据(子串匹配),仅在真的探测过 isBridgeReady 后
-        // 才宣称——此前 wait_for_bridge=false(默认)时也无条件假宣称,误导直接调工具的 AI。
-        if (preview) {
-          return textResult(warnPrefix + 'Preview mode: bridge ready, game window open at ' + p + ', no auto-stop. It stays open until the user closes the window. After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
-        }
-        return textResult(warnPrefix + 'Bridge ready. ' + `Running project at ${p} (timeout: ${timeout}s). Use get_debug_output or stop_project to check.` + sessionNote);
-      }
-      if (preview) {
-        return textResult(warnPrefix + 'Preview mode: game window is now open at ' + p + '. It stays open until the user closes the window (no auto-stop). After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
-      }
-      return textResult(warnPrefix + `Running project at ${p} (timeout: ${timeout}s; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.` + sessionNote);
-    }
+    case 'run_project':
+      return executeRunProject(args, ctx);
 
     case 'stop_project': {
       // 多项目(设计 §4.3):缺省=活跃桶;指定 project_path=X=杀 X 桶活进程并返回其输出
