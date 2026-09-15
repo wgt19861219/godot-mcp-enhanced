@@ -79,6 +79,10 @@ export const INDEX_HTML: string = `<!doctype html>
   .ed-host textarea { flex: 1; resize: none; border: none; outline: none; background: var(--bg); color: var(--fg); padding: 8px; font: 12px/1.5 Consolas, monospace; }
   .CodeMirror { height: 100%; flex: 1; font: 12px/1.5 Consolas, monospace; }   /* CM 升级 .ed-host 后填满 */
   .ed-status { padding: 3px 10px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 预览视图(Plan B Task 1,spec §6.4):img 限幅防大图撑爆中列;音频控件留边;下载链接复用 .ctl 需去下划线 */
+  #filesPane img { max-width: calc(100% - 20px); max-height: 60vh; margin: 8px 10px; border: 1px solid var(--line); }
+  #filesPane audio { margin: 10px; width: calc(100% - 20px); }
+  a.ctl { text-decoration: none; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -127,6 +131,9 @@ export const INDEX_HTML: string = `<!doctype html>
   // readOnly 信号源:hello 无此字段(不发明协议),复用现有 403 响应体 'read-only' 判定
   // (startSession I-2 先例 + 保存 POST 403 触发 enterReadOnly 置位)。
   var editorState = { rel: null, baseMtime: 0, dirty: false, cm: null, latest: null };
+  // 预览视图状态(Plan B Task 1,spec §6.4):当前预览文件与类型('img'|'audio',
+  // Task 2 补 'hex' 十六进制分支);预览无脏标,无拦截语义,仅供状态记录。
+  var previewState = { rel: null, kind: null };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
 
@@ -468,12 +475,58 @@ export const INDEX_HTML: string = `<!doctype html>
       loadDir(); return;
     }
     var e = fileExt(name);
-    // TEXT → 编辑视图(spec §6.3,Task 5):rel=sub 前缀拼全(Task 2 契约 path 相对项目根);
-    // IMG/AUDIO/其余仍为占位,由 Plan B 替换为预览视图(spec §6.4)。
-    if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(filesState.sub ? filesState.sub + '/' + name : name); return; }
-    if (IMG_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '图片预览(Plan B): ' + name; return; }
-    if (AUDIO_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '音频播放(Plan B): ' + name; return; }
-    $('statusBar').textContent = '二进制预览(Plan B): ' + name;
+    // TEXT → 编辑视图(spec §6.3,Task 5);IMG/AUDIO → 内联预览(spec §6.4,
+    // Plan B Task 1);其余二进制占位由 Task 2 替换为十六进制视图。rel=sub 前缀
+    // 拼全(Task 2 契约 path 相对项目根)。
+    var rel = filesState.sub ? filesState.sub + '/' + name : name;
+    if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(rel); return; }
+    if (IMG_EXTS.indexOf(e) !== -1) { openPreview(rel, 'img'); return; }
+    if (AUDIO_EXTS.indexOf(e) !== -1) { openPreview(rel, 'audio'); return; }
+    $('statusBar').textContent = '二进制预览(Task 2): ' + name;
+  }
+
+  // ── 预览视图(spec §6.4,Plan B Task 1)──────────────────────────────────────
+  // IMG/AUDIO 内联消费 mode=raw 端点(Task 2 已带 content-type 映射与 CSP/nosniff
+  // 响应头防线);kind='hex' 分支由 Task 2 落地。rawUrl 一律 JS 变量拼 token(M-9:
+  // URL query 里的 token 已被 replaceState 清除,且 img/audio 元素无法带请求头,
+  // query 是唯一鉴权通道)。SVG 经 img 上下文加载其内嵌脚本不执行,叠加上述 CSP。
+  function openPreview(rel, kind) {
+    if (!rel || !filesState.project) return;
+    previewState = { rel: rel, kind: kind };
+    var name = (rel || '').split('/').pop() || rel;   // basename:下载文件名与 entries 匹配键
+    var rawUrl = '/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=raw&token=' + token;
+    var host = $('filesPane'); host.textContent = '';
+    // 工具行:返回列表 + 下载链接(<a download> 静态安全;raw 响应头防线保证
+    // 直接导航也不执行 script)。按钮/链接零监听器,由 #filesPane 委托接管。
+    var tools = document.createElement('div'); tools.className = 'log-tools';
+    var back = document.createElement('button'); back.className = 'ctl'; back.textContent = '返回列表';
+    back.setAttribute('data-action', 'preview-back');
+    var dl = document.createElement('a'); dl.className = 'ctl'; dl.href = rawUrl;
+    dl.setAttribute('download', name); dl.textContent = '下载 ' + name;
+    tools.append(back, dl); host.appendChild(tools);
+    if (kind === 'img') {
+      var img = document.createElement('img');
+      img.src = rawUrl; img.alt = rel;
+      img.onerror = function () {   // token 失效(server 重启)/超限(too_large)时 raw 非 2xx
+        var d = document.createElement('div'); d.className = 'empty';
+        d.textContent = '加载失败(token 失效或文件超限)';
+        if (img.parentNode) img.parentNode.replaceChild(d, img);
+      };
+      host.appendChild(img);
+    } else if (kind === 'audio') {
+      // audio 元素经 DOM API 构建,形态等价 <audio controls src=rawUrl>
+      var au = document.createElement('audio');
+      au.controls = true; au.src = rawUrl;
+      host.appendChild(au);
+    }
+    // 元信息行:size 从列表 entries 快照取(打开预览不经 JSON 通道,raw 响应无从
+    // 知大小);跨目录进入(entries 不含该名)时省略,只显示 rel。
+    var size = null;
+    filesState.entries.forEach(function (en) { if (en.name === name && !en.isDir) size = en.size; });
+    var st = document.createElement('div'); st.className = 'ed-status';
+    st.textContent = rel + (size != null ? ' · ' + fmtSize(size) : '');
+    host.appendChild(st);
+    $('statusBar').textContent = '已打开预览 ' + rel;
   }
 
   // ── 编辑视图(spec §6.3,2026-09-15 资源管理批 Task 5)──────────────────────
@@ -777,10 +830,10 @@ export const INDEX_HTML: string = `<!doctype html>
 
   // #filesPane 容器一次性事件委托(资源管理批 spec §6.2/§6.3):面包屑段([data-sub]
   // 回根/回跳层级)、目录行([data-dir] 进子目录)、文件行([data-file] →
-  // openFileEntry)与编辑视图工具行/冲突条按钮(button[data-action]:editor-save|
-  // editor-reload|editor-back|conflict-reload|conflict-copy)全部零监听器——
-  // renderFiles/renderEditor 重绘只清空容器内部,委托永续;目录导航类动作进
-  // 编辑器脏标把守(spec §6.3)。
+  // openFileEntry)与编辑/预览视图工具行按钮(button[data-action]:editor-save|
+  // editor-reload|editor-back|conflict-reload|conflict-copy|preview-back)全部
+  // 零监听器——renderFiles/renderEditor/openPreview 重绘只清空容器内部,委托永续;
+  // 目录导航类动作进编辑器脏标把守(spec §6.3)。
   $('filesPane').addEventListener('click', function (ev) {
     if (!ev.target || !ev.target.closest) return;
     var act = ev.target.closest('button[data-action]');
@@ -794,6 +847,10 @@ export const INDEX_HTML: string = `<!doctype html>
       }
       if (action === 'editor-back') {
         if (dirtyBlock()) return;
+        renderFiles();
+        return;
+      }
+      if (action === 'preview-back') {   // 预览无脏标,直接回列表
         renderFiles();
         return;
       }

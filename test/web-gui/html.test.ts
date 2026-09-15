@@ -115,4 +115,19 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('mode-javascript.js');
     expect(INDEX_HTML).toContain('mode-markdown.js');
   });
+
+  // ── 资源管理批(Plan B Task 1,spec §6.4)────────────────────────────────────
+  it('图片预览:img 标签 + raw URL 拼 JS 变量 token + 尺寸/大小显示', () => {
+    expect(INDEX_HTML).toContain("mode=raw&token=' + token");     // src 变量拼接(M-9)
+    expect(INDEX_HTML).toContain('openPreview');                   // 预览视图函数
+    expect(INDEX_HTML).toContain("kind === 'img'");                // img 分支
+  });
+  it('音频预览:audio controls + 同 raw 通道', () => {
+    expect(INDEX_HTML).toContain('<audio controls');               // audio 元素(静态壳内)
+    expect(INDEX_HTML).toContain("kind === 'audio'");
+  });
+  it('下载链接:raw 同 URL + download 属性 + 恢复列表入口', () => {
+    expect(INDEX_HTML).toContain("download");                      // 下载属性
+    expect(INDEX_HTML).toContain('preview-back');                  // 返回列表 data-action
+  });
 });

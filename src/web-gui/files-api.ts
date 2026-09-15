@@ -85,6 +85,7 @@ export class FilesApi {
     const abs = resolveInProject(projectPath, rel);
     if (!TEXT_EXTS.has(ext(basename(abs)))) throw new FilesError('bad_request', 'not a text extension; use preview mode');
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found'); }
+    if (st.isDirectory()) throw new FilesError('bad_request', 'is a directory');   // M-3:目录名带文本扩展时唯一防线
     if (st.size > TEXT_MAX) throw new FilesError('too_large', `file ${st.size}B exceeds 512KB text limit`);
     const content = await readFile(abs, 'utf-8');
     return { content, mtime: st.mtimeMs, size: st.size };
@@ -93,6 +94,7 @@ export class FilesApi {
   async readRaw(projectPath: string, rel: string): Promise<RawFile> {
     const abs = resolveInProject(projectPath, rel);
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found'); }
+    if (st.isDirectory()) throw new FilesError('bad_request', 'is a directory');   // M-3:否则 readFile(目录)冒裸 EISDIR
     const e = ext(basename(abs));
     const max = IMG_EXTS.has(e) ? IMG_MAX : AUDIO_EXTS.has(e) ? AUDIO_MAX : OTHER_RAW_MAX;
     if (st.size > max) throw new FilesError('too_large', `file ${st.size}B exceeds raw limit`);
@@ -103,6 +105,7 @@ export class FilesApi {
   async readHex(projectPath: string, rel: string): Promise<HexSample> {
     const abs = resolveInProject(projectPath, rel);
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found'); }
+    if (st.isDirectory()) throw new FilesError('bad_request', 'is a directory');   // M-3:否则 open(目录)冒裸 EISDIR
     // 流式采样(controller 裁决 2026-09-15):handle 定位读,只占 4KB 缓冲——
     // 原 readFile 全量读入后截取会让 GB 级文件先占满内存,冲击同进程 MCP 会话。
     const fh = await open(abs, 'r');

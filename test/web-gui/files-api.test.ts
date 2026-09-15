@@ -101,6 +101,12 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
       const h = await api.readHex(proj, 'sprite.png');
       expect(h.bytes).toHaveLength(3);
     });
+    it('路径是目录 → bad_request 而非裸 EISDIR(M-3)', async () => {
+      await mkdir(join(proj, 'adir'), { recursive: true });
+      await expect(api.readText(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(api.readRaw(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(api.readHex(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+    });
   });
 
   describe('saveText 三重护栏(spec §3.3)', () => {
