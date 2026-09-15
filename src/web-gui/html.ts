@@ -100,8 +100,12 @@ export const INDEX_HTML: string = `<!doctype html>
   }
 
   // 面板控制(2026-09-14):alive 态(starting/running/stopping)→「停止」;
-  // ended 态(exited/exited_early/errored)→「清理」。成功后按钮禁用,等 SSE
-  // sessions 帧(500ms 周期)刷新状态;失败非 2xx → statusBar 显示前 80 字符。
+  // ended 态(exited/exited_early/errored)→「清理」。
+  // 2026-09-15 真机 bug 修复:SSE sessions 帧每 500ms 触发 renderSessions 全量
+  // 重建表格 DOM,按下按钮的瞬间(mousedown→mouseup 间隙)按钮 DOM 被替换,逐按钮
+  // addEventListener 的 click 随旧 DOM 丢弃。改为按钮零监听器、只携带 data-action /
+  // data-project 数据属性,点击由 #sessions 容器的一次性委托处理器接管(见初始化区
+  // 委托注册——容器本体在重绘中从不被替换,只有内部被清空重建,委托永续)。
   var ALIVE_STATUS = { starting: 1, running: 1, stopping: 1 };
 
   function sessionControl(s) {
@@ -109,23 +113,8 @@ export const INDEX_HTML: string = `<!doctype html>
     var btn = document.createElement('button');
     btn.className = 'ctl' + (alive ? ' stop' : '');
     btn.textContent = alive ? '停止' : '清理';
-    btn.addEventListener('click', function () {
-      btn.disabled = true;
-      fetch(alive ? '/api/sessions/stop' : '/api/sessions/remove', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-gui-token': token },
-        body: JSON.stringify({ projectPath: s.projectPath })
-      }).then(function (r) {
-        if (!r.ok) {
-          btn.disabled = false;
-          return r.text().then(function (t) { $('statusBar').textContent = '操作失败: ' + t.slice(0, 80); });
-        }
-        /* 成功:按钮保持禁用,SSE sessions 帧刷新后行随新状态重绘 */
-      }).catch(function () {
-        btn.disabled = false;
-        $('statusBar').textContent = '操作失败: network error';
-      });
-    });
+    btn.setAttribute('data-action', alive ? 'stop' : 'remove');
+    btn.setAttribute('data-project', s.projectPath);
     return btn;
   }
 
@@ -209,6 +198,34 @@ export const INDEX_HTML: string = `<!doctype html>
   $('logFilter').addEventListener('input', renderLogs);
   $('logLevel').addEventListener('change', renderLogs);
   $('projSel').addEventListener('change', renderStats);
+
+  // #sessions 容器一次性事件委托(2026-09-15 修复):renderSessions 每 500ms 清空
+  // 重建容器内部,#sessions 本体持续存在 → 委托处理器永续,按钮随 SSE 帧任意替换
+  // 也不丢 click。按钮只带 data-action(stop|remove) + data-project(见 sessionControl)。
+  $('sessions').addEventListener('click', function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('button[data-action]') : null;
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var project = btn.getAttribute('data-project') || '';
+    $('statusBar').textContent = action === 'stop' ? '停止中… ' + project : '清理中… ' + project;
+    btn.disabled = true;
+    fetch(action === 'stop' ? '/api/sessions/stop' : '/api/sessions/remove', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ projectPath: project }),
+    }).then(function (r) {
+      if (!r.ok) {
+        // 失败恢复:按钮尚未被重绘时可立即重试;已被 500ms 帧替换则此为孤儿节点,
+        // disabled 复位无害(状态栏提示已足够)。
+        btn.disabled = false;
+        return r.text().then(function (t) { $('statusBar').textContent = '操作失败: ' + t.slice(0, 80); });
+      }
+      $('statusBar').textContent = '操作已提交';
+    }).catch(function () {
+      btn.disabled = false;
+      $('statusBar').textContent = '网络异常,操作未送达';
+    });
+  });
 
   var es = new EventSource('/events?token=' + encodeURIComponent(token));
   es.addEventListener('hello', function (ev) { $('warn').style.display = 'none'; resetAll(JSON.parse(ev.data)); });
