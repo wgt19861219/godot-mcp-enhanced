@@ -123,6 +123,8 @@ export class FilesApi {
       const latest = await readFile(abs, 'utf-8');
       throw new FilesError('conflict', 'file modified since loaded', latest, st.mtimeMs);
     }
+    // NOTE: TOCTOU window exists between stat(mtime 校验) and backup/write —
+    // 两个并发保存可同时过校验造成丢更新;本地单用户面板场景接受该残留风险(标注风格对齐 path-utils.ts)。
     // 备份(§3.3-3):percent-encode 可逆无碰撞;0o600 滚动覆盖。
     // 编码集锁定为 '\' 与 ':'(与测试锁定一致):'\' 是 Linux 合法字面字符必须编码;
     // '/' 不编码——保留为目录分隔符天然区分路径,若编码则 Linux 绝对路径(/tmp/...)与
@@ -130,7 +132,7 @@ export class FilesApi {
     const projEnc = projectPath.replaceAll('\\', '%5C').replaceAll(':', '%3A');
     const relEnc = rel.replaceAll('\\', '%5C').replaceAll(':', '%3A');
     const bakDir = join(this.backupDir, projEnc);
-    await mkdir(bakDir, { recursive: true });
+    await mkdir(bakDir, { recursive: true, mode: 0o700 });
     await writeFile(join(bakDir, relEnc + '.bak'), await readFile(abs), { mode: 0o600 });
     // 原子写(§3.3-4)
     const tmp = abs + '.mcp-tmp';

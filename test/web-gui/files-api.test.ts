@@ -1,5 +1,5 @@
 // test/web-gui/files-api.test.ts
-import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -125,6 +125,15 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
       const err = await api.saveText(proj, 'main.gd', 'MINE', stale.mtime).catch(e => e as FilesError);
       expect(err).toBeInstanceOf(FilesError); expect(err.code).toBe('conflict');
       expect(err.latestContent).toBe('CHANGED-EXTERNAL'); expect(err.latestMtime).toBeGreaterThan(0);
+    });
+    it.skipIf(process.platform === 'win32')('备份子目录以 0o700 创建(spec §3.3-3;Windows ACL 语义不同跳过)', async () => {
+      // 自包含触发一次保存:mkdtemp 的 backupDir 父已存在,递归 mkdir 首次创建的层级是 <projEnc> 子目录
+      await writeFile(join(proj, 'main.gd'), 'PERM', 'utf-8');
+      const cur = await api.readText(proj, 'main.gd');
+      await api.saveText(proj, 'main.gd', 'PERM2', cur.mtime);
+      const projEnc = proj.replaceAll('\\', '%5C').replaceAll(':', '%3A');
+      const st = await stat(join(backupDir, projEnc));
+      expect(st.mode & 0o777).toBe(0o700);
     });
     it('文件不存在一律 404(含 baseMtime=0,堵创建后门 I-5)', async () => {
       await expect(api.saveText(proj, 'new-file.gd', 'x', 0)).rejects.toMatchObject({ code: 'not_found' });

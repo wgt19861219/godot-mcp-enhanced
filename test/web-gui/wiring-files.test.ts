@@ -19,12 +19,12 @@ vi.mock('../../src/web-gui/server.js', () => ({
 }));
 
 // ─── 定向 mock:FilesApi(防真实 ~/.godot-mcp/web-gui/backups IO;实例方法 spy 断言直注)───
-const { mockListDir, mockReadText, mockReadRaw, mockReadHex, mockSave } = vi.hoisted(() => ({
+const { mockListDir, mockReadText, mockReadRaw, mockReadHex, mockSaveText } = vi.hoisted(() => ({
   mockListDir: vi.fn().mockResolvedValue({ entries: [] }),
   mockReadText: vi.fn().mockResolvedValue({ content: '', mtime: 0, size: 0 }),
   mockReadRaw: vi.fn().mockResolvedValue({ bytes: Buffer.alloc(0), contentType: 'application/octet-stream', size: 0 }),
   mockReadHex: vi.fn().mockResolvedValue({ size: 0, bytes: [] }),
-  mockSave: vi.fn().mockResolvedValue({ ok: true, mtime: 0 }),
+  mockSaveText: vi.fn().mockResolvedValue({ ok: true, mtime: 0 }),
 }));
 vi.mock('../../src/web-gui/files-api.js', () => ({
   FilesApi: vi.fn().mockImplementation(function () {
@@ -33,7 +33,7 @@ vi.mock('../../src/web-gui/files-api.js', () => ({
       readText: mockReadText,
       readRaw: mockReadRaw,
       readHex: mockReadHex,
-      save: mockSave,
+      saveText: mockSaveText,
     };
   }),
 }));
@@ -177,7 +177,7 @@ describe('GodotServer files 接线(资源工作台 Plan A spec §3.1,Task 6)', (
     expect(opts.files, '缺少注入键 files').toBeDefined();
     // 实例直注(无委托包装):opts.files 即 new FilesApi() 产物,五方法直达端点层
     const files = opts.files as Record<string, unknown>;
-    for (const m of ['listDir', 'readText', 'readRaw', 'readHex', 'save']) {
+    for (const m of ['listDir', 'readText', 'readRaw', 'readHex', 'saveText']) {
       expect(typeof files[m], `files.${m} 应为函数`).toBe('function');
     }
   });
