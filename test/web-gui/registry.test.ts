@@ -1,9 +1,9 @@
 // test/web-gui/registry.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeRegistration, removeRegistration, listRegistrations } from '../../src/web-gui/registry.js';
+import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations } from '../../src/web-gui/registry.js';
 
 const ALIVE = () => true;
 const DEAD = () => false;
@@ -53,5 +53,22 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     await writeRegistration({ pid: 111, port: 9550, token: 'secret', startedAt: 't' }, { dir });
     const mode = statSync(join(dir, '111.json')).mode & 0o777;
     expect(mode).toBe(0o600);
+  });
+
+  // ── 陈旧登记清扫(2026-09-15 独立批:Windows 强杀不走 exit-hook 的系统性堆积) ──
+  it('sweepStaleRegistrations:死 pid 删/活 pid 留/返回删除数', async () => {
+    await writeRegistration({ pid: 111, port: 9550, token: 'a', startedAt: 't' }, { dir });
+    await writeRegistration({ pid: 222, port: 9551, token: 'b', startedAt: 't' }, { dir });
+    // 混入非登记形态文件(projects.json 同目录共存):格式校验不过 → 不删不报
+    writeFileSync(join(dir, 'projects.json'), JSON.stringify({ version: 1, projects: [] }), 'utf-8');
+    const removed = await sweepStaleRegistrations({ dir, isPidAlive: (pid) => pid === 111 });
+    expect(removed).toBe(1);
+    expect(existsSync(join(dir, '111.json'))).toBe(true);
+    expect(existsSync(join(dir, '222.json'))).toBe(false);
+    expect(existsSync(join(dir, 'projects.json'))).toBe(true);
+  });
+
+  it('sweepStaleRegistrations:目录不存在返回 0 不抛', async () => {
+    expect(await sweepStaleRegistrations({ dir: join(dir, 'no-such'), isPidAlive: DEAD })).toBe(0);
   });
 });
