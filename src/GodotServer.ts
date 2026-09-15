@@ -56,6 +56,8 @@ import { WebGuiServer } from './web-gui/server.js';
 import { INDEX_HTML } from './web-gui/html.js';
 // 项目面板批(2026-09-15 spec §6):store + run 链真实函数注入(应用层 → web-gui/tools,合法方向)
 import { ProjectsStore } from './web-gui/projects-store.js';
+// 资源工作台批(2026-09-15 spec §3.1):FilesApi 实例注入(纯逻辑模块,web-gui 内部互引合法)
+import { FilesApi } from './web-gui/files-api.js';
 import { executeRunProject } from './tools/runtime.js';
 import { buildSafeEnv } from './helpers.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
@@ -567,6 +569,9 @@ export class GodotServer {
               remove: (path: string) => projectsStore.removeProject(path),
             };
           })(),
+          // ── 资源管理工作台(spec 2026-09-15 §3.1):files 注入——纯逻辑模块, ──
+          // backupDir 缺省 ~/.godot-mcp/web-gui/backups(集中备份,三重护栏之三)
+          files: new FilesApi(),
           runProject: async (projectPath: string) => {
             // Task 1 getContext() 真实链路(spec §6 IMP-4):ctx.findGodot/setProjectDir/projectDir
             // 均接真实 dispatcher 状态(合成 no-op 会断活跃指针)。

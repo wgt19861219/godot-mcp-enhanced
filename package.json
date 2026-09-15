@@ -22,6 +22,7 @@
     "build/**/*.d.ts",
     "build/scripts/*.gd",
     "build/game-templates/**",
+    "build/web-gui/assets/**",
     "build/instructions.md",
     "addons",
     "scripts",
@@ -34,7 +35,7 @@
     "build:skills": "npm run build && node scripts/build-skills.mjs",
     "lint": "eslint src/",
     "typecheck:helpers": "tsc --noEmit -p tsconfig.test.json",
-    "build": "tsc && node -e \"const fs=require('fs'),p=require('path');const src=p.join(__dirname,'src','scripts');const dst=p.join(__dirname,'build','scripts');fs.mkdirSync(dst,{recursive:true});fs.readdirSync(src).filter(f=>f.endsWith('.gd')).forEach(f=>{fs.copyFileSync(p.join(src,f),p.join(dst,f));console.log('Copied',f)});fs.copyFileSync(p.join(__dirname,'src','instructions.md'),p.join(__dirname,'build','instructions.md'));console.log('Copied instructions.md')\" && node scripts/copy-game-templates.mjs",
+    "build": "tsc && node -e \"const fs=require('fs'),p=require('path');const src=p.join(__dirname,'src','scripts');const dst=p.join(__dirname,'build','scripts');fs.mkdirSync(dst,{recursive:true});fs.readdirSync(src).filter(f=>f.endsWith('.gd')).forEach(f=>{fs.copyFileSync(p.join(src,f),p.join(dst,f));console.log('Copied',f)});fs.copyFileSync(p.join(__dirname,'src','instructions.md'),p.join(__dirname,'build','instructions.md'));console.log('Copied instructions.md')\" && node scripts/copy-game-templates.mjs && node scripts/copy-codemirror.mjs",
     "version-sync": "node scripts/version-sync.mjs",
     "version-check": "node scripts/version-sync.mjs --check",
     "pretest": "npm run build",
@@ -76,6 +77,7 @@
   "dependencies": {
     "@modelcontextprotocol/core": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
+    "codemirror": "^5.65.21",
     "pngjs": "^7.0.0",
     "ws": "^8.21.0",
     "zod": "^4.2.0"
