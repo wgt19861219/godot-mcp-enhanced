@@ -345,8 +345,14 @@ export class WebGuiServer {
       }
 
       // ── POST /api/projects/file(spec §4:保存流,body 预检→乐观锁保存)──────
-      // I-6:content-length 预检在 readJsonBody 之前——超限 body 不进内存直接 413
       if (url.pathname === '/api/projects/file') {
+        // READ_ONLY 拦截(spec §3.3-1 第一重护栏,fix round 1):面板写路径不得绕过
+        // AI 侧防线;对齐 sessions/start 的 403_readonly 形态。
+        if (this.opts.isReadOnly?.()) {
+          getLogger().info('web-gui', 'action=file_save result=403_readonly');
+          return json(403, { error: 'read-only mode' });
+        }
+        // I-6:content-length 预检在 readJsonBody 之前——超限 body 不进内存直接 413
         const cl = Number(req.headers['content-length'] ?? 0);
         if (cl > 600 * 1024) {
           getLogger().info('web-gui', `action=file_save result=413 content_length=${cl}`);

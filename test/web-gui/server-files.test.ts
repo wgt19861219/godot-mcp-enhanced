@@ -118,6 +118,14 @@ describe('WebGuiServer files 端点+assets(spec §4/§5,2026-09-15 v2)', () => {
     expect(r.status).toBe(413);
   });
 
+  it('file POST readOnly → 403(spec §3.3-1 第一重护栏,审查 fix round 1)', async () => {
+    const t = await startSrv({ isReadOnly: () => true }); active = t.srv;
+    const r = await fetch(t.base + '/api/projects/file', { method: 'POST', headers: { ...H(t.token), 'content-type': 'application/json' },
+      body: JSON.stringify({ project: proj, path: 'main.gd', content: 'x', baseMtime: 1 }) });
+    expect(r.status).toBe(403);
+    expect(await r.text()).toContain('read-only');
+  });
+
   it('assets 枚举:清单内 200+cache-control;清单外/含路径分隔 → 404;无 token 401(I-2/M-14)', async () => {
     const t = await startSrv(); active = t.srv;
     const noAuth = await fetch(t.base + '/assets/codemirror.js');
