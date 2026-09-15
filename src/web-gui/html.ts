@@ -56,6 +56,21 @@ export const INDEX_HTML: string = `<!doctype html>
   .dot.run { color: var(--green); }
   .dot.missing { color: var(--red); }
   #addRow { display: none; }   /* 内联添加行,+添加按钮显隐切换(JS 置 style.display='flex') */
+  /* 资源管理批(spec §6.1,2026-09-15):中列 tab 条 + 文件浏览视图 */
+  .tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--dim);
+         font: 12px "Segoe UI", system-ui, sans-serif; padding: 4px 10px; cursor: pointer; }
+  .tab.on { color: var(--fg); border-bottom-color: var(--blue); }
+  #logsPane, #filesPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #filesPane { overflow: hidden; }   /* 面包屑固定 + 列表区(.scroll)自滚 */
+  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .crumb { color: var(--blue); cursor: pointer; }
+  .crumb:hover { text-decoration: underline; }
+  .breadcrumb .sep { color: var(--dim); padding: 0 2px; }
+  .file-row { display: flex; align-items: center; gap: 8px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; cursor: pointer; }
+  .file-row:hover { background: var(--bg); }
+  .f-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .f-size, .f-time { color: var(--dim); font-size: 11px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -74,8 +89,12 @@ export const INDEX_HTML: string = `<!doctype html>
     <section><h2>运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
   </div>
   <section><h2>日志流 <span class="dim" id="logCount"></span></h2>
-    <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
-    <div class="scroll" id="logList"></div></section>
+    <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button></div>
+    <div id="logsPane">
+      <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
+      <div class="scroll" id="logList"></div>
+    </div>
+    <div id="filesPane" style="display:none"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div></section>
   <section><h2>工具统计 <select id="projSel"><option value="">全部</option></select></h2>
     <div class="scroll"><table id="statsTable"><thead><tr><th>tool</th><th>calls</th><th>err</th><th>avg</th><th>min</th><th>max</th></tr></thead><tbody></tbody></table></div>
     <h2 style="border-top:1px solid var(--line)">分钟时序</h2><div id="chart"><div class="empty" style="flex:1">等待数据…</div></div></section>
@@ -93,6 +112,8 @@ export const INDEX_HTML: string = `<!doctype html>
   var $ = function (id) { return document.getElementById(id); };
   var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set() };
   var stopped = false;
+  // 文件浏览状态(spec §6.1,Task 5 消费):当前项目/当前子目录/当前目录条目快照。
+  var filesState = { project: null, sub: '', entries: [] };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
 
@@ -174,6 +195,15 @@ export const INDEX_HTML: string = `<!doctype html>
     return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
 
+  // 字节数人性化(spec §6.2,M-11):日志面板无现成实现,此处新写。
+  function fmtSize(n) {
+    if (n == null) return '-';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
   function renderProjects() {
     var host = $('projList'); host.textContent = '';
     if (state.projects === null) {   // hello projects:null → 注入缺席(设计 v2/M6)
@@ -197,7 +227,9 @@ export const INDEX_HTML: string = `<!doctype html>
       run.setAttribute('data-action', 'run'); run.setAttribute('data-path', p.path);
       var edit = document.createElement('button'); edit.className = 'ctl'; edit.textContent = '✎'; edit.title = '编辑';
       edit.setAttribute('data-action', 'edit'); edit.setAttribute('data-path', p.path);
-      if (p.missing) { run.disabled = true; edit.disabled = true; run.title = '路径不存在'; edit.title = '路径不存在'; }
+      var files = document.createElement('button'); files.className = 'ctl'; files.textContent = '文件'; files.title = '浏览文件';
+      files.setAttribute('data-action', 'files'); files.setAttribute('data-path', p.path);
+      if (p.missing) { run.disabled = true; edit.disabled = true; files.disabled = true; run.title = '路径不存在'; edit.title = '路径不存在'; files.title = '路径不存在'; }
       var name = document.createElement('span'); name.className = 'proj-name';
       name.textContent = p.name || (p.path || '').split(/[\\\\/]/).pop() || p.path; name.title = p.path;   // title=完整路径
       var time = document.createElement('span'); time.className = 'proj-time'; time.textContent = fmtAgo(p.mtime);
@@ -206,7 +238,7 @@ export const INDEX_HTML: string = `<!doctype html>
       else if (p.running) { badge.className = 'dot run'; badge.textContent = '●'; badge.title = '运行中'; }
       var rm = document.createElement('button'); rm.className = 'ctl stop'; rm.textContent = '×'; rm.title = '从列表移除';
       rm.setAttribute('data-action', 'remove'); rm.setAttribute('data-path', p.path);
-      row.append(run, edit, name, time, badge, rm); frag.appendChild(row);
+      row.append(run, edit, files, name, time, badge, rm); frag.appendChild(row);
     });
     host.appendChild(frag);
   }
@@ -313,6 +345,110 @@ export const INDEX_HTML: string = `<!doctype html>
       .catch(function () { $('statusBar').textContent = '网络异常,添加请求未送达'; });
   }
 
+  // ── 文件浏览(spec §6.1/§6.2,2026-09-15 资源管理批)────────────────────────
+  // 契约(Task 2):GET /api/projects/files?project=&sub= → {entries:[{name,isDir,size,mtime}]};
+  // 目录先排序与隐藏目录(.godot/.git 等)降噪均由 server 侧完成(files-api.ts),前端不重复。
+  // 中列 tab 切换:切 display + tab 按钮高亮;Task 5 在 filesPane 内接编辑/预览视图。
+  function showTab(name) {
+    var logs = name === 'logs';
+    $('tabLogs').className = 'tab' + (logs ? ' on' : '');
+    $('tabFiles').className = 'tab' + (logs ? '' : ' on');
+    $('logsPane').style.display = logs ? 'flex' : 'none';
+    $('filesPane').style.display = logs ? 'none' : 'flex';
+  }
+
+  function openFiles(projectPath) {
+    filesState.project = projectPath; filesState.sub = '';
+    showTab('files'); loadDir();
+  }
+
+  function loadDir() {
+    if (!filesState.project) return;
+    $('statusBar').textContent = '读取目录中…';
+    fetch('/api/projects/files?project=' + encodeURIComponent(filesState.project) + '&sub=' + encodeURIComponent(filesState.sub),
+      { headers: { 'x-gui-token': token } })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          var msg = r.status === 403 ? '路径在白名单之外'
+            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)'
+            : (r.status === 503 ? '文件功能未配置' : JSON.stringify(r.body).slice(0, 80)));
+          $('statusBar').textContent = '目录读取失败: ' + msg;
+          return;
+        }
+        filesState.entries = (r.body && r.body.entries) || [];
+        renderFiles();
+        $('statusBar').textContent = '目录已加载';
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,目录请求未送达'; });
+  }
+
+  // 面包屑 + 列表行均为零监听器、只带数据属性([data-sub]/[data-dir]/[data-file]),
+  // 点击由 #filesPane 容器一次性委托接管(同 #sessions/#projPane 模式:renderFiles
+  // 重绘只清空内部,容器本体永续)。
+  function renderFiles() {
+    var host = $('filesPane'); host.textContent = '';
+    var crumb = document.createElement('div'); crumb.className = 'breadcrumb';
+    var root = document.createElement('span'); root.className = 'crumb';
+    root.textContent = (filesState.project || '').split(/[\\\\/]/).pop() || filesState.project;
+    root.title = filesState.project || '';   // 悬停看完整项目路径
+    root.setAttribute('data-sub', '');       // 项目名段 → 回根
+    crumb.appendChild(root);
+    var acc = '';
+    (filesState.sub ? filesState.sub.split('/') : []).forEach(function (seg) {
+      acc = acc ? acc + '/' + seg : seg;   // 逐段累积路径,点击回跳该层
+      var sep = document.createElement('span'); sep.className = 'sep'; sep.textContent = '/';
+      var c = document.createElement('span'); c.className = 'crumb'; c.textContent = seg;
+      c.setAttribute('data-sub', acc);
+      crumb.append(sep, c);
+    });
+    host.appendChild(crumb);
+    var list = document.createElement('div'); list.className = 'scroll';
+    if (!filesState.entries.length) {
+      var empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '空目录';
+      list.appendChild(empty);
+    } else {
+      var frag = document.createDocumentFragment();
+      filesState.entries.forEach(function (en) {
+        var row = document.createElement('div'); row.className = 'file-row';
+        row.setAttribute(en.isDir ? 'data-dir' : 'data-file', en.name);
+        var nm = document.createElement('span'); nm.className = 'f-name';
+        nm.textContent = (en.isDir ? '📁 ' : '') + en.name; nm.title = en.name;
+        var sz = document.createElement('span'); sz.className = 'f-size'; sz.textContent = en.isDir ? '' : fmtSize(en.size);
+        var tm = document.createElement('span'); tm.className = 'f-time'; tm.textContent = fmtAgo(en.mtime);
+        row.append(nm, sz, tm); frag.appendChild(row);
+      });
+      list.appendChild(frag);
+    }
+    host.appendChild(list);
+  }
+
+  // 扩展名分类前端副本(与 server files-api.ts TEXT_EXTS/IMG_EXTS/AUDIO_EXTS 同清单):
+  // Task 5 在此分发点接文本编辑(CodeMirror)/图片预览/音频播放/十六进制视图,
+  // 本任务先落占位提示。dotfile(.gdignore/.gitignore)按整名去点匹配,与 server ext() 同语义。
+  var TEXT_EXTS = ['gd', 'tscn', 'tres', 'json', 'md', 'cfg', 'import', 'txt', 'gdignore', 'gitignore', 'bat', 'sh', 'ps1'];
+  var IMG_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
+  var AUDIO_EXTS = ['ogg', 'wav', 'mp3'];
+
+  function fileExt(name) {
+    var i = name.lastIndexOf('.');
+    if (i > 0) return name.slice(i + 1).toLowerCase();
+    if (i === 0) return name.slice(1).toLowerCase();   // dotfile:.gdignore → 'gdignore'
+    return '';
+  }
+
+  function openFileEntry(name, isDir) {
+    if (isDir) {   // 防御:#filesPane 委托已直接处理目录行,此分支保证契约自洽
+      filesState.sub = filesState.sub ? filesState.sub + '/' + name : name;
+      loadDir(); return;
+    }
+    var e = fileExt(name);
+    if (TEXT_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '文本编辑视图(Task 5 提供): ' + name; return; }
+    if (IMG_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '图片预览(Task 5 提供): ' + name; return; }
+    if (AUDIO_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '音频播放(Task 5 提供): ' + name; return; }
+    $('statusBar').textContent = '二进制预览(Task 5 提供): ' + name;
+  }
+
   function renderLogs() {
     var filter = $('logFilter').value.toLowerCase();
     var level = $('logLevel').value;
@@ -384,6 +520,7 @@ export const INDEX_HTML: string = `<!doctype html>
     if (action === 'add') { toggleAddRow(); return; }
     if (action === 'add-confirm') { submitAdd(); return; }
     if (action === 'run' || action === 'edit') { startSession(path, action); return; }
+    if (action === 'files') { openFiles(path); return; }
     if (action === 'remove') { removeProject(path); }
   });
 
@@ -413,6 +550,28 @@ export const INDEX_HTML: string = `<!doctype html>
       btn.disabled = false;
       $('statusBar').textContent = '网络异常,操作未送达';
     });
+  });
+
+  // 中列 tab 切换(资源管理批 spec §6.1):tab 按钮为静态 DOM、从不重绘,直接绑定
+  // (与 logFilter/projSearch 静态控件同模式;重绘容器内的按钮才须走 data-action 委托)。
+  $('tabLogs').addEventListener('click', function () { showTab('logs'); });
+  $('tabFiles').addEventListener('click', function () { showTab('files'); });
+
+  // #filesPane 容器一次性事件委托(资源管理批 spec §6.2):面包屑段([data-sub]
+  // 回根/回跳层级)、目录行([data-dir] 进子目录)、文件行([data-file] →
+  // openFileEntry)全部零监听器——renderFiles 重绘只清空容器内部,委托永续。
+  $('filesPane').addEventListener('click', function (ev) {
+    if (!ev.target || !ev.target.closest) return;
+    var subEl = ev.target.closest('[data-sub]');
+    if (subEl) { filesState.sub = subEl.getAttribute('data-sub') || ''; loadDir(); return; }
+    var dir = ev.target.closest('[data-dir]');
+    if (dir) {
+      var d = dir.getAttribute('data-dir') || '';
+      filesState.sub = filesState.sub ? filesState.sub + '/' + d : d;
+      loadDir(); return;
+    }
+    var file = ev.target.closest('[data-file]');
+    if (file) openFileEntry(file.getAttribute('data-file') || '', false);
   });
 
   var es = new EventSource('/events?token=' + encodeURIComponent(token));
