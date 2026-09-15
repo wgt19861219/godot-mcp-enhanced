@@ -314,7 +314,7 @@ export class WebGuiServer {
           (r) => { if (r.started) void this.pushScanDone(r.added ?? 0); return r; },
           (err: unknown) => {
             getLogger().warn('web-gui', `projects scan failed: ${err instanceof Error ? err.message : err}`);
-            this.broadcastProjectsEvent({ scanning: false });   // 兜底解卡前端扫描态
+            this.broadcastProjectsEvent({ scanning: false, failed: true });   // 兜底解卡前端扫描态(F-1:failed 标记供前端区分失败与完成)
             throw err;
           },
         );
@@ -558,6 +558,7 @@ export class WebGuiServer {
   // events payload 约定(Task 4 前端契约):
   //   扫描进度  {scanning:true, found, scanned}      —— 500ms 节流
   //   扫描完成  {scanning:false, added, total, projects}
+  //   扫描失败  {scanning:false, failed:true}        —— store 异步 reject 兜底(F-1)
   //   清单变更  {projects}                            —— add/remove/start 成功后的全量快照
   // 前端按字段在场性消费:'projects' 在场 → 整体重置列表;'scanning' 在场 → 更新扫描态
   // (快照事件不带 scanning,避免扫描进行中 add 的快照把扫描指示器误清)。

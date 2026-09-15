@@ -61,4 +61,10 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('只读模式，面板启动已禁用');      // readOnly 403 文案
     expect(INDEX_HTML).toContain('路径在白名单之外');              // 其余 403 仍是白名单文案
   });
+
+  // ── F-1 follow-up(2026-09-15 项目面板批审查)──────────────────────────────
+  it('扫描失败兜底事件识别:失败不误显"扫描完成"', () => {
+    expect(INDEX_HTML).toContain('p.failed');   // 兜底事件 {scanning:false, failed:true} 的判定
+    expect(INDEX_HTML).toContain('扫描失败');    // 失败文案(区分于"扫描完成")
+  });
 });
