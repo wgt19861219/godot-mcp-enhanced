@@ -71,6 +71,14 @@ export const INDEX_HTML: string = `<!doctype html>
   .file-row:hover { background: var(--bg); }
   .f-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .f-size, .f-time { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  /* 编辑视图(spec §6.3,2026-09-15):工具行复用 .log-tools;banner/conflict 默认隐藏 */
+  .ed-banner { display: none; align-items: center; gap: 8px; padding: 4px 10px; background: #3a2c00; color: var(--yellow); font-size: 12px; }
+  .ed-conflict { display: none; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 10px; background: #4a1618; color: var(--red); font-size: 12px; }
+  .ed-conflict .ctl { color: var(--fg); }
+  .ed-host { flex: 1; min-height: 0; display: flex; }
+  .ed-host textarea { flex: 1; resize: none; border: none; outline: none; background: var(--bg); color: var(--fg); padding: 8px; font: 12px/1.5 Consolas, monospace; }
+  .CodeMirror { height: 100%; flex: 1; font: 12px/1.5 Consolas, monospace; }   /* CM 升级 .ed-host 后填满 */
+  .ed-status { padding: 3px 10px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
@@ -88,7 +96,7 @@ export const INDEX_HTML: string = `<!doctype html>
       <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
     <section><h2>运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
   </div>
-  <section><h2>日志流 <span class="dim" id="logCount"></span></h2>
+  <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
     <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button></div>
     <div id="logsPane">
       <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
@@ -110,10 +118,15 @@ export const INDEX_HTML: string = `<!doctype html>
   // 失败不阻塞:query 通道兜底,哪个通用哪个;响应体无需处理。
   if (token) { fetch('/api/auth?token=' + encodeURIComponent(token)).catch(function () { /* 握手失败不阻塞:query 通道兜底 */ }); }
   var $ = function (id) { return document.getElementById(id); };
-  var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set() };
+  var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set(), readOnly: false };
   var stopped = false;
   // 文件浏览状态(spec §6.1,Task 5 消费):当前项目/当前子目录/当前目录条目快照。
   var filesState = { project: null, sub: '', entries: [] };
+  // 编辑视图状态(spec §6.3,Task 5):固定对象只改字段、从不重建——CM change 回调
+  // 闭包引用须稳定;latest 为 409 冲突时的服务端最新版(Task 2 契约 {content,mtime})。
+  // readOnly 信号源:hello 无此字段(不发明协议),复用现有 403 响应体 'read-only' 判定
+  // (startSession I-2 先例 + 保存 POST 403 触发 enterReadOnly 置位)。
+  var editorState = { rel: null, baseMtime: 0, dirty: false, cm: null, latest: null };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
 
@@ -254,10 +267,12 @@ export const INDEX_HTML: string = `<!doctype html>
       if (!r.ok) {
         return r.text().then(function (t) {
           // 403 双源区分(I-2):READ_ONLY 拦截响应体 {error:'read-only mode'},提示只读
-          // 而非误导用户排查白名单;白名单外仍是原文案。
-          var msg = r.status === 403
-            ? (t.indexOf('read-only') !== -1 ? '只读模式，面板启动已禁用' : '路径在白名单之外')
-            : (r.status === 404 ? '不是 Godot 项目' : t.slice(0, 80));
+          // 而非误导用户排查白名单;白名单外仍是原文案。Task 5:判定命中时同步置
+          // state.readOnly——编辑视图打开即只读,免得用户编辑半天才在保存时被 403。
+          var msg;
+          if (r.status === 403 && t.indexOf('read-only') !== -1) { state.readOnly = true; msg = '只读模式，面板启动已禁用'; }
+          else if (r.status === 403) msg = '路径在白名单之外';
+          else msg = r.status === 404 ? '不是 Godot 项目' : t.slice(0, 80);
           $('statusBar').textContent = '启动失败: ' + msg;
         });
       }
@@ -348,17 +363,23 @@ export const INDEX_HTML: string = `<!doctype html>
   // ── 文件浏览(spec §6.1/§6.2,2026-09-15 资源管理批)────────────────────────
   // 契约(Task 2):GET /api/projects/files?project=&sub= → {entries:[{name,isDir,size,mtime}]};
   // 目录先排序与隐藏目录(.godot/.git 等)降噪均由 server 侧完成(files-api.ts),前端不重复。
-  // 中列 tab 切换:切 display + tab 按钮高亮;Task 5 在 filesPane 内接编辑/预览视图。
+  // 中列 tab 切换:切 display + tab 按钮高亮 + 列标题同步(Task 4 审查 Minor 2:文件
+  // tab 激活时中列头不再误显「日志流」);Task 5 补脏标防误切——编辑器有未保存修改时
+  // 切回日志 tab 需 confirm(spec §6.3;切「文件」不拦,编辑视图仍保留可切回)。
   function showTab(name) {
     var logs = name === 'logs';
+    if (logs && dirtyBlock()) return;
     $('tabLogs').className = 'tab' + (logs ? ' on' : '');
     $('tabFiles').className = 'tab' + (logs ? '' : ' on');
+    $('midTitle').textContent = logs ? '日志流' : '文件';
     $('logsPane').style.display = logs ? 'flex' : 'none';
     $('filesPane').style.display = logs ? 'none' : 'flex';
   }
 
   function openFiles(projectPath) {
-    filesState.project = projectPath; filesState.sub = '';
+    if (dirtyBlock()) return;   // 换项目浏览=丢弃当前编辑视图,同属脏标防误切
+    // entries 重置(Task 4 审查 Minor 1):防 loadDir 失败时 #filesPane 保留上一项目旧渲染。
+    filesState.project = projectPath; filesState.sub = ''; filesState.entries = [];
     showTab('files'); loadDir();
   }
 
@@ -387,6 +408,10 @@ export const INDEX_HTML: string = `<!doctype html>
   // 点击由 #filesPane 容器一次性委托接管(同 #sessions/#projPane 模式:renderFiles
   // 重绘只清空内部,容器本体永续)。
   function renderFiles() {
+    // 列表重绘=编辑视图销毁:脏标/CM 句柄/latest 随视图失效(切走前已有 dirtyBlock
+    // 把守,此处兜底防绕过路径残留状态拦截后续导航)。
+    editorState.rel = null; editorState.baseMtime = 0; editorState.dirty = false;
+    editorState.cm = null; editorState.latest = null;
     var host = $('filesPane'); host.textContent = '';
     var crumb = document.createElement('div'); crumb.className = 'breadcrumb';
     var root = document.createElement('span'); root.className = 'crumb';
@@ -443,10 +468,195 @@ export const INDEX_HTML: string = `<!doctype html>
       loadDir(); return;
     }
     var e = fileExt(name);
-    if (TEXT_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '文本编辑视图(Task 5 提供): ' + name; return; }
-    if (IMG_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '图片预览(Task 5 提供): ' + name; return; }
-    if (AUDIO_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '音频播放(Task 5 提供): ' + name; return; }
-    $('statusBar').textContent = '二进制预览(Task 5 提供): ' + name;
+    // TEXT → 编辑视图(spec §6.3,Task 5):rel=sub 前缀拼全(Task 2 契约 path 相对项目根);
+    // IMG/AUDIO/其余仍为占位,由 Plan B 替换为预览视图(spec §6.4)。
+    if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(filesState.sub ? filesState.sub + '/' + name : name); return; }
+    if (IMG_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '图片预览(Plan B): ' + name; return; }
+    if (AUDIO_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '音频播放(Plan B): ' + name; return; }
+    $('statusBar').textContent = '二进制预览(Plan B): ' + name;
+  }
+
+  // ── 编辑视图(spec §6.3,2026-09-15 资源管理批 Task 5)──────────────────────
+  // 脏标防误切:一切离开编辑视图的动作(切日志 tab/目录导航/换项目浏览/重新加载/
+  // 返回列表)统一走此把守;rel 为 null(不在编辑视图)时不拦。
+  function dirtyBlock() {
+    return !!(editorState.rel && editorState.dirty && !confirm('有未保存修改,离开将丢失'));
+  }
+
+  // CM 动态加载(spec §6.3/M-9):首次进编辑视图才取资产,cmLoaded 保证只加载一次;
+  // 并发打开文件时后来的回调在 cmPending 排队,全 onload 后统一 flush。css+codemirror.js
+  // 先载,4 个 mode 后载(mode-xml 为 markdown 内嵌 HTML 块的依赖,spec §5.1/M-8)。
+  // src 一律拼 '?token=' + token JS 变量——URL query 里的 token 已被 replaceState 清除。
+  var cmLoaded = false, cmPending = [];
+  function ensureCodeMirror(cb) {
+    if (cmLoaded) { cb(); return; }
+    cmPending.push(cb);
+    if (cmPending.length > 1) return;
+    var link = document.createElement('link'); link.rel = 'stylesheet';
+    link.href = '/assets/codemirror.css?token=' + token; document.head.appendChild(link);
+    var s1 = document.createElement('script'); s1.src = '/assets/codemirror.js?token=' + token;
+    s1.onload = function () {
+      var n = 0, modes = ['mode-python.js', 'mode-javascript.js', 'mode-markdown.js', 'mode-xml.js'];
+      modes.forEach(function (m) {
+        var s = document.createElement('script'); s.src = '/assets/' + m + '?token=' + token;
+        s.onload = function () { if (++n === modes.length) { cmLoaded = true; cmPending.forEach(function (f) { f(); }); cmPending = []; } };
+        document.head.appendChild(s);
+      });
+    };
+    document.head.appendChild(s1);
+  }
+
+  // mode 路由(spec §6.3):gd 无官方 mode→python 近似;json 走 javascript mode 的
+  // application/json 变体;md→markdown;其余 null=plain 无高亮。
+  function modeForFile(rel) {
+    var e = fileExt(rel || '');
+    if (e === 'gd') return 'python';
+    if (e === 'json') return { name: 'javascript', json: true };
+    if (e === 'md') return 'markdown';
+    return null;
+  }
+
+  function openEditor(rel) {
+    if (!rel || !filesState.project) return;
+    $('statusBar').textContent = '读取文件中… ' + rel;
+    fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=text',
+      { headers: { 'x-gui-token': token } })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(function (r) {
+        if (!r.ok) {
+          var msg = r.status === 400 ? '不支持的扩展名(非文本类)'
+            : (r.status === 403 ? '路径在白名单之外'
+            : (r.status === 404 ? '文件不存在'
+            : (r.status === 413 ? '文件超限' : JSON.stringify(r.body).slice(0, 80))));
+          $('statusBar').textContent = '文件读取失败: ' + msg;
+          return;
+        }
+        editorState.rel = rel; editorState.baseMtime = r.body.mtime; editorState.dirty = false; editorState.latest = null;
+        renderEditor(rel, r.body.content, r.body.mtime, r.body.size);
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,文件请求未送达'; });
+  }
+
+  // 编辑子视图(替换 #filesPane 内容):工具行(保存/重新加载/返回列表)+ 只读横幅 +
+  // 409 冲突条(默认隐藏)+ CM 宿主 textarea + 状态栏。按钮全部零监听器、只带
+  // data-action,由 #filesPane 容器委托接管(同 renderFiles 模式:容器本体永续)。
+  function renderEditor(rel, content, mtime, size) {
+    editorState.cm = null;   // 旧实例随上一次视图 DOM 丢弃;新 textarea 待 CM 回调升级
+    var host = $('filesPane'); host.textContent = '';
+    var tools = document.createElement('div'); tools.className = 'log-tools';
+    var save = document.createElement('button'); save.className = 'ctl'; save.id = 'edSave'; save.textContent = '保存';
+    save.setAttribute('data-action', 'editor-save');
+    var reload = document.createElement('button'); reload.className = 'ctl'; reload.textContent = '重新加载';
+    reload.setAttribute('data-action', 'editor-reload');
+    var back = document.createElement('button'); back.className = 'ctl'; back.textContent = '返回列表';
+    back.setAttribute('data-action', 'editor-back');
+    if (state.readOnly) save.style.display = 'none';   // readOnly:保存钮隐藏(spec §6.3)
+    tools.append(save, reload, back); host.appendChild(tools);
+    var ro = document.createElement('div'); ro.className = 'ed-banner'; ro.id = 'edRoBanner';
+    ro.textContent = '只读模式:服务端为 READ_ONLY,保存已禁用';
+    if (state.readOnly) ro.style.display = 'flex';
+    host.appendChild(ro);
+    var cf = document.createElement('div'); cf.className = 'ed-conflict'; cf.id = 'edConflict';
+    var cfTxt = document.createElement('span'); cfTxt.textContent = '文件已被外部修改(可能是 Godot 编辑器或 AI)';
+    var cfReload = document.createElement('button'); cfReload.className = 'ctl'; cfReload.textContent = '重新加载';
+    cfReload.setAttribute('data-action', 'conflict-reload');
+    var cfCopy = document.createElement('button'); cfCopy.className = 'ctl'; cfCopy.textContent = '复制我的修改';
+    cfCopy.setAttribute('data-action', 'conflict-copy');
+    cf.append(cfTxt, cfReload, cfCopy); host.appendChild(cf);
+    var wrap = document.createElement('div'); wrap.className = 'ed-host';
+    var ta = document.createElement('textarea'); ta.id = 'cmHost'; ta.value = content;   // CM 就绪前原生可编辑兜底,就绪后 fromTextArea 升级
+    wrap.appendChild(ta); host.appendChild(wrap);
+    var st = document.createElement('div'); st.className = 'ed-status'; st.id = 'edStatus';
+    st.textContent = rel + ' · ' + fmtSize(size) + ' · ' + (mtime ? new Date(mtime).toLocaleString() : '-');
+    host.appendChild(st);
+    ensureCodeMirror(function () {
+      var ta2 = document.getElementById('cmHost');
+      if (!ta2 || editorState.cm) return;   // 已离开编辑视图/已被更早回调升级(快速重开竞态)
+      editorState.cm = CodeMirror.fromTextArea(ta2, {
+        lineNumbers: true,
+        mode: modeForFile(editorState.rel),
+        readOnly: state.readOnly ? true : false,
+      });
+      editorState.cm.on('change', function () {
+        editorState.dirty = true;
+        var b = $('edSave'); if (b) b.textContent = '● 保存';   // 未保存指示(spec §6.3)
+      });
+    });
+    $('statusBar').textContent = '已打开 ' + rel;
+  }
+
+  // 保存流(spec §3.3 三重护栏的 UI 端):POST 携 baseMtime 乐观锁;200 前进本地
+  // mtime+清脏标;409 弹冲突条(latest 消费);413/403/404 就地报错。
+  function saveEditor() {
+    if (!editorState.rel || !filesState.project) return;
+    var content = editorState.cm ? editorState.cm.getValue() : ($('cmHost') ? $('cmHost').value : '');
+    var btn = $('edSave'); if (btn) btn.disabled = true;
+    $('edStatus').textContent = '保存中…';
+    fetch('/api/projects/file', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ project: filesState.project, path: editorState.rel, content: content, baseMtime: editorState.baseMtime }),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(function (r) {
+        if (btn) btn.disabled = false;
+        if (r.ok) {
+          editorState.baseMtime = r.body.mtime; editorState.dirty = false;
+          if (btn) btn.textContent = '保存';
+          $('edStatus').textContent = '已保存 · ' + new Date(r.body.mtime).toLocaleString();
+          return;
+        }
+        if (r.status === 409) { showConflict(r.body && r.body.latest); return; }
+        if (r.status === 403) {   // 双源区分(对齐 startSession I-2 判定)
+          if (JSON.stringify(r.body).indexOf('read-only') !== -1) { enterReadOnly(); return; }
+          $('edStatus').textContent = '保存失败: 路径在白名单之外';
+          return;
+        }
+        var msg = r.status === 413 ? '内容超限(600KB)' : (r.status === 404 ? '文件不存在(可能已被删除)' : JSON.stringify(r.body).slice(0, 80));
+        $('edStatus').textContent = '保存失败: ' + msg;
+      })
+      .catch(function () { if (btn) btn.disabled = false; $('edStatus').textContent = '网络异常,保存请求未送达'; });
+  }
+
+  // 409 冲突条显示:latest 存 editorState 供「重新加载」按钮消费(Task 2 契约
+  // 409 body {error, latest:{content,mtime}})。
+  function showConflict(latest) {
+    editorState.latest = latest || null;
+    var bar = $('edConflict'); if (bar) bar.style.display = 'flex';
+    $('edStatus').textContent = '保存冲突: ' + (editorState.rel || '');
+  }
+
+  // readOnly 置位(spec §6.3):保存 403 read-only 响应体触发;此后打开的编辑器
+  // 直接只读(服务端 READ_ONLY 为启动期 env,运行期不变,置位后无需复位)。
+  function enterReadOnly() {
+    state.readOnly = true;
+    if (editorState.cm) editorState.cm.setOption('readOnly', true);
+    var b = $('edSave'); if (b) b.style.display = 'none';
+    var banner = $('edRoBanner'); if (banner) banner.style.display = 'flex';
+    $('edStatus').textContent = '只读模式:保存已禁用';
+  }
+
+  // 409 冲突条「重新加载」:丢弃本地修改,重设为服务端最新版+baseMtime 前进。
+  function conflictReload() {
+    var lt = editorState.latest;
+    if (!lt) return;
+    if (editorState.cm) editorState.cm.setValue(lt.content || '');
+    else if ($('cmHost')) $('cmHost').value = lt.content || '';
+    editorState.baseMtime = lt.mtime; editorState.dirty = false;   // setValue 同步触发 change→dirty=true,此处统一覆盖
+    editorState.latest = null;
+    var bar = $('edConflict'); if (bar) bar.style.display = 'none';
+    var sb = $('edSave'); if (sb) sb.textContent = '保存';
+    $('edStatus').textContent = '已重载外部版本 · ' + new Date(lt.mtime).toLocaleString();
+  }
+
+  // 409 冲突条「复制我的修改」:抢救本地输入到剪贴板(localhost 为 secure context,
+  // clipboard API 可用;失败给手动兜底提示)。
+  function conflictCopy() {
+    var mine = editorState.cm ? editorState.cm.getValue() : ($('cmHost') ? $('cmHost').value : '');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(mine).then(
+        function () { $('edStatus').textContent = '已复制我的修改到剪贴板'; },
+        function () { $('edStatus').textContent = '复制失败,请手动全选复制'; });
+    } else { $('edStatus').textContent = '剪贴板不可用,请手动全选复制'; }
   }
 
   function renderLogs() {
@@ -557,15 +767,40 @@ export const INDEX_HTML: string = `<!doctype html>
   $('tabLogs').addEventListener('click', function () { showTab('logs'); });
   $('tabFiles').addEventListener('click', function () { showTab('files'); });
 
-  // #filesPane 容器一次性事件委托(资源管理批 spec §6.2):面包屑段([data-sub]
+  // #filesPane 容器一次性事件委托(资源管理批 spec §6.2/§6.3):面包屑段([data-sub]
   // 回根/回跳层级)、目录行([data-dir] 进子目录)、文件行([data-file] →
-  // openFileEntry)全部零监听器——renderFiles 重绘只清空容器内部,委托永续。
+  // openFileEntry)与编辑视图工具行/冲突条按钮(button[data-action]:editor-save|
+  // editor-reload|editor-back|conflict-reload|conflict-copy)全部零监听器——
+  // renderFiles/renderEditor 重绘只清空容器内部,委托永续;目录导航类动作进
+  // 编辑器脏标把守(spec §6.3)。
   $('filesPane').addEventListener('click', function (ev) {
     if (!ev.target || !ev.target.closest) return;
+    var act = ev.target.closest('button[data-action]');
+    if (act) {
+      var action = act.getAttribute('data-action');
+      if (action === 'editor-save') { saveEditor(); return; }
+      if (action === 'editor-reload') {   // 重新拉服务端版本=丢弃本地,脏标把守
+        if (dirtyBlock()) return;
+        openEditor(editorState.rel);
+        return;
+      }
+      if (action === 'editor-back') {
+        if (dirtyBlock()) return;
+        renderFiles();
+        return;
+      }
+      if (action === 'conflict-reload') { conflictReload(); return; }
+      if (action === 'conflict-copy') { conflictCopy(); return; }
+      return;
+    }
     var subEl = ev.target.closest('[data-sub]');
-    if (subEl) { filesState.sub = subEl.getAttribute('data-sub') || ''; loadDir(); return; }
+    if (subEl) {
+      if (dirtyBlock()) return;
+      filesState.sub = subEl.getAttribute('data-sub') || ''; loadDir(); return;
+    }
     var dir = ev.target.closest('[data-dir]');
     if (dir) {
+      if (dirtyBlock()) return;
       var d = dir.getAttribute('data-dir') || '';
       filesState.sub = filesState.sub ? filesState.sub + '/' + d : d;
       loadDir(); return;

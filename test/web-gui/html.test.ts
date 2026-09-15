@@ -86,4 +86,33 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   it('文件 tab 请求拼 token(JS 变量,M-9):fetch 对 files 端点带鉴权', () => {
     expect(INDEX_HTML).toContain("'x-gui-token'");              // 现有请求头模式延续到 files 端点
   });
+
+  // ── 资源管理批(Plan A Task 5,spec §6.3)──────────────────────────────────
+  it('CM 动态加载:createElement script + src 拼 JS 变量 token(M-9)+只加载一次', () => {
+    expect(INDEX_HTML).toContain("createElement('script')");
+    expect(INDEX_HTML).toContain("'/assets/codemirror.js?token=' + token");   // 变量拼接,非字符串字面量
+    expect(INDEX_HTML).toContain('cmLoaded');                                 // 一次加载标志
+    expect(INDEX_HTML).toContain("'/assets/codemirror.css?token=' + token");  // css 同通道
+  });
+  it('mode 路由:gd→python 近似/json→javascript/md→markdown/其余 plain', () => {
+    expect(INDEX_HTML).toContain("modeForFile");                              // 路由函数
+    expect(INDEX_HTML).toContain("'python'");
+    expect(INDEX_HTML).toContain("'javascript'");
+    expect(INDEX_HTML).toContain("'markdown'");
+  });
+  it('保存三重护栏 UI:baseMtime 随请求/409 latest 消费/脏标 confirm', () => {
+    expect(INDEX_HTML).toContain('baseMtime');
+    expect(INDEX_HTML).toContain('latest');                                   // 409 响应体消费
+    expect(INDEX_HTML).toContain('文件已被外部修改');                          // 冲突文案(spec §3.3-2)
+    expect(INDEX_HTML).toContain('dirty');                                    // 脏标
+  });
+  it('readOnly:编辑器只读+保存隐藏', () => {
+    expect(INDEX_HTML).toContain("setOption('readOnly'");
+    expect(INDEX_HTML).toContain('只读模式');                                  // 横幅文案
+  });
+  it('mode 资产与下载链接(预览占位由 Plan B 替换)', () => {
+    expect(INDEX_HTML).toContain('mode-python.js');
+    expect(INDEX_HTML).toContain('mode-javascript.js');
+    expect(INDEX_HTML).toContain('mode-markdown.js');
+  });
 });
