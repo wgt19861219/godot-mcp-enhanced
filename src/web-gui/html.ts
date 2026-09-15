@@ -585,9 +585,12 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '已打开 ' + rel;
   }
 
-  // edStatus 异步写入统一守卫(Task 5 审查 Minor):saveEditor/conflictCopy 的异步回调
-  // 执行时用户可能已切走 tab 致 DOM 重建,$('edStatus') 可为 null——null.textContent
-  // 会抛 TypeError 吞掉后续逻辑;同步路径(打开/冲突条)DOM 刚创建必然在场,不强制改。
+  // edStatus 异步写入统一守卫(Task 5 审查 Minor + Fix R1 勘误):saveEditor 的
+  // then/catch 回调及其 409→showConflict / 403→enterReadOnly 延伸调用、conflictCopy
+  // 的 clipboard 回调均为异步路径——执行时用户可能已切走 tab 致 DOM 重建,
+  // $('edStatus') 可为 null,null.textContent 抛 TypeError 会落入 catch"网络异常"
+  // 误语义;打开/conflictReload/conflictCopy 的点击入口为同步路径,DOM 刚创建
+  // 必然在场,不强制改。
   function setEdStatus(msg) { var st = $('edStatus'); if (st) st.textContent = msg; }
 
   // 保存流(spec §3.3 三重护栏的 UI 端):POST 携 baseMtime 乐观锁;200 前进本地
@@ -627,7 +630,7 @@ export const INDEX_HTML: string = `<!doctype html>
   function showConflict(latest) {
     editorState.latest = latest || null;
     var bar = $('edConflict'); if (bar) bar.style.display = 'flex';
-    $('edStatus').textContent = '保存冲突: ' + (editorState.rel || '');
+    setEdStatus('保存冲突: ' + (editorState.rel || ''));   // Fix R1:唯一调用点在 saveEditor then 回调 409 分支(异步)
   }
 
   // readOnly 置位(spec §6.3):保存 403 read-only 响应体触发;此后打开的编辑器
@@ -637,7 +640,7 @@ export const INDEX_HTML: string = `<!doctype html>
     if (editorState.cm) editorState.cm.setOption('readOnly', true);
     var b = $('edSave'); if (b) b.style.display = 'none';
     var banner = $('edRoBanner'); if (banner) banner.style.display = 'flex';
-    $('edStatus').textContent = '只读模式:保存已禁用';
+    setEdStatus('只读模式:保存已禁用');   // Fix R1:唯一调用点在 saveEditor then 回调 403 read-only 分支(异步)
   }
 
   // 409 冲突条「重新加载」:丢弃本地修改,重设为服务端最新版+baseMtime 前进。
