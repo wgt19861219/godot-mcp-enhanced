@@ -50,8 +50,13 @@ describe('executeRunProject 抽取等价性(spec §8.1)', () => {
   });
 
   it('getAllowedRealRoots 返回归一化数组(空 allowlist→空数组,由调用方 cwd 兜底)', async () => {
+    // Task 2 补强(Task 1 review 弱断言移交):显式操作 env 后断言空数组,
+    // 不依赖本机 ALLOWED_PROJECT_PATHS 恰好未配置。
+    process.env.ALLOWED_PROJECT_PATHS = '';
     const m = await import('../../src/core/path-utils.js');
-    expect(Array.isArray(m.getAllowedRealRoots())).toBe(true);
+    const roots = m.getAllowedRealRoots();
+    expect(Array.isArray(roots)).toBe(true);
+    expect(roots).toHaveLength(0);
   });
 
   it('非项目路径:返回 Not a Godot project 错误文本(存在性检查)', async () => {
