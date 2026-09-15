@@ -1,4 +1,4 @@
-// 构建期拷贝 CodeMirror 6 文件到 build/web-gui/assets/(spec §5.1)。
+// 构建期拷贝 CodeMirror 5(CM5)的 6 个文件到 build/web-gui/assets/(spec §5.1)。
 // 拷贝失败 throw——不静默降级,防发布残缺资产。
 import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';

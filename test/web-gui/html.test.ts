@@ -115,4 +115,33 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('mode-javascript.js');
     expect(INDEX_HTML).toContain('mode-markdown.js');
   });
+
+  // ── 资源管理批(Plan B Task 1,spec §6.4)────────────────────────────────────
+  it('图片预览:img 标签 + raw URL 拼 JS 变量 token + 尺寸/大小显示', () => {
+    expect(INDEX_HTML).toContain("mode=raw&token=' + token");     // src 变量拼接(M-9)
+    expect(INDEX_HTML).toContain('openPreview');                   // 预览视图函数
+    expect(INDEX_HTML).toContain("kind === 'img'");                // img 分支
+    expect(INDEX_HTML).toContain('naturalWidth');                  // onload 追加 W×H 尺寸显示(fix F-3,spec §6.4「显示尺寸与大小」)
+  });
+  it('音频预览:audio controls + 同 raw 通道', () => {
+    expect(INDEX_HTML).toContain('au.controls = true');            // audio 控件行为码(锁真码,fix I-1:原 '<audio controls' 由注释桥接假绿)
+    expect(INDEX_HTML).toContain("kind === 'audio'");
+    expect(INDEX_HTML).toContain('au.onerror');                    // 加载失败占位行为码(fix F-2,对齐 img onerror 模式)
+  });
+  it('下载链接:raw 同 URL + download 属性 + 恢复列表入口', () => {
+    expect(INDEX_HTML).toContain("download");                      // 下载属性
+    expect(INDEX_HTML).toContain('preview-back');                  // 返回列表 data-action
+  });
+
+  // ── 资源管理批(Plan B Task 2,spec §6.4 hex)───────────────────────────────
+  it('hex 视图:三列网格 + >4KB 截断提示 + 下载', () => {
+    expect(INDEX_HTML).toContain("kind === 'hex'");
+    expect(INDEX_HTML).toContain('renderHex');                     // 渲染函数
+    expect(INDEX_HTML).toContain('仅前 4KB');                       // 截断提示
+    expect(INDEX_HTML).toContain('toString(16)');                   // 偏移 hex 化
+    expect(INDEX_HTML).toContain('!r.ok && r.status === 401');    // 401 哨兵对象行为码(fix 复审 round 2:锁先判状态的分支结构,非旧代码已有的字面量)
+  });
+  it('二进制路由:openFileEntry 其余分支走 hex', () => {
+    expect(INDEX_HTML).toContain("openPreview(rel, 'hex')");       // 等价拼接形态:rel=sub+name(hex 端点契约 path 相对项目根),同 img/audio 分支
+  });
 });

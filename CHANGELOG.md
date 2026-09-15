@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
+- Web GUI 资源管理工作台（Plan B）：二进制预览——图片/音频内联播放、其余二进制 hex 三列视图（4KB 采样+截断提示+下载链接）、目录路径 bad_request（M-3）。
 
 ### Fixed
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。

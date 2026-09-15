@@ -101,6 +101,18 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
       const h = await api.readHex(proj, 'sprite.png');
       expect(h.bytes).toHaveLength(3);
     });
+    it('路径是目录 → bad_request 而非裸 EISDIR(M-3)', async () => {
+      await mkdir(join(proj, 'adir'), { recursive: true });
+      await expect(api.readText(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(api.readRaw(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+      await expect(api.readHex(proj, 'adir')).rejects.toMatchObject({ code: 'bad_request' });
+    });
+    it('目录名带 .gd 扩展 → readText 走 isDirectory 防线而非扩展名检查(M-3 补,Plan B Task 2 Mi-1)', async () => {
+      // 'adir.gd' 扩展合法先过扩展名检查,唯一能拦它的是 readText 内 isDirectory 行——
+      // 该行的唯一真实覆盖路径;若删该行,readFile(目录) 冒裸 EISDIR,本用例转红。
+      await mkdir(join(proj, 'adir.gd'), { recursive: true });
+      await expect(api.readText(proj, 'adir.gd')).rejects.toMatchObject({ code: 'bad_request' });
+    });
   });
 
   describe('saveText 三重护栏(spec §3.3)', () => {

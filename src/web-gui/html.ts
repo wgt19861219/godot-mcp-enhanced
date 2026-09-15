@@ -79,6 +79,18 @@ export const INDEX_HTML: string = `<!doctype html>
   .ed-host textarea { flex: 1; resize: none; border: none; outline: none; background: var(--bg); color: var(--fg); padding: 8px; font: 12px/1.5 Consolas, monospace; }
   .CodeMirror { height: 100%; flex: 1; font: 12px/1.5 Consolas, monospace; }   /* CM 升级 .ed-host 后填满 */
   .ed-status { padding: 3px 10px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 预览视图(Plan B Task 1,spec §6.4):img 限幅防大图撑爆中列;音频控件留边;下载链接复用 .ctl 需去下划线 */
+  #filesPane img { max-width: calc(100% - 20px); max-height: 60vh; margin: 8px 10px; border: 1px solid var(--line); }
+  #filesPane audio { margin: 10px; width: calc(100% - 20px); }
+  a.ctl { text-decoration: none; color: var(--dim); }
+  /* hex 视图(Plan B Task 2,spec §6.4):等宽三列网格,滚动容器复用 .scroll(与日志区同款) */
+  .hex-box { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .hex-title { padding: 3px 10px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hex-grid { font: 12px/1.5 Consolas, monospace; padding: 4px 0; }
+  .hex-row { display: flex; white-space: pre; padding: 0 10px; }
+  .hex-off { color: var(--dim); margin-right: 14px; }
+  .hex-bytes { min-width: 47ch; }   /* 16 字节两位 hex+15 空格:末行不足 16 字节时 ASCII 列仍对齐(等宽字体下 ch 精确) */
+  .hex-ascii { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -127,6 +139,9 @@ export const INDEX_HTML: string = `<!doctype html>
   // readOnly 信号源:hello 无此字段(不发明协议),复用现有 403 响应体 'read-only' 判定
   // (startSession I-2 先例 + 保存 POST 403 触发 enterReadOnly 置位)。
   var editorState = { rel: null, baseMtime: 0, dirty: false, cm: null, latest: null };
+  // 预览视图状态(Plan B Task 1+2,spec §6.4):当前预览文件与类型
+  // ('img'|'audio'|'hex');预览无脏标,无拦截语义,仅供状态记录。
+  var previewState = { rel: null, kind: null };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
 
@@ -468,12 +483,136 @@ export const INDEX_HTML: string = `<!doctype html>
       loadDir(); return;
     }
     var e = fileExt(name);
-    // TEXT → 编辑视图(spec §6.3,Task 5):rel=sub 前缀拼全(Task 2 契约 path 相对项目根);
-    // IMG/AUDIO/其余仍为占位,由 Plan B 替换为预览视图(spec §6.4)。
-    if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(filesState.sub ? filesState.sub + '/' + name : name); return; }
-    if (IMG_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '图片预览(Plan B): ' + name; return; }
-    if (AUDIO_EXTS.indexOf(e) !== -1) { $('statusBar').textContent = '音频播放(Plan B): ' + name; return; }
-    $('statusBar').textContent = '二进制预览(Plan B): ' + name;
+    // TEXT → 编辑视图(spec §6.3,Task 5);IMG/AUDIO → 内联预览(spec §6.4,
+    // Plan B Task 1);其余二进制 → hex 视图(Plan B Task 2)。rel=sub 前缀
+    // 拼全(text/hex 端点契约 path 相对项目根)。
+    var rel = filesState.sub ? filesState.sub + '/' + name : name;
+    if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(rel); return; }
+    if (IMG_EXTS.indexOf(e) !== -1) { openPreview(rel, 'img'); return; }
+    if (AUDIO_EXTS.indexOf(e) !== -1) { openPreview(rel, 'audio'); return; }
+    openPreview(rel, 'hex');
+  }
+
+  // ── 预览视图(spec §6.4,Plan B Task 1+2)───────────────────────────────────
+  // IMG/AUDIO 内联消费 mode=raw 端点(content-type 映射与 CSP/nosniff 响应头
+  // 防线);HEX 走 mode=hex JSON 通道(x-gui-token 头)由 renderHex 渲染。rawUrl
+  // 一律 JS 变量拼 token(M-9:URL query 里的 token 已被 replaceState 清除,且
+  // img/audio 元素无法带请求头,query 是唯一鉴权通道)。SVG 经 img 上下文加载
+  // 其内嵌脚本不执行,叠加上述 CSP。
+  function openPreview(rel, kind) {
+    if (!rel || !filesState.project) return;
+    previewState = { rel: rel, kind: kind };
+    var name = (rel || '').split('/').pop() || rel;   // basename:下载文件名与 entries 匹配键
+    var rawUrl = '/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=raw&token=' + token;
+    var host = $('filesPane'); host.textContent = '';
+    // 工具行:返回列表 + 下载链接(<a download> 静态安全;raw 响应头防线保证
+    // 直接导航也不执行 script)。按钮/链接零监听器,由 #filesPane 委托接管。
+    var tools = document.createElement('div'); tools.className = 'log-tools';
+    var back = document.createElement('button'); back.className = 'ctl'; back.textContent = '返回列表';
+    back.setAttribute('data-action', 'preview-back');
+    var dl = document.createElement('a'); dl.className = 'ctl'; dl.href = rawUrl;
+    dl.setAttribute('download', name); dl.textContent = '下载 ' + name;
+    tools.append(back, dl); host.appendChild(tools);
+    if (kind === 'img') {
+      var img = document.createElement('img');
+      img.src = rawUrl; img.alt = rel;
+      img.onload = function () {   // 尺寸显示(spec §6.4):加载完成后在下方元信息
+        // 行 size 旁追加 W×H。st 在本函数末尾创建,onload 异步触发时已赋值(闭包
+        // 捕获变量引用),跨目录进入(size 为 null)时同样追加。
+        st.textContent = st.textContent + ' · ' + img.naturalWidth + '×' + img.naturalHeight;
+      };
+      img.onerror = function () {   // token 失效(server 重启)/超限(too_large)时 raw 非 2xx
+        var d = document.createElement('div'); d.className = 'empty';
+        d.textContent = '加载失败(token 失效或文件超限)';
+        if (img.parentNode) img.parentNode.replaceChild(d, img);
+      };
+      host.appendChild(img);
+    } else if (kind === 'audio') {
+      // audio 元素经 DOM API 构建,形态等价 <audio controls src=rawUrl>
+      var au = document.createElement('audio');
+      au.controls = true; au.src = rawUrl;
+      au.onerror = function () {   // 同 img 模式:token 失效/超限时 raw 非 2xx,占位可见反馈
+        var d = document.createElement('div'); d.className = 'empty';
+        d.textContent = '音频加载失败(token 失效或文件超限)';
+        if (au.parentNode) au.parentNode.replaceChild(d, au);
+      };
+      host.appendChild(au);
+    } else if (kind === 'hex') {
+      // hex 视图(spec §6.4,Plan B Task 2):JSON 通道(x-gui-token 头,同
+      // loadDir/openEditor 模式)取前 4KB 采样;读取中/失败均以占位文本呈现
+      // (401/403/404 等错误显示在预览区,不落 statusBar)。完整文件走工具行
+      // 下载链接(raw 同 URL+download,Task 1 已建)。
+      var box = document.createElement('div'); box.className = 'hex-box';
+      var ph = document.createElement('div'); ph.className = 'empty';
+      ph.textContent = '读取十六进制中…';
+      box.appendChild(ph); host.appendChild(box);
+      fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
+        { headers: { 'x-gui-token': token } })
+        .then(function (r) {
+          // 401 空体防线(审查 I-1 / 复审 round 2):server 鉴权 401 只写状态码、无响应
+          // 体(server.ts 写头即 end),先 r.json() 必 parse('') reject 落 catch。此处返回
+          // 哨兵对象(非裸 return——undefined 穿透会让下一层 !r.ok 访问 undefined.ok 抛
+          // TypeError 再落 catch 覆盖文案),控制流落进第二层既有 !r.ok → 401 三元文案;
+          // body:null 对第二层安全(401/403/404 三元支均不读 body)。
+          if (!r.ok && r.status === 401) { return { ok: r.ok, status: r.status, body: null }; }
+          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+        })
+        .then(function (r) {
+          if (!r.ok) {
+            var msg = r.status === 401 ? '鉴权失效,请刷新页面'
+              : (r.status === 403 ? '路径在白名单之外'
+              : (r.status === 404 ? '文件不存在' : JSON.stringify(r.body).slice(0, 80)));
+            ph.textContent = '十六进制读取失败: ' + msg;
+            return;
+          }
+          renderHex(box, rel, r.body.bytes || [], r.body.size || 0);
+        })
+        .catch(function () { ph.textContent = '网络异常,十六进制请求未送达'; });
+    }
+    // 元信息行:size 从列表 entries 快照取(打开预览不经 JSON 通道,raw 响应无从
+    // 知大小);跨目录进入(entries 不含该名)时省略,只显示 rel。
+    var size = null;
+    filesState.entries.forEach(function (en) { if (en.name === name && !en.isDir) size = en.size; });
+    var st = document.createElement('div'); st.className = 'ed-status';
+    st.textContent = rel + (size != null ? ' · ' + fmtSize(size) : '');
+    host.appendChild(st);
+    $('statusBar').textContent = '已打开预览 ' + rel;
+  }
+
+  // ── hex 渲染(spec §6.4,Plan B Task 2)─────────────────────────────────────
+  // 三列全 textContent:偏移 8 位 hex/16 字节两位 hex 空格分隔/ASCII 32-126 可打
+  // 印否则点号;4KB/16=256 行,无渲染压力。size>bytes.length(>4KB 截断)时提示
+  // 「仅前 4KB」,完整内容由工具行下载链接获取(raw 同 URL+download,复用 Task 1)。
+  // 标题行 size 取自 hex 响应体真实值(比 entries 快照可靠,跨目录进入也有)。
+  function renderHex(box, rel, bytes, size) {
+    box.textContent = '';
+    var title = document.createElement('div'); title.className = 'hex-title';
+    title.textContent = rel + ' (' + fmtSize(size) + ')';
+    box.appendChild(title);
+    if (size > bytes.length) {
+      var tr = document.createElement('div'); tr.className = 'hex-title';
+      tr.textContent = '仅前 4KB,完整内容请下载后查看';
+      box.appendChild(tr);
+    }
+    var grid = document.createElement('div'); grid.className = 'scroll hex-grid';
+    var frag = document.createDocumentFragment();
+    for (var off = 0; off < bytes.length; off += 16) {
+      var row = document.createElement('div'); row.className = 'hex-row';
+      var o = document.createElement('span'); o.className = 'hex-off';
+      o.textContent = ('00000000' + off.toString(16)).slice(-8);
+      var hs = [], as = [];
+      for (var i = off; i < off + 16 && i < bytes.length; i++) {
+        var b = bytes[i];
+        hs.push((b < 16 ? '0' : '') + b.toString(16));   // 两位 hex,不足补 0
+        as.push(b >= 32 && b < 127 ? String.fromCharCode(b) : '.');   // 32-126 可打印
+      }
+      var h = document.createElement('span'); h.className = 'hex-bytes';
+      h.textContent = hs.join(' ');
+      var a = document.createElement('span'); a.className = 'hex-ascii';
+      a.textContent = as.join('');
+      row.append(o, h, a); frag.appendChild(row);
+    }
+    grid.appendChild(frag); box.appendChild(grid);
   }
 
   // ── 编辑视图(spec §6.3,2026-09-15 资源管理批 Task 5)──────────────────────
@@ -777,10 +916,10 @@ export const INDEX_HTML: string = `<!doctype html>
 
   // #filesPane 容器一次性事件委托(资源管理批 spec §6.2/§6.3):面包屑段([data-sub]
   // 回根/回跳层级)、目录行([data-dir] 进子目录)、文件行([data-file] →
-  // openFileEntry)与编辑视图工具行/冲突条按钮(button[data-action]:editor-save|
-  // editor-reload|editor-back|conflict-reload|conflict-copy)全部零监听器——
-  // renderFiles/renderEditor 重绘只清空容器内部,委托永续;目录导航类动作进
-  // 编辑器脏标把守(spec §6.3)。
+  // openFileEntry)与编辑/预览视图工具行按钮(button[data-action]:editor-save|
+  // editor-reload|editor-back|conflict-reload|conflict-copy|preview-back)全部
+  // 零监听器——renderFiles/renderEditor/openPreview 重绘只清空容器内部,委托永续;
+  // 目录导航类动作进编辑器脏标把守(spec §6.3)。
   $('filesPane').addEventListener('click', function (ev) {
     if (!ev.target || !ev.target.closest) return;
     var act = ev.target.closest('button[data-action]');
@@ -794,6 +933,10 @@ export const INDEX_HTML: string = `<!doctype html>
       }
       if (action === 'editor-back') {
         if (dirtyBlock()) return;
+        renderFiles();
+        return;
+      }
+      if (action === 'preview-back') {   // 预览无脏标,直接回列表
         renderFiles();
         return;
       }
