@@ -213,6 +213,24 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
     expect(await res.json()).toEqual({ error: 'UNRESTRICTED 模式不支持扫描,请用添加按钮' });
   });
 
+  it('scan 异步失败 → SSE 兜底事件 {scanning:false, failed:true}(F-1:失败不得误显"扫描完成")', async () => {
+    // 同步 throw 走 0-tick 探针 500(上一用例);F-1 盲区在异步 reject——then 链
+    // reject 回调广播兜底事件解卡前端扫描态,必须带 failed 标记供前端区分文案。
+    let rejectScan!: (e: Error) => void;
+    const scanFn = vi.fn(() => new Promise<never>((_, rej) => { rejectScan = rej; }));
+    const t = await startSrv({ projects: mockProjects({ scan: scanFn }) }); active = t.srv;
+    const { next, close } = await connectEvents(t.base, t.token);
+    await next();   // 丢弃 hello
+    const res = await post(t.base, '/api/projects/scan', t.token, {});
+    expect(res.status).toBe(200);   // 0-tick 先到,扫描"已启动"
+    expect(await res.json()).toEqual({ started: true });
+    rejectScan(new Error('disk io error'));
+    const fail = await next();
+    expect(fail.event).toBe('projects');
+    expect(fail.data).toEqual({ scanning: false, failed: true });
+    await close();
+  });
+
   // ─── POST /api/projects/add ───────────────────────────────────────────────
 
   it('add:白名单外 → 403 且不调 store;白名单内 → 放行(env 收紧后验证,spec §4)', async () => {

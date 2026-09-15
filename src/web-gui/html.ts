@@ -421,13 +421,14 @@ export const INDEX_HTML: string = `<!doctype html>
   es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); refreshRunningBadges(); });
   es.addEventListener('stats', function (ev) { state.stats = JSON.parse(ev.data); renderStats(); });
   // projects 事件按字段在场性消费(Task 3 契约):
-  //   {scanning:true, found, scanned} 进度 / {scanning:false, added} 完成 / {projects:[...]} 快照。
+  //   {scanning:true, found, scanned} 进度 / {scanning:false, added} 完成 /
+  //   {scanning:false, failed:true} 失败兜底(F-1) / {projects:[...]} 快照。
   // 快照与扫描态独立处理——扫描进行中 add 成功的快照不清扫描指示器。
   es.addEventListener('projects', function (ev) {
     var p = JSON.parse(ev.data);
     if (p && Array.isArray(p.projects)) { state.projects = p.projects; renderProjects(); }
     if (p && p.scanning === true) { $('statusBar').textContent = '扫描中 已发现 ' + (p.found || 0) + ' / 已扫描 ' + (p.scanned || 0); return; }
-    if (p && p.scanning === false) { $('statusBar').textContent = '扫描完成 新增 ' + (p.added || 0) + ' 个项目'; }
+    if (p && p.scanning === false) { $('statusBar').textContent = p.failed ? '扫描失败,可重试;详情见 server 日志' : '扫描完成 新增 ' + (p.added || 0) + ' 个项目'; }
   });
   es.onerror = function () {
     $('statusBar').textContent = '连接中断,重连中…';
