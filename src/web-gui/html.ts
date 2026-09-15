@@ -539,10 +539,12 @@ export const INDEX_HTML: string = `<!doctype html>
       fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
         { headers: { 'x-gui-token': token } })
         .then(function (r) {
-          // 401 空体防线(审查 I-1):server 鉴权 401 只写状态码、无响应体(server.ts
-          // handle 写头即 end),若先 r.json() 必然 parse('') reject 落 catch——401 文案
-          // 不可达。故先判状态再解析体;其余 !r.ok(403/404 等带 JSON 体)走原路径。
-          if (!r.ok && r.status === 401) { ph.textContent = '十六进制读取失败: 鉴权失效,请刷新页面'; return; }
+          // 401 空体防线(审查 I-1 / 复审 round 2):server 鉴权 401 只写状态码、无响应
+          // 体(server.ts 写头即 end),先 r.json() 必 parse('') reject 落 catch。此处返回
+          // 哨兵对象(非裸 return——undefined 穿透会让下一层 !r.ok 访问 undefined.ok 抛
+          // TypeError 再落 catch 覆盖文案),控制流落进第二层既有 !r.ok → 401 三元文案;
+          // body:null 对第二层安全(401/403/404 三元支均不读 body)。
+          if (!r.ok && r.status === 401) { return { ok: r.ok, status: r.status, body: null }; }
           return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
         })
         .then(function (r) {
