@@ -225,6 +225,12 @@ export function getAllowedProjectPaths(): string[] {
   return env.split(';').filter(Boolean).map(p => resolvePath(p));
 }
 
+/** Web GUI 扫描根(spec 2026-09-15 §3.2):allowlist 条目 realpath 归一化数组。
+ *  与 isPathInAllowedRoots 的归一化语义同源(junction 防绕过);空数组=未配置,调用方自行 cwd 兜底。 */
+export function getAllowedRealRoots(): string[] {
+  return getAllowedProjectPaths().map(p => normalize(safeRealPath(p)));
+}
+
 const _pathAllowLogged = new Set<string>();
 
 function ensureSep(p: string): string {

@@ -65,3 +65,4 @@ test/fixtures/real-project/GeneratedAssets/
 
 # video-agent-kit 工作目录(会话产物,非仓库内容)
 .video_agent/
+.superpowers/

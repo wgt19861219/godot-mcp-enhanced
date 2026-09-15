@@ -1,8 +1,12 @@
 // Web GUI 监控面板服务(设计 2026-09-14 v3.1):嵌 MCP server 进程,node:http + SSE,
 // 127.0.0.1 恒绑定 + per-process token + Origin 白名单 + 响应卫生(Inspector 壳)。
+// 项目面板批(2026-09-15 spec §4/§5):GET /api/projects + POST scan/add/remove +
+// POST /api/sessions/start 五端点 + SSE projects 事件 + hello 扩展。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration } from './registry.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
@@ -10,6 +14,18 @@ import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
 import { Aggregator } from '../dashboard/aggregator.js';
 import type { ToolStats, TimeSeriesBucket } from '../dashboard/aggregator.js';
+import { isPathInAllowedRoots } from '../core/path-utils.js';
+import { PathError } from '../core/tool-errors.js';
+import type { ProjectView } from './projects-store.js';
+
+/** 项目面板 store 注入面(spec 2026-09-15 §4;Task 5 接线传 ProjectsStore 四方法)。
+ *  缺席 → 涉清单的项目端点 503,hello 的 projects 字段为 null(v2/M6)。 */
+export interface ProjectsApi {
+  list(): Promise<ProjectView[]>;
+  scan(onProgress?: (found: number, scanned: number) => void): Promise<{ started: boolean; reason?: string; added?: number }>;
+  add(path: string): Promise<{ ok: boolean; reason?: 'not_a_project' | 'duplicate' | 'full' | undefined }>;
+  remove(path: string): Promise<{ ok: boolean; reason?: string }>;
+}
 
 export interface WebGuiServerOptions {
   getSessions: () => RunSessionDetailed[];
@@ -28,6 +44,14 @@ export interface WebGuiServerOptions {
   stopSession?: (projectPath: string) => Promise<{ ok: boolean; reason?: string }>;
   /** 面板控制:POST /api/sessions/remove 回调(移除 ended 态桶);未注入时端点 503。 */
   removeSession?: (projectPath: string) => { ok: boolean; reason?: 'alive' | 'not_found' };
+  /** 项目面板(spec 2026-09-15 §4):清单四方法注入;缺席 → 项目端点 503 + hello projects=null。 */
+  projects?: ProjectsApi;
+  /** POST /api/sessions/start(mode=run)回调;缺席 → 503。 */
+  runProject?: (projectPath: string) => Promise<unknown>;
+  /** POST /api/sessions/start(mode=edit)回调;缺席 → 503。 */
+  editProject?: (projectPath: string) => Promise<unknown>;
+  /** READ_ONLY 判定(spec v2/IMP-3,接线层取 GODOT_MCP_READ_ONLY 同源状态);缺席视为非只读。 */
+  isReadOnly?: () => boolean;
 }
 
 /** /api/stats 与 SSE stats 快照形态(html.ts 契约,设计 §3.3.4)。 */
@@ -68,6 +92,8 @@ export class WebGuiServer {
   private logFlushTimer: ReturnType<typeof setInterval> | null = null;
   private sessionsTimer: ReturnType<typeof setInterval> | null = null;
   private statsTimer: ReturnType<typeof setInterval> | null = null;
+  // 项目面板 SSE(spec §5):扫描进度节流水位(每次 scan 启动时清零,首轮进度立即可见)
+  private scanProgressLastPush = 0;
 
   constructor(opts: WebGuiServerOptions) {
     this.opts = opts;
@@ -179,11 +205,14 @@ export class WebGuiServer {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.portValue}`);
-      // 面板控制写路径(2026-09-14):POST 先于 GET-only 拦截分发;未知 POST path → 405
-      // (原"非 GET 一律 405"语义对未知组合保持,仅放行两条已注册控制路径)。
+      // 面板控制写路径(2026-09-14 + 项目面板批 2026-09-15):POST 先于 GET-only 拦截
+      // 分发;未知 POST path → 405(原"非 GET 一律 405"语义对未知组合保持,仅放行
+      // 已注册控制路径:stop/remove/start + projects scan/add/remove)。
       if (req.method === 'POST') {
-        if (url.pathname === '/api/sessions/stop' || url.pathname === '/api/sessions/remove') {
-          void this.handleSessionControl(req, res, url);
+        if (url.pathname === '/api/sessions/stop' || url.pathname === '/api/sessions/remove'
+          || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
+          || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove') {
+          void this.handleApiPost(req, res, url);
           return;
         }
         res.writeHead(405).end();
@@ -234,18 +263,36 @@ export class WebGuiServer {
         res.end(JSON.stringify(this.opts.getSessions()));
         return;
       }
+      // 项目面板读路径(spec §4):list() 异步 → 独立 async handler(鉴权已在上方过)
+      if (url.pathname === '/api/projects') {
+        void this.handleProjectsList(res);
+        return;
+      }
       res.writeHead(404).end();
     } catch {
       res.writeHead(500).end();
     }
   }
 
-  // ─── 面板控制写路径(2026-09-14 批准设计)──────────────────────────────────
-  // POST /api/sessions/stop + /api/sessions/remove:body { projectPath } → 构造器注入
-  // 回调。鉴权复用 authorized()(浏览器 POST 恒带 Origin 须匹配;cookie SameSite=Strict
-  // 防跨站自动携带;无 Origin 的 curl 凭 token 放行)——写路径语义与读路径一致,不放松。
+  // ─── 面板控制写路径(2026-09-14 批准设计 + 2026-09-15 项目面板批)──────────
+  // POST /api/sessions/{stop,remove,start} + /api/projects/{scan,add,remove}:
+  // body JSON → 构造器注入回调。鉴权复用 authorized()(浏览器 POST 恒带 Origin 须匹配;
+  // cookie SameSite=Strict 防跨站自动携带;无 Origin 的 curl 凭 token 放行)——写路径
+  // 语义与读路径一致,不放松。
 
-  private async handleSessionControl(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  /** POST body 读取共用(自原 handleSessionControl 的 for-await 模式抽出)。
+   *  JSON 解析失败 → {ok:false}(调用方回 400 bad json)。 */
+  private async readJsonBody(req: IncomingMessage): Promise<{ ok: true; value: unknown } | { ok: false }> {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    try {
+      return { ok: true, value: JSON.parse(raw) as unknown };
+    } catch {
+      return { ok: false };
+    }
+  }
+
+  private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
@@ -255,22 +302,144 @@ export class WebGuiServer {
         res.writeHead(this.extractToken(req, url) === this.token ? 403 : 401).end();
         return;
       }
-      let body = '';
-      for await (const chunk of req) body += chunk;
-      let parsed: { projectPath?: unknown };
-      try {
-        parsed = JSON.parse(body) as { projectPath?: unknown };
-      } catch {
-        return json(400, { error: 'bad json' });
+
+      // ── POST /api/projects/scan(spec §4:异步起、立即返回;无 body 契约)───
+      if (url.pathname === '/api/projects/scan') {
+        const p = this.opts.projects;
+        if (!p) return json(503, { error: 'not configured' });
+        this.scanProgressLastPush = 0;   // 新扫描首轮进度立即可见
+        // store 的互斥/UNRESTRICTED 决策在调用时同步作出(spec §3.1.1-1);
+        // 完成事件经 then 回调后台推送;下方 0-tick 探针只取"是否已启动"决策。
+        const settled = p.scan((found, scanned) => this.onScanProgress(found, scanned)).then(
+          (r) => { if (r.started) void this.pushScanDone(r.added ?? 0); return r; },
+          (err: unknown) => {
+            getLogger().warn('web-gui', `projects scan failed: ${err instanceof Error ? err.message : err}`);
+            this.broadcastProjectsEvent({ scanning: false });   // 兜底解卡前端扫描态
+            throw err;
+          },
+        );
+        try {
+          const probe = await Promise.race([settled, new Promise<undefined>(resolve => { setTimeout(() => resolve(undefined), 0); })]);
+          if (probe !== undefined && !probe.started) {
+            return json(200, { started: false, reason: probe.reason ?? 'scanning' });
+          }
+          return json(200, { started: true });
+        } catch (err) {
+          // store 同步 throw(UNRESTRICTED 拒扫,Task 2 契约)→ 500 + 提示文案
+          return json(500, { error: err instanceof Error ? err.message : String(err) });
+        }
       }
-      if (typeof parsed.projectPath !== 'string' || parsed.projectPath.length === 0) {
+
+      const body = await this.readJsonBody(req);
+      if (!body.ok) return json(400, { error: 'bad json' });
+      const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
+
+      // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────
+      if (url.pathname === '/api/projects/add') {
+        const p = this.opts.projects;
+        if (!p) return json(503, { error: 'not configured' });
+        const path = fields.path;
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        if (!isPathInAllowedRoots(path)) {
+          getLogger().info('web-gui', `action=projects_add path=${path} result=403`);
+          return json(403, { error: 'path outside allowed roots' });
+        }
+        let r: { ok: boolean; reason?: string };
+        try {
+          r = await p.add(path);
+        } catch (err) {
+          getLogger().info('web-gui', `action=projects_add path=${path} result=500`);
+          return json(500, { error: err instanceof Error ? err.message : String(err) });
+        }
+        if (r.ok) {
+          getLogger().info('web-gui', `action=projects_add path=${path} result=200`);
+          await this.broadcastProjects();
+          return json(200, { ok: true });
+        }
+        if (r.reason === 'not_a_project') {
+          getLogger().info('web-gui', `action=projects_add path=${path} result=404`);
+          return json(404, { error: 'not a godot project' });
+        }
+        if (r.reason === 'duplicate') {
+          getLogger().info('web-gui', `action=projects_add path=${path} result=200_duplicate`);
+          return json(200, { ok: false, reason: 'duplicate' });
+        }
+        // 满员:store {ok:false} 无 reason(Task 2 契约——200 上限逐出耗尽)→ 200 + full 提示
+        getLogger().info('web-gui', `action=projects_add path=${path} result=200_full`);
+        return json(200, { ok: false, reason: 'full' });
+      }
+
+      // ── POST /api/projects/remove(spec §4:仅清单移除,不删文件)──────────────
+      if (url.pathname === '/api/projects/remove') {
+        const p = this.opts.projects;
+        if (!p) return json(503, { error: 'not configured' });
+        const path = fields.path;
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        let r: { ok: boolean; reason?: string };
+        try {
+          r = await p.remove(path);
+        } catch (err) {
+          getLogger().info('web-gui', `action=projects_remove path=${path} result=500`);
+          return json(500, { error: err instanceof Error ? err.message : String(err) });
+        }
+        if (r.ok) {
+          getLogger().info('web-gui', `action=projects_remove path=${path} result=200`);
+          await this.broadcastProjects();
+          return json(200, { ok: true });
+        }
+        getLogger().info('web-gui', `action=projects_remove path=${path} result=404`);
+        return json(404, { error: 'not found' });
+      }
+
+      // ── POST /api/sessions/start(spec §4:503 → readOnly 403 → 白名单 403 →
+      //    project.godot 存在 404 → 注入回调(PathError→403)→ 200)────────────
+      if (url.pathname === '/api/sessions/start') {
+        const projectPath = fields.projectPath;
+        if (typeof projectPath !== 'string' || projectPath.length === 0) return json(400, { error: 'projectPath required' });
+        let mode: 'run' | 'edit' = 'run';   // mode 缺省 'run'(spec §4)
+        if (fields.mode !== undefined) {
+          if (fields.mode !== 'run' && fields.mode !== 'edit') return json(400, { error: "mode must be 'run' or 'edit'" });
+          mode = fields.mode;
+        }
+        const fn = mode === 'run' ? this.opts.runProject : this.opts.editProject;
+        if (!fn) return json(503, { error: 'not configured' });
+        if (this.opts.isReadOnly?.()) {   // READ_ONLY 拦截(spec v2/IMP-3):面板不得绕过 AI 侧防线
+          getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403_readonly`);
+          return json(403, { error: 'read-only mode' });
+        }
+        if (!isPathInAllowedRoots(projectPath)) {
+          getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403`);
+          return json(403, { error: 'path outside allowed roots' });
+        }
+        if (!existsSync(join(projectPath, 'project.godot'))) {
+          getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=404`);
+          return json(404, { error: 'not a godot project' });
+        }
+        try {
+          await fn(projectPath);
+        } catch (err) {
+          if (err instanceof PathError) {   // executeRunProject 第二层白名单(Task 5 接线后真实触发)
+            getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403_path`);
+            return json(403, { error: err.message });
+          }
+          getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=500`);
+          return json(500, { error: err instanceof Error ? err.message : String(err) });
+        }
+        getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=200`);
+        await this.broadcastProjects();
+        return json(200, { ok: true });
+      }
+
+      const projectPath = fields.projectPath;
+      if (typeof projectPath !== 'string' || projectPath.length === 0) {
         return json(400, { error: 'projectPath required' });
       }
+      // ── POST /api/sessions/stop(面板控制第一版既有语义)─────────────────────
       if (url.pathname === '/api/sessions/stop') {
         const fn = this.opts.stopSession;
         if (!fn) return json(503, { error: 'not configured' });
         try {
-          const r = await fn(parsed.projectPath);
+          const r = await fn(projectPath);
           if (r.ok) return json(200, { ok: true });
           if (r.reason === 'not_found') return json(404, { error: 'not found' });
           return json(500, { error: r.reason ?? 'stop failed' });
@@ -278,12 +447,32 @@ export class WebGuiServer {
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
       }
+      // ── POST /api/sessions/remove(面板控制第一版既有语义)───────────────────
       const rm = this.opts.removeSession;
       if (!rm) return json(503, { error: 'not configured' });
-      const r = rm(parsed.projectPath);
+      const r = rm(projectPath);
       if (r.ok) return json(200, { ok: true });
       if (r.reason === 'alive') return json(409, { error: 'session is still running' });
       return json(404, { error: 'not found' });
+    } catch {
+      if (!res.headersSent) res.writeHead(500).end();
+    }
+  }
+
+  // ─── 项目面板读路径(spec §4)───────────────────────────────────────────────
+
+  /** GET /api/projects:list() 异步快照;注入缺席 503。鉴权已在 handle() 过。 */
+  private async handleProjectsList(res: ServerResponse): Promise<void> {
+    try {
+      const p = this.opts.projects;
+      if (!p) {
+        res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'not configured' }));
+        return;
+      }
+      const list = await p.list();
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(list));
     } catch {
       if (!res.headersSent) res.writeHead(500).end();
     }
@@ -300,12 +489,20 @@ export class WebGuiServer {
     res.socket?.unref();   // 活跃 SSE 连接不阻塞进程退出(设计 §3.1 M-8)
     this.sseClients.add(res);
     req.on('close', () => { this.sseClients.delete(res); });   // 死连接自动摘除
-    // 幂等全量(设计 I-4):每次连接建立(含自动重连)都发 hello,客户端整体重置
+    // 幂等全量(设计 I-4):每次连接建立(含自动重连)都发 hello,客户端整体重置。
+    // projects 字段异步取(list() 是 fs 读,注入缺席为 null)——list() 是 ms 级本地读,
+    // 理论上存在快照帧先于 hello 的交错窗,hello 全量重置语义自愈,无正确性影响。
+    void this.sendHello(res);
+  }
+
+  private async sendHello(res: ServerResponse): Promise<void> {
+    const projects = await this.safeProjectsList();
     const s = this.aggregator.getState();
     this.sendEvent(res, 'hello', {
       sessions: this.opts.getSessions(),
       stats: this.statsSnapshot(),
       logs: s.recentLogs.toArray().slice(-500),
+      projects,   // spec §5:注入缺席 null(v2/M6)
     });
   }
 
@@ -355,5 +552,54 @@ export class WebGuiServer {
     if (this.sseClients.size === 0) return;
     const data = event === 'sessions' ? this.opts.getSessions() : this.statsSnapshot();
     for (const res of this.sseClients) this.sendEvent(res, event, data);
+  }
+
+  // ─── 项目面板 SSE(spec §5)─────────────────────────────────────────────────
+  // events payload 约定(Task 4 前端契约):
+  //   扫描进度  {scanning:true, found, scanned}      —— 500ms 节流
+  //   扫描完成  {scanning:false, added, total, projects}
+  //   清单变更  {projects}                            —— add/remove/start 成功后的全量快照
+  // 前端按字段在场性消费:'projects' 在场 → 整体重置列表;'scanning' 在场 → 更新扫描态
+  // (快照事件不带 scanning,避免扫描进行中 add 的快照把扫描指示器误清)。
+
+  /** 扫描进度节流推送(spec §5:500ms)。 */
+  private onScanProgress(found: number, scanned: number): void {
+    const now = Date.now();
+    if (now - this.scanProgressLastPush < 500) return;
+    this.scanProgressLastPush = now;
+    this.broadcastProjectsEvent({ scanning: true, found, scanned });
+  }
+
+  /** 扫描完成:{scanning:false, added, total} + 最新快照(合并为单事件)。 */
+  private async pushScanDone(added: number): Promise<void> {
+    const list = await this.safeProjectsList();
+    if (list === null) {
+      this.broadcastProjectsEvent({ scanning: false, added });
+      return;
+    }
+    this.broadcastProjectsEvent({ scanning: false, added, total: list.length, projects: list });
+  }
+
+  /** 清单变更(add/remove/start 成功)→ 全量快照推送(spec §5)。best-effort,不抛。 */
+  private async broadcastProjects(): Promise<void> {
+    const list = await this.safeProjectsList();
+    if (list === null) return;
+    this.broadcastProjectsEvent({ projects: list });
+  }
+
+  /** 注入缺席 → null;list() 失败 → warn + null(best-effort,不炸调用方)。 */
+  private async safeProjectsList(): Promise<ProjectView[] | null> {
+    if (!this.opts.projects) return null;
+    try {
+      return await this.opts.projects.list();
+    } catch (err) {
+      getLogger().warn('web-gui', `projects list failed: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
+  private broadcastProjectsEvent(data: unknown): void {
+    if (this.sseClients.size === 0) return;
+    for (const res of this.sseClients) this.sendEvent(res, 'projects', data);
   }
 }

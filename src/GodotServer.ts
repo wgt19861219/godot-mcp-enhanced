@@ -10,6 +10,7 @@ const SUPPORTED_PROTOCOL_VERSIONS = [
   '2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07',
 ] as const;
 import { join } from 'path';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { readInstructions } from './core/instructions.js';
 import { registerBridgePushHandler, setBridgeProjectDir } from './tools/game-bridge.js';
@@ -53,6 +54,10 @@ import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
 import { WebGuiServer } from './web-gui/server.js';
 import { INDEX_HTML } from './web-gui/html.js';
+// 项目面板批(2026-09-15 spec §6):store + run 链真实函数注入(应用层 → web-gui/tools,合法方向)
+import { ProjectsStore } from './web-gui/projects-store.js';
+import { executeRunProject } from './tools/runtime.js';
+import { buildSafeEnv } from './helpers.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
 import { setProgressSender, setProgressClientReady } from './core/progress.js';
 import { setElicitServer } from './core/elicit.js';
@@ -550,6 +555,53 @@ export class GodotServer {
             return { ok: true };
           },
           removeSession: (projectPath) => ps.removeRunSession(projectPath),
+          // ── 项目面板批(2026-09-15 spec §6):store 四方法 + run/edit/isReadOnly 注入 ──
+          // store 构造注入 getSessions(listRunSessionsDetailed)满足 ProjectView.running
+          // 判定(spec §3.3;isAliveStatus 谓词复用在 store 内)。
+          projects: (() => {
+            const projectsStore = new ProjectsStore({ getSessions: () => ps.listRunSessionsDetailed() });
+            return {
+              list: () => projectsStore.listProjects(),
+              scan: (onProgress?: (found: number, scanned: number) => void) => projectsStore.scanProjects(onProgress),
+              add: (path: string) => projectsStore.addProject(path),
+              remove: (path: string) => projectsStore.removeProject(path),
+            };
+          })(),
+          runProject: async (projectPath: string) => {
+            // Task 1 getContext() 真实链路(spec §6 IMP-4):ctx.findGodot/setProjectDir/projectDir
+            // 均接真实 dispatcher 状态(合成 no-op 会断活跃指针)。
+            const ctx = this.dispatcher!.getContext();
+            const result = await executeRunProject(
+              { action: 'run_project', project_path: projectPath, preview: true },   // preview=面板拉起即看
+              ctx,
+            );
+            // 假成功防线(Task 3 review 裁决):executeRunProject 失败走 ToolResult 而非 throw,
+            // 不拦则 start 端点 200 假报成功。⚠️ 事实修正:isError 形态仅 bridge 未就绪一途
+            // (runtime.ts errorResult);其余失败(not_a_project/busy/capacity/spawn)全为
+            // textResult("Error: ...")且不带 isError(Task 1 "行为零变"抽取锁定)——防线
+            // = isError || "Error:" 前缀双判,精确覆盖全部失败路径且无误伤(成功消息以
+            // Preview mode:/Bridge ready./Running project at//[WARNING] 开头)。
+            if (result) {
+              const first = result.content[0];
+              const text = first?.type === 'text' ? first.text : '';
+              if ((result as { isError?: boolean }).isError === true || text.startsWith('Error:')) {
+                throw new Error(text.slice(0, 200) || 'run_project failed');
+              }
+            }
+            return result;
+          },
+          editProject: async (projectPath: string) => {
+            // launch_editor 链复刻(runtime.ts case 'launch_editor',spec §6:仅 6 行不抽函数;
+            // project.godot 存在性 404 已由端点层前置校验)。
+            const godot = await findGodot();
+            const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+            child.on('error', (err) => {
+              getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
+            });
+            child.unref();
+          },
+          // READ_ONLY 状态源与 index.ts:94 同源(spec v2/IMP-3:面板不得绕过 AI 侧 ReadOnlyGuard 防线)
+          isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
         });
         await this.webGuiServer.start();
         this.webGuiActive = true;

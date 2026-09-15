@@ -44,6 +44,18 @@ export const INDEX_HTML: string = `<!doctype html>
   .ctl:hover { color: var(--fg); border-color: var(--dim); }
   .ctl.stop:hover { color: var(--red); border-color: var(--red); }
   .ctl:disabled { opacity: .4; cursor: default; }
+  /* 项目面板批(spec §7.1):左列上项目(~55%)下会话(~45%),三列外框不变 */
+  #left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #projPane { flex: 55 1 0; }
+  #left > section:last-child { flex: 45 1 0; }
+  .proj-row { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .proj-row .ctl { padding: 1px 6px; }
+  .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-time { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .dot { font-size: 10px; line-height: 1; }
+  .dot.run { color: var(--green); }
+  .dot.missing { color: var(--red); }
+  #addRow { display: none; }   /* 内联添加行,+添加按钮显隐切换(JS 置 style.display='flex') */
 </style>
 </head>
 <body>
@@ -54,7 +66,13 @@ export const INDEX_HTML: string = `<!doctype html>
 </header>
 <div id="warn"></div>
 <main>
-  <section><h2>运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+  <div id="left">
+    <section id="projPane"><h2>项目</h2>
+      <div class="log-tools"><input id="projSearch" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
+      <div class="log-tools" id="addRow"><input id="addPath" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
+      <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
+    <section><h2>运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+  </div>
   <section><h2>日志流 <span class="dim" id="logCount"></span></h2>
     <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
     <div class="scroll" id="logList"></div></section>
@@ -73,7 +91,7 @@ export const INDEX_HTML: string = `<!doctype html>
   // 失败不阻塞:query 通道兜底,哪个通用哪个;响应体无需处理。
   if (token) { fetch('/api/auth?token=' + encodeURIComponent(token)).catch(function () { /* 握手失败不阻塞:query 通道兜底 */ }); }
   var $ = function (id) { return document.getElementById(id); };
-  var state = { logs: [], stats: null, sessions: [], dedup: new Set() };
+  var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set() };
   var stopped = false;
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
@@ -95,6 +113,7 @@ export const INDEX_HTML: string = `<!doctype html>
     if (payload.logs) pushLogs(payload.logs);
     if (payload.sessions) { state.sessions = payload.sessions; renderSessions(); }
     if (payload.stats) { state.stats = payload.stats; renderStats(); }
+    if (payload.projects !== undefined) { state.projects = payload.projects; renderProjects(); }   // null → 未配置空态
     $('statusBar').textContent = '已连接';
     $('connInfo').textContent = payload.stats && payload.stats.mode ? ('mode: ' + payload.stats.mode) : '';
   }
@@ -139,6 +158,159 @@ export const INDEX_HTML: string = `<!doctype html>
       tr.append(td1, td2, td3, td4, td5, td6); tbody.appendChild(tr);
     });
     tbl.append(thead, tbody); host.appendChild(tbl);
+  }
+
+  // ── 项目面板(spec §7.2/§7.3,2026-09-15)────────────────────────────────────
+  // ProjectView 契约(Task 3):{path,name,addedAt,source,mtime,missing,running,sessionId}
+  // 行按钮零监听器、只带 data-action(run|edit|remove)+data-path,点击由 #projPane
+  // 容器一次性委托接管(同 #sessions 2026-09-15 修复模式:容器本体在重绘中不被替换)。
+  function fmtAgo(ms) {
+    if (ms == null) return '-';
+    var diff = Date.now() - ms; if (diff < 0) diff = 0;
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+    if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+    var d = new Date(ms);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+  }
+
+  function renderProjects() {
+    var host = $('projList'); host.textContent = '';
+    if (state.projects === null) {   // hello projects:null → 注入缺席(设计 v2/M6)
+      var d = document.createElement('div'); d.className = 'empty'; d.textContent = '项目功能未配置';
+      host.appendChild(d); return;
+    }
+    var q = $('projSearch').value.toLowerCase();
+    var rows = state.projects.filter(function (p) {   // 名称/路径子串,不区分大小写
+      if (!q) return true;
+      return ((p.name || '') + (p.path || '')).toLowerCase().indexOf(q) !== -1;
+    });
+    if (!rows.length) {
+      var e = document.createElement('div'); e.className = 'empty';
+      e.textContent = state.projects.length ? '无匹配项目' : '暂无项目,点击「扫描」发现';
+      host.appendChild(e); return;
+    }
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (p) {
+      var row = document.createElement('div'); row.className = 'proj-row';
+      var run = document.createElement('button'); run.className = 'ctl'; run.textContent = '▶'; run.title = '运行';
+      run.setAttribute('data-action', 'run'); run.setAttribute('data-path', p.path);
+      var edit = document.createElement('button'); edit.className = 'ctl'; edit.textContent = '✎'; edit.title = '编辑';
+      edit.setAttribute('data-action', 'edit'); edit.setAttribute('data-path', p.path);
+      if (p.missing) { run.disabled = true; edit.disabled = true; run.title = '路径不存在'; edit.title = '路径不存在'; }
+      var name = document.createElement('span'); name.className = 'proj-name';
+      name.textContent = p.name || (p.path || '').split(/[\\\\/]/).pop() || p.path; name.title = p.path;   // title=完整路径
+      var time = document.createElement('span'); time.className = 'proj-time'; time.textContent = fmtAgo(p.mtime);
+      var badge = document.createElement('span');
+      if (p.missing) { badge.className = 'dot missing'; badge.textContent = '●'; badge.title = '路径不存在'; }
+      else if (p.running) { badge.className = 'dot run'; badge.textContent = '●'; badge.title = '运行中'; }
+      var rm = document.createElement('button'); rm.className = 'ctl stop'; rm.textContent = '×'; rm.title = '从列表移除';
+      rm.setAttribute('data-action', 'remove'); rm.setAttribute('data-path', p.path);
+      row.append(run, edit, name, time, badge, rm); frag.appendChild(row);
+    });
+    host.appendChild(frag);
+  }
+
+  // 行内 Run/Edit → POST /api/sessions/start(spec §4:mode 缺省 run;此处恒显式)
+  function startSession(path, mode) {
+    $('statusBar').textContent = (mode === 'run' ? '启动中… ' : '编辑器拉起中… ') + path;
+    fetch('/api/sessions/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ projectPath: path, mode: mode }),
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          // 403 双源区分(I-2):READ_ONLY 拦截响应体 {error:'read-only mode'},提示只读
+          // 而非误导用户排查白名单;白名单外仍是原文案。
+          var msg = r.status === 403
+            ? (t.indexOf('read-only') !== -1 ? '只读模式，面板启动已禁用' : '路径在白名单之外')
+            : (r.status === 404 ? '不是 Godot 项目' : t.slice(0, 80));
+          $('statusBar').textContent = '启动失败: ' + msg;
+        });
+      }
+      $('statusBar').textContent = mode === 'run' ? '启动指令已发出,等待会话出现' : '编辑器已拉起';
+    }).catch(function () { $('statusBar').textContent = '网络异常,启动请求未送达'; });
+  }
+
+  // 移除仅出清单不删文件;原生 confirm(CSP 不受限)
+  function removeProject(path) {
+    var name = (path || '').split(/[\\\\/]/).pop() || path;
+    if (!confirm('仅从列表移除，不删除文件。确定移除 ' + name + '?')) return;
+    $('statusBar').textContent = '移除中… ' + name;
+    fetch('/api/projects/remove', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ path: path }),
+    }).then(function (r) {
+      if (!r.ok) return r.text().then(function (t) { $('statusBar').textContent = '移除失败: ' + t.slice(0, 80); });
+      $('statusBar').textContent = '已从列表移除 ' + name;   // 列表本身由 SSE projects 快照刷新
+    }).catch(function () { $('statusBar').textContent = '网络异常,移除请求未送达'; });
+  }
+
+  // 扫描:异步起,立即返回;进度与结果由 SSE projects 事件接管(spec §4/§5)
+  function startScan() {
+    $('statusBar').textContent = '扫描中…';
+    fetch('/api/projects/scan', { method: 'POST', headers: { 'x-gui-token': token } })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (r) {
+        if (!r.ok) { $('statusBar').textContent = '扫描失败: ' + JSON.stringify(r.body).slice(0, 80); return; }
+        if (r.body && r.body.started === false) { $('statusBar').textContent = '扫描已在进行中,进度见状态栏'; return; }   // §3.1.1 互斥
+        $('statusBar').textContent = '扫描中…';   // SSE 接管进度显示
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,扫描请求未送达'; });
+  }
+
+  // +添加:内联输入行显隐(spec §7.2,非弹窗)
+  function toggleAddRow() {
+    var row = $('addRow');
+    row.style.display = row.style.display === 'flex' ? 'none' : 'flex';
+    if (row.style.display === 'flex') $('addPath').focus();
+  }
+
+  // sessions 帧对照 alive 会话刷新项目行 running 徽章(spec §7.3,Fix round 1/I-1)。
+  // 覆盖 AI 侧 run_project 启动的会话——不经面板 start 端点、不触发 broadcastProjects
+  // 快照推送,徽章只能经此路径变绿。匹配键与 store 同源:会话 projectPath 即归一化桶键
+  // (resolve + win lowercase,projects-store.ts:182 同语义),项目行 path 对照时 lowercase。
+  // 500ms 帧频率取舍:仅行 running 态实际变化时才重渲染,帧到达但不变不重绘。
+  function refreshRunningBadges() {
+    if (state.projects === null) return;   // 项目功能未配置(hello projects:null)跳过
+    var alive = {};
+    state.sessions.forEach(function (s) {
+      if (ALIVE_STATUS[s.status] === 1) alive[(s.projectPath || '').toLowerCase()] = 1;
+    });
+    var changed = false;
+    state.projects.forEach(function (p) {
+      var r = alive[(p.path || '').toLowerCase()] === 1;
+      if (p.running !== r) { p.running = r; changed = true; }
+    });
+    if (changed) renderProjects();
+  }
+
+  function submitAdd() {
+    var p = $('addPath').value.trim();
+    if (!p) { $('statusBar').textContent = '请输入项目绝对路径'; return; }
+    $('statusBar').textContent = '添加中…';
+    fetch('/api/projects/add', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ path: p }),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (r) {
+        var body = r.body || {};
+        if (r.ok && body.ok === false) {   // 200 + {ok:false,reason}(Task 3 契约:duplicate|full)
+          $('statusBar').textContent = body.reason === 'duplicate' ? '该路径已在清单中' : '清单已满(200 上限)';
+          return;
+        }
+        if (!r.ok) {
+          $('statusBar').textContent = r.status === 403 ? '路径在白名单之外'
+            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)' : '添加失败: ' + JSON.stringify(body).slice(0, 80));
+          return;
+        }
+        $('statusBar').textContent = '已添加';
+        $('addRow').style.display = 'none'; $('addPath').value = '';
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,添加请求未送达'; });
   }
 
   function renderLogs() {
@@ -198,6 +370,22 @@ export const INDEX_HTML: string = `<!doctype html>
   $('logFilter').addEventListener('input', renderLogs);
   $('logLevel').addEventListener('change', renderLogs);
   $('projSel').addEventListener('change', renderStats);
+  $('projSearch').addEventListener('input', renderProjects);   // 搜索即时过滤
+
+  // 项目区容器一次性事件委托(spec §7.2):工具行(扫描/+添加/确定)与列表行(Run/Edit/×)
+  // 按钮全部零监听器、只带 data-action(+data-path),由 #projPane section 本体接管——
+  // 容器在 renderProjects 重绘中从不被替换,只有 #projList 内部被清空重建,委托永续。
+  $('projPane').addEventListener('click', function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('button[data-action]') : null;
+    if (!btn) return;
+    var action = btn.getAttribute('data-action');
+    var path = btn.getAttribute('data-path') || '';
+    if (action === 'scan') { startScan(); return; }
+    if (action === 'add') { toggleAddRow(); return; }
+    if (action === 'add-confirm') { submitAdd(); return; }
+    if (action === 'run' || action === 'edit') { startSession(path, action); return; }
+    if (action === 'remove') { removeProject(path); }
+  });
 
   // #sessions 容器一次性事件委托(2026-09-15 修复):renderSessions 每 500ms 清空
   // 重建容器内部,#sessions 本体持续存在 → 委托处理器永续,按钮随 SSE 帧任意替换
@@ -230,8 +418,17 @@ export const INDEX_HTML: string = `<!doctype html>
   var es = new EventSource('/events?token=' + encodeURIComponent(token));
   es.addEventListener('hello', function (ev) { $('warn').style.display = 'none'; resetAll(JSON.parse(ev.data)); });
   es.addEventListener('log', function (ev) { pushLogs(JSON.parse(ev.data).entries || []); });
-  es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); });
+  es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); refreshRunningBadges(); });
   es.addEventListener('stats', function (ev) { state.stats = JSON.parse(ev.data); renderStats(); });
+  // projects 事件按字段在场性消费(Task 3 契约):
+  //   {scanning:true, found, scanned} 进度 / {scanning:false, added} 完成 / {projects:[...]} 快照。
+  // 快照与扫描态独立处理——扫描进行中 add 成功的快照不清扫描指示器。
+  es.addEventListener('projects', function (ev) {
+    var p = JSON.parse(ev.data);
+    if (p && Array.isArray(p.projects)) { state.projects = p.projects; renderProjects(); }
+    if (p && p.scanning === true) { $('statusBar').textContent = '扫描中 已发现 ' + (p.found || 0) + ' / 已扫描 ' + (p.scanned || 0); return; }
+    if (p && p.scanning === false) { $('statusBar').textContent = '扫描完成 新增 ' + (p.added || 0) + ' 个项目'; }
+  });
   es.onerror = function () {
     $('statusBar').textContent = '连接中断,重连中…';
     // token 失效(server 重启端口复用)探测:401 时停 EventSource 防死循环(设计 M-2)

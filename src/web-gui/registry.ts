@@ -32,8 +32,10 @@ function defaultIsPidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-/** S-5 同款(instance-manager.ts:94):Windows 无视 mode,用 icacls 收紧 ACL;best-effort。 */
-function hardenFilePermissionsWindows(filePath: string): void {
+/** S-5 同款(instance-manager.ts:94):Windows 无视 mode,用 icacls 收紧 ACL;best-effort。
+ *  导出复用供 projects-store 等同域持久化文件共享(I-E 教训:导出复用而非复制;
+ *  Web GUI 项目面板 spec 2026-09-15 §3.1 要求照抄本模式)。 */
+export function hardenFilePermissionsWindows(filePath: string): void {
   if (process.platform !== 'win32') return;
   try {
     const username = userInfo().username;
