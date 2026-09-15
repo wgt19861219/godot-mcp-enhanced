@@ -2,11 +2,14 @@
 // 127.0.0.1 恒绑定 + per-process token + Origin 白名单 + 响应卫生(Inspector 壳)。
 // 项目面板批(2026-09-15 spec §4/§5):GET /api/projects + POST scan/add/remove +
 // POST /api/sessions/start 五端点 + SSE projects 事件 + hello 扩展。
+// 资源工作台批(2026-09-15 v2 spec §4/§5):GET files/file + POST file + GET /assets
+// 固定清单四端点 + CSP 放宽(script/style self + img/media self)+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration } from './registry.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
@@ -16,6 +19,7 @@ import { Aggregator } from '../dashboard/aggregator.js';
 import type { ToolStats, TimeSeriesBucket } from '../dashboard/aggregator.js';
 import { isPathInAllowedRoots } from '../core/path-utils.js';
 import { PathError } from '../core/tool-errors.js';
+import { FilesError, type FilesApi, type FilesErrorCode } from './files-api.js';
 import type { ProjectView } from './projects-store.js';
 
 /** 项目面板 store 注入面(spec 2026-09-15 §4;Task 5 接线传 ProjectsStore 四方法)。
@@ -38,6 +42,10 @@ export interface WebGuiServerOptions {
   token?: string;
   /** 登记目录注入(测试隔离);缺省 ~/.godot-mcp/web-gui/(registry.js 默认) */
   registryDir?: string;
+  /** 资源工作台(spec 2026-09-15 §4):文件五方法注入;缺席 → files 端点 503。 */
+  files?: FilesApi;
+  /** 静态资产目录注入(测试隔离);缺省 build/web-gui/assets/(构造器定 assetsRoot)。 */
+  assetsDir?: string;
   /** 日志目录注入(测试隔离);缺省 resolveLogDir()(logger 同款平台路径) */
   logDir?: string;
   /** 面板控制(2026-09-14 批准设计):POST /api/sessions/stop 回调;未注入时端点 503。 */
@@ -72,6 +80,17 @@ interface StatsSnapshot extends ProjectStatsSnapshot {
 const DEFAULT_PORT_START = 9550;
 const PORT_ATTEMPTS = 20;
 
+// assets 固定清单(spec §4/I-2):白名单枚举而非目录扫描——含路径分隔符/编码(如
+// ..%2F)或不在清单的名字天然 404,无目录穿越面。Task 4 前端资源(Checkbox 任务书 §4)。
+const ASSET_FILES: ReadonlySet<string> = new Set([
+  'codemirror.js', 'codemirror.css', 'mode-python.js', 'mode-javascript.js', 'mode-markdown.js', 'mode-xml.js',
+]);
+
+// FilesError code → HTTP 状态码(spec §4:forbidden→403/not_found→404/too_large→413/conflict→409/bad_request→400)
+const FILE_ERR_STATUS: Record<FilesErrorCode, number> = {
+  forbidden: 403, not_found: 404, too_large: 413, conflict: 409, bad_request: 400,
+};
+
 // 模块级激活标志:只读查询导出(launcher guard 消费),由本类 start/stop 驱动——
 // 非依赖注入 setter,不违反 AGENTS.md 模块级 setter 红线(设计 §3.1)。
 let _active = false;
@@ -94,10 +113,13 @@ export class WebGuiServer {
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   // 项目面板 SSE(spec §5):扫描进度节流水位(每次 scan 启动时清零,首轮进度立即可见)
   private scanProgressLastPush = 0;
+  // assets 根目录(spec §4):构造器定(注入优先,缺省本模块同目录 assets/,与 index.ts 同法取 __dirname)
+  private readonly assetsRoot: string;
 
   constructor(opts: WebGuiServerOptions) {
     this.opts = opts;
     this.token = opts.token ?? randomBytes(24).toString('hex');
+    this.assetsRoot = opts.assetsDir ?? join(dirname(fileURLToPath(import.meta.url)), 'assets');
   }
 
   get port(): number {
@@ -211,7 +233,8 @@ export class WebGuiServer {
       if (req.method === 'POST') {
         if (url.pathname === '/api/sessions/stop' || url.pathname === '/api/sessions/remove'
           || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
-          || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove') {
+          || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
+          || url.pathname === '/api/projects/file') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -227,7 +250,10 @@ export class WebGuiServer {
           'content-type': 'text/html; charset=utf-8',
           'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
-          'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
+          // CSP 放宽(spec §5.2,资源工作台批):script/style 加 'self'(CodeMirror 资产经
+          // /assets 同源载入)+ img/media 'self'(预览 png/svg/音频)。default-src 'none'
+          // 底座不动,新增面全部限定 self。
+          'content-security-policy': "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self'; media-src 'self'; connect-src 'self'",
         });
         res.end(this.opts.getIndexHtml());
         return;
@@ -268,6 +294,21 @@ export class WebGuiServer {
         void this.handleProjectsList(res);
         return;
       }
+      // 资源工作台读路径(spec §4,2026-09-15 v2):列目录 + 单文件三模式读(均异步 fs)
+      if (url.pathname === '/api/projects/files') {
+        void this.handleFilesList(url, res);
+        return;
+      }
+      if (url.pathname === '/api/projects/file') {
+        void this.handleFileGet(url, res);
+        return;
+      }
+      // 静态资产(spec §4/I-2):同步读 + 固定清单白名单;与 GET / 的无 token 不同,
+      // assets 走 authorized() 三通道(资源含完整 CodeMirror,不对外裸奔)
+      if (url.pathname.startsWith('/assets/')) {
+        this.handleAsset(url, res);
+        return;
+      }
       res.writeHead(404).end();
     } catch {
       res.writeHead(500).end();
@@ -301,6 +342,40 @@ export class WebGuiServer {
       if (!this.authorized(req, url)) {
         res.writeHead(this.extractToken(req, url) === this.token ? 403 : 401).end();
         return;
+      }
+
+      // ── POST /api/projects/file(spec §4:保存流,body 预检→乐观锁保存)──────
+      // I-6:content-length 预检在 readJsonBody 之前——超限 body 不进内存直接 413
+      if (url.pathname === '/api/projects/file') {
+        const cl = Number(req.headers['content-length'] ?? 0);
+        if (cl > 600 * 1024) {
+          getLogger().info('web-gui', `action=file_save result=413 content_length=${cl}`);
+          return json(413, { error: 'payload too large' });
+        }
+        const f = this.opts.files;
+        if (!f) return json(503, { error: 'not configured' });
+        const body = await this.readJsonBody(req);
+        if (!body.ok) return json(400, { error: 'bad json' });
+        const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
+        const { project, path, content, baseMtime } = fields as Partial<Record<'project' | 'path' | 'content' | 'baseMtime', unknown>>;
+        if (typeof project !== 'string' || typeof path !== 'string' || typeof content !== 'string' || typeof baseMtime !== 'number') {
+          return json(400, { error: 'project/path/content/baseMtime required' });
+        }
+        try {
+          const r = await f.saveText(project, path, content, baseMtime);
+          getLogger().info('web-gui', `action=file_save project=${project} path=${path} result=200`);
+          return json(200, { mtime: r.mtime });
+        } catch (err) {
+          if (err instanceof FilesError && err.code === 'conflict') {
+            // 409 带最新内容+mtime,前端可提示覆盖/放弃(spec §4)
+            getLogger().info('web-gui', `action=file_save project=${project} path=${path} result=409`);
+            return json(409, { error: err.message, latest: { content: err.latestContent, mtime: err.latestMtime } });
+          }
+          const status = err instanceof FilesError ? FILE_ERR_STATUS[err.code] : 500;
+          getLogger().info('web-gui', `action=file_save project=${project} path=${path} result=${status}`);
+          this.filesErr(err, json);
+          return;
+        }
       }
 
       // ── POST /api/projects/scan(spec §4:异步起、立即返回;无 body 契约)───
@@ -473,6 +548,89 @@ export class WebGuiServer {
       const list = await p.list();
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(list));
+    } catch {
+      if (!res.headersSent) res.writeHead(500).end();
+    }
+  }
+
+  // ─── 资源工作台(spec §4,2026-09-15 v2)────────────────────────────────────
+  // 三 GET + 一 POST 共用的 FilesError → HTTP 映射;未知异常 → 500。
+  private filesErr(e: unknown, json: (code: number, body: unknown) => void): void {
+    if (e instanceof FilesError) {
+      json(FILE_ERR_STATUS[e.code], { error: e.message });
+      return;
+    }
+    json(500, { error: e instanceof Error ? e.message : String(e) });
+  }
+
+  /** GET /api/projects/files:列目录({entries});注入缺席 503(对齐 projects 语义)。 */
+  private async handleFilesList(url: URL, res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    const f = this.opts.files;
+    if (!f) return json(503, { error: 'not configured' });
+    try {
+      const { entries } = await f.listDir(url.searchParams.get('project') ?? '', url.searchParams.get('sub') ?? '');
+      json(200, { entries });
+    } catch (e) {
+      this.filesErr(e, json);
+    }
+  }
+
+  /** GET /api/projects/file:按 mode 分派 text(JSON)/raw(带 CSP 防线)/hex(JSON)。 */
+  private async handleFileGet(url: URL, res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    const f = this.opts.files;
+    if (!f) return json(503, { error: 'not configured' });
+    const project = url.searchParams.get('project') ?? '';
+    const path = url.searchParams.get('path') ?? '';
+    const mode = url.searchParams.get('mode') ?? 'text';
+    try {
+      if (mode === 'text') {
+        json(200, await f.readText(project, path));
+        return;
+      }
+      if (mode === 'hex') {
+        json(200, await f.readHex(project, path));
+        return;
+      }
+      if (mode === 'raw') {
+        // B-1 响应头防线:raw 内容直出 body,CSP 'none' + nosniff 防 SVG 等可执行
+        // 载荷在面板源内被激活(内容与 HTML 页面同源,必须按文档级隔离对待)。
+        const r = await f.readRaw(project, path);
+        res.writeHead(200, {
+          'content-type': r.contentType,
+          'content-security-policy': "default-src 'none'",
+          'x-content-type-options': 'nosniff',
+        });
+        res.end(r.bytes);
+        return;
+      }
+      json(400, { error: 'mode must be text, raw or hex' });
+    } catch (e) {
+      if (!res.headersSent) this.filesErr(e, json);
+    }
+  }
+
+  /** GET /assets/{name}:固定清单枚举(spec §4/I-2);同步读。鉴权已在 handle() 过。 */
+  private handleAsset(url: URL, res: ServerResponse): void {
+    const name = url.pathname.slice('/assets/'.length);
+    if (!ASSET_FILES.has(name)) { res.writeHead(404).end(); return; }   // 含 / 或 %2F 的名字天然不在清单
+    const file = join(this.assetsRoot, name);
+    if (!existsSync(file)) { res.writeHead(404).end(); return; }
+    try {
+      const data = readFileSync(file);
+      res.writeHead(200, {
+        'content-type': name.endsWith('.js') ? 'application/javascript; charset=utf-8' : 'text/css; charset=utf-8',
+        'cache-control': 'private, max-age=86400',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end(data);
     } catch {
       if (!res.headersSent) res.writeHead(500).end();
     }

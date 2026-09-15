@@ -1,7 +1,7 @@
 // src/web-gui/files-api.ts
 // 资源管理工作台纯逻辑层(spec 2026-09-15 v2 §3):列目录/读三模式/保存三重护栏。
 // 路径安全链(§3.2):isPathInAllowedRoots+project.godot 校验 → resolveWithinRoot → 隐藏降噪。
-import { readdir, stat, readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readdir, stat, readFile, writeFile, mkdir, rename, open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
@@ -103,8 +103,16 @@ export class FilesApi {
   async readHex(projectPath: string, rel: string): Promise<HexSample> {
     const abs = resolveInProject(projectPath, rel);
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found'); }
-    const fh = await readFile(abs);
-    return { size: st.size, bytes: Array.from(fh.subarray(0, HEX_SAMPLE_BYTES)) };
+    // 流式采样(controller 裁决 2026-09-15):handle 定位读,只占 4KB 缓冲——
+    // 原 readFile 全量读入后截取会让 GB 级文件先占满内存,冲击同进程 MCP 会话。
+    const fh = await open(abs, 'r');
+    try {
+      const buf = Buffer.alloc(HEX_SAMPLE_BYTES);
+      const { bytesRead } = await fh.read(buf, 0, HEX_SAMPLE_BYTES, 0);
+      return { size: st.size, bytes: Array.from(buf.subarray(0, bytesRead)) };
+    } finally {
+      await fh.close();
+    }
   }
 
   async saveText(projectPath: string, rel: string, content: string, baseMtime: number): Promise<{ mtime: number }> {
