@@ -538,7 +538,13 @@ export const INDEX_HTML: string = `<!doctype html>
       box.appendChild(ph); host.appendChild(box);
       fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
         { headers: { 'x-gui-token': token } })
-        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+        .then(function (r) {
+          // 401 空体防线(审查 I-1):server 鉴权 401 只写状态码、无响应体(server.ts
+          // handle 写头即 end),若先 r.json() 必然 parse('') reject 落 catch——401 文案
+          // 不可达。故先判状态再解析体;其余 !r.ok(403/404 等带 JSON 体)走原路径。
+          if (!r.ok && r.status === 401) { ph.textContent = '十六进制读取失败: 鉴权失效,请刷新页面'; return; }
+          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+        })
         .then(function (r) {
           if (!r.ok) {
             var msg = r.status === 401 ? '鉴权失效,请刷新页面'

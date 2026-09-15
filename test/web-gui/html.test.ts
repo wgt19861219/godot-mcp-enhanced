@@ -137,6 +137,7 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('renderHex');                     // 渲染函数
     expect(INDEX_HTML).toContain('仅前 4KB');                       // 截断提示
     expect(INDEX_HTML).toContain('toString(16)');                   // 偏移 hex 化
+    expect(INDEX_HTML).toContain('鉴权失效');                       // 401 空体先判状态的错误占位文案(fix I-1:先 r.json() 必落 catch,文案不可达)
   });
   it('二进制路由:openFileEntry 其余分支走 hex', () => {
     expect(INDEX_HTML).toContain("openPreview(rel, 'hex')");       // 等价拼接形态:rel=sub+name(hex 端点契约 path 相对项目根),同 img/audio 分支
