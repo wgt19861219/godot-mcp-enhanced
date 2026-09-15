@@ -123,7 +123,7 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain("kind === 'img'");                // img 分支
   });
   it('音频预览:audio controls + 同 raw 通道', () => {
-    expect(INDEX_HTML).toContain('<audio controls');               // audio 元素(静态壳内)
+    expect(INDEX_HTML).toContain('au.controls = true');            // audio 控件行为码(锁真码,fix I-1:原 '<audio controls' 由注释桥接假绿)
     expect(INDEX_HTML).toContain("kind === 'audio'");
   });
   it('下载链接:raw 同 URL + download 属性 + 恢复列表入口', () => {
