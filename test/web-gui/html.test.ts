@@ -24,4 +24,29 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     // 旧逐按钮绑定(500ms 重绘吞 click 的载体)已删除
     expect(INDEX_HTML).not.toContain('btn.addEventListener');
   });
+
+  // ── 项目面板批(Task 4,spec §7):上项目下会话左列改造 ────────────────────
+  it('项目面板机制标记(委托/搜索/添加/确认文案)', () => {
+    expect(INDEX_HTML).toContain("closest('button[data-action]')");   // 委托(项目区复用会话行委托模式)
+    expect(INDEX_HTML).toContain('data-action');                       // run|edit|remove|scan|add
+    expect(INDEX_HTML).toContain('projSearch');                        // 搜索框
+    expect(INDEX_HTML).toContain('仅从列表移除');                       // confirm 文案
+    expect(INDEX_HTML).toContain('项目功能未配置');                     // hello projects:null 空态
+  });
+  it('项目面板 data-action 值集与端点接线', () => {
+    // 委托覆盖的 action 值:run|edit|remove|scan|add(+ 内联添加行确认)
+    ["'run'", "'edit'", "'remove'", "'scan'", "'add'"].forEach(a => expect(INDEX_HTML).toContain(a));
+    expect(INDEX_HTML).toContain('/api/projects/scan');
+    expect(INDEX_HTML).toContain('/api/projects/add');
+    expect(INDEX_HTML).toContain('/api/projects/remove');
+    expect(INDEX_HTML).toContain('/api/sessions/start');
+    expect(INDEX_HTML).toContain("es.addEventListener('projects'");    // SSE projects 事件
+    expect(INDEX_HTML).toContain('payload.projects');                  // hello 分支 projects 字段消费
+  });
+  it('项目面板 Missing 态/相对时间/零 innerHTML', () => {
+    expect(INDEX_HTML).toContain('路径不存在');      // missing 行 Run/Edit disabled 的 title
+    expect(INDEX_HTML).toContain('fmtAgo');          // 相对时间函数
+    expect(INDEX_HTML).toContain('分钟前');          // 相对时间文案
+    expect(INDEX_HTML).not.toContain('innerHTML');   // 防注入铁律:动态内容全 textContent
+  });
 });
