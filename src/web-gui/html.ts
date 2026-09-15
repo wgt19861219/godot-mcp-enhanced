@@ -221,7 +221,11 @@ export const INDEX_HTML: string = `<!doctype html>
     }).then(function (r) {
       if (!r.ok) {
         return r.text().then(function (t) {
-          var msg = r.status === 403 ? '路径在白名单之外' : (r.status === 404 ? '不是 Godot 项目' : t.slice(0, 80));
+          // 403 双源区分(I-2):READ_ONLY 拦截响应体 {error:'read-only mode'},提示只读
+          // 而非误导用户排查白名单;白名单外仍是原文案。
+          var msg = r.status === 403
+            ? (t.indexOf('read-only') !== -1 ? '只读模式，面板启动已禁用' : '路径在白名单之外')
+            : (r.status === 404 ? '不是 Godot 项目' : t.slice(0, 80));
           $('statusBar').textContent = '启动失败: ' + msg;
         });
       }
@@ -262,6 +266,25 @@ export const INDEX_HTML: string = `<!doctype html>
     var row = $('addRow');
     row.style.display = row.style.display === 'flex' ? 'none' : 'flex';
     if (row.style.display === 'flex') $('addPath').focus();
+  }
+
+  // sessions 帧对照 alive 会话刷新项目行 running 徽章(spec §7.3,Fix round 1/I-1)。
+  // 覆盖 AI 侧 run_project 启动的会话——不经面板 start 端点、不触发 broadcastProjects
+  // 快照推送,徽章只能经此路径变绿。匹配键与 store 同源:会话 projectPath 即归一化桶键
+  // (resolve + win lowercase,projects-store.ts:182 同语义),项目行 path 对照时 lowercase。
+  // 500ms 帧频率取舍:仅行 running 态实际变化时才重渲染,帧到达但不变不重绘。
+  function refreshRunningBadges() {
+    if (state.projects === null) return;   // 项目功能未配置(hello projects:null)跳过
+    var alive = {};
+    state.sessions.forEach(function (s) {
+      if (ALIVE_STATUS[s.status] === 1) alive[(s.projectPath || '').toLowerCase()] = 1;
+    });
+    var changed = false;
+    state.projects.forEach(function (p) {
+      var r = alive[(p.path || '').toLowerCase()] === 1;
+      if (p.running !== r) { p.running = r; changed = true; }
+    });
+    if (changed) renderProjects();
   }
 
   function submitAdd() {
@@ -395,7 +418,7 @@ export const INDEX_HTML: string = `<!doctype html>
   var es = new EventSource('/events?token=' + encodeURIComponent(token));
   es.addEventListener('hello', function (ev) { $('warn').style.display = 'none'; resetAll(JSON.parse(ev.data)); });
   es.addEventListener('log', function (ev) { pushLogs(JSON.parse(ev.data).entries || []); });
-  es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); });
+  es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); refreshRunningBadges(); });
   es.addEventListener('stats', function (ev) { state.stats = JSON.parse(ev.data); renderStats(); });
   // projects 事件按字段在场性消费(Task 3 契约):
   //   {scanning:true, found, scanned} 进度 / {scanning:false, added} 完成 / {projects:[...]} 快照。

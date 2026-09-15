@@ -49,4 +49,16 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('分钟前');          // 相对时间文案
     expect(INDEX_HTML).not.toContain('innerHTML');   // 防注入铁律:动态内容全 textContent
   });
+
+  // ── Fix round 1(I-1/I-2)──────────────────────────────────────────────────
+  it('sessions 帧联动刷新项目 running 徽章(spec §7.3:覆盖 AI 侧启动的会话)', () => {
+    expect(INDEX_HTML).toContain('function refreshRunningBadges');          // 对照函数存在
+    expect(INDEX_HTML).toContain('renderSessions(); refreshRunningBadges()'); // sessions 处理器接线
+    expect(INDEX_HTML).toContain('state.projects === null) return;');       // 未配置跳过
+  });
+  it('start 403 文案区分 readOnly 与白名单外(I-2)', () => {
+    expect(INDEX_HTML).toContain("'read-only'");                  // 响应体判定依据
+    expect(INDEX_HTML).toContain('只读模式，面板启动已禁用');      // readOnly 403 文案
+    expect(INDEX_HTML).toContain('路径在白名单之外');              // 其余 403 仍是白名单文案
+  });
 });
