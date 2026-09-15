@@ -23,7 +23,7 @@ import type { ProjectView } from './projects-store.js';
 export interface ProjectsApi {
   list(): Promise<ProjectView[]>;
   scan(onProgress?: (found: number, scanned: number) => void): Promise<{ started: boolean; reason?: string; added?: number }>;
-  add(path: string): Promise<{ ok: boolean; reason?: string }>;
+  add(path: string): Promise<{ ok: boolean; reason?: 'not_a_project' | 'duplicate' | 'full' | undefined }>;
   remove(path: string): Promise<{ ok: boolean; reason?: string }>;
 }
 
