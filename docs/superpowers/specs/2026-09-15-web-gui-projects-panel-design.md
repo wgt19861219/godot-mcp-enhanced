@@ -68,7 +68,7 @@ interface ProjectEntry {
 - **空 allowlist 时扫描根 = process.cwd()**（与 isPathInAllowedRoots 的 cwd-fallback 判定侧同源——默认安装态点扫描能发现 cwd 下项目，与 add 放行语义一致；v2/IMP-2）
 - **UNRESTRICTED 模式禁扫描**（全盘递归不可接受，返回错误提示"UNRESTRICTED 模式不支持扫描，请用添加按钮"）
 - 各根 BFS 递归找 `project.godot`，**限深 4 层**、跳过 `node_modules/.git/.godot/build/dist` 目录、单根目录条目上限 5000（防超大树）
-- **不跟随目录符号链接/junction**（`readdir withFileTypes` 判 `isDirectory() && !isSymbolicLink()`——链接环免疫 + 发现结果确定性，v2/M5）
+- **不跟随目录符号链接/junction**（`readdir withFileTypes` 判 `isDirectory() && !isSymbolicLink()`——链接环免疫 + 发现结果确定性，v2/M5）。**junction 兜底说明（v2.1）**：Windows junction 是 reparse point，`Dirent.isSymbolicLink()` 对其归类有版本差异——若实测判别不出而被跟随，防环退化为限深 4 + 条目 5000 兜底（正确性无洞，实施时以 Windows 实测为准并在报告注明）
 - 发现即合并入清单（**只加不删**——Godot 原版语义；丢失项靠 Missing 状态呈现；合并受 §3.1.1 串行队列保护）
 - 同时读 `project.godot` 的 `[application]` 段 `config/name`（轻量 INI 解析：逐行找 `[application]` 段内的 `config/name="..."`；解析失败缺省 basename——不引入 project-config.ts 全量解析器，扫描要快）
 - 每发现 N 个经回调推进度（SSE 事件，见 §5）
@@ -94,7 +94,7 @@ interface ProjectView extends ProjectEntry {
 | 端点 | 方法 | body | 行为 |
 |------|------|------|------|
 | `/api/projects` | GET | — | listProjects() 快照 |
-| `/api/projects/scan` | POST | — | 触发扫描（异步起、立即返回 `{started:true}`；进度与结果经 SSE `projects` 事件推送） |
+| `/api/projects/scan` | POST | — | 触发扫描（异步起、立即返回 `{started:true}`；进度与结果经 SSE `projects` 事件推送；**扫描互斥语义见 §3.1.1**——进行中再收返回 `{started:false, reason:'scanning'}`） |
 | `/api/projects/add` | POST | `{path}` | **白名单校验**（`isPathInAllowedRoots`，拒 403）→ project.godot 存在校验（拒 404）→ 合并入清单 |
 | `/api/projects/remove` | POST | `{path}` | 仅清单移除（**不删文件**）；成功 200 / 不存在 404 |
 | `/api/sessions/start` | POST | `{projectPath, mode: 'run'\|'edit'}` | **白名单校验 403** → project.godot 存在校验 404 → mode=run 调注入 runProject / mode=edit 调注入 editProject；mode 缺省 'run'；坏 body 400 |
@@ -116,7 +116,7 @@ interface ProjectView extends ProjectEntry {
 
 ## 6. run 链抽取（runtime.ts）
 
-- `case 'run_project'` 主体抽为 `export async function executeRunProject(args: RunProjectArgs, ctx: ToolContext): Promise<string>`（返回原文本由调用方各自包装，最小 diff 原则）。**抽取边界含 `requireProjectPath`**（v2/M2 裁决：面板链路自动继承第二层白名单防线 + PathError 校验；端点 catch PathError 转 403）。`RunProjectArgs` 从现有 zod 推导类型
+- `case 'run_project'` 主体抽为 `export async function executeRunProject(args: RunProjectArgs, ctx: ToolContext): Promise<string>`（返回原文本由调用方各自包装，最小 diff 原则）。**抽取边界含 `requireProjectPath`**（v2/M2 裁决：面板链路自动继承第二层白名单防线 + PathError 校验；端点 catch PathError 转 403）。`RunProjectArgs` **直接定义 interface**（runtime 的 inputSchema 为手写 JSON Schema runtime.ts:110-134 非 zod，v2.1 修正措辞）
 - 工具 case 改调它；**行为零变**守门员 = `test/runtime.test.js`（55 用例块/161 断言，实测计数）+ runtime-timeout/process-state/guard/function-profiler/regression 等关联套件 + 全量 `npm test`（v2/IMP-5 修正：v1 的"500+ 用例"为未实测转述）
 - **ctx 依赖面（实测清单，v2/IMP-4）**：必用 3 成员 = `ctx.findGodot()`（runtime.ts:180）、`ctx.setProjectDir(p)`（:216，**必须接真实 `ps.setProjectDir`**——合成 no-op 会断活跃指针，AI 侧 stop_project/get_debug_output 缺省路径将指错桶）、`ctx.projectDir`（getter）；可选 1 成员 = `ctx.functionProfiler`（undefined 时链内安全跳过）。**模块级可变状态 `profilerOwnerKey`**（runtime.ts:101，4 处读写）为同文件抽取无障碍依赖——未来迁出 runtime.ts 时必须同搬
 - **ctx 来源首选第三路线（v2/IMP-4）**：`ToolDispatcher` 加一行只读 getter `getContext(): ToolContext`（现 `private readonly ctx` 无暴露面）——GodotServer 接线经 `this.dispatcher.getContext()` 取真实 ctx（复用真实链路零复刻）；若 getter 方案受阻，退而照抄 ToolDispatcher 构造器 `:104-116` 的成员映射模式（把 findGodot/setProjectDir/projectDir 逐一映射到 `ps.*`，类型合法且行为等价）
@@ -152,7 +152,7 @@ interface ProjectView extends ProjectEntry {
 
 ### 7.3 事件接线
 
-- hello 的 `projects` 字段初始化；`projects` SSE 事件刷新；`sessions` 事件刷新 running 徽章（复用现有快照数据对照 sessionId）
+- hello 的 `projects` 字段初始化（**`projects: null` 时显示空态提示"项目功能未配置"**——注入缺席场景，v2.1）；`projects` SSE 事件刷新；`sessions` 事件刷新 running 徽章（复用现有快照数据对照 sessionId）
 - 启动成功后项目行徽章在 sessions 帧到达时自动变绿（无需 projects 事件）
 
 ## 8. 验收标准（真机）
