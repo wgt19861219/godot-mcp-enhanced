@@ -516,6 +516,11 @@ export const INDEX_HTML: string = `<!doctype html>
     if (kind === 'img') {
       var img = document.createElement('img');
       img.src = rawUrl; img.alt = rel;
+      img.onload = function () {   // 尺寸显示(spec §6.4):加载完成后在下方元信息
+        // 行 size 旁追加 W×H。st 在本函数末尾创建,onload 异步触发时已赋值(闭包
+        // 捕获变量引用),跨目录进入(size 为 null)时同样追加。
+        st.textContent = st.textContent + ' · ' + img.naturalWidth + '×' + img.naturalHeight;
+      };
       img.onerror = function () {   // token 失效(server 重启)/超限(too_large)时 raw 非 2xx
         var d = document.createElement('div'); d.className = 'empty';
         d.textContent = '加载失败(token 失效或文件超限)';
@@ -526,6 +531,11 @@ export const INDEX_HTML: string = `<!doctype html>
       // audio 元素经 DOM API 构建,形态等价 <audio controls src=rawUrl>
       var au = document.createElement('audio');
       au.controls = true; au.src = rawUrl;
+      au.onerror = function () {   // 同 img 模式:token 失效/超限时 raw 非 2xx,占位可见反馈
+        var d = document.createElement('div'); d.className = 'empty';
+        d.textContent = '音频加载失败(token 失效或文件超限)';
+        if (au.parentNode) au.parentNode.replaceChild(d, au);
+      };
       host.appendChild(au);
     } else if (kind === 'hex') {
       // hex 视图(spec §6.4,Plan B Task 2):JSON 通道(x-gui-token 头,同
