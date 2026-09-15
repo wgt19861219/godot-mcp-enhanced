@@ -46,6 +46,7 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     const res = await fetch(t.base + '/');
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(FAKE_HTML);
+    expect(res.headers.get('cache-control')).toBe('no-store');   // 防浏览器缓存旧 HTML(2026-09-15 真机叠加因素)
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(res.headers.get('access-control-allow-origin')).toBeNull();   // 不发任何 CORS 头

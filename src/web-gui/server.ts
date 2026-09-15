@@ -192,8 +192,11 @@ export class WebGuiServer {
       if (req.method !== 'GET') { res.writeHead(405).end(); return; }
       if (url.pathname === '/') {
         // 静态 HTML 无 token 要求(本体不含 token;token 经 CLI 打开的 URL query 进入)
+        // no-store(2026-09-15):防浏览器缓存旧 HTML——面板是单文件应用,每次取新无成本;
+        // 真机事件曾疑似叠加旧缓存 HTML 因素(按钮行为与最新版本不符)。
         res.writeHead(200, {
           'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
           'x-content-type-options': 'nosniff',
           'content-security-policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'",
         });
