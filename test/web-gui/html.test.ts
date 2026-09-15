@@ -130,4 +130,15 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain("download");                      // 下载属性
     expect(INDEX_HTML).toContain('preview-back');                  // 返回列表 data-action
   });
+
+  // ── 资源管理批(Plan B Task 2,spec §6.4 hex)───────────────────────────────
+  it('hex 视图:三列网格 + >4KB 截断提示 + 下载', () => {
+    expect(INDEX_HTML).toContain("kind === 'hex'");
+    expect(INDEX_HTML).toContain('renderHex');                     // 渲染函数
+    expect(INDEX_HTML).toContain('仅前 4KB');                       // 截断提示
+    expect(INDEX_HTML).toContain('toString(16)');                   // 偏移 hex 化
+  });
+  it('二进制路由:openFileEntry 其余分支走 hex', () => {
+    expect(INDEX_HTML).toContain("openPreview(rel, 'hex')");       // 等价拼接形态:rel=sub+name(hex 端点契约 path 相对项目根),同 img/audio 分支
+  });
 });

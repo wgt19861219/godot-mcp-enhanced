@@ -83,6 +83,14 @@ export const INDEX_HTML: string = `<!doctype html>
   #filesPane img { max-width: calc(100% - 20px); max-height: 60vh; margin: 8px 10px; border: 1px solid var(--line); }
   #filesPane audio { margin: 10px; width: calc(100% - 20px); }
   a.ctl { text-decoration: none; color: var(--dim); }
+  /* hex 视图(Plan B Task 2,spec §6.4):等宽三列网格,滚动容器复用 .scroll(与日志区同款) */
+  .hex-box { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .hex-title { padding: 3px 10px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hex-grid { font: 12px/1.5 Consolas, monospace; padding: 4px 0; }
+  .hex-row { display: flex; white-space: pre; padding: 0 10px; }
+  .hex-off { color: var(--dim); margin-right: 14px; }
+  .hex-bytes { min-width: 47ch; }   /* 16 字节两位 hex+15 空格:末行不足 16 字节时 ASCII 列仍对齐(等宽字体下 ch 精确) */
+  .hex-ascii { color: var(--dim); }
 </style>
 </head>
 <body>
@@ -131,8 +139,8 @@ export const INDEX_HTML: string = `<!doctype html>
   // readOnly 信号源:hello 无此字段(不发明协议),复用现有 403 响应体 'read-only' 判定
   // (startSession I-2 先例 + 保存 POST 403 触发 enterReadOnly 置位)。
   var editorState = { rel: null, baseMtime: 0, dirty: false, cm: null, latest: null };
-  // 预览视图状态(Plan B Task 1,spec §6.4):当前预览文件与类型('img'|'audio',
-  // Task 2 补 'hex' 十六进制分支);预览无脏标,无拦截语义,仅供状态记录。
+  // 预览视图状态(Plan B Task 1+2,spec §6.4):当前预览文件与类型
+  // ('img'|'audio'|'hex');预览无脏标,无拦截语义,仅供状态记录。
   var previewState = { rel: null, kind: null };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
@@ -476,20 +484,21 @@ export const INDEX_HTML: string = `<!doctype html>
     }
     var e = fileExt(name);
     // TEXT → 编辑视图(spec §6.3,Task 5);IMG/AUDIO → 内联预览(spec §6.4,
-    // Plan B Task 1);其余二进制占位由 Task 2 替换为十六进制视图。rel=sub 前缀
-    // 拼全(Task 2 契约 path 相对项目根)。
+    // Plan B Task 1);其余二进制 → hex 视图(Plan B Task 2)。rel=sub 前缀
+    // 拼全(text/hex 端点契约 path 相对项目根)。
     var rel = filesState.sub ? filesState.sub + '/' + name : name;
     if (TEXT_EXTS.indexOf(e) !== -1) { openEditor(rel); return; }
     if (IMG_EXTS.indexOf(e) !== -1) { openPreview(rel, 'img'); return; }
     if (AUDIO_EXTS.indexOf(e) !== -1) { openPreview(rel, 'audio'); return; }
-    $('statusBar').textContent = '二进制预览(Task 2): ' + name;
+    openPreview(rel, 'hex');
   }
 
-  // ── 预览视图(spec §6.4,Plan B Task 1)──────────────────────────────────────
-  // IMG/AUDIO 内联消费 mode=raw 端点(Task 2 已带 content-type 映射与 CSP/nosniff
-  // 响应头防线);kind='hex' 分支由 Task 2 落地。rawUrl 一律 JS 变量拼 token(M-9:
-  // URL query 里的 token 已被 replaceState 清除,且 img/audio 元素无法带请求头,
-  // query 是唯一鉴权通道)。SVG 经 img 上下文加载其内嵌脚本不执行,叠加上述 CSP。
+  // ── 预览视图(spec §6.4,Plan B Task 1+2)───────────────────────────────────
+  // IMG/AUDIO 内联消费 mode=raw 端点(content-type 映射与 CSP/nosniff 响应头
+  // 防线);HEX 走 mode=hex JSON 通道(x-gui-token 头)由 renderHex 渲染。rawUrl
+  // 一律 JS 变量拼 token(M-9:URL query 里的 token 已被 replaceState 清除,且
+  // img/audio 元素无法带请求头,query 是唯一鉴权通道)。SVG 经 img 上下文加载
+  // 其内嵌脚本不执行,叠加上述 CSP。
   function openPreview(rel, kind) {
     if (!rel || !filesState.project) return;
     previewState = { rel: rel, kind: kind };
@@ -518,6 +527,29 @@ export const INDEX_HTML: string = `<!doctype html>
       var au = document.createElement('audio');
       au.controls = true; au.src = rawUrl;
       host.appendChild(au);
+    } else if (kind === 'hex') {
+      // hex 视图(spec §6.4,Plan B Task 2):JSON 通道(x-gui-token 头,同
+      // loadDir/openEditor 模式)取前 4KB 采样;读取中/失败均以占位文本呈现
+      // (401/403/404 等错误显示在预览区,不落 statusBar)。完整文件走工具行
+      // 下载链接(raw 同 URL+download,Task 1 已建)。
+      var box = document.createElement('div'); box.className = 'hex-box';
+      var ph = document.createElement('div'); ph.className = 'empty';
+      ph.textContent = '读取十六进制中…';
+      box.appendChild(ph); host.appendChild(box);
+      fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
+        { headers: { 'x-gui-token': token } })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+        .then(function (r) {
+          if (!r.ok) {
+            var msg = r.status === 401 ? '鉴权失效,请刷新页面'
+              : (r.status === 403 ? '路径在白名单之外'
+              : (r.status === 404 ? '文件不存在' : JSON.stringify(r.body).slice(0, 80)));
+            ph.textContent = '十六进制读取失败: ' + msg;
+            return;
+          }
+          renderHex(box, rel, r.body.bytes || [], r.body.size || 0);
+        })
+        .catch(function () { ph.textContent = '网络异常,十六进制请求未送达'; });
     }
     // 元信息行:size 从列表 entries 快照取(打开预览不经 JSON 通道,raw 响应无从
     // 知大小);跨目录进入(entries 不含该名)时省略,只显示 rel。
@@ -527,6 +559,42 @@ export const INDEX_HTML: string = `<!doctype html>
     st.textContent = rel + (size != null ? ' · ' + fmtSize(size) : '');
     host.appendChild(st);
     $('statusBar').textContent = '已打开预览 ' + rel;
+  }
+
+  // ── hex 渲染(spec §6.4,Plan B Task 2)─────────────────────────────────────
+  // 三列全 textContent:偏移 8 位 hex/16 字节两位 hex 空格分隔/ASCII 32-126 可打
+  // 印否则点号;4KB/16=256 行,无渲染压力。size>bytes.length(>4KB 截断)时提示
+  // 「仅前 4KB」,完整内容由工具行下载链接获取(raw 同 URL+download,复用 Task 1)。
+  // 标题行 size 取自 hex 响应体真实值(比 entries 快照可靠,跨目录进入也有)。
+  function renderHex(box, rel, bytes, size) {
+    box.textContent = '';
+    var title = document.createElement('div'); title.className = 'hex-title';
+    title.textContent = rel + ' (' + fmtSize(size) + ')';
+    box.appendChild(title);
+    if (size > bytes.length) {
+      var tr = document.createElement('div'); tr.className = 'hex-title';
+      tr.textContent = '仅前 4KB,完整内容请下载后查看';
+      box.appendChild(tr);
+    }
+    var grid = document.createElement('div'); grid.className = 'scroll hex-grid';
+    var frag = document.createDocumentFragment();
+    for (var off = 0; off < bytes.length; off += 16) {
+      var row = document.createElement('div'); row.className = 'hex-row';
+      var o = document.createElement('span'); o.className = 'hex-off';
+      o.textContent = ('00000000' + off.toString(16)).slice(-8);
+      var hs = [], as = [];
+      for (var i = off; i < off + 16 && i < bytes.length; i++) {
+        var b = bytes[i];
+        hs.push((b < 16 ? '0' : '') + b.toString(16));   // 两位 hex,不足补 0
+        as.push(b >= 32 && b < 127 ? String.fromCharCode(b) : '.');   // 32-126 可打印
+      }
+      var h = document.createElement('span'); h.className = 'hex-bytes';
+      h.textContent = hs.join(' ');
+      var a = document.createElement('span'); a.className = 'hex-ascii';
+      a.textContent = as.join('');
+      row.append(o, h, a); frag.appendChild(row);
+    }
+    grid.appendChild(frag); box.appendChild(grid);
   }
 
   // ── 编辑视图(spec §6.3,2026-09-15 资源管理批 Task 5)──────────────────────
