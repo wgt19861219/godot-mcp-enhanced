@@ -585,6 +585,11 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '已打开 ' + rel;
   }
 
+  // edStatus 异步写入统一守卫(Task 5 审查 Minor):saveEditor/conflictCopy 的异步回调
+  // 执行时用户可能已切走 tab 致 DOM 重建,$('edStatus') 可为 null——null.textContent
+  // 会抛 TypeError 吞掉后续逻辑;同步路径(打开/冲突条)DOM 刚创建必然在场,不强制改。
+  function setEdStatus(msg) { var st = $('edStatus'); if (st) st.textContent = msg; }
+
   // 保存流(spec §3.3 三重护栏的 UI 端):POST 携 baseMtime 乐观锁;200 前进本地
   // mtime+清脏标;409 弹冲突条(latest 消费);413/403/404 就地报错。
   function saveEditor() {
@@ -602,19 +607,19 @@ export const INDEX_HTML: string = `<!doctype html>
         if (r.ok) {
           editorState.baseMtime = r.body.mtime; editorState.dirty = false;
           if (btn) btn.textContent = '保存';
-          $('edStatus').textContent = '已保存 · ' + new Date(r.body.mtime).toLocaleString();
+          setEdStatus('已保存 · ' + new Date(r.body.mtime).toLocaleString());
           return;
         }
         if (r.status === 409) { showConflict(r.body && r.body.latest); return; }
         if (r.status === 403) {   // 双源区分(对齐 startSession I-2 判定)
           if (JSON.stringify(r.body).indexOf('read-only') !== -1) { enterReadOnly(); return; }
-          $('edStatus').textContent = '保存失败: 路径在白名单之外';
+          setEdStatus('保存失败: 路径在白名单之外');
           return;
         }
         var msg = r.status === 413 ? '内容超限(600KB)' : (r.status === 404 ? '文件不存在(可能已被删除)' : JSON.stringify(r.body).slice(0, 80));
-        $('edStatus').textContent = '保存失败: ' + msg;
+        setEdStatus('保存失败: ' + msg);
       })
-      .catch(function () { if (btn) btn.disabled = false; $('edStatus').textContent = '网络异常,保存请求未送达'; });
+      .catch(function () { if (btn) btn.disabled = false; setEdStatus('网络异常,保存请求未送达'); });
   }
 
   // 409 冲突条显示:latest 存 editorState 供「重新加载」按钮消费(Task 2 契约
@@ -654,8 +659,8 @@ export const INDEX_HTML: string = `<!doctype html>
     var mine = editorState.cm ? editorState.cm.getValue() : ($('cmHost') ? $('cmHost').value : '');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(mine).then(
-        function () { $('edStatus').textContent = '已复制我的修改到剪贴板'; },
-        function () { $('edStatus').textContent = '复制失败,请手动全选复制'; });
+        function () { setEdStatus('已复制我的修改到剪贴板'); },
+        function () { setEdStatus('复制失败,请手动全选复制'); });
     } else { $('edStatus').textContent = '剪贴板不可用,请手动全选复制'; }
   }
 
