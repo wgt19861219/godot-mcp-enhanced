@@ -93,3 +93,32 @@ export async function listRegistrations(opts: RegistryOpts = {}): Promise<WebGui
   }
   return out;
 }
+
+/**
+ * 陈旧登记清扫(2026-09-15 独立批):删除 pid 已死的登记文件,返回删除数。
+ * 动机:Windows 强杀(taskkill/断电)不走 exit-hook,死登记只靠 listRegistrations
+ * 的顺手清——而该函数仅 dashboard CLI 探活路径调用,server 自身只写不读 → 持续堆积。
+ * server 启动时 fire-and-forget 调本函数(server.ts start() 接线)。
+ * 诚实边界:pid 复用时 isPidAlive 误报 true → 该条目保留(方向安全:垃圾无害,误删活登记才有害)。
+ * 非 WebGuiRegistration 形态文件(如 projects.json)经同 listRegistrations 的格式校验跳过,不删。
+ */
+export async function sweepStaleRegistrations(opts: RegistryOpts = {}): Promise<number> {
+  const dir = opts.dir ?? webGuiRegistryDir();
+  const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
+  let removed = 0;
+  let files: string[];
+  try { files = await readdir(dir); } catch { return 0; }
+  for (const f of files) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const raw = JSON.parse(await readFile(join(dir, f), 'utf-8')) as WebGuiRegistration;
+      if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) continue;
+      if (!isPidAlive(raw.pid)) {
+        await unlink(join(dir, f)).catch(() => {});
+        removed++;
+      }
+    } catch { /* 损坏文件跳过 */ }
+  }
+  if (removed > 0) getLogger().info('web-gui', `registry sweep: removed ${removed} stale entr${removed === 1 ? 'y' : 'ies'}`);
+  return removed;
+}

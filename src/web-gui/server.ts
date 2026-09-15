@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
-import { removeRegistration, writeRegistration } from './registry.js';
+import { removeRegistration, writeRegistration, sweepStaleRegistrations } from './registry.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -146,6 +146,9 @@ export class WebGuiServer {
     _active = true;
     const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
     await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: new Date().toISOString() }, regOpts);
+    // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
+    // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
+    void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
     getLogger().info('web-gui', `Web GUI listening on http://127.0.0.1:${this.portValue}/ (pid ${process.pid})`);
     this.startDataStream();
     // log 增量帧:500ms 聚合(设计 §3.3.3;pollIntervalMs 硬下限 500 见 CHECK_DEBOUNCE_MS)。
