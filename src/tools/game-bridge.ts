@@ -513,12 +513,7 @@ async function bridgeAction(method: string, params: Record<string, unknown>, ctx
   if (resp.error) {
     return errorResult(`Bridge error (${resp.error.code}): ${resp.error.message}`);
   }
-  // A2 (2026-09-16 反馈批): ping 响应注解版本指纹 —— bundled vs 项目内远端版本比对,
-  // 旧版拷贝未同步(五踩根源)一眼可辨,warning 附可操作指引。
-  if (method === 'ping' && resp.result !== null && typeof resp.result === 'object' && !Array.isArray(resp.result)) {
-    const annotated = annotatePingWithVersion(resp.result as Record<string, unknown>, bundledBridgeVersion(ctx));
-    return textResult(JSON.stringify(annotated, null, 2));
-  }
+  // A2 注:ping 版本注解在 game_query 直连路径(本函数不被 game_query 走到,见 case 注释)
   // G-1: 订阅登记表维护 — start 成功登记(重连后重发),stop 成功移除(不再重发)
   if (method === 'watch.start' || method === 'monitor.start') {
     _registerSubscription(method, params);
@@ -799,6 +794,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             invalidateBridgeSecret();
           }
           return errorResult(`Bridge error (${response.error.code}): ${response.error.message}`);  // T-2: textResult→errorResult(isError=true)
+        }
+        // A2 (2026-09-16 跨项目验证接线修正): game_query/write/input 走本直连路径而非
+        // bridgeAction(共享 helper 只服务 watch/monitor 等)——ping 版本注解必须接在这里,
+        // 首版误接 bridgeAction 导致真机 ping 无 bundledBridgeVersion/versionWarning。
+        if (method === 'ping' && response.result !== null && typeof response.result === 'object' && !Array.isArray(response.result)) {
+          const annotated = annotatePingWithVersion(response.result as Record<string, unknown>, bundledBridgeVersion(ctx));
+          return textResult(JSON.stringify(annotated, null, 2));
         }
         return textResult(JSON.stringify(response.result, null, 2));
       }

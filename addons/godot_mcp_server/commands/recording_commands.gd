@@ -66,12 +66,13 @@ func _input(event: InputEvent) -> void:
 		}
 		_append_event(entry)
 	elif event is InputEventScreenDrag:  # IMP-11 补全: 拖拽录制(对齐 bridge _input + _cmd_send_drag 契约)
+		# speed 键是 MCP 录制契约名保留;引擎属性读取走 velocity(Godot 4 改名,2026-09-16 跨项目验证发现)
 		var drag_entry: Dictionary = {
 			"type": "touch_drag",
 			"position": [event.position.x, event.position.y],
 			"index": event.index,
 			"relative": [event.relative.x, event.relative.y],
-			"speed": [event.speed.x, event.speed.y],
+			"speed": [event.velocity.x, event.velocity.y],
 			"time_offset": Time.get_ticks_msec() - _record_start_time
 		}
 		_append_event(drag_entry)
@@ -256,7 +257,7 @@ func _fire_playback_event(evt: Dictionary) -> void:
 				ie.relative = Vector2(float(rel[0]), float(rel[1]))
 			var spd = evt.get("speed", [0.0, 0.0])
 			if spd is Array and spd.size() >= 2:
-				ie.speed = Vector2(float(spd[0]), float(spd[1]))
+				ie.velocity = Vector2(float(spd[0]), float(spd[1]))  # 引擎属性 velocity(Godot 4 改名;speed 是 MCP 契约键名)
 			Input.parse_input_event(ie)
 	_playback_count += 1
 

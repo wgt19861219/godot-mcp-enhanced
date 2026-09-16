@@ -2499,7 +2499,11 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	event.position = Vector2(x, y)
 	event.index = index
 	event.relative = relative
-	event.speed = speed
+	# 跨项目验证发现(2026-09-16 反馈批A,CardGame2 Godot 4.7 真机):InputEventScreenDrag
+	# 的引擎属性是 velocity(Godot 3 的 speed 已改名),赋值/读取 speed 直接 SCRIPT ERROR —
+	# send_drag 在 Godot 4 上从未真正可用(6f997b4 修的是参数归一化,属性名错漏网)。
+	# MCP API 参数名 speed 保持不变(调用方契约),仅引擎属性侧改名。
+	event.velocity = speed
 	Input.parse_input_event(event)
 	# 审查 I-B(2026-09-03): 裸 Vector2 经 JSON.stringify 退化为 "(x, y)" 字符串(真机实证),
 	# 走 _jsonify 输出 {"x","y"}(对齐 wait_for_property 先例),响应可结构化消费。
@@ -3808,7 +3812,8 @@ func _input(event: InputEvent) -> void:
 	elif event is InputEventScreenTouch:  # IMP-11: 触摸事件录制(对齐 recording_commands.gd :46 + _cmd_send_touch 契约)
 		_recorded_events.append({"type": "touch", "position": [event.position.x, event.position.y], "pressed": event.pressed, "index": event.index, "time_offset": time_ms})
 	elif event is InputEventScreenDrag:  # IMP-11 补全: 拖拽录制(对齐 recording_commands.gd + _cmd_send_drag 契约)
-		_recorded_events.append({"type": "touch_drag", "position": [event.position.x, event.position.y], "index": event.index, "relative": [event.relative.x, event.relative.y], "speed": [event.speed.x, event.speed.y], "time_offset": time_ms})
+	# speed 键是 MCP 录制契约名保留;引擎属性读取走 velocity(Godot 4 改名,同 _cmd_send_drag)
+		_recorded_events.append({"type": "touch_drag", "position": [event.position.x, event.position.y], "index": event.index, "relative": [event.relative.x, event.relative.y], "speed": [event.velocity.x, event.velocity.y], "time_offset": time_ms})
 
 
 ## 内联安全类型检查（替代 SafeValues 类引用，autoload 环境无法引用 safe_values.gd）
