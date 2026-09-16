@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync, utimesSync } from 'fs';
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
-import { resolveBridgePort, normalizeProjectKey, machineRegistryInstancesDir, _markPortFailed, _isPortFailed, resetBridgeState } from '../src/tools/game-bridge.js';
+import { resolveBridgePort, normalizeProjectKey, machineRegistryInstancesDir, _markPortFailed, _isPortFailed, liveHeartbeatPortsFor, resetBridgeState } from '../src/tools/game-bridge.js';
 
 let registryDir: string;
 
@@ -243,5 +243,39 @@ describe('A3: 失败端口记忆与降级', () => {
     expect(_isPortFailed(9082)).toBe(true);
     resetBridgeState();
     expect(_isPortFailed(9082)).toBe(false);
+  });
+});
+
+// ── A4 直测 (2026-09-16 反馈批,审查 B-1 修复): liveHeartbeatPortsFor 判活集合 ──
+// ── 位置契约:与 resolveBridgePort 同源 machine registry(勿读 {project}/.godot/      ──
+// ── mcp-instances——GD 的 project-level 心跳在 user:// 不可达,B-1 首版教训)。       ──
+describe('A4: liveHeartbeatPortsFor(clean_stale_secrets 判活集合)', () => {
+  const proj = join(tmpdir(), 'proj-clean');
+
+  it('projectPath 匹配的新鲜心跳 → 端口入集合', () => {
+    writeEntry('111_1.json', proj, 9081);
+    writeEntry('222_2.json', proj, 9084);
+    const ports = liveHeartbeatPortsFor(proj, registryDir);
+    expect(ports.has(9081)).toBe(true);
+    expect(ports.has(9084)).toBe(true);
+    expect(ports.size).toBe(2);
+  });
+
+  it('projectPath 不匹配(另一项目)→ 不入集合(判活按项目隔离)', () => {
+    writeEntry('111_1.json', join(tmpdir(), 'proj-other'), 9082);
+    expect(liveHeartbeatPortsFor(proj, registryDir).size).toBe(0);
+  });
+
+  it('超龄心跳(>5min)与 server 自注册条目 → 不入集合(与 resolveBridgePort 同过滤)', () => {
+    writeEntry('111_1.json', proj, 9082, 6 * 60 * 1000);  // 超龄
+    writeFileSync(join(registryDir, 'server-x.json'), JSON.stringify({
+      id: 'server-x', projectPath: proj, port: 9090, lastSeen: localIso(0),
+      capabilities: ['ts-http-receiver'],
+    }), 'utf-8');
+    expect(liveHeartbeatPortsFor(proj, registryDir).size).toBe(0);
+  });
+
+  it('registry 目录不存在 → 空集(调用方按无法判活保守处理,P 空拒清)', () => {
+    expect(liveHeartbeatPortsFor(proj, join(registryDir, 'no-such-dir')).size).toBe(0);
   });
 });

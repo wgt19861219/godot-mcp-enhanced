@@ -108,11 +108,23 @@ describe('A2: game_bridge_install 内容比对守卫', () => {
 
   // ── A4 (2026-09-16 反馈批): clean_stale_secrets 陈旧 secret 清理入口 ──────────
   // 多实例端口避让后死实例的 mcp_bridge_*.secret 残留误导端口解析与 auth(09-03/09-06 反馈)。
-  // 判活依据=项目级 registry 新鲜心跳;P 为空拒绝清理(防误删不写心跳的旧版活实例)。
+  // 判活依据=machine registry 按项目过滤的新鲜心跳(审查 B-1 修复:首版误读
+  // {project}/.godot/mcp-instances——GD 的 project-level 心跳在 user:// 不可达,判活恒空);
+  // P 为空拒绝清理(防误删不写心跳的旧版活实例)。测试经 GODOT_MCP_BRIDGE_REGISTRY_DIR
+  // 把 machine registry 重定向到 tmp(不碰真实 ~/.godot-mcp)。
+  let machineRegistryDir: string;
+
+  beforeEach(() => {
+    machineRegistryDir = join(tmpRoot, 'machine-registry');
+    mkdirSync(machineRegistryDir, { recursive: true });
+    process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = machineRegistryDir;
+  });
+  afterEach(() => {
+    delete process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+  });
+
   function writeHeartbeat(port: number, ageMs: number): void {
-    const regDir = join(projectDir, '.godot', 'mcp-instances');
-    mkdirSync(regDir, { recursive: true });
-    writeFileSync(join(regDir, `inst_${port}.json`), JSON.stringify({
+    writeFileSync(join(machineRegistryDir, `inst_${port}.json`), JSON.stringify({
       id: `inst_${port}`, projectPath: projectDir, port,
       lastSeen: new Date(Date.now() - ageMs).toISOString(),
       capabilities: ['registry-heartbeat'],

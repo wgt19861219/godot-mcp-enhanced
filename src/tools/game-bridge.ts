@@ -33,7 +33,7 @@ import {
   invalidateBridgeSecret,
   invalidateBridgeConnection,
   registerBridgePushHandler,
-  BRIDGE_REGISTRY_MAX_AGE_MS,
+  liveHeartbeatPortsFor,
   type BridgeResponse,
   setBridgeProjectDir,
   sendToBridge,
@@ -63,34 +63,7 @@ export {
   sendToBridge,
   type BridgeResponse,
 };
-export { machineRegistryInstancesDir, normalizeProjectKey, setOnBridgeConnected, _markPortFailed, _isPortFailed } from '../core/bridge-client.js';
-
-/** A4 (2026-09-16 反馈批): 读项目级实例 registry({project}/.godot/mcp-instances/),
- * 返回新鲜心跳(≤BRIDGE_REGISTRY_MAX_AGE_MS,与 resolveBridgePort 同窗口)的端口集合。
- * 判活依据=bridge 实例自身心跳(capabilities 含 registry-heartbeat 过滤 server 自注册条目),
- * GD 侧 _start_registry_heartbeat 30s 双写 machine/project 两级,c18c6183 起所有带心跳的
- * 版本都写 project-level。registry 不可读/全损坏 → 空集(调用方按"无法判活"保守处理)。 */
-function liveHeartbeatPorts(projectPath: string): Set<number> {
-  const ports = new Set<number>();
-  try {
-    const dir = join(projectPath, '.godot', 'mcp-instances');
-    const now = Date.now();
-    for (const name of readdirSync(dir)) {
-      if (!name.endsWith('.json')) continue;
-      try {
-        const entry = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as {
-          port?: unknown; lastSeen?: unknown; capabilities?: unknown;
-        };
-        if (typeof entry.port !== 'number') continue;
-        if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
-        const lastSeen = typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
-        if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
-        ports.add(entry.port);
-      } catch { /* 损坏条目容错跳过 */ }
-    }
-  } catch { /* registry 目录不可读 → 空集(调用方按无法判活保守处理) */ }
-  return ports;
-}
+export { machineRegistryInstancesDir, normalizeProjectKey, setOnBridgeConnected, _markPortFailed, _isPortFailed, liveHeartbeatPortsFor } from '../core/bridge-client.js';
 
 // ─── A2 (2026-09-16 反馈批): bridge 版本指纹比对 ─────────────────────────────
 // GD 侧 mcp_bridge.gd 顶部 BRIDGE_SCRIPT_VERSION 常量(与 package.json version 同步,
@@ -610,9 +583,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
         // A4 (2026-09-16 反馈批): 陈旧 secret 检测/清理入口 —— 多实例端口避让后死实例的
         // mcp_bridge_*.secret 残留会误导端口解析(mtime 语义)与 auth(连错/删错)。判活依据 =
-        // 项目级实例 registry({project}/.godot/mcp-instances/)新鲜心跳端口;无任何新鲜心跳时
-        // 拒绝清理(防误删仍存活但不写心跳的旧版 GD 实例)。默认只检测列出,clean_stale_secrets
-        // 才删。
+        // machine registry 按项目过滤的新鲜心跳(liveHeartbeatPortsFor,与 resolveBridgePort
+        // 同源位置;审查 B-1 修复:勿读 {project}/.godot/mcp-instances——GD 的 project-level
+        // 心跳在 user:// 不可达);无任何新鲜心跳时拒绝清理(防误删仍存活但不写心跳的旧版 GD
+        // 实例)。默认只检测列出,clean_stale_secrets 才删。
         let secretCleanupNote = '';
         {
           const godotDir = join(projectPath, '.godot');
@@ -623,7 +597,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             }
           } catch { /* .godot 不存在(未跑过游戏)→ 无残留可处理 */ }
           if (secretFiles.length > 0) {
-            const livePorts = liveHeartbeatPorts(projectPath);
+            // A4 判活:machine registry(与 resolveBridgePort 同源位置;审查 B-1 修复——
+            // 勿读 {project}/.godot/mcp-instances,GD 的 project-level 心跳在 user:// 不可达)
+            const livePorts = liveHeartbeatPortsFor(projectPath);
             if (args.clean_stale_secrets === true) {
               if (livePorts.size === 0) {
                 secretCleanupNote = ` stale secret cleanup skipped: no fresh registry heartbeat (cannot prove which instances are live — game not running, or old GD without heartbeat). Start the game once (new GD writes heartbeats) then retry, or delete .godot/mcp_bridge_*.secret manually when no game is running.`;
@@ -636,7 +612,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                   }
                 }
                 secretCleanupNote = deleted.length > 0
-                  ? ` stale secrets deleted: ${deleted.join(', ')} (live heartbeat ports: ${[...livePorts].join('/')}).`
+                  ? ` stale secrets deleted: ${deleted.join(', ')} (live heartbeat ports: ${[...livePorts].join('/')}; note: an old-GD instance without heartbeats keeps no secret file after this — its in-memory auth still works, but TS-side reconnect to it would need a re-run).`
                   : ` no stale secrets (all match live heartbeat ports ${[...livePorts].join('/')}).`;
               }
             } else if (livePorts.size > 0) {
