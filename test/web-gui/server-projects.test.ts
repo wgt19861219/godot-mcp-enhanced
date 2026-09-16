@@ -540,4 +540,18 @@ describe('WebGuiServer 项目目录入口页(2026-09-16 项目入口批)', () =>
     await new Promise(r => setTimeout(r, 200));
     expect(existsSync(join(notProj, '面板入口.html'))).toBe(false);
   });
+
+  it('start 后为包根(packageRootDir 注入)无条件写 面板入口.html(仓库根入口,2026-09-16 用户裁决)', async () => {
+    const pkgRoot = await mkdtemp(join(tmpdir(), 'web-gui-pkgroot-'));   // 注入隔离,不写真实仓库根
+    try {
+      const t = await startSrv({ packageRootDir: pkgRoot }); active = t.srv;   // 不注入 projects → 包根路径独立可验
+      for (let i = 0; i < 100 && !existsSync(join(pkgRoot, '面板入口.html')); i++) {
+        await new Promise(r => setTimeout(r, 20));
+      }
+      expect(existsSync(join(pkgRoot, '面板入口.html'))).toBe(true);
+      expect(readFileSync(join(pkgRoot, '面板入口.html'), 'utf-8')).toContain('9550');
+    } finally {
+      await rm(pkgRoot, { recursive: true, force: true });
+    }
+  });
 });

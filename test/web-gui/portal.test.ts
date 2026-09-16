@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ensurePortalPage, ensureProjectPortalEntry } from '../../src/web-gui/portal.js';
+import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from '../../src/web-gui/portal.js';
 import { writeRegistration } from '../../src/web-gui/registry.js';
 
 describe('file:// 入口页 portal.html(2026-09-16 入口简化批)', () => {
@@ -61,5 +61,11 @@ describe('项目目录入口页 面板入口.html(2026-09-16 项目入口批)', 
     const p2 = ensureProjectPortalEntry(dir);
     expect(p1).toBe(p2);
     expect(readFileSync(p1!, 'utf-8')).toBe(readFileSync(p2!, 'utf-8'));
+  });
+
+  it('包根入口 ensurePackageRootEntry:无 project.godot 也无条件写(用户裁决:入口放仓库根)', () => {
+    const p = ensurePackageRootEntry(dir);   // tmp 目录无 project.godot,照样写入
+    expect(p).toBe(join(dir, '面板入口.html'));
+    expect(readFileSync(p, 'utf-8')).toContain('9550');
   });
 });

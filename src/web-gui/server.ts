@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
-import { ensurePortalPage, ensureProjectPortalEntry } from './portal.js';
+import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -42,6 +42,9 @@ export interface WebGuiServerOptions {
   token?: string;
   /** 登记目录注入(测试隔离);缺省 ~/.godot-mcp/web-gui/(registry.js 默认) */
   registryDir?: string;
+  /** server 包根目录注入(测试隔离,2026-09-16 项目入口批);缺省从本模块位置向上三级
+   *  推导(build/web-gui/ 或 src/web-gui/ 的上两级 = 包根/仓库根)——入口页落包根用。 */
+  packageRootDir?: string;
   /** 资源工作台(spec 2026-09-15 §4):文件五方法注入;缺席 → files 端点 503。 */
   files?: FilesApi;
   /** 静态资产目录注入(测试隔离);缺省 build/web-gui/assets/(构造器定 assetsRoot)。 */
@@ -131,6 +134,8 @@ export class WebGuiServer {
   private scanProgressLastPush = 0;
   // assets 根目录(spec §4):构造器定(注入优先,缺省本模块同目录 assets/,与 index.ts 同法取 __dirname)
   private readonly assetsRoot: string;
+  // 包根目录(项目入口批 2026-09-16):入口页落包根(开发模式=仓库根,npm 模式=包安装目录)
+  private readonly packageRoot: string;
 
   constructor(opts: WebGuiServerOptions) {
     this.opts = opts;
@@ -138,6 +143,8 @@ export class WebGuiServer {
     // → cookie 持续有效,前端可跨实例自愈;显式注入优先(测试确定性)。
     this.token = opts.token ?? getOrCreateSharedToken(opts.registryDir ? { dir: opts.registryDir } : {});
     this.assetsRoot = opts.assetsDir ?? join(dirname(fileURLToPath(import.meta.url)), 'assets');
+    // build/web-gui/server.js → 上两级 = 包根(src/web-gui/ 直跑同理,vitest 亦然)
+    this.packageRoot = opts.packageRootDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   }
 
   get port(): number {
@@ -812,9 +819,11 @@ export class WebGuiServer {
     }
   }
 
-  /** 为 CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
-   *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。 */
+  /** 为包根、CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
+   *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
+   *  包根无条件写(自己的地盘);CWD/登记项目走 project.godot 护栏。 */
   private refreshProjectEntries(): void {
+    try { ensurePackageRootEntry(this.packageRoot); } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {
       if (list) for (const p of list) dirs.add(p.path);

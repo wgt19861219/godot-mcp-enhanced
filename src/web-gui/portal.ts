@@ -94,3 +94,12 @@ export function ensureProjectPortalEntry(dir: string): string | null {
   writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
   return filePath;
 }
+
+/** 幂等写入口页到 server 包根目录(2026-09-16 用户裁决:入口放本仓库根目录)。
+ * 包根是自己的地盘,无 project.godot 护栏,无条件写——开发模式即仓库根,
+ * npm 安装模式为 node_modules/godot-mcp-enhanced/(无害)。 */
+export function ensurePackageRootEntry(root: string): string {
+  const filePath = join(root, PROJECT_ENTRY_NAME);
+  writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
+  return filePath;
+}
