@@ -28,7 +28,8 @@ export function webGuiRegistryDir(): string {
   return join(homedir(), '.godot-mcp', 'web-gui');
 }
 
-const SHARED_TOKEN_RE = /^[A-Za-z0-9_-]{32,}$/;
+/** 共享 token 形状(导出复用:portal.ts 内嵌前同款校验,单一校验来源)。 */
+export const SHARED_TOKEN_RE = /^[A-Za-z0-9_-]{32,}$/;
 
 /**
  * 共享持久 token(2026-09-16 入口简化批):registry 目录一份 token.txt,首实例生成后续复用。

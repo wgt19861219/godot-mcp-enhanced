@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
-import { ensurePortalPage } from './portal.js';
+import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -42,6 +42,9 @@ export interface WebGuiServerOptions {
   token?: string;
   /** 登记目录注入(测试隔离);缺省 ~/.godot-mcp/web-gui/(registry.js 默认) */
   registryDir?: string;
+  /** server 包根目录注入(测试隔离,2026-09-16 项目入口批);缺省从本模块位置向上三级
+   *  推导(build/web-gui/ 或 src/web-gui/ 的上两级 = 包根/仓库根)——入口页落包根用。 */
+  packageRootDir?: string;
   /** 资源工作台(spec 2026-09-15 §4):文件五方法注入;缺席 → files 端点 503。 */
   files?: FilesApi;
   /** 静态资产目录注入(测试隔离);缺省 build/web-gui/assets/(构造器定 assetsRoot)。 */
@@ -131,6 +134,8 @@ export class WebGuiServer {
   private scanProgressLastPush = 0;
   // assets 根目录(spec §4):构造器定(注入优先,缺省本模块同目录 assets/,与 index.ts 同法取 __dirname)
   private readonly assetsRoot: string;
+  // 包根目录(项目入口批 2026-09-16):入口页落包根(开发模式=仓库根,npm 模式=包安装目录)
+  private readonly packageRoot: string;
 
   constructor(opts: WebGuiServerOptions) {
     this.opts = opts;
@@ -138,6 +143,8 @@ export class WebGuiServer {
     // → cookie 持续有效,前端可跨实例自愈;显式注入优先(测试确定性)。
     this.token = opts.token ?? getOrCreateSharedToken(opts.registryDir ? { dir: opts.registryDir } : {});
     this.assetsRoot = opts.assetsDir ?? join(dirname(fileURLToPath(import.meta.url)), 'assets');
+    // build/web-gui/server.js → 上两级 = 包根(src/web-gui/ 直跑同理,vitest 亦然)
+    this.packageRoot = opts.packageRootDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   }
 
   get port(): number {
@@ -171,6 +178,9 @@ export class WebGuiServer {
     // file:// 入口页幂等落盘(2026-09-16):server 启动即确保 portal.html 存在,
     // 用户的 file:/// 书签永远有一个能响应的本地入口(扫描跳转活实例)。
     try { ensurePortalPage(this.opts.registryDir); } catch { /* 入口页失败不影响服务 */ }
+    // 项目目录入口页(2026-09-16 项目入口批):登记项目 + CWD(若为 Godot 项目)各放一份
+    // 「面板入口.html」——registry 深路径难找的真机反馈,入口放用户天天开的项目文件夹。
+    this.refreshProjectEntries();
     getLogger().info('web-gui', `Web GUI listening on http://127.0.0.1:${this.portValue}/ (pid ${process.pid})`);
     this.startDataStream();
     // log 增量帧:500ms 聚合(设计 §3.3.3;pollIntervalMs 硬下限 500 见 CHECK_DEBOUNCE_MS)。
@@ -433,7 +443,11 @@ export class WebGuiServer {
         // store 的互斥/UNRESTRICTED 决策在调用时同步作出(spec §3.1.1-1);
         // 完成事件经 then 回调后台推送;下方 0-tick 探针只取"是否已启动"决策。
         const settled = p.scan((found, scanned) => this.onScanProgress(found, scanned)).then(
-          (r) => { if (r.started) void this.pushScanDone(r.added ?? 0); return r; },
+          (r) => {
+            if (r.started) void this.pushScanDone(r.added ?? 0);
+            this.refreshProjectEntries();   // 扫描新增项目后放入口页(项目入口批 2026-09-16)
+            return r;
+          },
           (err: unknown) => {
             getLogger().warn('web-gui', `projects scan failed: ${err instanceof Error ? err.message : err}`);
             this.broadcastProjectsEvent({ scanning: false, failed: true });   // 兜底解卡前端扫描态(F-1:failed 标记供前端区分失败与完成)
@@ -476,6 +490,7 @@ export class WebGuiServer {
         if (r.ok) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=200`);
           await this.broadcastProjects();
+          this.refreshProjectEntries();   // 新项目目录放入口页(项目入口批 2026-09-16)
           return json(200, { ok: true });
         }
         if (r.reason === 'not_a_project') {
@@ -802,6 +817,22 @@ export class WebGuiServer {
       getLogger().warn('web-gui', `projects list failed: ${err instanceof Error ? err.message : err}`);
       return null;
     }
+  }
+
+  /** 为包根、CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
+   *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
+   *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。 */
+  private refreshProjectEntries(): void {
+    try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
+    const dirs = new Set<string>([process.cwd()]);
+    void this.safeProjectsList().then((list) => {
+      if (list) for (const p of list) dirs.add(p.path);
+      let written = 0;
+      for (const dir of dirs) {
+        try { if (ensureProjectPortalEntry(dir)) written++; } catch { /* 单目录失败不影响其余 */ }
+      }
+      if (written > 0) getLogger().info('web-gui', `project portal entries refreshed: ${written}`);
+    }).catch(() => { /* 刷新失败不影响服务 */ });
   }
 
   private broadcastProjectsEvent(data: unknown): void {
