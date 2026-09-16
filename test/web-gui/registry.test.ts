@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations } from '../../src/web-gui/registry.js';
+import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken } from '../../src/web-gui/registry.js';
 
 const ALIVE = () => true;
 const DEAD = () => false;
@@ -70,5 +70,34 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
 
   it('sweepStaleRegistrations:目录不存在返回 0 不抛', async () => {
     expect(await sweepStaleRegistrations({ dir: join(dir, 'no-such'), isPidAlive: DEAD })).toBe(0);
+  });
+
+  // ── 共享持久 token(2026-09-16 入口简化批:cookie 跨实例/跨重启持续有效的前提) ──
+  it('getOrCreateSharedToken:首调生成,再调复用同值;目录递归建', () => {
+    const d = join(dir, 'tok-sub');
+    const t1 = getOrCreateSharedToken({ dir: d });
+    expect(t1).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(t1.length).toBeGreaterThanOrEqual(32);
+    expect(existsSync(join(d, 'token.txt'))).toBe(true);
+    expect(getOrCreateSharedToken({ dir: d })).toBe(t1);
+  });
+
+  it('getOrCreateSharedToken:两个实例(同目录)拿到同一 token', () => {
+    const t1 = getOrCreateSharedToken({ dir });
+    const t2 = getOrCreateSharedToken({ dir });
+    expect(t1).toBe(t2);
+  });
+
+  it.skipIf(process.platform === 'win32')('共享 token 文件权限 0o600(Linux/macOS)', () => {
+    getOrCreateSharedToken({ dir });
+    const mode = statSync(join(dir, 'token.txt')).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('getOrCreateSharedToken:损坏 token.txt(非法字符集)重新生成', () => {
+    writeFileSync(join(dir, 'token.txt'), 'bad token with spaces!!', 'utf-8');
+    const t = getOrCreateSharedToken({ dir });
+    expect(t).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(t).not.toBe('bad token with spaces!!');
   });
 });

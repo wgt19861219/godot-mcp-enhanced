@@ -8,7 +8,7 @@
 // GodotServer 层 env 门(GODOT_MCP_WEB_GUI='0' 不构造)在 env-gate.test.ts(vi.mock server.js)。
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -23,11 +23,14 @@ describe('dashboard --web(设计 §6)', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'webgui-open-')); mkdirSync(dir, { recursive: true }); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it('零个活 server:打印提示,返回非 0', async () => {
+  it('零个活 server:打印提示,返回非 0,并打开 file:// 入口页(2026-09-16 行为变更)', async () => {
     const urls: string[] = [];
     const code = await openWebDashboard({ opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE });
     expect(code).not.toBe(0);
-    expect(urls).toHaveLength(0);
+    // 新行为:零实例时打开本地入口页(portal.html 扫描跳转页),不再是纯文字提示
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toMatch(/^file:\/\/\/.*portal\.html$/);
+    expect(existsSync(join(dir, 'portal.html'))).toBe(true);
   });
 
   it('单个:opener 收到带 token 的 URL', async () => {

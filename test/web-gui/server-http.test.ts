@@ -266,4 +266,28 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     const del = await fetch(`${t.base}/api/sessions`, { method: 'DELETE', headers: { 'x-gui-token': t.token } });
     expect(del.status).toBe(405);
   });
+
+  // ── 入口简化+自愈批(2026-09-16,用户确认):共享 token + /api/health 探测 ──────
+  it('共享持久 token:同 registryDir 两实例 token 相同;显式注入 token 仍优先', async () => {
+    const a = new WebGuiServer({ getSessions: () => FAKE_SESSIONS, getIndexHtml: () => FAKE_HTML, portStart: 0, registryDir });
+    const b = new WebGuiServer({ getSessions: () => FAKE_SESSIONS, getIndexHtml: () => FAKE_HTML, portStart: 0, registryDir });
+    expect(a.token).toBe(b.token);
+    expect(a.token).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+    const c = new WebGuiServer({ getSessions: () => FAKE_SESSIONS, getIndexHtml: () => FAKE_HTML, portStart: 0, registryDir, token: 'explicit-tok-0123456789abcdef012345' });
+    expect(c.token).toBe('explicit-tok-0123456789abcdef012345');
+  });
+
+  it('/api/health:无 token 200 + CORS * + {ok,port,startedAt} 无 pid/token 字段 + no-store', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const r = await fetch(`${t.base}/api/health`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('cache-control')).toBe('no-store');
+    const body = await r.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.port).toBe(t.srv.port);
+    expect(typeof body.startedAt).toBe('string');
+    expect('pid' in body).toBe(false);
+    expect('token' in body).toBe(false);
+  });
 });

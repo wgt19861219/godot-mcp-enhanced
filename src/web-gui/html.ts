@@ -131,7 +131,7 @@ export const INDEX_HTML: string = `<!doctype html>
   if (token) { fetch('/api/auth?token=' + encodeURIComponent(token)).catch(function () { /* 握手失败不阻塞:query 通道兜底 */ }); }
   var $ = function (id) { return document.getElementById(id); };
   var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set(), readOnly: false };
-  var stopped = false;
+  var stopped = false;   // 401 凭据失效后停 SSE 死循环(M-2 语义,2026-09-16 保留)
   // 文件浏览状态(spec §6.1,Task 5 消费):当前项目/当前子目录/当前目录条目快照。
   var filesState = { project: null, sub: '', entries: [] };
   // 编辑视图状态(spec §6.3,Task 5):固定对象只改字段、从不重建——CM change 回调
@@ -961,6 +961,49 @@ export const INDEX_HTML: string = `<!doctype html>
   });
 
   var es = new EventSource('/events?token=' + encodeURIComponent(token));
+  // 自愈(2026-09-16 入口简化批):onopen 时间戳 + 持续失联/401 都进 recoverPanel
+  // (扫端口段找活实例迁移,不再躺平等死);共享持久 token 保证 cookie 跨实例有效。
+  var lastOpenAt = Date.now();
+  var recovering = false;
+  es.onopen = function () { lastOpenAt = Date.now(); recovering = false; };
+  function recoverPanel() {
+    if (recovering) return;
+    recovering = true;
+    $('statusBar').textContent = '连接中断,正在寻找可用面板实例…';
+    var probes = [];
+    for (var p = 9550; p <= 9569; p++) probes.push(probeHealth(p));
+    Promise.all(probes).then(function (alive) {
+      var here = Number(location.port) || 80;
+      // 环防护(真机实测教训):sessionStorage 记录已迁移过的端口,跳过的实例再跳回=乒乓死循环
+      var visited = {};
+      try { visited = JSON.parse(sessionStorage.getItem('gui-visited') || '{}'); } catch (e) { visited = {}; }
+      visited[here] = 1;
+      var pick = -1;
+      for (var i = 0; i < alive.length; i++) { if (alive[i] >= 0 && alive[i] !== here && !visited[alive[i]]) { pick = alive[i]; break; } }
+      if (pick >= 0) {
+        visited[pick] = 1;
+        try { sessionStorage.setItem('gui-visited', JSON.stringify(visited)); } catch (e) { /* 私有模式忽略 */ }
+        location.replace('http://127.0.0.1:' + pick + '/'); return;   // 迁移:cookie 随导航带
+      }
+      showDeadPanel();                                               // 无未访问活实例:友好指引
+    });
+  }
+  function probeHealth(port) {
+    return new Promise(function (resolve) {
+      var ctl = new AbortController();
+      var timer = setTimeout(function () { ctl.abort(); resolve(-1); }, 2000);
+      fetch('http://127.0.0.1:' + port + '/api/health', { signal: ctl.signal }).then(function (r) {
+        clearTimeout(timer);
+        resolve(r.ok ? port : -1);
+      }).catch(function () { clearTimeout(timer); resolve(-1); });
+    });
+  }
+  function showDeadPanel() {
+    $('statusBar').textContent = '面板服务已全部停止';
+    var w = $('warn'); w.style.display = 'block';
+    w.textContent = '面板服务已全部停止——服务重启后刷新本页即可自动恢复;或运行 npx godot-mcp-enhanced dashboard --web 重新打开';
+    recovering = false;
+  }
   es.addEventListener('hello', function (ev) { $('warn').style.display = 'none'; resetAll(JSON.parse(ev.data)); });
   es.addEventListener('log', function (ev) { pushLogs(JSON.parse(ev.data).entries || []); });
   es.addEventListener('sessions', function (ev) { state.sessions = JSON.parse(ev.data); renderSessions(); refreshRunningBadges(); });
@@ -977,13 +1020,17 @@ export const INDEX_HTML: string = `<!doctype html>
   });
   es.onerror = function () {
     $('statusBar').textContent = '连接中断,重连中…';
-    // token 失效(server 重启端口复用)探测:401 时停 EventSource 防死循环(设计 M-2)
-    if (stopped) return;
+    // 持续失联 >10s(无 onopen):实例大概率已死,不再等自动重连,进自愈扫描(2026-09-16)
+    if (Date.now() - lastOpenAt > 10000) { es.close(); recoverPanel(); return; }
+    // 凭据失效(401/403)躺平提示(对齐 M-2 语义,真机实测教训):此场景实例活着但浏览器
+    // 无有效凭据——迁移到别的实例同样 401,只会乒乓死循环;恢复指引用户重新打开。
+    // (共享持久 token 下 401 基本只剩 cookie 被清/换浏览器场景)
     authFetch('/api/stats').then(function (r) {
       if (r.status === 401 || r.status === 403) {
         stopped = true; es.close();
-        $('statusBar').textContent = '面板已失效(server 已重启),请重新运行 dashboard --web';
-        $('warn').style.display = 'block'; $('warn').textContent = '会话凭证已失效,请重新打开面板';
+        $('statusBar').textContent = '面板凭证已失效,请重新打开';
+        var w = $('warn'); w.style.display = 'block';
+        w.textContent = '会话凭证已失效——请重新运行 npx godot-mcp-enhanced dashboard --web 打开面板';
       }
     }).catch(function () { /* 网络瞬断,EventSource 自动重连 */ });
   };

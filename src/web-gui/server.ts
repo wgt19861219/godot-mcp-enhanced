@@ -11,7 +11,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
-import { removeRegistration, writeRegistration, sweepStaleRegistrations } from './registry.js';
+import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
+import { ensurePortalPage } from './portal.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -80,6 +81,20 @@ interface StatsSnapshot extends ProjectStatsSnapshot {
 const DEFAULT_PORT_START = 9550;
 const PORT_ATTEMPTS = 20;
 
+/**
+ * 面板主文档 CSP(导出供测试精确断言)。
+ * connect-src 除 'self' 外加 9550-9569 端口段(2026-09-16 入口简化批):前端自愈探测
+ * 跨端口 fetch /api/health——CSP 源表达式 'self' 含端口,跨端口即跨源被拦(真机实测)。
+ * 端口段与 html.ts recoverPanel 的扫描范围(9550..9569)一一对应,改动须两处同步;
+ * 127.0.0.1 与 localhost 双 host 都放(用户书签可能用任一形态)。
+ */
+export const WEB_GUI_CSP: string =
+  "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; "
+  + "img-src 'self'; media-src 'self'; connect-src 'self'"
+  + Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i)
+    .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
+    .join('');
+
 // assets 固定清单(spec §4/I-2):白名单枚举而非目录扫描——含路径分隔符/编码(如
 // ..%2F)或不在清单的名字天然 404,无目录穿越面。Task 4 前端资源(Checkbox 任务书 §4)。
 const ASSET_FILES: ReadonlySet<string> = new Set([
@@ -103,6 +118,8 @@ export class WebGuiServer {
   private readonly opts: WebGuiServerOptions;
   private httpServer: Server | null = null;
   private portValue = 0;
+  // /api/health 响应用(2026-09-16 入口简化批);start() 时定格
+  private startedAtIso = '';
   // ─── SSE + 日志数据流(设计 §3.3,Task 7) ───────────────────────────────────
   private sseClients = new Set<ServerResponse>();
   private reader: LogReader | null = null;
@@ -118,7 +135,9 @@ export class WebGuiServer {
 
   constructor(opts: WebGuiServerOptions) {
     this.opts = opts;
-    this.token = opts.token ?? randomBytes(24).toString('hex');
+    // 共享持久 token(2026-09-16 入口简化批):同 registry 目录一份,重启/多实例不变
+    // → cookie 持续有效,前端可跨实例自愈;显式注入优先(测试确定性)。
+    this.token = opts.token ?? getOrCreateSharedToken(opts.registryDir ? { dir: opts.registryDir } : {});
     this.assetsRoot = opts.assetsDir ?? join(dirname(fileURLToPath(import.meta.url)), 'assets');
   }
 
@@ -145,10 +164,14 @@ export class WebGuiServer {
     this.httpServer.unref();
     _active = true;
     const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
-    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: new Date().toISOString() }, regOpts);
+    this.startedAtIso = new Date().toISOString();
+    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso }, regOpts);
     // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
     // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
     void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
+    // file:// 入口页幂等落盘(2026-09-16):server 启动即确保 portal.html 存在,
+    // 用户的 file:/// 书签永远有一个能响应的本地入口(扫描跳转活实例)。
+    try { ensurePortalPage(this.opts.registryDir); } catch { /* 入口页失败不影响服务 */ }
     getLogger().info('web-gui', `Web GUI listening on http://127.0.0.1:${this.portValue}/ (pid ${process.pid})`);
     this.startDataStream();
     // log 增量帧:500ms 聚合(设计 §3.3.3;pollIntervalMs 硬下限 500 见 CHECK_DEBOUNCE_MS)。
@@ -245,6 +268,19 @@ export class WebGuiServer {
         return;
       }
       if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+      // /api/health 无鉴权探测端点(2026-09-16 入口简化批):前端自愈扫描端口段用。
+      // 响应只报 {ok,port,startedAt}——无 pid/token 等敏感字段;CORS * 供跨端口探测读
+      // (端口不同即跨源,需 ACAO 才能读到响应;信息面=活着+端口,泄露无害)。
+      if (url.pathname === '/api/health') {
+        res.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'cache-control': 'no-store',
+          'access-control-allow-origin': '*',
+          'x-content-type-options': 'nosniff',
+        });
+        res.end(JSON.stringify({ ok: true, port: this.portValue, startedAt: this.startedAtIso }));
+        return;
+      }
       if (url.pathname === '/') {
         // 静态 HTML 无 token 要求(本体不含 token;token 经 CLI 打开的 URL query 进入)
         // no-store(2026-09-15):防浏览器缓存旧 HTML——面板是单文件应用,每次取新无成本;
@@ -256,7 +292,10 @@ export class WebGuiServer {
           // CSP 放宽(spec §5.2,资源工作台批):script/style 加 'self'(CodeMirror 资产经
           // /assets 同源载入)+ img/media 'self'(预览 png/svg/音频)。default-src 'none'
           // 底座不动,新增面全部限定 self。
-          'content-security-policy': "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self'; media-src 'self'; connect-src 'self'",
+          // connect-src 端口段(2026-09-16 入口简化批):自愈探测需跨端口 fetch /api/health
+          // (CSP 的 'self' 含端口,跨端口即跨源被拦——真机实测)。端口段与前端 recoverPanel
+          // 扫描范围(9550-9569)一一对应;127.0.0.1 与 localhost 双 host 都放。
+          'content-security-policy': WEB_GUI_CSP,
         });
         res.end(this.opts.getIndexHtml());
         return;
