@@ -11,7 +11,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
-import { ensurePortalPage } from './portal.js';
+import { ensurePortalPage, ensureProjectPortalEntry } from './portal.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -171,6 +171,9 @@ export class WebGuiServer {
     // file:// 入口页幂等落盘(2026-09-16):server 启动即确保 portal.html 存在,
     // 用户的 file:/// 书签永远有一个能响应的本地入口(扫描跳转活实例)。
     try { ensurePortalPage(this.opts.registryDir); } catch { /* 入口页失败不影响服务 */ }
+    // 项目目录入口页(2026-09-16 项目入口批):登记项目 + CWD(若为 Godot 项目)各放一份
+    // 「面板入口.html」——registry 深路径难找的真机反馈,入口放用户天天开的项目文件夹。
+    this.refreshProjectEntries();
     getLogger().info('web-gui', `Web GUI listening on http://127.0.0.1:${this.portValue}/ (pid ${process.pid})`);
     this.startDataStream();
     // log 增量帧:500ms 聚合(设计 §3.3.3;pollIntervalMs 硬下限 500 见 CHECK_DEBOUNCE_MS)。
@@ -433,7 +436,11 @@ export class WebGuiServer {
         // store 的互斥/UNRESTRICTED 决策在调用时同步作出(spec §3.1.1-1);
         // 完成事件经 then 回调后台推送;下方 0-tick 探针只取"是否已启动"决策。
         const settled = p.scan((found, scanned) => this.onScanProgress(found, scanned)).then(
-          (r) => { if (r.started) void this.pushScanDone(r.added ?? 0); return r; },
+          (r) => {
+            if (r.started) void this.pushScanDone(r.added ?? 0);
+            this.refreshProjectEntries();   // 扫描新增项目后放入口页(项目入口批 2026-09-16)
+            return r;
+          },
           (err: unknown) => {
             getLogger().warn('web-gui', `projects scan failed: ${err instanceof Error ? err.message : err}`);
             this.broadcastProjectsEvent({ scanning: false, failed: true });   // 兜底解卡前端扫描态(F-1:failed 标记供前端区分失败与完成)
@@ -476,6 +483,7 @@ export class WebGuiServer {
         if (r.ok) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=200`);
           await this.broadcastProjects();
+          this.refreshProjectEntries();   // 新项目目录放入口页(项目入口批 2026-09-16)
           return json(200, { ok: true });
         }
         if (r.reason === 'not_a_project') {
@@ -802,6 +810,20 @@ export class WebGuiServer {
       getLogger().warn('web-gui', `projects list failed: ${err instanceof Error ? err.message : err}`);
       return null;
     }
+  }
+
+  /** 为 CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
+   *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。 */
+  private refreshProjectEntries(): void {
+    const dirs = new Set<string>([process.cwd()]);
+    void this.safeProjectsList().then((list) => {
+      if (list) for (const p of list) dirs.add(p.path);
+      let written = 0;
+      for (const dir of dirs) {
+        try { if (ensureProjectPortalEntry(dir)) written++; } catch { /* 单目录失败不影响其余 */ }
+      }
+      if (written > 0) getLogger().info('web-gui', `project portal entries refreshed: ${written}`);
+    }).catch(() => { /* 刷新失败不影响服务 */ });
   }
 
   private broadcastProjectsEvent(data: unknown): void {

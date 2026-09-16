@@ -6,6 +6,7 @@
 // ALLOWED_PROJECT_PATHS,用后还原(惯例对齐 test/web-gui/env-gate.test.ts)。
 
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
@@ -465,5 +466,78 @@ describe('hello payload projects 字段(spec §5 / v2-M6)', () => {
     expect(hello.event).toBe('hello');
     expect(hello.data.projects).toBeNull();
     await close();
+  });
+});
+
+// ─── 项目目录入口页 面板入口.html(2026-09-16 项目入口批)────────────────────
+// server start 全量刷新 + add 成功后刷新,均为 fire-and-forget → 轮询等落盘。
+
+describe('WebGuiServer 项目目录入口页(2026-09-16 项目入口批)', () => {
+  let registryDir = '';
+  let projDir = '';
+  let active: WebGuiServer | null = null;
+
+  beforeAll(async () => {
+    registryDir = await mkdtemp(join(tmpdir(), 'web-gui-pentry-reg-'));
+    const work = await mkdtemp(join(tmpdir(), 'web-gui-pentry-work-'));
+    projDir = join(work, 'proj');
+    await mkdir(projDir, { recursive: true });
+    await writeFile(join(projDir, 'project.godot'), '; test project\n', 'utf-8');
+  });
+  afterAll(async () => {
+    for (const d of [registryDir, join(projDir, '..')]) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+  afterEach(async () => { if (active) { await active.stop(); active = null; } });
+
+  async function startSrv(hooks: Partial<WebGuiServerOptions> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
+    const srv = new WebGuiServer({
+      getSessions: () => [], getIndexHtml: () => '<html></html>', portStart: 0, registryDir, ...hooks,
+    });
+    await srv.start();
+    return { srv, base: `http://127.0.0.1:${srv.port}`, token: srv.token };
+  }
+
+  async function waitEntryFile(): Promise<boolean> {
+    for (let i = 0; i < 100; i++) {
+      if (existsSync(join(projDir, '面板入口.html'))) return true;
+      await new Promise(r => setTimeout(r, 20));
+    }
+    return existsSync(join(projDir, '面板入口.html'));
+  }
+
+  it('start 后为登记的 Godot 项目目录写入 面板入口.html', async () => {
+    const t = await startSrv({ projects: mockProjects({ list: [{ ...DEMO_VIEW, path: projDir }] }) }); active = t.srv;
+    expect(await waitEntryFile()).toBe(true);
+    expect(readFileSync(join(projDir, '面板入口.html'), 'utf-8')).toContain('9550');
+  });
+
+  it('POST /api/projects/add 成功后新项目目录出现 面板入口.html', async () => {
+    rmSync(join(projDir, '面板入口.html'), { force: true });   // 清上一用例残留,保证"初始未登记"前提
+    let list: ProjectView[] = [];
+    const t = await startSrv({
+      projects: {
+        list: async () => list,
+        scan: async () => ({ started: true, added: 0 }),
+        add: async (p: string) => { list = [{ ...DEMO_VIEW, path: p }]; return { ok: true }; },
+        remove: async () => ({ ok: true }),
+      },
+    }); active = t.srv;
+    expect(existsSync(join(projDir, '面板入口.html'))).toBe(false);   // 初始未登记 → 无入口
+    const res = await fetch(`${t.base}/api/projects/add`, {
+      method: 'POST',
+      headers: { 'x-gui-token': t.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ path: projDir }),
+    });
+    expect(res.status).toBe(200);
+    expect(await waitEntryFile()).toBe(true);
+  });
+
+  it('非 Godot 项目登记(path 无 project.godot)不写入口(护栏)', async () => {
+    const notProj = join(projDir, '..');
+    const t = await startSrv({ projects: mockProjects({ list: [{ ...DEMO_VIEW, path: notProj }] }) }); active = t.srv;
+    await new Promise(r => setTimeout(r, 200));
+    expect(existsSync(join(notProj, '面板入口.html'))).toBe(false);
   });
 });

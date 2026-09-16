@@ -3,8 +3,10 @@
 // 自愈无从谈起。本模块幂等写一个本地 portal.html 到 registry 目录,file:/// 书签永远可用:
 // 页面 JS 扫描 9550-9569(no-cors fetch GET /,连接成功 resolve/失败 reject,兼容新旧 build),
 // 命中活实例自动跳转(共享 token 的 cookie 随导航带),全死显示启动指引。
+// 项目入口批(2026-09-16):同一份 HTML 再落一份「面板入口.html」到各 Godot 项目目录
+// (ensureProjectPortalEntry)——registry 深路径难找,入口放用户天天开的项目文件夹。
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { webGuiRegistryDir } from './registry.js';
 
@@ -75,6 +77,20 @@ export function ensurePortalPage(dir?: string): string {
   const d = dir ?? webGuiRegistryDir();
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const filePath = join(d, 'portal.html');
+  writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
+  return filePath;
+}
+
+/** 项目目录入口文件名(中文,用户在项目文件夹一眼可辨;双击即扫描跳转活实例)。 */
+export const PROJECT_ENTRY_NAME = '面板入口.html';
+
+/** 幂等写入口页到 Godot 项目目录(2026-09-16 项目入口批)。
+ * 动机:registry 深路径(~/.godot-mcp/web-gui/portal.html)真机反馈难找——入口直接放
+ * 项目文件夹,资源管理器双击即用。护栏:dir/project.godot 存在才写,非 Godot 目录
+ * 返回 null 不留文件;内容与 portal.html 同源(同一 PORTAL_HTML)。 */
+export function ensureProjectPortalEntry(dir: string): string | null {
+  if (!existsSync(join(dir, 'project.godot'))) return null;
+  const filePath = join(dir, PROJECT_ENTRY_NAME);
   writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
   return filePath;
 }

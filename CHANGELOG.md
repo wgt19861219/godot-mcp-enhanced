@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
 - Web GUI 面板入口简化与自愈：共享持久 token（registry 目录一份，重启/多实例不变，cookie 持续有效）、`/api/health` 无鉴权探测端点（CORS，仅 ok/port/startedAt）、前端断线自愈（持续失联扫 9550–9569 迁移活实例 + visited 环防护，凭据失效友好指引不乒乓）、connect-src 端口段放宽；书签 `http://127.0.0.1:9550` 即固定入口；另增 file:// 入口页 `~/.godot-mcp/web-gui/portal.html`（server 启动/dashboard CLI 幂等落盘，no-cors 扫描兼容新旧 build，有实例自动跳转、无实例显示启动指引），书签指到它则任何时刻都有响应。
 - Web GUI 资源管理工作台（Plan B）：二进制预览——图片/音频内联播放、其余二进制 hex 三列视图（4KB 采样+截断提示+下载链接）、目录路径 bad_request（M-3）。
+- Web GUI 项目目录入口页：server 启动/项目新增/扫描完成时为 CWD 与全部登记的 Godot 项目目录幂等落一份 `面板入口.html`（内容与 portal.html 同源的扫描跳转页，`project.godot` 存在护栏防向任意目录塞文件）——入口直接放用户项目文件夹，双击即用（registry 深路径 `~/.godot-mcp/web-gui/portal.html` 难找的真机反馈）。
 
 ### Fixed
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
