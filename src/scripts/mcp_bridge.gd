@@ -19,6 +19,10 @@ const LOCKOUT_MAX_SECONDS := 300.0
 const MAX_MESSAGE_SIZE := 1048576  # 1MB
 const MAX_PEERS := 5
 const PROTOCOL_VERSION := "1.0"
+# A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
+# scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
+# 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
+const BRIDGE_SCRIPT_VERSION := "0.33.3"
 const INACTIVITY_TIMEOUT := 60.0
 
 # ─── Instance Registry (Phase 2b) ─────────────────────────────────────────
@@ -871,6 +875,7 @@ func _write_registry_entry() -> void:
 		"pid": OS.get_process_id(),
 		"lastSeen": Time.get_datetime_string_from_system(),
 		"godotVersion": Engine.get_version_info().get("string", "unknown"),
+		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
 		"capabilities": ["registry-heartbeat"],
 	}
 	var json: String = JSON.stringify(entry, "	")
@@ -1221,6 +1226,7 @@ func _cmd_ping() -> Dictionary:
 	return {
 		"pong": true,
 		"version": PROTOCOL_VERSION,
+		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
 		"scene": scene_path,
 		"fps": Engine.get_frames_per_second(),
 		"pid": OS.get_process_id(),

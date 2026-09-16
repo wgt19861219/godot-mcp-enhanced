@@ -33,6 +33,7 @@ import {
   invalidateBridgeSecret,
   invalidateBridgeConnection,
   registerBridgePushHandler,
+  BRIDGE_REGISTRY_MAX_AGE_MS,
   type BridgeResponse,
   setBridgeProjectDir,
   sendToBridge,
@@ -62,7 +63,74 @@ export {
   sendToBridge,
   type BridgeResponse,
 };
-export { machineRegistryInstancesDir, normalizeProjectKey, setOnBridgeConnected } from '../core/bridge-client.js';
+export { machineRegistryInstancesDir, normalizeProjectKey, setOnBridgeConnected, _markPortFailed, _isPortFailed } from '../core/bridge-client.js';
+
+/** A4 (2026-09-16 反馈批): 读项目级实例 registry({project}/.godot/mcp-instances/),
+ * 返回新鲜心跳(≤BRIDGE_REGISTRY_MAX_AGE_MS,与 resolveBridgePort 同窗口)的端口集合。
+ * 判活依据=bridge 实例自身心跳(capabilities 含 registry-heartbeat 过滤 server 自注册条目),
+ * GD 侧 _start_registry_heartbeat 30s 双写 machine/project 两级,c18c6183 起所有带心跳的
+ * 版本都写 project-level。registry 不可读/全损坏 → 空集(调用方按"无法判活"保守处理)。 */
+function liveHeartbeatPorts(projectPath: string): Set<number> {
+  const ports = new Set<number>();
+  try {
+    const dir = join(projectPath, '.godot', 'mcp-instances');
+    const now = Date.now();
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const entry = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as {
+          port?: unknown; lastSeen?: unknown; capabilities?: unknown;
+        };
+        if (typeof entry.port !== 'number') continue;
+        if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
+        const lastSeen = typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
+        if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
+        ports.add(entry.port);
+      } catch { /* 损坏条目容错跳过 */ }
+    }
+  } catch { /* registry 目录不可读 → 空集(调用方按无法判活保守处理) */ }
+  return ports;
+}
+
+// ─── A2 (2026-09-16 反馈批): bridge 版本指纹比对 ─────────────────────────────
+// GD 侧 mcp_bridge.gd 顶部 BRIDGE_SCRIPT_VERSION 常量(与 package.json version 同步,
+// version-sync bridgeGd target 管理)随 ping 响应与 registry entry 回传。TS 侧从 bundled
+// 脚本(opsScript 同目录)提取期望值比对 —— 项目内拷贝旧版未同步(send_drag 五踩 /
+// registry 断链 / button_mask 复踩的共同根源)在 ping 一发内一眼可辨。
+const BRIDGE_SCRIPT_VERSION_RE = /^const BRIDGE_SCRIPT_VERSION := "([^"\r]*)"/m;
+
+/** 从 mcp_bridge.gd 内容提取 BRIDGE_SCRIPT_VERSION(纯函数,单测直测);无匹配返回 null。 */
+export function extractBridgeScriptVersion(content: string): string | null {
+  return BRIDGE_SCRIPT_VERSION_RE.exec(content)?.[1] ?? null;
+}
+
+/** 读 opsScript 同目录的 bundled mcp_bridge.gd 提取版本;缺失/无匹配返回 null。
+ *  ping 是低频显式调用(keepalive 的 ping 走 core 层不经此注解),每次直读几 KB
+ *  文件开销可忽略 —— 刻意不做模块级缓存(defects module-level-mutable-state 防恶化门禁)。 */
+function bundledBridgeVersion(ctx: ToolContext): string | null {
+  try {
+    return extractBridgeScriptVersion(readFileSync(join(dirname(ctx.opsScript), BRIDGE_SCRIPT_NAME), 'utf-8'));
+  } catch { return null; }
+}
+
+/** ping 响应注解(纯函数,单测直测):附加 bundledBridgeVersion,与远端 bridgeVersion 不一致
+ *  时加 versionWarning(旧版项目拷贝的可操作指引)。返回注解后的新对象,不改入参。 */
+export function annotatePingWithVersion(
+  result: Record<string, unknown>,
+  bundled: string | null,
+): Record<string, unknown> {
+  if (!bundled) return result;
+  const annotated: Record<string, unknown> = { ...result, bundledBridgeVersion: bundled };
+  const remote = typeof result.bridgeVersion === 'string'
+    ? result.bridgeVersion
+    : 'unknown (old GD without version fingerprint)';
+  if (remote !== bundled) {
+    annotated.versionWarning =
+      `bridge GD ${remote} != bundled ${bundled} — the project's mcp_bridge.gd is an outdated copy. ` +
+      'Re-run game_bridge_install with force: true and restart the game to sync (new tools like send_drag/send_input_sequence live only in the bundled version).';
+  }
+  return annotated;
+}
 
 // 首次连接成功自动拉起 Dashboard —— 经回调注入(core/bridge-client 不依赖 dashboard,
 // 防 core→dashboard→helpers→core 环;等价迁移原 _doConnect 内联调用点)
@@ -204,6 +272,8 @@ export function getToolDefinitions(): Tool[] {
             description: '操作类型',
           },
           port: { type: 'number', description: 'game_bridge_install: 期望的起始监听端口(实际端口由游戏侧 env GODOT_MCP_BRIDGE_PORT 设起点,被占自动递增避让;此参数不影响行为,保留兼容)。实际端口见 ping 响应与实例 registry', default: 9081 },
+          force: { type: 'boolean', description: 'install: 项目内 mcp_bridge.gd 与自带版本不同(旧版未同步)时 force=true 覆盖刷新,重启游戏生效。send_drag 等报 Method not found 时用本参数', default: false },
+          clean_stale_secrets: { type: 'boolean', description: 'install: 清理 .godot/ 陈旧 mcp_bridge_*.secret(按 registry 新鲜心跳判活,无心跳拒清防误删)。多实例 auth 失败/连错实例时用', default: false },
           source_script_path: { type: 'string', description: 'install_override/uninstall_override: 源调试脚本绝对路径（必须在 ALLOWED_PROJECT_PATHS 白名单内,拷贝到项目根注册为 MCPOVERRIDE_<basename> autoload;插入 [autoload] 段末尾=在游戏 autoload 之后加载,脚本 _ready 可直接访问游戏单例,无需 await <Singleton>.ready）' },
           sub_action: {
             type: 'string',
@@ -470,6 +540,12 @@ async function bridgeAction(method: string, params: Record<string, unknown>, ctx
   if (resp.error) {
     return errorResult(`Bridge error (${resp.error.code}): ${resp.error.message}`);
   }
+  // A2 (2026-09-16 反馈批): ping 响应注解版本指纹 —— bundled vs 项目内远端版本比对,
+  // 旧版拷贝未同步(五踩根源)一眼可辨,warning 附可操作指引。
+  if (method === 'ping' && resp.result !== null && typeof resp.result === 'object' && !Array.isArray(resp.result)) {
+    const annotated = annotatePingWithVersion(resp.result as Record<string, unknown>, bundledBridgeVersion(ctx));
+    return textResult(JSON.stringify(annotated, null, 2));
+  }
   // G-1: 订阅登记表维护 — start 成功登记(重连后重发),stop 成功移除(不再重发)
   if (method === 'watch.start' || method === 'monitor.start') {
     _registerSubscription(method, params);
@@ -510,11 +586,21 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // A2 (2026-08-18 反馈): mcp_bridge.gd 托管语义 —— 目标已存在且内容与工具自带版本不同
         // (项目自管/git tracked + 本地修改)时**不覆盖**,保留现有文件并明确告知;内容一致
         // (工具拷贝的原样)才覆盖刷新(升级场景)。拷贝放在幂等检查前只做一次,已注册同样遵守。
+        // A1 (2026-09-16 反馈批): drift 场景加 force 刷新入口 —— 项目内旧版未同步是 send_drag
+        // 五踩/registry 断链/button_mask 复踩的共同根源,kept-as-is 无刷新路径迫使用户手删。
+        // force=true 显式覆盖;默认 false 保留项目内版本但指引可操作(旧文案"delete it manually"
+        // 藏在括号里且无精确路径)。
         const destScript = join(projectPath, BRIDGE_SCRIPT_NAME);
+        const forceRefresh = args.force === true;
         let scriptNote = '';
         if (existsSync(destScript)) {
           if (readFileSync(bridgeSrc, 'utf-8') !== readFileSync(destScript, 'utf-8')) {
-            scriptNote = `existing ${BRIDGE_SCRIPT_NAME} differs from bundled version — kept as-is (not overwritten); delete it manually to force refresh.`;
+            if (forceRefresh) {
+              copyFileSync(bridgeSrc, destScript);
+              scriptNote = `existing ${BRIDGE_SCRIPT_NAME} was outdated and has been overwritten (force: true) — restart the game to load the new version.`;
+            } else {
+              scriptNote = `existing ${BRIDGE_SCRIPT_NAME} at ${destScript} differs from bundled version — kept as-is (project may manage its own copy). To refresh to the bundled version: re-run with force: true, or delete that file and re-run game_bridge_install.`;
+            }
           } else {
             copyFileSync(bridgeSrc, destScript);
           }
@@ -522,8 +608,48 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           copyFileSync(bridgeSrc, destScript);
         }
 
+        // A4 (2026-09-16 反馈批): 陈旧 secret 检测/清理入口 —— 多实例端口避让后死实例的
+        // mcp_bridge_*.secret 残留会误导端口解析(mtime 语义)与 auth(连错/删错)。判活依据 =
+        // 项目级实例 registry({project}/.godot/mcp-instances/)新鲜心跳端口;无任何新鲜心跳时
+        // 拒绝清理(防误删仍存活但不写心跳的旧版 GD 实例)。默认只检测列出,clean_stale_secrets
+        // 才删。
+        let secretCleanupNote = '';
+        {
+          const godotDir = join(projectPath, '.godot');
+          const secretFiles: string[] = [];
+          try {
+            for (const name of readdirSync(godotDir)) {
+              if (/^mcp_bridge_\d+\.secret$/.test(name)) secretFiles.push(name);
+            }
+          } catch { /* .godot 不存在(未跑过游戏)→ 无残留可处理 */ }
+          if (secretFiles.length > 0) {
+            const livePorts = liveHeartbeatPorts(projectPath);
+            if (args.clean_stale_secrets === true) {
+              if (livePorts.size === 0) {
+                secretCleanupNote = ` stale secret cleanup skipped: no fresh registry heartbeat (cannot prove which instances are live — game not running, or old GD without heartbeat). Start the game once (new GD writes heartbeats) then retry, or delete .godot/mcp_bridge_*.secret manually when no game is running.`;
+              } else {
+                const deleted: string[] = [];
+                for (const name of secretFiles) {
+                  const port = Number(/^mcp_bridge_(\d+)\.secret$/.exec(name)?.[1]);
+                  if (!livePorts.has(port)) {
+                    try { unlinkSync(join(godotDir, name)); deleted.push(name); } catch { /* best-effort */ }
+                  }
+                }
+                secretCleanupNote = deleted.length > 0
+                  ? ` stale secrets deleted: ${deleted.join(', ')} (live heartbeat ports: ${[...livePorts].join('/')}).`
+                  : ` no stale secrets (all match live heartbeat ports ${[...livePorts].join('/')}).`;
+              }
+            } else if (livePorts.size > 0) {
+              const stale = secretFiles.filter(name => !livePorts.has(Number(/^mcp_bridge_(\d+)\.secret$/.exec(name)?.[1])));
+              if (stale.length > 0) {
+                secretCleanupNote = ` stale secret candidates (ports not in live heartbeat set ${[...livePorts].join('/')}): ${stale.join(', ')} — can mislead port resolution; clean via clean_stale_secrets: true.`;
+              }
+            }
+          }
+        }
+
         if (hasNewKey) {
-          return textResult(`MCP Bridge autoload already registered. ${scriptNote || `Script copied to ${destScript}.`}`);
+          return textResult(`MCP Bridge autoload already registered. ${scriptNote || `Script copied to ${destScript}.`}${secretCleanupNote}`);
         }
         if (hasLegacyKey) {
           config = config.split('\n').filter(line => !line.startsWith(AUTOLOAD_KEY_LEGACY + '=')).join('\n');
@@ -543,7 +669,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return textResult(JSON.stringify({
           success: true,
           // A1: 端口自动避让(默认起始候选在 9081-9090 内 crypto 随机——竞态缓解,env GODOT_MCP_BRIDGE_PORT 可固定起点;实际端口见 instance registry + ping 响应 pid/project 指纹)
-          message: `MCP Bridge installed. Listens in the 9081-9090 range (randomized start candidate, auto-increments when occupied; ping response carries pid/project to verify target instance).${scriptNote ? ' ' + scriptNote : ''}`,
+          message: `MCP Bridge installed. Listens in the 9081-9090 range (randomized start candidate, auto-increments when occupied; ping response carries pid/project to verify target instance).${scriptNote ? ' ' + scriptNote : ''}${secretCleanupNote}`,
           script_path: `res://${BRIDGE_SCRIPT_NAME}`,
           autoload_key: AUTOLOAD_KEY,
         }));

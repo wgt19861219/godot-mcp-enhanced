@@ -67,6 +67,32 @@ export function clampTimeoutMs(value: unknown, min = 1000, max = 60000, def = 10
 // 最新存活条目取实际端口;registry 不可读/无匹配/条目全部超龄(崩溃残留)时回落 9081,
 // 对旧版 GD(不写 machine registry)完全兼容。
 const BRIDGE_REGISTRY_MAX_AGE_MS = 5 * 60 * 1000;  // 心跳 30s,容 10 个心跳周期
+export { BRIDGE_REGISTRY_MAX_AGE_MS };  // A4 (2026-09-16): game-bridge install 清残留 secret 的判活窗口与此同源
+
+// ─── A3 (2026-09-16 反馈批): 连接失败端口记忆 ───────────────────────────────
+// 多实例/残留 secret 场景: registry 命中或 mtime 扫描选中的端口可能属于刚死掉的实例
+// (被 kill 的进程不走 _exit_tree,secret 与超龄心跳均残留;PERSISTENT_SECRET 模式
+// secret 恒不删且 mtime 恒旧,被任何陈旧文件压过 — 2026-09-03 反馈)。ECONNREFUSED
+// 时把端口记入失败集合(TTL 内端口解析自动避开、降级到次新候选),下次调用即恢复,
+// 无需人工删 secret。TTL 有限防"端口复活后永久拉黑"。
+const PORT_FAILURE_TTL_MS = 60_000;
+const _failedPorts = new Map<number, number>();  // port → failedAt(ms)
+
+/** 标记端口连接失败(ECONNREFUSED)——TTL 内 resolveBridgePort/scanSecretWindow 避开它。 */
+export function _markPortFailed(port: number): void {
+  _failedPorts.set(port, Date.now());
+}
+
+/** 端口是否处于失败记忆期内。 */
+export function _isPortFailed(port: number): boolean {
+  const at = _failedPorts.get(port);
+  if (at === undefined) return false;
+  if (Date.now() - at > PORT_FAILURE_TTL_MS) {
+    _failedPorts.delete(port);  // 惰性过期
+    return false;
+  }
+  return true;
+}
 
 /** 镜像 GD 侧 machine registry 目录。GD: OS.get_data_dir().get_base_dir().get_base_dir()/
  *  .godot-mcp/instances —— 实测三平台(Win %APPDATA%/Linux ~/.local/share/mac ~/Library/
@@ -104,6 +130,8 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
       // GD Time.get_datetime_string_from_system() 输出无时区 ISO 串,JS 按本地时区解析,同机一致。
       const lastSeen = typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
       if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
+      // A3: 失败记忆期内的端口跳过(刚 ECONNREFUSED 过的实例条目仍可能新鲜),降级次新心跳。
+      if (_isPortFailed(entry.port)) continue;
       if (!best || lastSeen > best.lastSeen) best = { port: entry.port, lastSeen };
     }
     if (best) return best.port;
@@ -122,13 +150,17 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
  *  (与缓解批立场一致)。全窗口无 secret(bridge 未跑/旧版 GD)仍回落 9081(旧版确定性绑定)。 */
 function scanSecretWindow(projectDir: string): number {
   let scan: { port: number; mtime: number } | null = null;
+  let fallback: { port: number; mtime: number } | null = null;  // A3: 全部候选都失败时的 mtime 最新(避无可避,维持候选语义)
   for (let p = DEFAULT_PORT_START; p <= DEFAULT_PORT_END; p++) {
     try {
       const st = statSync(bridgeSecretPathFor(projectDir, p));
+      if (!fallback || st.mtimeMs > fallback.mtime) fallback = { port: p, mtime: st.mtimeMs };
+      // A3: 失败记忆期内的端口跳过(陈旧 secret 压过活实例的 mtime 误导场景,2026-09-03 反馈)
+      if (_isPortFailed(p)) continue;
       if (!scan || st.mtimeMs > scan.mtime) scan = { port: p, mtime: st.mtimeMs };
     } catch { /* 该端口无 secret,继续 */ }
   }
-  return scan?.port ?? BRIDGE_PORT;
+  return scan?.port ?? fallback?.port ?? BRIDGE_PORT;
 }
 
 /** 按实际端口拼 secret 文件路径(GD 侧 secret 文件名含避让后的端口)。 */
@@ -465,8 +497,14 @@ async function _doConnect(timeout: number): Promise<Socket> {
       clearTimeout(timer);
       const errno = (err as NodeJS.ErrnoException).code;
       if (errno === 'ECONNREFUSED') {
+        // A3 (2026-09-16 反馈批): 记入失败记忆,下次端口解析自动避开、降级次新候选
+        // (registry 心跳超龄前残留 / 陈旧 secret 的 mtime 误导场景,2026-09-03 反馈:
+        // "ping 秒败 + netstat 见端口在听"的多 secret 并存形态)。文案带端口可诊断。
+        _markPortFailed(port);
         reject(new BridgeNotConnectedError(
-          'Cannot connect to MCP Bridge. Is the game running with the bridge autoload installed?'
+          `Cannot connect to MCP Bridge on port ${port} (connection refused). ` +
+          'This port is now avoided for 60s — a stale bridge secret or dead instance may own it. ' +
+          'Retry the call to fall back to another candidate port; if it persists, run game_bridge_install with clean_stale_secrets: true.'
         ));
       } else {
         reject(new Error(`Bridge connection error: ${err.message}`));
@@ -657,6 +695,8 @@ export function resetBridgeState(): void {
   _subscriptions = [];
   _resendInFlight = null;
   _stopKeepalive();
+  // A3: 失败端口记忆一并清(测试隔离/服务重启语义:进程重启后旧失败无意义)
+  _failedPorts.clear();
 }
 
 // ─── Bridge readiness probe (M4) ────────────────────────────────────────────

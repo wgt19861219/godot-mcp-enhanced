@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **bridge 同步与多实例连接健壮(反馈批A,2026-09-16)**:`game_bridge_install` 新增 `force` 参数——项目内 mcp_bridge.gd 与自带版本不同(旧版未同步)时显式覆盖刷新,drift 提示给出精确路径与刷新指引(send_drag 五踩/registry 断链/button_mask 复踩的共同根源是项目内旧版拷贝 kept-as-is 无刷新路径);新增 `clean_stale_secrets` 参数——清理 `.godot/` 陈旧 `mcp_bridge_*.secret`(判活=项目级 registry 新鲜心跳,无心跳拒清防误删旧版活实例,默认只检测列出可疑残留);bridge 版本指纹——mcp_bridge.gd 顶部 `BRIDGE_SCRIPT_VERSION`(version-sync 新增 bridgeGd target 与 package.json 同步防漂移)随 ping 响应与 registry entry 回传,TS 侧 ping 注解 `bundledBridgeVersion` + 不一致时 `versionWarning`(项目内旧版一眼可辨)。
 - Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
 - Web GUI 面板入口简化与自愈：共享持久 token（registry 目录一份，重启/多实例不变，cookie 持续有效）、`/api/health` 无鉴权探测端点（CORS，仅 ok/port/startedAt）、前端断线自愈（持续失联扫 9550–9569 迁移活实例 + visited 环防护，凭据失效友好指引不乒乓）、connect-src 端口段放宽；书签 `http://127.0.0.1:9550` 即固定入口；另增 file:// 入口页 `~/.godot-mcp/web-gui/portal.html`（server 启动/dashboard CLI 幂等落盘，no-cors 扫描兼容新旧 build，有实例自动跳转、无实例显示启动指引），书签指到它则任何时刻都有响应。
@@ -15,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web GUI 零门槛授权：包根 `面板入口.html` 内嵌共享 token（跳转 URL 自动带 `?token=`，**双击直达免 CLI 首授权**，token 轮换随 server 启动自动重写；`0o600` + Windows icacls 收紧，非法形状防御性退化为无 token 版）——项目目录版不内嵌（目录可能被 git 跟踪/分享，token 进公开仓库会配合恶意网页形成攻击链），registry 版保持纯净模板；多实例场景入口页自带实例按钮列表。
 
 ### Fixed
+- bridge 端口解析的陈旧 secret/死实例误导(2026-09-03/09-06 反馈):ECONNREFUSED 连接失败端口 60s 记忆降级——registry 命中与 secret 窗口扫描均避开刚失败端口、降级次新候选,下次调用自动恢复;错误文案带实际端口与 `clean_stale_secrets` 清理指引。
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
 ## [0.33.3] - 2026-09-14

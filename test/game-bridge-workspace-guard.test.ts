@@ -75,6 +75,84 @@ describe('A2: game_bridge_install 内容比对守卫', () => {
     expect(text).toContain('differs from bundled version');
     expect(readFileSync(join(projectDir, 'mcp_bridge.gd'), 'utf-8')).toBe(USER_MODIFIED_CONTENT);
   });
+
+  // ── A1 (2026-09-16 反馈批): drift 场景 force 刷新入口 ────────────────────────
+  // send_drag 五踩根因: 项目内 mcp_bridge.gd 旧版 drift 时 kept-as-is 无 force 刷新路径,
+  // 提示 "delete it manually" 藏在括号里且无精确路径。修复: force=true 显式覆盖 +
+  // 无 force 时指引可操作(force=true 或删除精确路径后重装)。
+  it('A1: drift + force=true → 覆盖刷新为 bundled 版本 + 响应注明 overwritten', async () => {
+    writeFileSync(join(projectDir, 'mcp_bridge.gd'), USER_MODIFIED_CONTENT, 'utf-8');
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, force: true }, ctx());
+    expect(r?.isError).toBeFalsy();
+    expect(readFileSync(join(projectDir, 'mcp_bridge.gd'), 'utf-8')).toBe(BUNDLED_CONTENT);  // 已被覆盖刷新
+    expect(resultText(r)).toContain('overwritten (force: true)');
+  });
+
+  it('A1: drift + force=true + 已注册(幂等)→ 同样覆盖刷新', async () => {
+    writeFileSync(join(projectDir, 'project.godot'), BASE_CONFIG + '[autoload]\nMCPBridge="*res://mcp_bridge.gd"\n', 'utf-8');
+    writeFileSync(join(projectDir, 'mcp_bridge.gd'), USER_MODIFIED_CONTENT, 'utf-8');
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, force: true }, ctx());
+    expect(readFileSync(join(projectDir, 'mcp_bridge.gd'), 'utf-8')).toBe(BUNDLED_CONTENT);
+    expect(resultText(r)).toContain('overwritten (force: true)');
+  });
+
+  it('A1: drift 无 force → 提示含可操作指引(force=true 与精确删除路径)', async () => {
+    writeFileSync(join(projectDir, 'mcp_bridge.gd'), USER_MODIFIED_CONTENT, 'utf-8');
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+    const text = resultText(r);
+    expect(readFileSync(join(projectDir, 'mcp_bridge.gd'), 'utf-8')).toBe(USER_MODIFIED_CONTENT);
+    expect(text).toContain('force: true');
+    // 响应经 JSON.stringify,Windows 路径反斜杠被转义 — 断言同形态(JSON 编码后的路径)
+    expect(text).toContain(JSON.stringify(join(projectDir, 'mcp_bridge.gd')).slice(1, -1));
+  });
+
+  // ── A4 (2026-09-16 反馈批): clean_stale_secrets 陈旧 secret 清理入口 ──────────
+  // 多实例端口避让后死实例的 mcp_bridge_*.secret 残留误导端口解析与 auth(09-03/09-06 反馈)。
+  // 判活依据=项目级 registry 新鲜心跳;P 为空拒绝清理(防误删不写心跳的旧版活实例)。
+  function writeHeartbeat(port: number, ageMs: number): void {
+    const regDir = join(projectDir, '.godot', 'mcp-instances');
+    mkdirSync(regDir, { recursive: true });
+    writeFileSync(join(regDir, `inst_${port}.json`), JSON.stringify({
+      id: `inst_${port}`, projectPath: projectDir, port,
+      lastSeen: new Date(Date.now() - ageMs).toISOString(),
+      capabilities: ['registry-heartbeat'],
+    }), 'utf-8');
+  }
+  function writeSecrets(): string {
+    const godotDir = join(projectDir, '.godot');
+    mkdirSync(godotDir, { recursive: true });
+    writeFileSync(join(godotDir, 'mcp_bridge_9081.secret'), 'a'.repeat(32), 'utf-8');
+    writeFileSync(join(godotDir, 'mcp_bridge_9082.secret'), 'b'.repeat(32), 'utf-8');
+    return godotDir;
+  }
+
+  it('A4: clean_stale_secrets=true + 新鲜心跳 9081 → 删 9082 残留,保留 9081', async () => {
+    const godotDir = writeSecrets();
+    writeHeartbeat(9081, 10_000);  // 10s 前心跳,新鲜
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, clean_stale_secrets: true }, ctx());
+    expect(r?.isError).toBeFalsy();
+    expect(existsSync(join(godotDir, 'mcp_bridge_9081.secret'))).toBe(true);   // 活实例保留
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(false);  // 残留被删
+    expect(resultText(r)).toContain('mcp_bridge_9082.secret');
+  });
+
+  it('A4: clean_stale_secrets=true + 无任何新鲜心跳 → 拒绝清理(防误删旧版活实例)', async () => {
+    const godotDir = writeSecrets();
+    writeHeartbeat(9081, 10 * 60_000);  // 10 分钟前,超龄(窗口 5min)
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, clean_stale_secrets: true }, ctx());
+    expect(existsSync(join(godotDir, 'mcp_bridge_9081.secret'))).toBe(true);   // 不删
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(true);
+    expect(resultText(r)).toContain('cleanup skipped');
+  });
+
+  it('A4: 默认(无参数)+ 有心跳 + 有陈旧 → 只检测不删,响应列出 candidates', async () => {
+    const godotDir = writeSecrets();
+    writeHeartbeat(9081, 10_000);
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(true);   // 未删
+    expect(resultText(r)).toContain('stale secret candidates');
+    expect(resultText(r)).toContain('mcp_bridge_9082.secret');
+  });
 });
 
 describe('A2: game_bridge_uninstall 内容比对守卫', () => {
