@@ -6,7 +6,6 @@
 // 固定清单四端点 + CSP 放宽(script/style self + img/media self)+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
