@@ -3,6 +3,7 @@
 
 import { exec } from 'node:child_process';
 import { listRegistrations, type WebGuiRegistration } from './registry.js';
+import { ensurePortalPage } from './portal.js';
 
 export interface OpenWebDashboardOpts {
   /** 浏览器打开函数(测试注入);缺省跨平台探测 */
@@ -44,9 +45,15 @@ async function defaultChoose(entries: WebGuiRegistration[]): Promise<WebGuiRegis
 }
 
 export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise<number> {
+  // 入口页幂等落盘(2026-09-16):file:/// 书签永远可用的跳转页,随 CLI 顺带确保存在
+  const portalPath = ensurePortalPage(opts.registryDir);
   const entries = await listRegistrations({ dir: opts.registryDir, isPidAlive: opts.isPidAlive });
   if (entries.length === 0) {
     console.log('没有运行中的 MCP server(先在 AI 客户端里启动 godot-mcp-enhanced)。');
+    console.log('已打开本地入口页(服务启动后它会自动跳转):');
+    const portalUrl = `file:///${portalPath.replace(/\\/g, '/')}`;
+    console.log(`  ${portalUrl}`);
+    (opts.opener ?? defaultOpener)(portalUrl);
     return 1;
   }
   let picked: WebGuiRegistration | null;
