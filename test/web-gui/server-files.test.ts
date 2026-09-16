@@ -3,7 +3,7 @@ import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { WebGuiServer, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { WebGuiServer, WEB_GUI_CSP, type WebGuiServerOptions } from '../../src/web-gui/server.js';
 import { FilesApi } from '../../src/web-gui/files-api.js';
 
 describe('WebGuiServer files 端点+assets(spec §4/§5,2026-09-15 v2)', () => {
@@ -46,8 +46,12 @@ describe('WebGuiServer files 端点+assets(spec §4/§5,2026-09-15 v2)', () => {
   it('GET / 响应 CSP 放宽(script/style self+img/media self)', async () => {
     const t = await startSrv(); active = t.srv;
     const r = await fetch(t.base + '/', { headers: H(t.token) });
-    expect(r.headers.get('content-security-policy')).toBe(
-      "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; img-src 'self'; media-src 'self'; connect-src 'self'");
+    expect(r.headers.get('content-security-policy')).toBe(WEB_GUI_CSP);
+    // 自愈探测端口段抽查(2026-09-16):connect-src 含 9550/9569 双 host 段
+    expect(WEB_GUI_CSP).toContain('connect-src');
+    expect(WEB_GUI_CSP).toContain('http://127.0.0.1:9550');
+    expect(WEB_GUI_CSP).toContain('http://127.0.0.1:9569');
+    expect(WEB_GUI_CSP).toContain('http://localhost:9550');
   });
 
   it('files 缺席 → 503(对齐 projects 注入缺席语义)', async () => {

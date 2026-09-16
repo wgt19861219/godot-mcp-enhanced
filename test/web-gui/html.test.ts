@@ -144,4 +144,19 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   it('二进制路由:openFileEntry 其余分支走 hex', () => {
     expect(INDEX_HTML).toContain("openPreview(rel, 'hex')");       // 等价拼接形态:rel=sub+name(hex 端点契约 path 相对项目根),同 img/audio 分支
   });
+
+  // ── 入口简化+自愈批(2026-09-16,用户确认):断线自动找活实例 + 友好死页 ──────
+  it('自愈:recoverPanel 扫描端口段 + health 探测 + location.replace 迁移', () => {
+    expect(INDEX_HTML).toContain('function recoverPanel');          // 自愈入口函数
+    expect(INDEX_HTML).toContain('/api/health');                    // 无鉴权探测端点
+    expect(INDEX_HTML).toContain('9550');                           // 端口段起点常量
+    expect(INDEX_HTML).toContain('9569');                           // 端口段终点常量
+    expect(INDEX_HTML).toContain('location.replace');               // 命中活实例整页迁移(cookie 随导航带)
+  });
+  it('自愈:持续失联触发 + 401 不再躺平 + 全死友好指引页', () => {
+    expect(INDEX_HTML).toContain('lastOpenAt');                      // onopen 时间戳(持续失联判定)
+    expect(INDEX_HTML).toContain('recoverPanel()');                  // onerror/401 路径都进自愈(非 stopped 躺平)
+    expect(INDEX_HTML).toContain('面板服务已全部停止');                // 全死友好文案
+    expect(INDEX_HTML).toContain('dashboard --web');                 // 指引命令
+  });
 });

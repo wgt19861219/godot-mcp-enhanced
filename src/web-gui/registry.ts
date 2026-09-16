@@ -1,11 +1,13 @@
 // Web GUI per-pid 登记(设计 §3.1):每实例写自己的 ~/.godot-mcp/web-gui/<pid>.json,
 // 无并发写竞争(对齐 InstanceManager 模式);文件含 token 准入凭证,权限加固防同机他用户读取。
 
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { userInfo } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { getLogger } from '../core/logger.js';
 
 export interface WebGuiRegistration {
@@ -24,6 +26,42 @@ export interface RegistryOpts {
 
 export function webGuiRegistryDir(): string {
   return join(homedir(), '.godot-mcp', 'web-gui');
+}
+
+const SHARED_TOKEN_RE = /^[A-Za-z0-9_-]{32,}$/;
+
+/**
+ * 共享持久 token(2026-09-16 入口简化批):registry 目录一份 token.txt,首实例生成后续复用。
+ * 动机:原 token 每进程随机生成,server 重启即换 → 旧面板 cookie 立即作废(入口不自愈根因)。
+ * cookie 域不分端口(RFC 6265),同 host 全端口有效 → 所有实例共享一份 token 后,
+ * 任一实例种下的 cookie 对全部端口有效,前端跨实例/跨重启迁移无需重新鉴权。
+ * 并发窗口:两实例同时首启可能各生成一份各写各的——写后以重读文件为准,收敛到最后写者的值
+ * (毫秒级窗口,仅影响启动瞬间,方向安全:两实例最终一致)。
+ * 0o600 + Windows icacls 对齐登记文件惯例;损坏/格式非法时重新生成。
+ */
+export function getOrCreateSharedToken(opts: RegistryOpts = {}): string {
+  const dir = opts.dir ?? webGuiRegistryDir();
+  const filePath = join(dir, 'token.txt');
+  try {
+    const existing = readFileSyncOpt(filePath);
+    if (existing && SHARED_TOKEN_RE.test(existing)) return existing;
+  } catch { /* 读失败按不存在处理 */ }
+  const generated = randomBytes(24).toString('hex');
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(filePath, generated, { encoding: 'utf-8', mode: 0o600 });
+    hardenFilePermissionsWindows(filePath);
+    // 写后重读:并发首启时收敛到文件终值,保证多实例一致
+    const after = readFileSyncOpt(filePath);
+    return after && SHARED_TOKEN_RE.test(after) ? after : generated;
+  } catch (err) {
+    getLogger().warn('web-gui', `shared token persistence failed, using per-process token: ${err instanceof Error ? err.message : err}`);
+    return generated;
+  }
+}
+
+function readFileSyncOpt(filePath: string): string | null {
+  try { return readFileSync(filePath, 'utf-8').trim() || null; } catch { return null; }
 }
 
 function defaultIsPidAlive(pid: number): boolean {
