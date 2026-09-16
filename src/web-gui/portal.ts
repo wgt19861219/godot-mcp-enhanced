@@ -5,12 +5,19 @@
 // 命中活实例自动跳转(共享 token 的 cookie 随导航带),全死显示启动指引。
 // 项目入口批(2026-09-16):同一份 HTML 再落一份「面板入口.html」到各 Godot 项目目录
 // (ensureProjectPortalEntry)——registry 深路径难找,入口放用户天天开的项目文件夹。
+// 零门槛授权(2026-09-16 用户裁决):包根入口页内嵌 token(ensurePackageRootEntry,跳转 URL
+// 自动带 ?token=,双击直达免 CLI 首授权);项目目录版不内嵌(目录可能被 git 跟踪/分享,
+// token 进公开仓库会配合恶意网页形成攻击链),registry 版保持纯净模板。
 
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { webGuiRegistryDir } from './registry.js';
+import { webGuiRegistryDir, hardenFilePermissionsWindows, SHARED_TOKEN_RE } from './registry.js';
 
-const PORTAL_HTML = `<!doctype html>
+/** 构建入口页 HTML。token 非空时内嵌(跳转 URL 自动带 ?token=,首次即过鉴权并种 cookie);
+ *  形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。 */
+export function buildPortalHtml(token?: string): string {
+  const safeToken = token && SHARED_TOKEN_RE.test(token) ? token : '';
+  return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -38,6 +45,10 @@ a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 16px;background:#2d6
 <p class="status" id="status">正在扫描本机面板服务…</p>
 </div>
 <script>
+var TOKEN = ${JSON.stringify(safeToken)};
+function withToken(url) {
+  return TOKEN ? url + '?token=' + encodeURIComponent(TOKEN) : url;
+}
 function probe(port) {
   return new Promise(function (resolve) {
     fetch('http://127.0.0.1:' + port + '/', { mode: 'no-cors' })
@@ -60,46 +71,50 @@ Promise.all(probes).then(function (alive) {
   for (var i = 0; i < found.length; i++) {
     var a = document.createElement('a');
     a.className = 'btn';
-    a.href = 'http://127.0.0.1:' + found[i] + '/';
+    a.href = withToken('http://127.0.0.1:' + found[i] + '/');
     a.textContent = '实例 :' + found[i];
     list.appendChild(a);
   }
-  // 自动进入第一个活实例(探测序即端口序;点击上方按钮可选其他实例)
-  location.replace('http://127.0.0.1:' + found[0] + '/');
+  // 自动进入第一个活实例(探测序即端口序;点击上方按钮可选其他实例);
+  // 内嵌 token 时 URL 带 ?token= → 首次即过鉴权,前端握手种 cookie 后长期免带。
+  location.replace(withToken('http://127.0.0.1:' + found[0] + '/'));
 });
 </script>
 </body>
 </html>
 `;
+}
 
 /** 幂等写入口页到 registry 目录,返回绝对路径(dashboard --web 与 server.start 共用)。 */
 export function ensurePortalPage(dir?: string): string {
   const d = dir ?? webGuiRegistryDir();
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const filePath = join(d, 'portal.html');
-  writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
+  writeFileSync(filePath, buildPortalHtml(), { encoding: 'utf-8' });
   return filePath;
 }
 
 /** 项目目录入口文件名(中文,用户在项目文件夹一眼可辨;双击即扫描跳转活实例)。 */
 export const PROJECT_ENTRY_NAME = '面板入口.html';
 
-/** 幂等写入口页到 Godot 项目目录(2026-09-16 项目入口批)。
+/** 幂等写入口页到 Godot 项目目录(2026-09-16 项目入口批)。不内嵌 token。
  * 动机:registry 深路径(~/.godot-mcp/web-gui/portal.html)真机反馈难找——入口直接放
  * 项目文件夹,资源管理器双击即用。护栏:dir/project.godot 存在才写,非 Godot 目录
- * 返回 null 不留文件;内容与 portal.html 同源(同一 PORTAL_HTML)。 */
+ * 返回 null 不留文件;内容与 portal.html 同源(同一模板)。 */
 export function ensureProjectPortalEntry(dir: string): string | null {
   if (!existsSync(join(dir, 'project.godot'))) return null;
   const filePath = join(dir, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
+  writeFileSync(filePath, buildPortalHtml(), { encoding: 'utf-8' });
   return filePath;
 }
 
-/** 幂等写入口页到 server 包根目录(2026-09-16 用户裁决:入口放本仓库根目录)。
- * 包根是自己的地盘,无 project.godot 护栏,无条件写——开发模式即仓库根,
- * npm 安装模式为 node_modules/godot-mcp-enhanced/(无害)。 */
-export function ensurePackageRootEntry(root: string): string {
+/** 幂等写入口页到 server 包根目录,内嵌 token(2026-09-16 零门槛授权,用户裁决)。
+ * 双击即带 ?token= 跳转——首次访问即过鉴权并种 cookie,免 CLI/bat 首授权。
+ * 开发模式即本仓库根(已 gitignore),npm 模式为 node_modules 内(不入用户 git)。
+ * token 落盘按 registry 同款收紧:0o600 + Windows icacls(同机多用户防读)。 */
+export function ensurePackageRootEntry(root: string, token: string): string {
   const filePath = join(root, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, PORTAL_HTML, { encoding: 'utf-8' });
+  writeFileSync(filePath, buildPortalHtml(token), { encoding: 'utf-8', mode: 0o600 });
+  hardenFilePermissionsWindows(filePath);
   return filePath;
 }

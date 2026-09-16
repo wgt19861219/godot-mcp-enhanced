@@ -541,15 +541,16 @@ describe('WebGuiServer 项目目录入口页(2026-09-16 项目入口批)', () =>
     expect(existsSync(join(notProj, '面板入口.html'))).toBe(false);
   });
 
-  it('start 后为包根(packageRootDir 注入)无条件写 面板入口.html(仓库根入口,2026-09-16 用户裁决)', async () => {
+  it('start 后为包根(packageRootDir 注入)写内嵌 token 的 面板入口.html(零门槛授权)', async () => {
     const pkgRoot = await mkdtemp(join(tmpdir(), 'web-gui-pkgroot-'));   // 注入隔离,不写真实仓库根
     try {
       const t = await startSrv({ packageRootDir: pkgRoot }); active = t.srv;   // 不注入 projects → 包根路径独立可验
       for (let i = 0; i < 100 && !existsSync(join(pkgRoot, '面板入口.html')); i++) {
         await new Promise(r => setTimeout(r, 20));
       }
-      expect(existsSync(join(pkgRoot, '面板入口.html'))).toBe(true);
-      expect(readFileSync(join(pkgRoot, '面板入口.html'), 'utf-8')).toContain('9550');
+      const html = readFileSync(join(pkgRoot, '面板入口.html'), 'utf-8');
+      expect(html).toContain(t.token);            // server 自身 token 内嵌 → 双击直达
+      expect(html).toContain('9550');
     } finally {
       await rm(pkgRoot, { recursive: true, force: true });
     }

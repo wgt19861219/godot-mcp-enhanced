@@ -1,9 +1,9 @@
 // test/web-gui/portal.test.ts(2026-09-16 入口简化批补强:file:// 入口页)
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from '../../src/web-gui/portal.js';
+import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry, buildPortalHtml } from '../../src/web-gui/portal.js';
 import { writeRegistration } from '../../src/web-gui/registry.js';
 
 describe('file:// 入口页 portal.html(2026-09-16 入口简化批)', () => {
@@ -63,9 +63,24 @@ describe('项目目录入口页 面板入口.html(2026-09-16 项目入口批)', 
     expect(readFileSync(p1!, 'utf-8')).toBe(readFileSync(p2!, 'utf-8'));
   });
 
-  it('包根入口 ensurePackageRootEntry:无 project.godot 也无条件写(用户裁决:入口放仓库根)', () => {
-    const p = ensurePackageRootEntry(dir);   // tmp 目录无 project.godot,照样写入
+  it('包根入口 ensurePackageRootEntry:内嵌 token(双击直达免首授权)+权限收紧', () => {
+    const tok = 'a'.repeat(32) + 'Z9_-';   // 满足 SHARED_TOKEN_RE([A-Za-z0-9_-]{32,})
+    const p = ensurePackageRootEntry(dir, tok);   // tmp 目录无 project.godot,照样写入
     expect(p).toBe(join(dir, '面板入口.html'));
-    expect(readFileSync(p, 'utf-8')).toContain('9550');
+    const html = readFileSync(p, 'utf-8');
+    expect(html).toContain(tok);                       // token 内嵌
+    expect(html).toContain("withToken('http://127.0.0.1:' + found[0] + '/')");   // 跳转带 token
+    if (process.platform !== 'win32') {
+      const mode = (statSync(p).mode & 0o777).toString(8);
+      expect(mode).toBe('600');                        // registry 同款文件权限(POSIX)
+    }
+  });
+
+  it('非法形状 token 防御性退化为无 token 版(buildPortalHtml 单一校验来源)', () => {
+    const html = buildPortalHtml('short');             // 不满足 32+ 长度
+    expect(html).not.toContain('short');
+    expect(html).toContain('var TOKEN = "";');         // 退化为空 token(纯跳转)
+    const plain = buildPortalHtml();
+    expect(plain).toContain('var TOKEN = "";');        // 项目目录/registry 版永不内嵌
   });
 });
