@@ -220,6 +220,9 @@ export function uninstallOverride(sourceScriptPath: string, projectRoot: string)
   if (existsSync(entry.destScriptPath)) {
     try { unlinkSyncQuiet(entry.destScriptPath); } catch { /* best effort */ }
   }
+  // D4 (2026-09-17 反馈批次D, 09-06 CardGame2 反馈): Godot 4.4+ 为 .gd 生成伴生 .uid,
+  // 删脚本不清 .uid 留孤儿文件(mcpoverride_*.gd.uid 进 git status 误导排查)。同 best-effort。
+  removeUidCompanion(entry.destScriptPath);
 
   getLogger().info('overrides', `Override uninstalled: ${entry.autoloadKey}`);
   return true;
@@ -266,6 +269,7 @@ export function uninstallAllOverrides(projectRoot: string): number {
       if (existsSync(scriptPath)) {
         try { unlinkSyncQuiet(scriptPath); } catch { /* best effort */ }
       }
+      removeUidCompanion(scriptPath);  // D4: .uid 孤儿同清(单卸载同款)
     }
   }
 
@@ -276,6 +280,15 @@ export function uninstallAllOverrides(projectRoot: string): number {
 // unlinkSync 的 quiet 包装(best effort,删失败不抛)
 function unlinkSyncQuiet(p: string): void {
   unlinkSync(p);
+}
+
+/** D4 (2026-09-17 反馈批次D): 删 Godot 4.4+ 伴生 .uid(<script>.gd.uid)——卸载删脚本
+ *  不清 .uid 会留孤儿(09-06 CardGame2 反馈:mcpoverride_*.gd 被删但 .gd.uid 残留)。
+ *  best-effort:文件不存在(旧版 Godot 不生成/已清)静默跳过,删失败不抛。 */
+function removeUidCompanion(scriptPath: string): void {
+  const uidPath = scriptPath + '.uid';
+  if (!existsSync(uidPath)) return;
+  try { unlinkSyncQuiet(uidPath); } catch { /* best effort */ }
 }
 
 /**

@@ -29,4 +29,24 @@ describe('computeRunTimeout', () => {
   it('最小 5(下限)', () => {
     expect(computeRunTimeout(1, 10, false)).toBe(5);
   });
+
+  // 反馈批次D (2026-09-17, fr2 2026-09-02 反馈): 显式 0/-1 = 不自动停(交 stop_project)
+  it('显式 0 = 不自动停(bridge 交互会话逐步驱动场景)', () => {
+    expect(computeRunTimeout(0, 10, false)).toBe(0);
+  });
+
+  it('显式 -1 = 不自动停(负数全归一 0)', () => {
+    expect(computeRunTimeout(-1, 10, false)).toBe(0);
+  });
+
+  it('显式 0 + wait_for_bridge 也不设 auto-stop(无 timer 即无 race,不强制 bridge+10)', () => {
+    expect(computeRunTimeout(0, 30, true)).toBe(0);
+  });
+
+  it('未传/NaN/空串/null 不触发 0 语义(仍默认 30,防误伤)', () => {
+    expect(computeRunTimeout(undefined, 10, false)).toBe(30);
+    expect(computeRunTimeout(NaN, 10, false)).toBe(30);
+    expect(computeRunTimeout('', 10, false)).toBe(30);
+    expect(computeRunTimeout(null, 10, false)).toBe(30);
+  });
 });

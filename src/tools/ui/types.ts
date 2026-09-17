@@ -30,6 +30,8 @@ export const CONTROL_TYPES = [
   'MarginContainer', 'HBoxContainer', 'VBoxContainer', 'GridContainer',
   'CenterContainer', 'ScrollContainer', 'PanelContainer',
   'HSplitContainer', 'VSplitContainer', 'NinePatchRect',
+  // 反馈批次 B B1(2026-09-09/09-10): 补 TextureButton/ColorRect(UI 刚需),与 ui_commands.gd ALLOWED_CONTROL_TYPES 同步
+  'TextureButton', 'ColorRect',
 ] as const;
 
 export const ANCHOR_PRESETS: Record<string, number> = {

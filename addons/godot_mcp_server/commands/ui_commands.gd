@@ -5,7 +5,8 @@ var _undo_manager: Node
 
 # IMPORTANT-14 (review): 严格白名单替代 is_parent_class(node_type,"Control") 兜底。
 # 原写法放行任意 Control 子类(含第三方 class_name 脚本),实例化时触发其 _init/_ready 执行任意 GDScript。
-# 与 node_commands.gd ALLOWED_NODE_TYPES(I-4)对齐;须与 TS 端 ui_create_control 的 29 种 Control 同步。
+# 与 node_commands.gd ALLOWED_NODE_TYPES(I-4)对齐;须与 TS 端 ui_create_control 的 31 种 Control 同步。
+# 反馈批次 B B1(2026-09-09/09-10): 补 TextureButton/ColorRect(UI 刚需:图片按钮/遮罩色块)。
 const ALLOWED_CONTROL_TYPES: Array = [
 	"Button", "Label", "Panel", "LineEdit", "TextEdit", "RichTextLabel",
 	"LinkButton", "HSlider", "VSlider", "CheckBox", "CheckButton",
@@ -13,6 +14,7 @@ const ALLOWED_CONTROL_TYPES: Array = [
 	"TabContainer", "Tree", "ItemList", "MarginContainer", "HBoxContainer",
 	"VBoxContainer", "GridContainer", "CenterContainer", "ScrollContainer",
 	"PanelContainer", "HSplitContainer", "VSplitContainer", "NinePatchRect",
+	"TextureButton", "ColorRect",
 ]
 
 func setup(plugin: EditorPlugin, undo_manager: Node = null) -> void:
@@ -29,9 +31,9 @@ func cleanup() -> void:
 func get_command_docs() -> Dictionary:
 	return {
 		"ui_create_control": {
-			"description": "创建 Control 子类节点(须在白名单 29 种内)。创建后可设属性。",
+			"description": "创建 Control 子类节点(须在白名单 31 种内)。创建后可设属性。",
 			"params": [
-				CommandHelpers.doc_param("node_type", "String", false, "Control 子类类型,须在白名单 29 种内(默认 Label)"),
+				CommandHelpers.doc_param("node_type", "String", false, "Control 子类类型,须在白名单 31 种内(默认 Label)"),
 				CommandHelpers.doc_param("node_name", "String", false, "新节点名(默认 Control)"),
 				CommandHelpers.doc_param("parent_node_path", "String", false, "父节点路径,空则挂场景根"),
 				CommandHelpers.doc_param("properties", "Dictionary", false, "创建后要设置的属性键值(经 coerce_property_value)"),

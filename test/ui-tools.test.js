@@ -641,14 +641,16 @@ describe('getToolDefinitions', () => {
     expect(actionEnum).toContain('theme_create');
     expect(actionEnum).toContain('theme_set_property');
   });
-  it('node_type enum has all 29 Control types', () => {
+  it('node_type enum has all 31 Control types (B1 反馈批次 B: +TextureButton/ColorRect)', () => {
     const defs = getToolDefinitions();
     const enumValues = defs[0].inputSchema.properties.node_type.enum;
     expect(enumValues).toBeTruthy();
-    expect(enumValues.length).toBe(29);
+    expect(enumValues.length).toBe(31);
     expect(enumValues).toContain('Button');
     expect(enumValues).toContain('Label');
     expect(enumValues).toContain('NinePatchRect');
+    expect(enumValues).toContain('TextureButton');
+    expect(enumValues).toContain('ColorRect');
   });
   it('preset enum has all 16 anchor presets', () => {
     const defs = getToolDefinitions();

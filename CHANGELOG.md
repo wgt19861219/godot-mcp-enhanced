@@ -6,7 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 插件反馈批次 D（语义与易用：run_project timeout 语义 / find_nodes CanvasLayer 定谳 / godot_path 诊断线索 / install_override 卸载义务与 .uid 残留 / 注入链 device=0 对称收口）；不涉及规则模板 → 不触发版本 bump；npm publish / tag 待用户指令。
+
+### Fixed
+- **D3 godot_path 校验失败错误带诊断线索**（09-06 fr2 反馈：合法 4.7.2 console exe 被拒只剩单句 `not a valid Godot binary`，无从排查被迫手动 spawn）：`validateGodotBinaryDetailed` 分层返回失败 stage（path-not-allowed / is-directory / version-run-failed / not-godot-signature 含 --version 输出前 80 字符），错误消息带各 stage 的排查指引 + validator pipeline 说明（whitelist → directory → run --version(5s) → signature）；boolean 版签名保留供 finder 候选循环消费。
+- **D4 install_override 卸载义务明示 + uninstall 清残留 .uid**（09-06 CardGame2 反馈：取证脚本忘卸载 → autoload 残留 project.godot 污染 GUT 共享门禁 2483/2484；卸载后 `mcpoverride_*.gd.uid` 孤儿残留）：三种安装形态（新装/漂移更新/幂等跳过）响应均明示「取证完必 uninstall_override（会一并清 dest script 与伴生 .gd.uid）」；`uninstallOverride`/`uninstallAllOverrides` 删脚本后同款 best-effort 清 `*.gd.uid`（Godot 4.4+ 伴生文件）。
+- **D5 touch/drag/key/text 注入链 device=0 对称收口**（批次C审查 Nit3 挂账）：`_cmd_send_key`/`_cmd_send_touch`/`_cmd_send_drag`/`_cmd_send_text` 显式 `event.device = 0`（mouse 链批次C已收，本批补齐 InputEventKey/ScreenTouch/ScreenDrag——不依赖引擎对默认 -1 的未文档化规范化）；timeline 注入复用同函数自动跟随。行为级 e2e 锚定（probe 设备分布断言：真机 `touch_device_counts={"0":2}` / `key_device_counts={"0":1}`，无 -1 桶）。
+- **send_drag 引擎属性 velocity 修复复刻**（与批A分支 `d7b15fa4` 同款，批次D e2e 依赖 send_drag 可用——批次C/D 分支链不含批A提交，`event.speed = speed` 在 Godot 4 上赋值即 SCRIPT ERROR + Debugger Break 卡死游戏，本批 e2e 首跑实锤）：赋值行逐字复刻保 merge 无冲突；批A另修的录制读取 3 处（bridge/editor recording）留批A合并。
+- dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
+
 ### Added
+- **D1 run_project `timeout=0/-1` = 不自动停**（09-02 fr2 反馈：bridge 交互会话逐步驱动总时长天然超冷启动时长，timeout=90 到点静默 kill 游戏呈 BRIDGE_NOT_CONNECTED 假象，排障 8 分钟）：`computeRunTimeout` 显式 ≤0 归一 0 = 不设 auto-stop timer（undefined/NaN/空串/null 仍默认 30 防误伤；`timeout > 0` 消费守卫既有）；schema 与响应文本同步（`no auto-stop (timeout=0/-1; stop via stop_project)`，Bridge-not-ready 消息同款不再误示 0s）。真机冒烟：timeout=0 起 → 8s 后 `running:true` → stop_project 正常停。
+- **D2 find_nodes CanvasLayer 盲区定谳 + 防回归锚定**（09-02 fr2 反馈 pattern=`*Map*` 对 CanvasLayer 返回 count=0）：真机核实当前版本（P7 重写后）`_traverse_tree` 全 Node 递归**无盲区**——fixture 动态挂 MapPanel(CanvasLayer, layer=12) 复刻反馈场景，find_nodes 返回 `/root/Main/MapPanel` type=CanvasLayer（pattern 与 type 过滤双命中）；反馈根因同批A/B/C 模式（fr2 项目内 addons 旧版）。e2e 用例锚定，未来若给遍历加 CanvasItem 过滤即红。
 - Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
 - Web GUI 面板入口简化与自愈：共享持久 token（registry 目录一份，重启/多实例不变，cookie 持续有效）、`/api/health` 无鉴权探测端点（CORS，仅 ok/port/startedAt）、前端断线自愈（持续失联扫 9550–9569 迁移活实例 + visited 环防护，凭据失效友好指引不乒乓）、connect-src 端口段放宽；书签 `http://127.0.0.1:9550` 即固定入口；另增 file:// 入口页 `~/.godot-mcp/web-gui/portal.html`（server 启动/dashboard CLI 幂等落盘，no-cors 扫描兼容新旧 build，有实例自动跳转、无实例显示启动指引），书签指到它则任何时刻都有响应。
@@ -14,8 +25,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web GUI 项目目录入口页：server 启动/项目新增/扫描完成时为 server 包根（开发模式即本仓库根目录）、CWD 与全部登记的 Godot 项目目录幂等落一份 `面板入口.html`（内容与 portal.html 同源的扫描跳转页，`project.godot` 存在护栏防向任意目录塞文件，包根无条件写）——入口直接放用户天天开的文件夹，双击即用（registry 深路径 `~/.godot-mcp/web-gui/portal.html` 难找的真机反馈）；文件为运行时产物，已加 `.gitignore`。
 - Web GUI 零门槛授权：包根 `面板入口.html` 内嵌共享 token（跳转 URL 自动带 `?token=`，**双击直达免 CLI 首授权**，token 轮换随 server 启动自动重写；`0o600` + Windows icacls 收紧，非法形状防御性退化为无 token 版）——项目目录版不内嵌（目录可能被 git 跟踪/分享，token 进公开仓库会配合恶意网页形成攻击链），registry 版保持纯净模板；多实例场景入口页自带实例按钮列表。
 
+## [0.33.5] - 2026-09-17
+
+> 插件反馈批次 C（输入注入：09-10 send_mouse_click gui_input 不触发 / 09-12 headless 注入不派发，双双真机定谳为上游不可复现）；规则模板 bridge 输入节标注触发硬门禁 bump（N-C 条款）；npm publish / tag 待用户指令。
+
 ### Fixed
-- dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
+- **send_mouse_click/send_mouse_move/click_button real_event 注入事件显式 device=0**（09-10 反馈建议①）：global_position 上游 2026-05-29（ec65e2e5）起已在位、device 此前依赖引擎派发链对默认 -1 的未文档化规范化（真机 4.6.3 实测探针读到 0）——现在显式设置，消除对引擎内部行为的隐式依赖；timeline 注入复用同函数自动跟随。
+- **send_mouse_click/send_touch 的 x/y 裸 float() 收口为 _num 守卫**（2026-09-03 审查 I-C 漏网点：mouse_move/drag 已改守卫，这两处漏改）：null/容器参数触发 SCRIPT ERROR，同步分发无异常隔离 → 响应静默变 `result:null`（真机 headless 实证，第一轮 C2 复现即栽在此处）。
+
+### Added
+- **输入注入 e2e（带窗口 + headless 双形态）**：`test/e2e-bridge-mouse-gui.test.ts` + fixture `mouse-gui-e2e`（普通 Control gui_input + 复刻 CardGame2 press→release 位移判 tap 链 + Button 对照 + _input 管线探针）——锚定 09-10 反馈「非 Button 控件 gui_input 不触发」与 09-12「headless 整链不派发」均在上游当前版本**不可复现**（两形态全链正常：Button pressed / Control gui_input / tap 判定 / motion / _input 全触发）；headless describe 手动 spawn `--headless` 进程 + bridge 直连，防引擎未来行为回归。
+- **契约测试**：`test/bridge-feedback-batch-c-contract.test.ts` 锚定 device=0 三处落位 + x/y _num 守卫无裸转残留。
+- **规则文档标注**（bridge 双副本）：输入注入管线要点——坐标口径（窗口坐标 + 引擎派发自动局部化语义）、覆盖面实测结论、注入无效排查清单（多实例连错→坐标口径→addons 旧版）、复杂交互引导（press/release 分次注入 / send_input_sequence 帧对齐）。
+
+## [0.33.4] - 2026-09-17
+
+> 插件反馈批次 B（scene 序列化：tscn 损坏/数据丢失类，CardGame2 2026-09-03~09-10 反馈）；规则模板白名单变更触发硬门禁 bump（N-C 条款）；npm publish / tag 待用户指令。
+
+### Fixed
+- **B1 headless 白名单补 TextureButton/ColorRect**（2026-09-09/09-10 反馈：图片按钮/遮罩色块 UI 刚需被 `Refused: not in the headless allowed types whitelist` 拒）：`godot_operations.gd` `ALLOWED_HEADLESS_TYPES` + `ui_commands.gd` `ALLOWED_CONTROL_TYPES` + TS `CONTROL_TYPES` 三方同步 29→31 种（新增测试 `scene-batch-b-contract` 锚定对齐）；规则模板双副本 `.claude/rules/godot-mcp-ui.md` / `rule-templates.ts` 同步 31 种清单（触发 0.33.4 bump）。
+- **B4 add_node 单发 texture 落盘裸字符串（纹理静默丢失）**（2026-09-03 反馈，真机复现：`texture = "res://icon.png"` 落盘后 Godot load 不报错但 `Banner.texture=null`）：文本捷径 `canSerializeProperty` 对 `res://` / `uid://` 字符串一律 fallback GD 链——GD 链 `TYPE_OBJECT` 分支 load 后 pack 自动生成 `[ext_resource]` + `texture = ExtResource("...")`（真机验证落盘即 ExtResource 形态），与 batch 路径行为对齐。
+- **B3-text add_node 单发属性数组落盘裸数组字面量（属性静默回退默认值）**（2026-09-10 editor 反馈同族，headless 文本路径真机复现：`color = [0, 0, 0, 0.588235]` 落盘后 Godot 加载 `Shade.color=(0,0,0,1)`，期望的 0.588 透明遮罩静默丢失）：`canSerializeProperty` 对 Array 一律 fallback GD 链——GD 链数学 coerce（`_coerce_math_value`）转换后 pack 序列化为 `color = Color(0, 0, 0, 0.588235)` 合法形态（真机验证）。editor 侧 `coerce_value_for_property` 的 Color 分支上游 `8cbac21`（2026-07-11）已在位，09-10 反馈定位为项目内 addons 旧版未同步（批次 A 同款根因），非上游缺陷。
+- **B2 add_node 单发 parent 含场景根名前缀报 not found（与 batch/GD 链行为分叉）**（2026-09-09 反馈）：反馈描述的损坏形态（节点加载即 vanished）在当前上游不可复现（fixture 矩阵验证：相对 parent 正确落盘、根名前缀/绝对路径诚实报错）；真实缺口是 query_scene_tree 拷贝的 `parent_node_path="Root/Child"` 形态在文本捷径被拒、而 GD 链（M-3 剥离链）能正确处理——补 `inferSceneRootName`（root [node] name 属性，缺失回退场景文件名，Godot 同款行为）+ 根名前缀剥离，单发文本路径与 batch/GD 链输入形态统一。
+- **B5 scene 写操作落盘自检（损坏当场报错非静默成功）**（09-09/09-10 反馈共同建议）：①TS 文本捷径 add_node 落盘前 `verifySceneTree` 回读 parse 自检（node parent 链逐段可达，断链=Godot 加载 "Parent path has vanished" 静默丢节点——拒写并报 `SCENE_SELF_CHECK_FAILED`）；②GD 链六个写 handler（add_node/edit_node/remove_node/batch_add_nodes/load_sprite/save_scene）`_save_atomic` 成功后 `_verify_saved_scene` 回读（`CACHE_MODE_IGNORE` 绕进程缓存直读盘上文件，`SceneState.get_node_count()` 计数比对，不 instantiate 零脚本副作用），不符 exit 1。
 
 ## [0.33.3] - 2026-09-14
 

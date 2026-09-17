@@ -41,6 +41,11 @@ test/fixtures/input-seq-e2e/mcp_bridge.gd
 # input-seq-e2e 实跑生成的伴随 .uid(mcp_bridge.gd.uid 属 bridge 拷贝件副作用;probe.gd 源文件入库但 .uid 为 Godot import 副作用,同 e2e_verify_test.gd.uid 模式)
 test/fixtures/input-seq-e2e/mcp_bridge.gd.uid
 test/fixtures/input-seq-e2e/probe.gd.uid
+# mouse-gui-e2e(反馈批次C)同款运行时产物:bridge 拷贝件 + probe.gd 的 import .uid 副作用
+test/fixtures/mouse-gui-e2e/mcp_bridge.gd
+test/fixtures/mouse-gui-e2e/mcp_bridge.gd.uid
+test/fixtures/mouse-gui-e2e/probe.gd.uid
+test/fixtures/mouse-gui-e2e/NVIDIA Corporation/
 # real-project 的 mcp_bridge.gd 由 game_bridge_install 拷入、afterAll 删除(不入库),Godot import 生成的伴随 .uid 同为副作用(PR#58 后 e2e 实跑生成)
 test/fixtures/real-project/mcp_bridge.gd.uid
 # e2e-full-tool-verification write_script/quick_scene 用例的运行时产物(内容确定但每次实跑重新生成;.uid 曾被误提交,已移出索引)

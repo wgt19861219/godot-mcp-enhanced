@@ -16,9 +16,12 @@ describe('F2 touch_drag 双侧字段契约', () => {
   it('bridge _cmd_send_drag 构造 InputEventScreenDrag 并赋全部 TOUCH_DRAG_FIELDS 语义', () => {
     const src = read('src/scripts/mcp_bridge.gd');
     expect(src).toContain('InputEventScreenDrag.new()');
-    // position 拆 x/y(对齐 send_touch),relative/speed/index 直读
+    // position 拆 x/y(对齐 send_touch),relative/speed/index 直读。
+    // 2026-09-16 跨项目验证修复:引擎属性是 velocity(Godot 3 的 speed 已改名,赋值
+    // event.speed 在 Godot 4 直接 SCRIPT ERROR);JSON 契约键 speed 不变(TOUCH_DRAG_FIELDS)。
     expect(src).toContain('event.relative =');
-    expect(src).toContain('event.speed =');
+    expect(src).toContain('event.velocity =');
+    expect(src).not.toContain('event.speed =');
     expect(src).toContain('"send_drag"'); // dispatch 入口(L497)
   });
 

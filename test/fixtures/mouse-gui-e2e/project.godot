@@ -1,0 +1,23 @@
+; Engine configuration file.
+; C1 (2026-09-17) 反馈批次C fixture:复现 09-10「send_mouse_click 对普通 Control.gui_input
+; 不触发(Button 类正常)」。probe.gd 动态构建 Control(非 Button,gui_input 计数)+Button
+; (pressed 计数)+_input 引擎管线探针,经 get_* 白名单方法暴露计数。
+; 注:game_bridge_install/qa run 会在运行时写入 [autoload] 段并放置 mcp_bridge.gd——
+; 均为运行时产物,不入库(对齐 input-seq-e2e 惯例)。
+config_version=5
+
+[application]
+
+config/name="mouse-gui-e2e"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.5")
+
+; P0-2 (2026-09-11): dual-key file logging off — concurrent instances share user://logs,
+; RotatedFileLogger rotate race makes abort look like engine_crashed (aigengame pit).
+[debug]
+
+file_logging/enable_file_logging=false
+file_logging/enable_file_logging.pc=false
+
+[autoload]
+MCPBridge="*res://mcp_bridge.gd"

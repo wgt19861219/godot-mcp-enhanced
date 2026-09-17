@@ -6,7 +6,7 @@
 FROM node:18-slim
 
 # 安装已发布的 npm 包（含 bin: godot-mcp-enhanced -> build/index.js）
-RUN npm install -g godot-mcp-enhanced@0.33.3
+RUN npm install -g godot-mcp-enhanced@0.33.5
 
 # 本地开发模式（跳过 ALLOWED_PROJECT_PATHS 白名单校验）
 # Glama check 只发 initialize/tools/list 不调工具，但开启更稳，避免任何路径相关警告中断

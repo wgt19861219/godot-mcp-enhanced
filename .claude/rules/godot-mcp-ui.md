@@ -20,7 +20,7 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 | `ui_build_layout` | 声明式批量布局，CSS Flexbox/Grid → Godot Container 树；支持 rect 绝对几何与 persist 原子写 |
 | `ui_import_prototype` | HTML 原型几何 JSON 一次调用：翻译→build（固定 persist）→measure→layout_verify；返回 verify_coverage 覆盖率（v0.31.0） |
 | `ui_measure_layout` | headless 整树 computed rect 测量（等布局稳定后输出，可带 expect_tree diff） |
-| `ui_create_control` | 创建单个 Control 节点（29 种类型） |
+| `ui_create_control` | 创建单个 Control 节点（31 种类型） |
 | `ui_set_layout` | 设置锚点/偏移/最小尺寸 |
 | `ui_get_layout` | 查询节点布局信息 |
 | `ui_anchor_preset` | 应用 16 种锚点预设 |
@@ -30,9 +30,9 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 | `theme_create` | 创建空 Theme 或从节点提取 |
 | `theme_set_property` | 设置 Theme 属性（font/color/constant/stylebox） |
 
-### 支持的 29 种 Control 子类
+### 支持的 31 种 Control 子类
 
-Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VSlider, CheckBox, CheckButton, OptionButton, SpinBox, ProgressBar, TextureRect, ColorPickerButton, TabContainer, Tree, ItemList, MarginContainer, HBoxContainer, VBoxContainer, GridContainer, CenterContainer, ScrollContainer, PanelContainer, HSplitContainer, VSplitContainer, NinePatchRect
+Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VSlider, CheckBox, CheckButton, OptionButton, SpinBox, ProgressBar, TextureRect, ColorPickerButton, TabContainer, Tree, ItemList, MarginContainer, HBoxContainer, VBoxContainer, GridContainer, CenterContainer, ScrollContainer, PanelContainer, HSplitContainer, VSplitContainer, NinePatchRect, TextureButton, ColorRect
 
 ## 使用指南
 
@@ -207,7 +207,7 @@ HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名�
       const fc = toRgba(getComputedStyle(fillEl).backgroundColor);
       if (fc) node.fill = fc;
     }
-    if (el.dataset.type) node.type = el.dataset.type;     // 显式类型覆盖推断(29 种白名单内)
+    if (el.dataset.type) node.type = el.dataset.type;     // 显式类型覆盖推断(31 种白名单内)
     out.nodes.push(node);
   }
   return out;  // → 直接作 geometry 入参,或写文件后走 geometry_path
@@ -269,7 +269,7 @@ ui_create_control(
   node_name="CustomWidget"
 )
 // → { error: "INVALID_CONTROL_TYPE", message: "MyCustomWidget is not a supported control type" }
-// 解决：使用 29 种支持的类型之一，或通过 execute_gdscript 注册自定义场景
+// 解决：使用 31 种支持的类型之一，或通过 execute_gdscript 注册自定义场景
 ```
 
 ## 常见陷阱

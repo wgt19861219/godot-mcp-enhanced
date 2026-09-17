@@ -136,20 +136,36 @@ function isDirectoryPath(p: string): boolean {
   try { return statSync(p).isDirectory(); } catch { return false; }
 }
 
+/** validateGodotBinary 的分层结果——失败时带 stage(校验器在哪一步判非法)。
+ * D3 (2026-09-17 反馈批次D, 09-06 fr2 反馈): ToolDispatcher 的 godot_path 校验错误
+ * 出口消费它组装诊断线索,替代单句 "not a valid Godot binary"(合法 4.7.2 console exe
+ * 被拒时无从排查)。validateGodotBinary 保持 boolean 语义供 finder 内部候选循环消费。 */
+export type GodotBinaryCheck =
+  | { ok: true }
+  | { ok: false; stage: 'path-not-allowed' | 'is-directory' | 'version-run-failed' | 'not-godot-signature'; stdoutPreview?: string };
+
 /** Validate a candidate binary by running --version and checking for Godot signature. */
-export async function validateGodotBinary(candidatePath: string): Promise<boolean> {
-  if (!isGodotPathAllowed(candidatePath)) return false;
+export async function validateGodotBinaryDetailed(candidatePath: string): Promise<GodotBinaryCheck> {
+  if (!isGodotPathAllowed(candidatePath)) return { ok: false, stage: 'path-not-allowed' };
   if (isDirectoryPath(candidatePath)) {
     getLogger().warn('godot-finder', `godot candidate is a directory, not an executable: ${candidatePath}`);
-    return false;
+    return { ok: false, stage: 'is-directory' };
   }
   try {
     const { stdout } = await execFileAsync(candidatePath, ['--version'], { encoding: 'utf-8', timeout: 5000, env: buildSafeEnv() });
-    return isGodotVersionSignature(stdout);
+    if (!isGodotVersionSignature(stdout)) {
+      getLogger().warn('godot-finder', `godot candidate --version output not a Godot signature: ${JSON.stringify(stdout.trim().slice(0, 80))}`);
+      return { ok: false, stage: 'not-godot-signature', stdoutPreview: stdout.trim().slice(0, 80) };
+    }
+    return { ok: true };
   } catch (err) {
     getLogger().debug('godot-finder', `validateGodotBinary failed for ${candidatePath}: ${err instanceof Error ? err.message : err}`);
-    return false;
+    return { ok: false, stage: 'version-run-failed' };
   }
+}
+
+export async function validateGodotBinary(candidatePath: string): Promise<boolean> {
+  return (await validateGodotBinaryDetailed(candidatePath)).ok;
 }
 
 /**

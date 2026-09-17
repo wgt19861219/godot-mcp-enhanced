@@ -315,6 +315,22 @@ func cleanup_and_quit(nodes: Array, exit_code: int = 0) -> void:
 	_exit_with(exit_code)
 	return
 
+# B5(反馈批次 B, 2026-09-09/09-10): 落盘后回读自检——save 返回 OK 不等于文件可加载
+# (历史上序列化异常/半写形态静默成功,调用方下次操作/游戏加载才发现节点被丢)。
+# 回读用 CACHE_MODE_IGNORE 绕过本进程资源缓存直读盘上文件;SceneState 节点计数比对
+# (不 instantiate,零脚本副作用——场景可能挂用户脚本)。失败 → 调用方 exit 1 当场报错。
+func _verify_saved_scene(saved_res_path: String, packed: PackedScene) -> bool:
+	var expected: int = packed.get_state().get_node_count()
+	var reloaded = ResourceLoader.load(saved_res_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+	if reloaded == null or not (reloaded is PackedScene):
+		log_error("Self-check failed: saved scene failed to load back: " + saved_res_path)
+		return false
+	var actual: int = (reloaded as PackedScene).get_state().get_node_count()
+	if actual != expected:
+		log_error("Self-check failed: node count mismatch after save (packed %d, reloaded %d) — nodes dropped on reload: " % [expected, actual] + saved_res_path)
+		return false
+	return true
+
 # 审查 M-3(2026-09-03): parent 规范化统一——原 add_node/batch 只特判整体 "root"/裸根名 +
 # 剥 "root/" 前缀,不剥 "/root/" 与场景根名前缀,与 edit_node/remove_node 的 node_path 剥离链
 # 分叉(同一输入 "/root/Foo" 或 query_scene_tree 拷贝的 "Main/Foo" 在两路径行为不同)。
@@ -380,6 +396,9 @@ const ALLOWED_HEADLESS_TYPES: Array = [
 	"TabContainer", "Tree", "ItemList", "MarginContainer", "HBoxContainer",
 	"VBoxContainer", "GridContainer", "CenterContainer", "ScrollContainer",
 	"PanelContainer", "HSplitContainer", "VSplitContainer", "NinePatchRect",
+	# 反馈批次 B B1(2026-09-09/09-10): TextureButton/ColorRect 是 UI 刚需(图片按钮/遮罩色块),
+	# 此前缺失致 headless add_node/batch_add_nodes Refused。与 ui_commands ALLOWED_CONTROL_TYPES 同步。
+	"TextureButton", "ColorRect",
 ]
 
 func _is_headless_allowed(type_name: String) -> bool:
@@ -546,6 +565,9 @@ func add_node(params):
 	if result == OK:
 		var save_error = _save_atomic(packed_scene, absolute_scene_path, absolute_scene_path)  # A5: 回填原 uid
 		if save_error == OK:
+			if not _verify_saved_scene(full_scene_path, packed_scene):  # B5: 回读自检
+				cleanup_and_quit([scene_root], 1)
+				return
 			print("Node '%s' of type '%s' added successfully" % [params.node_name, params.node_type])
 		else:
 			log_error("Failed to save scene: " + str(save_error))
@@ -608,6 +630,9 @@ func edit_node(params):
 	if result == OK:
 		var save_error = _save_atomic(packed_scene, absolute_scene_path, absolute_scene_path)  # A5: 回填原 uid
 		if save_error == OK:
+			if not _verify_saved_scene(full_scene_path, packed_scene):  # B5: 回读自检
+				cleanup_and_quit([scene_root], 1)
+				return
 			print("Node '%s' edited successfully" % params.node_path)
 		else:
 			log_error("Failed to save scene: " + str(save_error))
@@ -673,6 +698,9 @@ func remove_node(params):
 	if result == OK:
 		var save_error = _save_atomic(packed_scene, absolute_scene_path, absolute_scene_path)  # A5: 回填原 uid
 		if save_error == OK:
+			if not _verify_saved_scene(full_scene_path, packed_scene):  # B5: 回读自检
+				cleanup_and_quit([scene_root], 1)
+				return
 			print("Node '%s' removed successfully from %s" % [node_name, params.scene_path])
 		else:
 			log_error("Failed to save scene: " + str(save_error))
@@ -765,6 +793,9 @@ func batch_add_nodes(params):
 	if result == OK:
 		var save_error = _save_atomic(packed_scene, absolute_scene_path, absolute_scene_path)  # A5: 回填原 uid
 		if save_error == OK:
+			if not _verify_saved_scene(full_scene_path, packed_scene):  # B5: 回读自检
+				cleanup_and_quit([scene_root], 1)
+				return
 			print("Batch add completed: %d/%d nodes added to %s" % [added_count, nodes.size(), params.scene_path])
 			if failed_count > 0:
 				log_error("Failed to add %d nodes" % failed_count)
@@ -846,6 +877,10 @@ func load_sprite(params):
 	if result == OK:
 		var error = _save_atomic(packed_scene, full_scene_path, full_scene_path)  # A5: 回填原 uid
 		if error == OK:
+			if not _verify_saved_scene(full_scene_path, packed_scene):  # B5: 回读自检
+				scene_root.free()
+				_exit_with(1)
+				return
 			print("Sprite loaded successfully with texture: " + full_texture_path)
 			scene_root.free()
 			return
@@ -982,6 +1017,9 @@ func save_scene(params):
 	if result == OK:
 		var error = _save_atomic(packed_scene, save_path, full_scene_path)  # A5: 回填原文件 uid(save_path 可为 new_path)
 		if error == OK:
+			if not _verify_saved_scene(save_path, packed_scene):  # B5: 回读自检
+				cleanup_and_quit([scene_root], 1)
+				return
 			print("Scene saved successfully to: " + save_path)
 			scene_root.free()
 			return

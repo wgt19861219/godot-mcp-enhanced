@@ -116,7 +116,7 @@ export function getToolDefinitions(): Tool[] {
             description: '操作类型',
           },
           project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶' },
-          timeout: { type: 'number', description: '自动停止秒数（默认 30。游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race）', default: 30 },
+          timeout: { type: 'number', description: '自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）', default: 30 },
           wait_for_bridge: { type: 'boolean', default: false, description: 'true 时 spawn 后轮询 bridge 就绪(默认 false,向后兼容)' },
           profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置;之后用 profiler 工具 action=capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
           bridge_timeout: { type: 'number', default: 10, description: 'wait_for_bridge 轮询总预算(秒,默认 10)' },
@@ -141,8 +141,17 @@ export function getToolDefinitions(): Tool[] {
 // computeRunTimeout:run_project 的 auto-stop timeout 计算(提取为纯函数便于测试)。
 // wait_for_bridge 时 timeout 至少 bridge_timeout + 10,防 auto-stop 与 bridge 就绪 race
 // (修复前默认 timeout=30 与 bridge_timeout=30 同量级,游戏在 bridge 就绪前被 auto-stop kill)。
+// 反馈批次D (2026-09-17, fr2 2026-09-02 反馈): 显式 0/-1 = 不自动停——bridge 交互会话
+// (每步 game_write/game_query 慢慢驱动,大图装载单步 10s+)总时长天然超冷启动时长,
+// 到点静默 kill 游戏呈 BRIDGE_NOT_CONNECTED 假象(排障 8 分钟);交 stop_project 手动控制。
 export function computeRunTimeout(rawTimeout: unknown, bridgeTimeout: number, waitForBridge: boolean): number {
-  const base = Math.max(5, Number(rawTimeout) || 30);
+  const raw = Number(rawTimeout);
+  // 显式 <=0 (0/-1) 归一为 0 = 不设 auto-stop timer(消费方 `timeout > 0` 守卫已就位);
+  // undefined/NaN/空串/null 不算显式(未传参防误伤,仍走默认 30)。
+  if (rawTimeout != null && rawTimeout !== '' && Number.isFinite(raw) && raw <= 0) {
+    return 0;
+  }
+  const base = Math.max(5, raw || 30);
   return waitForBridge ? Math.max(bridgeTimeout + 10, base) : base;
 }
 
@@ -158,6 +167,8 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   const waitForBridge = args.wait_for_bridge === true;
   const bridgeTimeout = Math.max(1, Number(args.bridge_timeout) || 10);
   const timeout = computeRunTimeout(args.timeout, bridgeTimeout, waitForBridge);
+  // 反馈批次D: timeout=0/-1 时响应文本明示「不自动停」,不再显示误导性的 "timeout: 0s"
+  const timeoutNote = timeout > 0 ? `timeout: ${timeout}s` : 'no auto-stop (timeout=0/-1; stop via stop_project)';
   const preview = args.preview === true;
   const godot = await ctx.findGodot();
 
@@ -326,7 +337,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
         void killProcess(proc);
         clearRunSession(sessionKey);
       }
-      return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. timeout=${timeout}s, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.`);
+      return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. ${timeoutNote}, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.`);
     }
     // P1-6 关联修复(2026-08-21 七维度审核): "Bridge ready." 是 bridge-session.ts /
     // qa/runner.ts 的 load-bearing 判据(子串匹配),仅在真的探测过 isBridgeReady 后
@@ -334,12 +345,12 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     if (preview) {
       return textResult(warnPrefix + 'Preview mode: bridge ready, game window open at ' + p + ', no auto-stop. It stays open until the user closes the window. After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
     }
-    return textResult(warnPrefix + 'Bridge ready. ' + `Running project at ${p} (timeout: ${timeout}s). Use get_debug_output or stop_project to check.` + sessionNote);
+    return textResult(warnPrefix + 'Bridge ready. ' + `Running project at ${p} (${timeoutNote}). Use get_debug_output or stop_project to check.` + sessionNote);
   }
   if (preview) {
     return textResult(warnPrefix + 'Preview mode: game window is now open at ' + p + '. It stays open until the user closes the window (no auto-stop). After the user closes it, call get_debug_output to check for runtime errors.' + sessionNote);
   }
-  return textResult(warnPrefix + `Running project at ${p} (timeout: ${timeout}s; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.` + sessionNote);
+  return textResult(warnPrefix + `Running project at ${p} (${timeoutNote}; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.` + sessionNote);
 }
 
 // ─── Tool handler ───────────────────────────────────────────────────────────

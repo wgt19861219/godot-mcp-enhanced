@@ -2353,6 +2353,9 @@ func _cmd_send_key(params: Dictionary) -> Variant:
 	# Godot 4 推荐 physical_keycode 映射;只设 keycode 在 physical 映射项目里不触发 ui_action。
 	event.physical_keycode = keycode
 	event.pressed = pressed
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链;不依赖
+	# 引擎对默认 -1 的未文档化规范化)。timeline 注入复用本函数,自动跟随。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "key": key}
 
@@ -2399,8 +2402,11 @@ func _is_valid_touch_index(v: Variant) -> bool:
 
 
 func _cmd_send_mouse_click(params: Dictionary) -> Variant:
-	var x: float = float(params.get("x", 0))
-	var y: float = float(params.get("y", 0))
+	# 反馈批次C (2026-09-17):x/y 裸 float() 是 2026-09-03 审查 I-C 修复的漏网点
+	# (mouse_move/drag 已改 _num 守卫,此处漏改)——null/容器参数触发 SCRIPT ERROR,
+	# 同步分发无异常隔离 → 响应静默变 result:null(真机 headless 实证)。对齐 _num 收口。
+	var x: float = _num(params.get("x", 0), 0.0)
+	var y: float = _num(params.get("y", 0), 0.0)
 	var button: int = _mouse_button_from_value(params.get("button", 1))
 	if button == -1:
 		return {"error": {"code": -1, "message": "Invalid mouse button: %s (use 1-9 or left/right/middle)" % str(params.get("button", 1))}}
@@ -2410,6 +2416,9 @@ func _cmd_send_mouse_click(params: Dictionary) -> Variant:
 	event.button_index = button
 	event.pressed = pressed
 	event.global_position = Vector2(x, y)
+	# 反馈批次C (2026-09-17,09-10 建议①):显式 device=0 对齐真实鼠标事件(真实事件 device=0;
+	# 不设时默认 -1,当前引擎派发链会规范化为 0——真机 4.6.3 实测——但不依赖该未文档化行为)。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "x": x, "y": y, "button": button}
 
@@ -2421,6 +2430,8 @@ func _cmd_send_mouse_move(params: Dictionary) -> Variant:
 	var event := InputEventMouseMotion.new()
 	event.position = Vector2(x, y)
 	event.global_position = Vector2(x, y)
+	# 反馈批次C (2026-09-17):device=0 对齐真实管线(同 _cmd_send_mouse_click)
+	event.device = 0
 	# 反馈 2026-08-22 (CardGame2): 可选 button_mask(1=left 2=right 4=middle 位掩码)——
 	# move 事件默认不带按键状态,非 drag motion;传掩码可模拟按住拖动(先 press 再带 mask 的 move)。
 	var mask := int(_num(params.get("button_mask", 0), 0.0))
@@ -2433,8 +2444,9 @@ func _cmd_send_mouse_move(params: Dictionary) -> Variant:
 
 # 阶段2b IMP-11: 触摸事件注入(对齐 recording_commands.gd :197 + recording.ts touch 回放契约)
 func _cmd_send_touch(params: Dictionary) -> Variant:
-	var x: float = float(params.get("x", 0))
-	var y: float = float(params.get("y", 0))
+	# 反馈批次C (2026-09-17):x/y 裸 float() 同 _cmd_send_mouse_click 的 I-C 漏网收口
+	var x: float = _num(params.get("x", 0), 0.0)
+	var y: float = _num(params.get("y", 0), 0.0)
 	var pressed: bool = params.get("pressed", true)
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
@@ -2444,6 +2456,9 @@ func _cmd_send_touch(params: Dictionary) -> Variant:
 	event.position = Vector2(x, y)
 	event.pressed = pressed
 	event.index = index
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
+	# timeline 注入复用本函数,自动跟随。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "x": x, "y": y, "pressed": pressed, "index": index}
 
@@ -2492,8 +2507,16 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	var event := InputEventScreenDrag.new()
 	event.position = Vector2(x, y)
 	event.index = index
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
+	# timeline 注入复用本函数,自动跟随。(插在 index 后避开 velocity 行区域——
+	# 该行由批A d7b15fa4 改名,分支合并时两侧改动重叠会冲突)
+	event.device = 0
 	event.relative = relative
-	event.speed = speed
+	# 跨项目验证发现(2026-09-16 反馈批A,CardGame2 Godot 4.7 真机):InputEventScreenDrag
+	# 的引擎属性是 velocity(Godot 3 的 speed 已改名),赋值/读取 speed 直接 SCRIPT ERROR —
+	# send_drag 在 Godot 4 上从未真正可用(6f997b4 修的是参数归一化,属性名错漏网)。
+	# MCP API 参数名 speed 保持不变(调用方契约),仅引擎属性侧改名。
+	event.velocity = speed
 	Input.parse_input_event(event)
 	# 审查 I-B(2026-09-03): 裸 Vector2 经 JSON.stringify 退化为 "(x, y)" 字符串(真机实证),
 	# 走 _jsonify 输出 {"x","y"}(对齐 wait_for_property 先例),响应可结构化消费。
@@ -2510,6 +2533,8 @@ func _cmd_send_text(params: Dictionary) -> Variant:
 	for ch in text:
 		var event := InputEventKey.new()
 		event.unicode = ch.unicode_at(0)
+		# 反馈批次D (2026-09-17): device=0 对称收口(同 _cmd_send_key)
+		event.device = 0
 		event.pressed = true
 		Input.parse_input_event(event)
 		event.pressed = false
@@ -3945,6 +3970,8 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 			press.pressed = true
 			press.position = center
 			press.global_position = center
+			# 反馈批次C (2026-09-17):device=0 对齐真实管线(同 _cmd_send_mouse_click)
+			press.device = 0
 			vp.push_input(press)
 			await get_tree().process_frame
 			await get_tree().process_frame
@@ -3953,6 +3980,7 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 			release.pressed = false
 			release.position = center
 			release.global_position = center
+			release.device = 0
 			vp.push_input(release)
 			await get_tree().process_frame
 			await get_tree().process_frame

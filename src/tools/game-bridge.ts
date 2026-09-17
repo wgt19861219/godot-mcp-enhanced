@@ -236,7 +236,7 @@ export function getToolDefinitions(): Tool[] {
           },
           params: {
             type: 'object',
-            description: '方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。',
+            description: '方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。',
           },
           timeout: { type: 'number', description: 'game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000)' },
           interval_ms: { type: 'number', description: 'game_wait 专用：轮询探测间隔（毫秒，默认 200，范围 50-2000）。仅 wait_for_node/wait_for_property 生效', default: 200 },
@@ -619,14 +619,20 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         try {
           const { installOverride } = await import('../core/overrides.js');
           const entry = installOverride(sourceScriptPath, projectPath);
+          // D4 (2026-09-17 反馈批次D, 09-06 CardGame2 反馈): 三种安装形态都明示卸载义务——
+          // 取证脚本忘卸载 → autoload 残留 project.godot,GUT 等共享 project.godot 的测试门禁
+          // 同样执行 _ready(改存档/切场景)污染用例环境(2483/2484 一例)。
+          const mustUninstall = '取证/调试完成后必须 uninstall_override(同一 source_script_path)——'
+            + 'autoload 残留在 project.godot 会在共享它的测试门禁(GUT 等)里同样执行 _ready,污染用例环境;'
+            + 'uninstall 会一并清理 dest script 与伴生 .gd.uid 残留。';
           if (entry === null) {
-            return textResult(JSON.stringify({ success: true, message: 'Override already registered and content identical, skipped.', already_installed: true }));
+            return textResult(JSON.stringify({ success: true, message: 'Override already registered and content identical, skipped. ' + mustUninstall, already_installed: true }));
           }
           if (entry.updated) {
             // 反馈 2026-08-30: 源脚本内容漂移时重拷贝,autoload 注册不动
             return textResult(JSON.stringify({
               success: true,
-              message: `Override already registered; dest script updated to match source (content drift). Restart the game to load the new version.`,
+              message: `Override already registered; dest script updated to match source (content drift). Restart the game to load the new version. ${mustUninstall}`,
               autoload_key: entry.autoloadKey,
               dest_script: `res://${entry.destScriptName}`,
               updated: true,
@@ -634,7 +640,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           }
           return textResult(JSON.stringify({
             success: true,
-            message: `Override installed: ${entry.autoloadKey} (autoload 段末尾,游戏 autoload 之后加载,_ready 可直接访问游戏单例)`,
+            message: `Override installed: ${entry.autoloadKey} (autoload 段末尾,游戏 autoload 之后加载,_ready 可直接访问游戏单例)。${mustUninstall}`,
             autoload_key: entry.autoloadKey,
             dest_script: `res://${entry.destScriptName}`,
             project_root: entry.projectRoot,

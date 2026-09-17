@@ -85,6 +85,58 @@ describe('Level B: Scene Operations', () => {
     expect(result.structuredContent.persisted).toBe(true);
   });
 
+  // B2(反馈批次 B, 2026-09-09): add_node parent 含场景根名前缀(query_scene_tree 拷贝形态
+  // "Root/Main")——修复前文本路径报 "Parent node not found"(与 batch/GD 链分叉),
+  // 修复后剥根名前缀对齐 GD 链 _resolve_parent_node,落盘 parent="Main"。
+  it('add_node — parent 含场景根名前缀(Root/Main)剥根名后落盘(B2)', async () => {
+    const result = await scene.handleTool('scene', {
+      project_path: dirRef.path,
+      action: 'add_node',
+      scene_path: 'res://scenes/main.tscn',
+      node_type: 'Node2D',
+      node_name: 'B2Child',
+      parent_node_path: 'Root/Main',
+    }, ctx);
+    expect(isSuccessful(result)).toBeTruthy();
+    const { readFileSync } = await import('node:fs');
+    const tscn = readFileSync(`${dirRef.path}/scenes/main.tscn`, 'utf-8');
+    expect(tscn).toContain('[node name="B2Child" type="Node2D" parent="Main"]');
+  });
+
+  // B5(反馈批次 B): add_node 文本捷径产物落盘前过 verifySceneTree 自检(正常产物通过不打扰;
+  // 自检失败的拒写形态由 tscn-editor-add-node.test.ts 的 verifySceneTree 单测覆盖)。
+  it('add_node — 正常添加落盘(自检接线不误伤,B5)', async () => {
+    const result = await scene.handleTool('scene', {
+      project_path: dirRef.path,
+      action: 'add_node',
+      scene_path: 'res://scenes/main.tscn',
+      node_type: 'Node2D',
+      node_name: 'SelfCheckOk',
+      parent_node_path: 'Main',
+    }, ctx);
+    expect(isSuccessful(result)).toBeTruthy();
+    const { readFileSync } = await import('node:fs');
+    const tscn = readFileSync(`${dirRef.path}/scenes/main.tscn`, 'utf-8');
+    expect(tscn).toContain('SelfCheckOk');
+  });
+
+  // 审查 N2(2026-09-17): parent 前缀正则曾为 /^\/?root\/?/(尾斜杠可选),
+  // "rootMain" 被误剥成 "Main" 静默指向错误节点;修正后不再误剥,如实报 not found。
+  it('add_node — parent "rootMain" 不被误剥成 "Main"(审查 N2)', async () => {
+    const result = await scene.handleTool('scene', {
+      project_path: dirRef.path,
+      action: 'add_node',
+      scene_path: 'res://scenes/main.tscn',
+      node_type: 'Node2D',
+      node_name: 'N2Guard',
+      parent_node_path: 'rootMain',
+    }, ctx);
+    // rootMain 节点不存在 → 如实报错(而非误剥成 Main 成功)
+    // 注:addNode 失败走 textResult 无 isError 标志,isSuccessful 对 "Error:" 文本放行,故直接断言错误文本
+    const text = result.content?.[0]?.text || '';
+    expect(text).toContain('Parent node not found');
+  });
+
   // P1-3 (2026-08-11 审查): add_node 错误路径 — 场景文件不存在 → FILE_NOT_FOUND
   // 注:重名/父节点无效/父不存在在 GD 侧(addNode 文本编辑不检测,spawn 路径 GD 侧检),
   // mock 鸿沟切断(靠 godot-matrix e2e 验证),此处覆盖 TS 侧可达错误路径。

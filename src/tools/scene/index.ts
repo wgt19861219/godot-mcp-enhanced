@@ -10,10 +10,10 @@ import { pluginSelfPathGuard } from '../shared/file-guard.js';
 import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath, ensureDir, parseMcpScriptOutput } from '../../helpers.js';
 import { parseTscn, parseTscnSummary } from '../../tscn/tscn-parser.js';
 import { normalizeNodePath, opsErrorResult, sanitizeResPath } from '../shared.js';
-import { addNode } from '../../tscn/tscn-editor.js';
+import { addNode, verifySceneTree } from '../../tscn/tscn-editor.js';
 import { acquireShortRunningSlot, releaseShortRunningSlot } from '../../core/process-state.js';
 import { spawnGodot } from '../spawn-helper.js';
-import { ACTIONS, requireScenePath, writeAtomic } from './helpers.js';
+import { ACTIONS, requireScenePath, writeAtomic, inferSceneRootName } from './helpers.js';
 import { handleInstanceScene, handleSetInstanceProperty, handleDetachInstance } from './scene-instance.js';
 import { mergeTscn, checkSceneHealth } from './scene-merge.js';
 import { handleCreate3dNode } from '../node-3d-ops.js';
@@ -171,17 +171,27 @@ export async function handleTool(
       }
 
       // Convert parent_node_path to .tscn parent format
+      const tscnContent = readFileSync(absPath, 'utf-8');
       const rawParent = String(args.parent_node_path || 'root');
       let tscnParent: string;
       if (rawParent === 'root' || rawParent === '/root' || rawParent === '') {
         tscnParent = '.';
       } else {
         // Strip "root/" prefix if present, keep the rest as tscn parent path
-        const stripped = rawParent.replace(/^\/?root\/?/, '');
-        tscnParent = stripped || '.';
+        // 审查 N2(2026-09-17): 正则尾斜杠须必有——`/^\/?root\/?/` 会把 "rootFoo" 误剥成
+        // "Foo"(裸前缀吃掉);纯 "root"/"/root" 已被上方特判覆盖,此处只需 "root/..." 形态。
+        let cleaned = rawParent.replace(/^\/?root\//, '');
+        // B2(反馈批次 B, 2026-09-09): 对齐 GD 链 _resolve_parent_node 的根名剥离链——
+        // query_scene_tree 拷贝的 parent 路径含场景根名前缀("GetNewHeroContent/OkBtn"),
+        // 而 .tscn parent 语义相对场景根不含根名;不剥则 findNodeSectionLine 找不到节点
+        // (此前单发文本路径与 batch/GD 链行为分叉:同输入 batch 成功、单发报 not found)。
+        // 根名取 root [node] 的 name 属性;缺失时 Godot 以场景文件名(去扩展名)为根名。
+        const rootName = inferSceneRootName(tscnContent, sceneRelPath);
+        if (rootName && (cleaned === rootName || cleaned.startsWith(rootName + '/'))) {
+          cleaned = cleaned === rootName ? '' : cleaned.slice(rootName.length + 1);
+        }
+        tscnParent = cleaned || '.';
       }
-
-      const tscnContent = readFileSync(absPath, 'utf-8');
       const result = addNode(tscnContent, {
         parent: tscnParent,
         name: String(args.node_name),
@@ -221,6 +231,13 @@ export async function handleTool(
       // A-ATOMIC (2026-09-01): 覆盖已存在的用户场景资产改走原子写(同目录 helpers.writeAtomic
       // 此前已 import 却漏用;直写中断=半写 .tscn 损坏用户场景)
       if (result.scene) {
+        // B5(反馈批次 B): 落盘前回读 parse 自检——文本拼接产物的 node parent 链须逐段可达
+        // (Godot 按文件序解析,断链节点加载即"Parent path has vanished"静默丢弃),
+        // 损坏当场报错拒写而非静默成功(纵深防文本拼接的未知损坏形态)
+        const verify = verifySceneTree(result.scene);
+        if (!verify.ok) {
+          return opsErrorResult('SCENE_SELF_CHECK_FAILED', `add_node produced an invalid scene, write blocked: ${verify.problem}`);
+        }
         writeAtomic(absPath, result.scene);
       }
       // S1 (2026-06-23): BLOCKED_PROPS 命中时前置明确警告(避免"设 script 看似成功但未落盘"的静默失败)

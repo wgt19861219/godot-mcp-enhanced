@@ -26,6 +26,7 @@ const {
   mockIsToolAllowed,
   mockSetActiveGroups,
   mockValidateGodotBinary,
+  mockValidateGodotBinaryDetailed,
   mockIsDynamicToolName,
 } = vi.hoisted(() => ({
   mockGetAllToolDefinitions: vi.fn<() => Tool[]>(),
@@ -43,6 +44,8 @@ const {
   mockIsToolAllowed: vi.fn().mockReturnValue(true),
   mockSetActiveGroups: vi.fn(),
   mockValidateGodotBinary: vi.fn().mockResolvedValue(true),
+  // D3 (2026-09-17 反馈批次D): ToolDispatcher 改消费 validateGodotBinaryDetailed(分层 stage)
+  mockValidateGodotBinaryDetailed: vi.fn().mockResolvedValue({ ok: true }),
   // A1 (2026-08-11): dispatcher 动态工具门反查依赖;默认 false(非动态),用例内按需 mockReturnValue
   mockIsDynamicToolName: vi.fn().mockReturnValue(false),
 }));
@@ -112,8 +115,10 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
 });
 
 // M-1: mock godot-finder 的 validateGodotBinary(resolveFindGodotOverride 动态 import 调用)
+// D3: 校验出口已改为消费 validateGodotBinaryDetailed(分层 stage);boolean 版保留给其他调用方
 vi.mock('../../src/core/godot-finder.js', () => ({
   validateGodotBinary: mockValidateGodotBinary,
+  validateGodotBinaryDetailed: mockValidateGodotBinaryDetailed,
 }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1574,7 +1579,7 @@ describe('ToolDispatcher: findGodot override propagation (CR-1/CR-2)', () => {
     const guard = createMockGuard(false);
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
-    mockValidateGodotBinary.mockResolvedValueOnce(false);
+    mockValidateGodotBinaryDetailed.mockResolvedValueOnce({ ok: false, stage: 'version-run-failed' });
     const dispatcher = makeDispatcher({ readOnlyGuard: guard });
 
     const result = await dispatcher.handleCall({
@@ -1582,7 +1587,8 @@ describe('ToolDispatcher: findGodot override propagation (CR-1/CR-2)', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).toContain('not a valid Godot binary');
+    // D3: 错误消息已从单句 "not a valid Godot binary" 升级为 stage 诊断线索
+    expect(JSON.stringify(result)).toContain('godot_path failed validation');
     expect(mockModule.handleTool).not.toHaveBeenCalled();
   });
 
@@ -1996,10 +2002,11 @@ describe('ToolDispatcher isPathInAllowedRoots wiring (P2-2)', () => {
 describe('ToolDispatcher validateGodotBinary wiring (P2-2)', () => {
   afterEach(() => {
     mockValidateGodotBinary.mockResolvedValue(true);  // restore 默认(通过)
+    mockValidateGodotBinaryDetailed.mockResolvedValue({ ok: true });
   });
 
   it('validateGodotBinary=false + godot_path → INVALID_PARAMS(守护接线,删 :672 此测试红)', async () => {
-    mockValidateGodotBinary.mockResolvedValue(false);
+    mockValidateGodotBinaryDetailed.mockResolvedValue({ ok: false, stage: 'path-not-allowed' });
     const handleToolSpy = vi.fn().mockResolvedValue(mockToolResult);
     mockGetModuleForTool.mockReturnValue({ handleTool: handleToolSpy });
     const dispatcher = new ToolDispatcher(createOptions());
@@ -2012,11 +2019,37 @@ describe('ToolDispatcher validateGodotBinary wiring (P2-2)', () => {
     expect(handleToolSpy).not.toHaveBeenCalled();
     const parsed = JSON.parse((result.content[0] as { text: string }).text);
     expect(parsed.error_code).toBe('INVALID_PARAMS');
-    expect(JSON.stringify(parsed)).toMatch(/godot_path failed validation|not a valid Godot/i);
+    expect(JSON.stringify(parsed)).toMatch(/godot_path failed validation/i);
   });
 
-  it('validateGodotBinary=true + godot_path → 放行(对照)', async () => {
-    mockValidateGodotBinary.mockResolvedValue(true);
+  // D3 (2026-09-17 反馈批次D): 校验失败错误须带诊断线索——分层 stage 的排查指引 +
+  // validator pipeline 说明(09-06 fr2 反馈:单句 "not a valid Godot binary" 无从排查)。
+  it('D3: 失败错误带 stage 诊断线索 + validator pipeline 说明(各 stage 抽查)', async () => {
+    const cases: Array<{ stage: 'path-not-allowed' | 'is-directory' | 'version-run-failed' | 'not-godot-signature'; stdoutPreview?: string; expectText: RegExp }> = [
+      { stage: 'path-not-allowed', expectText: /GODOT_MCP_ALLOWED_GODOT_PATHS whitelist/ },
+      { stage: 'is-directory', expectText: /path is a directory/ },
+      { stage: 'version-run-failed', expectText: /could not execute the binary with --version/ },
+      { stage: 'not-godot-signature', stdoutPreview: 'some junk 1.2', expectText: /did not match a Godot version signature \(got: .{0,3}some junk 1\.2/ },
+    ];
+    for (const c of cases) {
+      mockValidateGodotBinaryDetailed.mockResolvedValue({ ok: false, stage: c.stage, stdoutPreview: c.stdoutPreview });
+      const dispatcher = new ToolDispatcher(createOptions());
+
+      const result = await dispatcher.handleCall({
+        params: { name: 'scene', arguments: { action: 'add_node', project_path: '/proj', scene_path: 'res://main.tscn', node_type: 'Node', node_name: 'X', godot_path: '/fake/invalid-godot' } },
+      });
+
+      expect(result.isError, `stage=${c.stage}`).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      expect(text, `stage=${c.stage} 须含该 stage 的排查指引`).toMatch(c.expectText);
+      expect(text, `stage=${c.stage} 须含 validator pipeline 说明`).toMatch(/validator pipeline: whitelist check → directory check → run --version/);
+    }
+  });
+
+  // Nit2 清偿(2026-09-17 批D审查): 消费方已改 validateGodotBinaryDetailed——
+  // 放行靠 Detailed 默认 {ok:true},用例名与显式设置同步对齐(旧 boolean mock 设置是无效残留)
+  it('validateGodotBinaryDetailed ok:true + godot_path → 放行(对照)', async () => {
+    mockValidateGodotBinaryDetailed.mockResolvedValue({ ok: true });
     const handleToolSpy = vi.fn().mockResolvedValue(mockToolResult);
     mockGetModuleForTool.mockReturnValue({ handleTool: handleToolSpy });
     const dispatcher = new ToolDispatcher(createOptions());
