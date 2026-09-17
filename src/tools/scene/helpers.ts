@@ -4,6 +4,7 @@ import type { ToolResult } from '../../types.js';
 import { opsErrorResult } from '../shared.js';
 import { gdEscape, valueToGd } from '../shared.js';
 import { writeFileAtomicWithMode } from '../../core/fs-atomic.js';
+import { parseTscn } from '../../tscn/tscn-parser.js';
 
 export const ACTIONS = [
   'read_scene', 'create_scene', 'add_node', 'save_scene', 'load_sprite',
@@ -96,4 +97,19 @@ export const BLOCKED_PROPS = new Set([
  * mode 保持 + 随机 tmp 后缀 + Windows 锁定降级),此处保留签名薄委托,消费方零改动。 */
 export function writeAtomic(filePath: string, content: string): void {
   writeFileAtomicWithMode(filePath, content);
+}
+
+/** B2(反馈批次 B): 推断场景根节点名——root [node] 的 name 属性;缺失时 Godot 以
+ * 场景文件名(去扩展名)为根名。用于剥 query_scene_tree 拷贝路径里的根名前缀
+ * (对齐 GD 链 _resolve_parent_node 的剥离链)。 */
+export function inferSceneRootName(tscnContent: string, sceneRelPath: string): string | undefined {
+  try {
+    const root = parseTscn(tscnContent).nodes.find(n => !n.parent);
+    if (root && root.name) return root.name;
+  } catch {
+    // parse 失败走文件名推断(addNode 文本拼接对 parse 失败的场景自身也会失败)
+  }
+  const base = sceneRelPath.split('/').pop() ?? '';
+  const fromFile = base.replace(/\.tscn$/i, '');
+  return fromFile || undefined;
 }

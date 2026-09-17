@@ -1,5 +1,5 @@
 {
-  "version": "0.33.3",
+  "version": "0.33.4",
   "tools": [
     {
       "name": "analysis",
@@ -6085,7 +6085,9 @@
               "PanelContainer",
               "HSplitContainer",
               "VSplitContainer",
-              "NinePatchRect"
+              "NinePatchRect",
+              "TextureButton",
+              "ColorRect"
             ],
             "description": "ui_create_control/ui_container_add: Control 子类类型"
           },
@@ -6245,7 +6247,9 @@
               "PanelContainer",
               "HSplitContainer",
               "VSplitContainer",
-              "NinePatchRect"
+              "NinePatchRect",
+              "TextureButton",
+              "ColorRect"
             ],
             "description": "ui_container_add: 子节点 Control 类型"
           },
@@ -6465,7 +6469,9 @@
                   "PanelContainer",
                   "HSplitContainer",
                   "VSplitContainer",
-                  "NinePatchRect"
+                  "NinePatchRect",
+                  "TextureButton",
+                  "ColorRect"
                 ],
                 "description": "Control 子类"
               },
@@ -6734,8 +6740,8 @@
       },
       "size": {
         "descBytes": 709,
-        "schemaBytes": 10927,
-        "totalBytes": 11636
+        "schemaBytes": 11011,
+        "totalBytes": 11720
       },
       "annotations": {
         "readOnlyHint": false,

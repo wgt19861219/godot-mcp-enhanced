@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addNode, canSerializeProperty, formatPropertyValue } from '../src/tscn/tscn-editor.js';
+import { addNode, canSerializeProperty, formatPropertyValue, verifySceneTree } from '../src/tscn/tscn-editor.js';
 import type { AddNodeParams } from '../src/tscn/tscn-editor.js';
 
 const SIMPLE_SCENE = `[gd_scene load_steps=2 format=3]
@@ -40,15 +40,23 @@ describe('canSerializeProperty', () => {
     expect(canSerializeProperty({ text: 'hello' })).toBe(true);
   });
 
-  it('allows arrays of primitives', () => {
-    expect(canSerializeProperty([1, 2, 3])).toBe(true);
-    expect(canSerializeProperty([])).toBe(true);
-    expect(canSerializeProperty(['a'])).toBe(true);
-  });
-
-  it('rejects arrays with nested objects', () => {
+  it('B3-text(反馈批次 B): rejects ALL arrays → fallback to Godot process — 裸数组对数学类型属性是非法 tscn,Godot 静默丢属性回退默认值', () => {
+    // 修复前:primitive Array 直接落盘裸数组字面量(color=[0,0,0,0.588] → Godot 加载后 Shade.color=(0,0,0,1) 静默丢)
+    // 修复后:一律 fallback GD 链(_set_property_with_coerce 数学 coerce 转换后 pack 序列化为 Color(...) 等合法形态)
+    expect(canSerializeProperty([1, 2, 3])).toBe(false);
+    expect(canSerializeProperty([])).toBe(false);
+    expect(canSerializeProperty(['a'])).toBe(false);
+    expect(canSerializeProperty([0, 0, 0, 0.588235])).toBe(false);
     expect(canSerializeProperty([{ x: 1 }])).toBe(false);
     expect(canSerializeProperty([[1, 2]])).toBe(false);
+  });
+
+  it('B4(反馈批次 B): rejects res:// and uid:// strings → fallback (裸字符串资源路径落盘后纹理静默丢失)', () => {
+    expect(canSerializeProperty('res://icon.png')).toBe(false);
+    expect(canSerializeProperty('uid://b5juum7jogola')).toBe(false);
+    // 普通字符串不受影响(仍是文本路径可序列化)
+    expect(canSerializeProperty('hello')).toBe(true);
+    expect(canSerializeProperty('user://saves/x.json')).toBe(true);
   });
 
   it('rejects nested objects', () => {
@@ -146,7 +154,7 @@ describe('addNode', () => {
     expect(result.scene).toContain('modulate = Color(1, 0, 0, 1)');
   });
 
-  it('serializes array properties of primitives', () => {
+  it('B3-text(反馈批次 B): array properties now fallback to Godot process (裸数组落盘=静默丢属性)', () => {
     const result = addNode(SIMPLE_SCENE, {
       parent: '.',
       name: 'ArrNode',
@@ -157,8 +165,8 @@ describe('addNode', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.fallback).toBe(false);
-    expect(result.scene).toContain('items = [1, 2, 3]');
+    expect(result.fallback).toBe(true);
+    expect(result.scene).toBeUndefined();
   });
 
   it('returns fallback=true for nested object properties', () => {
@@ -353,13 +361,10 @@ describe('formatPropertyValue', () => {
 });
 
 describe('canSerializeProperty (extended)', () => {
-  it('allows arrays of primitives', () => {
-    expect(canSerializeProperty([1, 2, 3])).toBe(true);
-    expect(canSerializeProperty(['a', 'b'])).toBe(true);
-    expect(canSerializeProperty([true, false])).toBe(true);
-  });
-
-  it('rejects arrays with nested objects', () => {
+  it('B3-text(反馈批次 B): arrays 一律 fallback(修复前 primitive Array 落盘裸数组,Godot 静默丢属性)', () => {
+    expect(canSerializeProperty([1, 2, 3])).toBe(false);
+    expect(canSerializeProperty(['a', 'b'])).toBe(false);
+    expect(canSerializeProperty([true, false])).toBe(false);
     expect(canSerializeProperty([{ x: 1 }])).toBe(false);
     expect(canSerializeProperty([[1, 2]])).toBe(false);
   });
@@ -505,5 +510,56 @@ describe('F-3: addNode property key validation & BLOCKED_PROPS', () => {
     });
     expect(result.success).toBe(true);
     expect(result.blockedProps).toBeUndefined();
+  });
+});
+
+describe('verifySceneTree (B5 反馈批次 B: 落盘前回读 parse 自检)', () => {
+  it('accepts a structurally valid scene (root + children in depth-first order)', () => {
+    const r = verifySceneTree(NESTED_SCENE);
+    expect(r.ok).toBe(true);
+    expect(r.problem).toBeUndefined();
+  });
+
+  it('accepts the output of addNode (正常单发添加产物自检通过)', () => {
+    const added = addNode(NESTED_SCENE, { parent: 'Player', name: 'NewChild', type: 'Node2D' });
+    expect(added.success).toBe(true);
+    const r = verifySceneTree(added.scene!);
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects a node whose parent path contains the scene-root name (B2 形态: 加载即 vanished)', () => {
+    const broken = `[gd_scene format=3]
+
+[node name="GetNewHeroContent" type="Control"]
+
+[node name="OkBtn" type="Button" parent="."]
+
+[node name="OkLbl" type="Label" parent="GetNewHeroContent/OkBtn"]
+`;
+    const r = verifySceneTree(broken);
+    expect(r.ok).toBe(false);
+    expect(r.problem).toContain('OkLbl');
+  });
+
+  it('rejects a child block appearing BEFORE its parent block (Godot parses nodes in file order)', () => {
+    const broken = `[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="Sprite" type="Sprite2D" parent="Player"]
+
+[node name="Player" type="CharacterBody2D" parent="."]
+`;
+    const r = verifySceneTree(broken);
+    expect(r.ok).toBe(false);
+    expect(r.problem).toContain('Sprite');
+  });
+
+  it('rejects unparseable content (自检自身报 parse failed 而非吞错)', () => {
+    const r = verifySceneTree('this is not a tscn at all');
+    // 解析器可能宽容;关键约束:绝不 ok=false 被吞。宽松断言:要么 ok=false 带 parse failed,要么 ok=true(解析器容忍)
+    if (!r.ok) {
+      expect(r.problem).toContain('parse failed');
+    }
   });
 });

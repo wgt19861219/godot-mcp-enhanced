@@ -17,6 +17,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
+## [0.33.4] - 2026-09-17
+
+> 插件反馈批次 B（scene 序列化：tscn 损坏/数据丢失类，CardGame2 2026-09-03~09-10 反馈）；规则模板白名单变更触发硬门禁 bump（N-C 条款）；npm publish / tag 待用户指令。
+
+### Fixed
+- **B1 headless 白名单补 TextureButton/ColorRect**（2026-09-09/09-10 反馈：图片按钮/遮罩色块 UI 刚需被 `Refused: not in the headless allowed types whitelist` 拒）：`godot_operations.gd` `ALLOWED_HEADLESS_TYPES` + `ui_commands.gd` `ALLOWED_CONTROL_TYPES` + TS `CONTROL_TYPES` 三方同步 29→31 种（新增测试 `scene-batch-b-contract` 锚定对齐）；规则模板双副本 `.claude/rules/godot-mcp-ui.md` / `rule-templates.ts` 同步 31 种清单（触发 0.33.4 bump）。
+- **B4 add_node 单发 texture 落盘裸字符串（纹理静默丢失）**（2026-09-03 反馈，真机复现：`texture = "res://icon.png"` 落盘后 Godot load 不报错但 `Banner.texture=null`）：文本捷径 `canSerializeProperty` 对 `res://` / `uid://` 字符串一律 fallback GD 链——GD 链 `TYPE_OBJECT` 分支 load 后 pack 自动生成 `[ext_resource]` + `texture = ExtResource("...")`（真机验证落盘即 ExtResource 形态），与 batch 路径行为对齐。
+- **B3-text add_node 单发属性数组落盘裸数组字面量（属性静默回退默认值）**（2026-09-10 editor 反馈同族，headless 文本路径真机复现：`color = [0, 0, 0, 0.588235]` 落盘后 Godot 加载 `Shade.color=(0,0,0,1)`，期望的 0.588 透明遮罩静默丢失）：`canSerializeProperty` 对 Array 一律 fallback GD 链——GD 链数学 coerce（`_coerce_math_value`）转换后 pack 序列化为 `color = Color(0, 0, 0, 0.588235)` 合法形态（真机验证）。editor 侧 `coerce_value_for_property` 的 Color 分支上游 `8cbac21`（2026-07-11）已在位，09-10 反馈定位为项目内 addons 旧版未同步（批次 A 同款根因），非上游缺陷。
+- **B2 add_node 单发 parent 含场景根名前缀报 not found（与 batch/GD 链行为分叉）**（2026-09-09 反馈）：反馈描述的损坏形态（节点加载即 vanished）在当前上游不可复现（fixture 矩阵验证：相对 parent 正确落盘、根名前缀/绝对路径诚实报错）；真实缺口是 query_scene_tree 拷贝的 `parent_node_path="Root/Child"` 形态在文本捷径被拒、而 GD 链（M-3 剥离链）能正确处理——补 `inferSceneRootName`（root [node] name 属性，缺失回退场景文件名，Godot 同款行为）+ 根名前缀剥离，单发文本路径与 batch/GD 链输入形态统一。
+- **B5 scene 写操作落盘自检（损坏当场报错非静默成功）**（09-09/09-10 反馈共同建议）：①TS 文本捷径 add_node 落盘前 `verifySceneTree` 回读 parse 自检（node parent 链逐段可达，断链=Godot 加载 "Parent path has vanished" 静默丢节点——拒写并报 `SCENE_SELF_CHECK_FAILED`）；②GD 链六个写 handler（add_node/edit_node/remove_node/batch_add_nodes/load_sprite/save_scene）`_save_atomic` 成功后 `_verify_saved_scene` 回读（`CACHE_MODE_IGNORE` 绕进程缓存直读盘上文件，`SceneState.get_node_count()` 计数比对，不 instantiate 零脚本副作用），不符 exit 1。
+
 ## [0.33.3] - 2026-09-14
 
 > per-project 运行会话分桶（设计 `docs/superpowers/specs/2026-09-13-per-project-run-sessions-design.md`，三轮独立审阅 1C+5I+7M 全落实）；规则模板门禁触发的 patch bump；npm publish / tag 待用户指令。

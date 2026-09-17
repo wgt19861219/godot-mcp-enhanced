@@ -12,6 +12,7 @@ import {
   nodeSectionEnd,
   formatTscnValue,
 } from './tscn-editor-shared.js';
+import { parseTscn } from './tscn-parser.js';
 // F-3: 复用 edit_node/scene-instance 的危险属性黑名单(单一来源,避免防护不一致)
 import { BLOCKED_PROPS } from '../tools/scene/helpers.js';
 
@@ -59,20 +60,29 @@ export interface AddNodeResult {
 /**
  * Check whether a property value can be safely serialized to .tscn text.
  * Returns true for primitives and flat objects with only primitive values.
- * Returns false for arrays and objects with nested objects.
+ * Returns false (→ fallback to Godot process) for:
+ * - Arrays: .tscn 数学/资源类型属性(Color/Vector2/texture 等)收到裸数组会被 Godot
+ *   解析器静默丢弃回退默认值(反馈批次 B B3/B4,2026-09 真机实测:color=[0,0,0,0.588]
+ *   → Shade.color=(0,0,0,1));TS 文本路径无属性期望类型上下文,无法甄别少数合法裸数组属性,
+ *   一律 fallback——GD 链 _set_property_with_coerce 的 _coerce_math_value 转换后 pack 序列化正确。
+ * - res:// / uid:// 字符串:资源属性须 ExtResource("id") 引用,裸字符串路径被 Godot 静默丢弃
+ *   (反馈批次 B B4:texture="res://..." 落盘后 Banner.texture=null 纹理静默丢失);
+ *   GD 链 TYPE_OBJECT 分支 load 后 pack 自动生成 ExtResource。
  */
 export function canSerializeProperty(value: unknown): boolean {
   if (value === null || value === undefined) return true;
-  if (typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'string' || typeof value === 'boolean') {
+    // B4: 资源路径字符串走 GD 链(load → pack 自动 ExtResource),文本路径写裸字符串=静默丢资源
+    if (typeof value === 'string' && (/^res:\/\//.test(value) || /^uid:\/\//.test(value))) {
+      return false;
+    }
+    return true;
+  }
   // F-2: 拒绝非有限数(NaN/Infinity)——文本路径无法安全序列化,让其 fallback 到 Godot 进程
   if (typeof value === 'number') return Number.isFinite(value);
-  if (Array.isArray(value)) {
-    return value.every(v =>
-      v === null || v === undefined ||
-      typeof v === 'string' || typeof v === 'boolean' ||
-      (typeof v === 'number' && Number.isFinite(v))
-    );
-  }
+  // B3-text(反馈批次 B): Array 一律 fallback——裸数组字面量对数学类型属性(Color/Vector)非法,
+  // Godot 解析器静默丢属性回退默认值;少数真 Array 类型属性由 GD 链 node.set 正确处理,无损
+  if (Array.isArray(value)) return false;
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
     for (const v of Object.values(obj)) {
@@ -371,6 +381,38 @@ function _addNodeInner(
 }
 
 // ── addNodes (batch) ────────────────────────────────────────────────────────
+
+// ── B5(反馈批次 B): 落盘前回读 parse 自检 ────────────────────────────────────
+
+/**
+ * Verify the node tree of a .tscn text is structurally loadable:
+ * every [node] block's parent path must be reachable from previously-defined
+ * nodes (Godot parses nodes in file order; a parent defined after its child —
+ * or a parent path containing the scene-root name — makes Godot emit
+ * "Parent path has vanished" and silently drop the node on load).
+ * 返回第一个断链节点;ok=true 表示 parent 链完整。
+ */
+export function verifySceneTree(content: string): { ok: boolean; problem?: string } {
+  let parsed;
+  try {
+    parsed = parseTscn(content);
+  } catch (err) {
+    return { ok: false, problem: `parse failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const knownPaths = new Set<string>();  // 相对场景根的完整路径('' = root 自身)
+  for (const n of parsed.nodes) {
+    const parentPath = n.parent === '' || n.parent === '.' ? '' : n.parent;
+    if (parentPath !== '' && !knownPaths.has(parentPath)) {
+      return {
+        ok: false,
+        problem: `node "${n.name}" (parent="${n.parent}") references a parent not defined before it — Godot would drop this node on load ("Parent path has vanished")`,
+      };
+    }
+    const full = parentPath === '' ? n.name : `${parentPath}/${n.name}`;
+    if (full !== '') knownPaths.add(full);
+  }
+  return { ok: true };
+}
 
 /**
  * Add multiple nodes to a .tscn scene in one pass.

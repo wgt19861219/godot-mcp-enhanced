@@ -28,12 +28,11 @@ describe('P2-D: canSerializeProperty', () => {
     expect(canSerializeProperty(-Infinity)).toBe(false);
   });
 
-  it('接受基本类型数组，拒绝含非有限数的数组', () => {
-    expect(canSerializeProperty([1, 2, 3])).toBe(true);
-    expect(canSerializeProperty(['a', 'b'])).toBe(true);
-    expect(canSerializeProperty([true, false])).toBe(true);
-    expect(canSerializeProperty([1, null, 'x'])).toBe(true);
-    // F-2: 数组含 NaN 拒绝
+  it('B3-text(反馈批次 B): 数组一律 fallback(修复前 primitive Array 落盘裸数组,Godot 静默丢属性)', () => {
+    expect(canSerializeProperty([1, 2, 3])).toBe(false);
+    expect(canSerializeProperty(['a', 'b'])).toBe(false);
+    expect(canSerializeProperty([true, false])).toBe(false);
+    expect(canSerializeProperty([1, null, 'x'])).toBe(false);
     expect(canSerializeProperty([1, NaN, 3])).toBe(false);
     expect(canSerializeProperty([1, Infinity])).toBe(false);
   });
