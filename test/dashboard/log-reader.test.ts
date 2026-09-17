@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { LogReader, resolveRotationTarget } from '../../src/dashboard/log-reader.js';
-import { writeFileSync, mkdirSync, rmSync, appendFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, appendFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { todayStr } from '../../src/core/logger.js';
@@ -151,5 +151,22 @@ describe('resolveRotationTarget (CRITICAL-1 path-traversal guard)', () => {
   it('rejects empty / non-string', () => {
     expect(resolveRotationTarget(logDir, '')).toBeNull();
     expect(resolveRotationTarget(logDir, String(undefined))).toBeNull();
+  });
+
+  // ── 审查 Low(2026-09-17 批 3):附属句柄 unref——对齐 server.ts 数据流定时器
+  //    先例(logFlush/sessions/statsTimer 全 unref + httpServer.unref):LogReader 由
+  //    web-gui server 持有,fs.watch watcher 与 pollTimer 保持 ref 会在 server 停止后
+  //    挂住进程退出(watcher/timer 是长寿命句柄,stop() 之外的持有期不阻塞主流程)。
+  //    诚实边界:pollTimer 用 hasRef() 行为断言;FSWatcher 无 ref 状态查询接口
+  //    (Node v24 实测:unref 存在、hasRef 不存在),watcher 以源码契约锁调用落位。
+  it('start 后 pollTimer unref(hasRef=false);watcher 调 unref(源码契约)', async () => {
+    const reader = new LogReader(TEST_DIR, { pollIntervalMs: 500 });
+    await reader.start();
+    const internals = reader as unknown as { pollTimer: NodeJS.Timeout | null };
+    expect(internals.pollTimer).not.toBeNull();
+    expect(internals.pollTimer!.hasRef()).toBe(false);
+    reader.stop();
+    const src = readFileSync(new URL('../../src/dashboard/log-reader.ts', import.meta.url), 'utf-8');
+    expect(src).toMatch(/this\.watcher\.unref\?\.\(\)/);
   });
 });
