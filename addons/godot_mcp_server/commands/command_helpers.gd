@@ -96,36 +96,89 @@ static func parse_vec3(v: Variant) -> Vector3:
 ## when no coercion applies so non-math properties fall through to type_ok / Godot.
 ## Fixes instance_scene properties.position / set_instance_property Vector3 set
 ## (asset create/batch already worked via parse_vec3; scene tools did not).
+## H-1(2026-09-17 审查第三副本收口, fix round 1): Array 分量经 _comp_white 类型白名单——
+## 毒分量({}/非法串)裸 float()/int() = "Nonexistent constructor" SCRIPT ERROR(editor 常驻
+## 进程不挂死,但中断后落 return val → node.set(Array) 静默 no-op 假成功)。守卫后毒/缺
+## 分量返 null,调用方(coerce_property_value / ui theme)报错或点名跳过,不再静默。
+## 短数组行为随此对齐两副本:分量缺失返 null(旧透传原 Array → set no-op 假成功)。
 static func coerce_value_for_property(obj: Object, prop_name: String, val: Variant) -> Variant:
 	if val is Array:
 		var current = obj.get(prop_name)
 		if current != null:
+			var a: Array = val
 			match typeof(current):
 				TYPE_VECTOR2:
-					if val.size() >= 2:
-						return Vector2(float(val[0]), float(val[1]))
+					var x: Variant = _comp_white(a, 0)
+					var y: Variant = _comp_white(a, 1)
+					if x != null and y != null:
+						return Vector2(float(x), float(y))
+					return null
 				TYPE_VECTOR2I:
-					if val.size() >= 2:
-						return Vector2i(int(val[0]), int(val[1]))
+					var xi: Variant = _comp_white(a, 0)
+					var yi: Variant = _comp_white(a, 1)
+					if xi != null and yi != null:
+						return Vector2i(int(xi), int(yi))
+					return null
 				TYPE_VECTOR3:
-					if val.size() >= 3:
-						return Vector3(float(val[0]), float(val[1]), float(val[2]))
+					var x3: Variant = _comp_white(a, 0)
+					var y3: Variant = _comp_white(a, 1)
+					var z3: Variant = _comp_white(a, 2)
+					if x3 != null and y3 != null and z3 != null:
+						return Vector3(float(x3), float(y3), float(z3))
+					return null
 				TYPE_VECTOR3I:
-					if val.size() >= 3:
-						return Vector3i(int(val[0]), int(val[1]), int(val[2]))
+					var x3i: Variant = _comp_white(a, 0)
+					var y3i: Variant = _comp_white(a, 1)
+					var z3i: Variant = _comp_white(a, 2)
+					if x3i != null and y3i != null and z3i != null:
+						return Vector3i(int(x3i), int(y3i), int(z3i))
+					return null
 				TYPE_VECTOR4:
-					if val.size() >= 4:
-						return Vector4(float(val[0]), float(val[1]), float(val[2]), float(val[3]))
+					var x4: Variant = _comp_white(a, 0)
+					var y4: Variant = _comp_white(a, 1)
+					var z4: Variant = _comp_white(a, 2)
+					var w4: Variant = _comp_white(a, 3)
+					if x4 != null and y4 != null and z4 != null and w4 != null:
+						return Vector4(float(x4), float(y4), float(z4), float(w4))
+					return null
 				TYPE_COLOR:
-					if val.size() >= 3:
-						return Color(float(val[0]), float(val[1]), float(val[2]), float(val[3]) if val.size() > 3 else 1.0)
+					# alpha 分量毒/缺 → 默认 1.0(对齐 headless _coerce_math_value Color 分支宽松语义)
+					var cr: Variant = _comp_white(a, 0)
+					var cg: Variant = _comp_white(a, 1)
+					var cb: Variant = _comp_white(a, 2)
+					if cr != null and cg != null and cb != null:
+						var ca: Variant = _comp_white(a, 3)
+						return Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+					return null
 				TYPE_PLANE:
-					if val.size() >= 4:
-						return Plane(float(val[0]), float(val[1]), float(val[2]), float(val[3]))
+					var px: Variant = _comp_white(a, 0)
+					var py: Variant = _comp_white(a, 1)
+					var pz: Variant = _comp_white(a, 2)
+					var pw: Variant = _comp_white(a, 3)
+					if px != null and py != null and pz != null and pw != null:
+						return Plane(float(px), float(py), float(pz), float(pw))
+					return null
 				TYPE_QUATERNION:
-					if val.size() >= 4:
-						return Quaternion(float(val[0]), float(val[1]), float(val[2]), float(val[3]))
+					var qx: Variant = _comp_white(a, 0)
+					var qy: Variant = _comp_white(a, 1)
+					var qz: Variant = _comp_white(a, 2)
+					var qw: Variant = _comp_white(a, 3)
+					if qx != null and qy != null and qz != null and qw != null:
+						return Quaternion(float(qx), float(qy), float(qz), float(qw))
+					return null
 	return val
+
+
+## H-1(2026-09-17 审查): Array 分量类型白名单——仅 int/float/合法数字串放行,其余返 null。
+## Keep in sync(三副本分量白名单): src/scripts/godot_operations.gd _math_comp(headless)+
+## src/scripts/mcp_bridge.gd _math_comp(bridge)——本文件是 editor 异构形态的第三副本
+## (coerce_value_for_property 按 typeof(current) 分派,只收 Array 输入)。
+static func _comp_white(a: Array, index: int) -> Variant:
+	if index < a.size():
+		var out: Variant = a[index]
+		if out is int or out is float or (out is String and String(out).is_valid_float()):
+			return out
+	return null
 
 
 ## C12: 查属性的 PROPERTY_USAGE_* flag（via get_property_list）。
@@ -212,6 +265,11 @@ static func coerce_property_value(obj: Object, prop: String, val: Variant) -> Di
 	else:
 		# 非 TYPE_OBJECT：Array 走数学类型 coerce（Vector2/3/Color...），非 Array 透传
 		coerced = coerce_value_for_property(obj, prop, val)
+		# H-1 fix round 1: 毒/缺分量 → null(守卫拒绝,仅 Array 输入可能),报可读错误——
+		# 文案对齐 headless _set_property_with_coerce 的 cannot coerce(三副本行为对齐,
+		# 不再中断兜底/透传原 Array → undo do_op set 静默 no-op 假成功)
+		if coerced == null and val is Array:
+			return {"ok": false, "value": null, "error": "Property %s: cannot coerce %s (missing/null/blocked component)" % [prop, val]}
 	return {"ok": true, "value": coerced, "error": ""}
 
 

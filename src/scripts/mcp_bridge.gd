@@ -1689,10 +1689,11 @@ func _get_property_type(obj: Object, key: String) -> int:
 
 
 # E-2 (2026-08-14): MCP JSON Array/Dict 输入 → Godot 数学类型真转换(DUPLICATE 三副本之一)。
-# ⚠️ 三副本同步关系(改任一处须同步另外两处):
-#   源(editor 侧):   addons/godot_mcp_server/commands/command_helpers.gd coerce_value_for_property
-#   副本(headless):  src/scripts/godot_operations.gd _coerce_math_value
-#   副本(bridge 侧): 本文件 _coerce_math_value
+# ⚠️ 三副本同步关系(改任一处须同步另外两处;editor 侧是异构形态:Array-only +
+#   typeof(current) 分派 + _comp_white 分量白名单,2026-09-17 fix round 1 已收口同款守卫):
+#   源(editor 侧):   addons/godot_mcp_server/commands/command_helpers.gd coerce_value_for_property(_comp_white)
+#   副本(headless):  src/scripts/godot_operations.gd _coerce_math_value(_math_comp)
+#   副本(bridge 侧): 本文件 _coerce_math_value(_math_comp)
 # 另:文件内第四份同族 _coerce_bridge_single(call_method args 侧,CMP-9-B)按 ClassDB 方法
 # 声明类型逐参数强转(Vector2/3 显式接受 String 构造),与本函数按属性声明类型的分派是
 # 不同输入面——同步维护属性 coerce 时勿混淆两份的 String 语义(属性 set 拒绝,args 接受)。
@@ -1751,6 +1752,8 @@ func _coerce_math_value(prop_type: int, value: Variant) -> Variant:
 
 
 # E-2: 数学分量读取——Array 按索引,Dict 按 key(x/y/z/w 或 r/g/b/a);越界/缺键/值为 null 返 null。
+# Keep in sync(三副本分量白名单): godot_operations.gd _math_comp(headless)+
+# command_helpers.gd _comp_white(editor,fix round 1 收口)。
 func _math_comp(value: Variant, index: int, key: String) -> Variant:
 	# H-1(2026-09-17 审查):分量取出后必须过类型白名单,容器分量进 float() 即 SCRIPT ERROR
 	# (同步分发无异常隔离→result:null)。对齐 _num 先例。

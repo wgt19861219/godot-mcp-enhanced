@@ -374,6 +374,11 @@ func handle_ui_set_theme(params: Dictionary) -> Dictionary:
 					# P2-1: val 按 Theme 属性当前类型 coerce（Array→Color/Vector3 等），对齐
 					# handle_theme_set_property :491-497 显式 Array→Color 模式，避免 Color 属性传 Array silent no-op
 					val = CommandHelpers.coerce_value_for_property(theme, String(key), val)
+					# H-1 fix round 1: 毒/缺分量 → null(守卫拒绝,仅 Array 输入可能)——点名跳过
+					# 该 key,不进 undo 链(theme.set(key,null) 会清值/报错);对齐三副本可诊断语义
+					if val == null and p[key] is Array:
+						printerr("[ERROR] UI theme param %s: cannot coerce Array (blocked/missing component), skipped" % String(key))
+						continue
 					t_undo.append({"type": "method", "target": theme, "method": "set", "args": [String(key), theme.get(key)]})
 					t_do.append({"type": "method", "target": theme, "method": "set", "args": [String(key), val]})
 				if not t_do.is_empty() and _undo_manager != null:

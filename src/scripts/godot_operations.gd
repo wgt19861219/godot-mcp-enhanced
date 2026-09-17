@@ -147,7 +147,8 @@ func _coerce_math_value(prop_type: int, value: Variant) -> Variant:
 # H-1(2026-09-17 审查 headless 侧收口,Task B): 分量取出后必须过类型白名单——容器/非法串
 # 分量穿透到 float()/int() 即 "Nonexistent constructor" SCRIPT ERROR(headless --script 下
 # 依赖"函数中断返回 null"的未定义行为兜底不可接受;真机 4.6.3 实测交互场景还可挂死)。
-# Keep in sync with mcp_bridge.gd _math_comp(Task A 0e426ab1 同款白名单形态)。
+# Keep in sync(三副本分量白名单): mcp_bridge.gd _math_comp(bridge,Task A 0e426ab1)+
+# command_helpers.gd _comp_white(editor 异构第三副本,fix round 1 收口)。
 # 仅 int/float/合法数字串放行,其余返 null(= 分量缺失,调用方走 cannot coerce 报错拒绝)。
 func _math_comp(value: Variant, index: int, key: String) -> Variant:
 	var out: Variant = null

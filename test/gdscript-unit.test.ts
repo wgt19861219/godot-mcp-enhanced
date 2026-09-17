@@ -8,11 +8,12 @@
  *
  * 复用 e2e-p1-p5.test.ts 的 skipIf 无 GODOT_PATH 模式（防 CI 假绿）。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeGdscript } from '../src/gdscript-executor.js';
+import { syncCheckProjectFixture } from '../src/scoring/check-gdscript.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const GODOT_PATH = process.env.GODOT_PATH || '';
@@ -265,5 +266,96 @@ describe.skipIf(!hasGodot)('mcp_bridge 参数守卫行为测试(H-1/H-2 毒参�
     expect(values.num_arr).toBe('7.5');
     expect(values.num_badstr).toBe('7.5');
     expect(values.num_str).toBe('3.5');
+  });
+});
+
+// ─── Fix round 1(2026-09-17 H-1 第三副本): editor command_helpers Array 分量守卫 ──
+// editor 源副本 coerce_value_for_property 的 float(val[0])/int(val[0]) 裸转收口——
+// 毒分量 = "Nonexistent constructor" SCRIPT ERROR(editor 常驻进程不挂死,但中断后落
+// return val → node.set(Array) 静默 no-op 假成功)。守卫后:毒/缺分量返 null,调用方
+// coerce_property_value 走 {ok:false, error} 可诊断错误(对齐 headless/bridge 两副本语义)。
+// fixture 依赖:gdscript-check 的 addons 副本须与仓库根一致(既有测试隐式依赖上次
+// check:gdscript 拷贝;本 describe 显式同步,保证测的是当前源)。
+describe.skipIf(!hasGodot)('CommandHelpers Array 分量守卫(H-1 editor 第三副本收口, fix round 1)', () => {
+  beforeAll(() => {
+    syncCheckProjectFixture();
+  });
+
+  it('毒分量 → 守卫拒绝返 null,无 SCRIPT ERROR;合法数值/数字串放行(修复前 float({}) 裸转中断)', async () => {
+    const result = await executeGdscript({
+      godotPath: GODOT_PATH,
+      projectPath: CHECK_PROJECT,
+      timeout: 30,
+      code: [
+        'var n = Node2D.new()',
+        'n.position = Vector2(1, 2)',
+        '_mcp_output("poison_dict", str(CommandHelpers.coerce_value_for_property(n, "position", [{}, 2])))',
+        '_mcp_output("poison_nested", str(CommandHelpers.coerce_value_for_property(n, "position", [{"x": 1}, 2])))',
+        '_mcp_output("bad_str", str(CommandHelpers.coerce_value_for_property(n, "position", ["abc", 2])))',
+        '_mcp_output("comp_null", str(CommandHelpers.coerce_value_for_property(n, "position", [null, 2])))',
+        '_mcp_output("valid", str(CommandHelpers.coerce_value_for_property(n, "position", [1.5, 2])))',
+        '_mcp_output("str_num", str(CommandHelpers.coerce_value_for_property(n, "position", ["3.5", 2])))',
+        'n.free()',
+        '_mcp_done()',
+      ].join('\n'),
+    });
+    expect(result.run_success, 'raw:' + result.raw_output).toBe(true);
+    expect(result.raw_output, '不应有 SCRIPT ERROR(裸转中断,editor 侧假成功根因)').not.toMatch(/SCRIPT ERROR/);
+    expect(out(result, 'poison_dict')).toBe('<null>');
+    expect(out(result, 'poison_nested')).toBe('<null>');
+    expect(out(result, 'bad_str')).toBe('<null>');
+    expect(out(result, 'comp_null')).toBe('<null>');
+    expect(out(result, 'valid')).toBe('(1.5, 2.0)');
+    expect(out(result, 'str_num')).toBe('(3.5, 2.0)');
+  });
+
+  it('短数组(分量缺失)→ null 而非透传原 Array(对齐两副本:不再 set no-op 假成功)', async () => {
+    const result = await executeGdscript({
+      godotPath: GODOT_PATH,
+      projectPath: CHECK_PROJECT,
+      timeout: 30,
+      code: [
+        'var n = Node2D.new()',
+        'n.position = Vector2(1, 2)',
+        '_mcp_output("short_v2", str(CommandHelpers.coerce_value_for_property(n, "position", [1])))',
+        'n.modulate = Color(1, 1, 1)',
+        '_mcp_output("short_color", str(CommandHelpers.coerce_value_for_property(n, "modulate", [0.5, 0.5])))',
+        'n.free()',
+        '_mcp_done()',
+      ].join('\n'),
+    });
+    expect(result.run_success).toBe(true);
+    expect(out(result, 'short_v2')).toBe('<null>');     // 修复前透传 "[1]"
+    expect(out(result, 'short_color')).toBe('<null>');  // 修复前透传 "[0.5, 0.5]"
+  });
+
+  it('coerce_property_value 报错链: 毒/缺分量 Array → {ok:false, error 含 cannot coerce}(可诊断非静默)', async () => {
+    const result = await executeGdscript({
+      godotPath: GODOT_PATH,
+      projectPath: CHECK_PROJECT,
+      timeout: 30,
+      code: [
+        'var n = Node2D.new()',
+        'var r1 = CommandHelpers.coerce_property_value(n, "position", [{}, 2])',
+        '_mcp_output("err_poison", JSON.stringify(r1))',
+        'var r2 = CommandHelpers.coerce_property_value(n, "position", [1])',
+        '_mcp_output("err_short", JSON.stringify(r2))',
+        'var r3 = CommandHelpers.coerce_property_value(n, "position", [3, 4])',
+        '_mcp_output("ok_valid", JSON.stringify(r3))',
+        'var r4 = CommandHelpers.coerce_property_value(n, "position", null)',
+        '_mcp_output("null_passthrough", JSON.stringify(r4))',
+        'n.free()',
+        '_mcp_done()',
+      ].join('\n'),
+    });
+    expect(result.run_success).toBe(true);
+    expect(out(result, 'err_poison')).toContain('"ok":false');
+    expect(out(result, 'err_poison')).toContain('cannot coerce');
+    expect(out(result, 'err_short')).toContain('"ok":false');
+    expect(out(result, 'err_short')).toContain('cannot coerce');
+    expect(out(result, 'ok_valid')).toContain('"ok":true');
+    expect(out(result, 'ok_valid')).toContain('"value":"(3.0, 4.0)');  // GD JSON.stringify 对 Vector2 序列化为字符串
+    // 非 Array null 输入透传不受守卫影响(守卫拒绝仅限 Array 输入)
+    expect(out(result, 'null_passthrough')).toContain('"ok":true');
   });
 });
