@@ -67,6 +67,11 @@ import { setElicitServer } from './core/elicit.js';
 import { resolveProjectPath } from './core/path-utils.js';
 import { AgentContextManager } from './core/agent-context.js';
 import { FileStateStore } from './core/state-store.js';
+// O2 归位(2026-09-17 审查 H-3):bridge 首连拉起 Dashboard 的装配从 game-bridge 模块
+// 顶层副作用迁入控制面(下方 run() 装配 / close() 对称置 null);launcher 经控制面引用,
+// game-bridge 不再 import dashboard
+import { launchDashboardOnce } from './dashboard/launcher.js';
+import { setOnBridgeConnected } from './core/bridge-client.js';
 
 // Re-export for backward compatibility (tests import from GodotServer)
 export { clearGodotPathCache, getCachedGodotPath };
@@ -538,6 +543,11 @@ export class GodotServer {
     await this.server.connect(transport);
     log('Godot MCP Enhanced server running on stdio');
 
+    // O2 归位(2026-09-17 审查 H-3):首连拉起 Dashboard 从 game-bridge 模块顶层副作用
+    // 迁入控制面装配,close() 可对称清理;dashboard⇄game-bridge 的 import 链在控制面
+    // 汇合,方向不变(core/bridge-client 仍不依赖 dashboard)
+    setOnBridgeConnected(() => launchDashboardOnce());
+
     // Web GUI(设计 §3.2):connect 后即起,run() resolve 前三态已定(消除 index.ts 决策竞态)。
     // env=0 关闭(与 GODOT_MCP_NO_DASHBOARD 同模式);任何异常降级禁用,绝不拖垮主流程。
     if (process.env.GODOT_MCP_WEB_GUI !== '0') {
@@ -850,6 +860,9 @@ export class GodotServer {
       setDynamicSender(null);
       setToolCallDelegate(null);
       setBridgeProjectDir(null);
+      // H-3/O2 (2026-09-17 审查): run() 装配的 bridge 首连回调对置 null(与上方 setter
+      // 两件套清理同款——不走 safeStep,finally 直调保证必执行)
+      setOnBridgeConnected(null);
       // G-2 (:942③): 补漏两个模块级注入点 —— registerBridgePushHandler(:269 注册的
       // push handler 闭包持已 close 旧 server,不注销则热重启后 push 事件错路由到死 server)
       // 与 dynamicSchema.setFetcher(:229 注入的 fetcher 同样持旧 editorMgr 闭包)。

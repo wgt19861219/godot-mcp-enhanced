@@ -101,6 +101,8 @@ import * as bridgeMod from '../src/tools/game-bridge.js';
 import { dynamicSchema } from '../src/core/dynamic-schema.js';
 import { killAllRunSessions } from '../src/core/process-state.js';
 import * as dapMod from '../src/tools/dap.js';
+import * as bridgeClientMod from '../src/core/bridge-client.js';
+import { _resetProjectPathCache } from '../src/core/path-utils.js';
 import { EditorConnection } from '../src/core/EditorConnection.js';
 import { EditorToolExecutor } from '../src/core/EditorToolExecutor.js';
 
@@ -289,6 +291,27 @@ describe('GodotServer', () => {
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
         spy.mockRestore();
+      }
+    });
+
+    // ── 架构审查批 2 Task 2.2 (H-3/O2): setOnBridgeConnected 装配归位控制面 ──────────
+    it('run() 装配 setOnBridgeConnected(非 null),close() 对称置 null', async () => {
+      const spy = vi.spyOn(bridgeClientMod, 'setOnBridgeConnected');
+      process.env.GODOT_MCP_WEB_GUI = '0';  // 跳过 Web GUI 启动(与本断言无关,减噪)
+      try {
+        const server = new GodotServer('/fake/ops.gd');
+        await server.run();
+        const registered = spy.mock.calls.filter((c) => typeof c[0] === 'function');
+        expect(registered.length, 'run() 须装配非 null 的 bridge 首连回调').toBeGreaterThanOrEqual(1);
+        await server.close();
+        const last = spy.mock.calls[spy.mock.calls.length - 1];
+        expect(last[0], 'close() 最后一次须置 null(装配-清理对称)').toBeNull();
+      } finally {
+        spy.mockRestore();
+        delete process.env.GODOT_MCP_WEB_GUI;
+        // 测试卫生:run() 触发 resolveProjectPath 写模块级 TTL 缓存(本测试 existsSync
+        // mock=false 缓存 "undefined"),不重置会污染后续依赖 projectPath 的 editor 测试
+        _resetProjectPathCache();
       }
     });
   });
