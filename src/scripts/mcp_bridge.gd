@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.33.3"
+const BRIDGE_SCRIPT_VERSION := "0.33.5"
 const INACTIVITY_TIMEOUT := 60.0
 
 # ─── Instance Registry (Phase 2b) ─────────────────────────────────────────
