@@ -76,4 +76,11 @@ describe('审查H-1/H-2: _int_guarded 守卫 + _math_comp 分量类型白名单'
     ).toBe(true);
     expect(s.includes('return null'), '白名单外返 null(上游走 -8 可读错误分支)').toBe(true);
   });
+
+  it('裸转禁绝必须全文件性质(批次C只扫两个函数致分量层/漏网点漏网的教训)', () => {
+    // H-1/H-2(2026-09-17 审查):守卫必须是全文件性质——批次C只扫两个函数致分量层/19处裸转漏网
+    expect(gd).not.toMatch(/int\(params\.get\(/);      // 全文件禁绝 int 裸转
+    expect(gd).not.toMatch(/float\(params\.get\(/);    // 全文件禁绝 float 裸转
+    expect(gd).toContain('func _int_guarded');          // 守卫存在锚
+  });
 });

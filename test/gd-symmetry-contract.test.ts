@@ -83,11 +83,11 @@ describe('审查G-2 [P3]: 深预检扩展 + 底层 button 语义(mouse_click 误
     const dragSlice = sliceBetween('func _cmd_send_drag', 'func _cmd_send_text');
     expect(touchSlice.includes('_is_valid_touch_index(params.get("index", 0))'), 'send_touch 缺 index 校验').toBe(true);
     expect(dragSlice.includes('_is_valid_touch_index(params.get("index", 0))'), 'send_drag 缺 index 校验').toBe(true);
-    // 守卫后的裸转安全(值已过校验),断言守卫必须先于裸转
+    // H-2(2026-09-17 审查)后裸转收口为 _int_guarded;断言严格校验必须先于守卫取值
     for (const [name, s] of [['touch', touchSlice], ['drag', dragSlice]] as const) {
       expect(
-        s.indexOf('_is_valid_touch_index('), `${name}: index 守卫应在裸转之前`
-      ).toBeLessThan(s.indexOf('var index: int = int(params.get'));
+        s.indexOf('_is_valid_touch_index('), `${name}: index 严格校验应在 _int_guarded 之前`
+      ).toBeLessThan(s.indexOf('var index: int = _int_guarded(params.get'));
     }
   });
 });

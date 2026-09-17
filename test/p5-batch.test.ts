@@ -86,7 +86,8 @@ describe('P5-2: near 空间查询(源码契约;行为由 e2e 覆盖)', () => {
   });
 
   it('NEAR-b: 默认 max_distance=1000 与 gua 式确定性排序(tie 按节点名)', () => {
-    expect(BRIDGE_GD).toContain('params.get("max_distance", 1000.0)');
+    // H-2(2026-09-17 审查)后裸转收口为 _num 守卫,默认值语义不变(1000.0)
+    expect(BRIDGE_GD).toContain('_num(params.get("max_distance"), 1000.0)');
     expect(BRIDGE_GD).toContain('(a["node"] as Node).name < (b["node"] as Node).name');
   });
 });
