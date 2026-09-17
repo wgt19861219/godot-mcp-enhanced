@@ -116,7 +116,7 @@ export function getToolDefinitions(): Tool[] {
             description: '操作类型',
           },
           project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶' },
-          timeout: { type: 'number', description: '自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race）', default: 30 },
+          timeout: { type: 'number', description: '自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）', default: 30 },
           wait_for_bridge: { type: 'boolean', default: false, description: 'true 时 spawn 后轮询 bridge 就绪(默认 false,向后兼容)' },
           profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置;之后用 profiler 工具 action=capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
           bridge_timeout: { type: 'number', default: 10, description: 'wait_for_bridge 轮询总预算(秒,默认 10)' },

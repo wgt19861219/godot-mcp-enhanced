@@ -13,21 +13,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **D4 install_override 卸载义务明示 + uninstall 清残留 .uid**（09-06 CardGame2 反馈：取证脚本忘卸载 → autoload 残留 project.godot 污染 GUT 共享门禁 2483/2484；卸载后 `mcpoverride_*.gd.uid` 孤儿残留）：三种安装形态（新装/漂移更新/幂等跳过）响应均明示「取证完必 uninstall_override（会一并清 dest script 与伴生 .gd.uid）」；`uninstallOverride`/`uninstallAllOverrides` 删脚本后同款 best-effort 清 `*.gd.uid`（Godot 4.4+ 伴生文件）。
 - **D5 touch/drag/key/text 注入链 device=0 对称收口**（批次C审查 Nit3 挂账）：`_cmd_send_key`/`_cmd_send_touch`/`_cmd_send_drag`/`_cmd_send_text` 显式 `event.device = 0`（mouse 链批次C已收，本批补齐 InputEventKey/ScreenTouch/ScreenDrag——不依赖引擎对默认 -1 的未文档化规范化）；timeline 注入复用同函数自动跟随。行为级 e2e 锚定（probe 设备分布断言：真机 `touch_device_counts={"0":2}` / `key_device_counts={"0":1}`，无 -1 桶）。
 - **send_drag 引擎属性 velocity 修复复刻**（与批A分支 `d7b15fa4` 同款，批次D e2e 依赖 send_drag 可用——批次C/D 分支链不含批A提交，`event.speed = speed` 在 Godot 4 上赋值即 SCRIPT ERROR + Debugger Break 卡死游戏，本批 e2e 首跑实锤）：赋值行逐字复刻保 merge 无冲突；批A另修的录制读取 3 处（bridge/editor recording）留批A合并。
+- dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
 ### Added
 - **D1 run_project `timeout=0/-1` = 不自动停**（09-02 fr2 反馈：bridge 交互会话逐步驱动总时长天然超冷启动时长，timeout=90 到点静默 kill 游戏呈 BRIDGE_NOT_CONNECTED 假象，排障 8 分钟）：`computeRunTimeout` 显式 ≤0 归一 0 = 不设 auto-stop timer（undefined/NaN/空串/null 仍默认 30 防误伤；`timeout > 0` 消费守卫既有）；schema 与响应文本同步（`no auto-stop (timeout=0/-1; stop via stop_project)`，Bridge-not-ready 消息同款不再误示 0s）。真机冒烟：timeout=0 起 → 8s 后 `running:true` → stop_project 正常停。
 - **D2 find_nodes CanvasLayer 盲区定谳 + 防回归锚定**（09-02 fr2 反馈 pattern=`*Map*` 对 CanvasLayer 返回 count=0）：真机核实当前版本（P7 重写后）`_traverse_tree` 全 Node 递归**无盲区**——fixture 动态挂 MapPanel(CanvasLayer, layer=12) 复刻反馈场景，find_nodes 返回 `/root/Main/MapPanel` type=CanvasLayer（pattern 与 type 过滤双命中）；反馈根因同批A/B/C 模式（fr2 项目内 addons 旧版）。e2e 用例锚定，未来若给遍历加 CanvasItem 过滤即红。
-
-### Added
 - Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
 - Web GUI 面板入口简化与自愈：共享持久 token（registry 目录一份，重启/多实例不变，cookie 持续有效）、`/api/health` 无鉴权探测端点（CORS，仅 ok/port/startedAt）、前端断线自愈（持续失联扫 9550–9569 迁移活实例 + visited 环防护，凭据失效友好指引不乒乓）、connect-src 端口段放宽；书签 `http://127.0.0.1:9550` 即固定入口；另增 file:// 入口页 `~/.godot-mcp/web-gui/portal.html`（server 启动/dashboard CLI 幂等落盘，no-cors 扫描兼容新旧 build，有实例自动跳转、无实例显示启动指引），书签指到它则任何时刻都有响应。
 - Web GUI 资源管理工作台（Plan B）：二进制预览——图片/音频内联播放、其余二进制 hex 三列视图（4KB 采样+截断提示+下载链接）、目录路径 bad_request（M-3）。
 - Web GUI 项目目录入口页：server 启动/项目新增/扫描完成时为 server 包根（开发模式即本仓库根目录）、CWD 与全部登记的 Godot 项目目录幂等落一份 `面板入口.html`（内容与 portal.html 同源的扫描跳转页，`project.godot` 存在护栏防向任意目录塞文件，包根无条件写）——入口直接放用户天天开的文件夹，双击即用（registry 深路径 `~/.godot-mcp/web-gui/portal.html` 难找的真机反馈）；文件为运行时产物，已加 `.gitignore`。
 - Web GUI 零门槛授权：包根 `面板入口.html` 内嵌共享 token（跳转 URL 自动带 `?token=`，**双击直达免 CLI 首授权**，token 轮换随 server 启动自动重写；`0o600` + Windows icacls 收紧，非法形状防御性退化为无 token 版）——项目目录版不内嵌（目录可能被 git 跟踪/分享，token 进公开仓库会配合恶意网页形成攻击链），registry 版保持纯净模板；多实例场景入口页自带实例按钮列表。
-
-### Fixed
-- dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
 ## [0.33.5] - 2026-09-17
 

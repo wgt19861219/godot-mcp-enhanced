@@ -2512,7 +2512,6 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	# 的引擎属性是 velocity(Godot 3 的 speed 已改名),赋值/读取 speed 直接 SCRIPT ERROR —
 	# send_drag 在 Godot 4 上从未真正可用(6f997b4 修的是参数归一化,属性名错漏网)。
 	# MCP API 参数名 speed 保持不变(调用方契约),仅引擎属性侧改名。
-	# (本行与批A分支 d7b15fa4 同款复刻——批次D e2e 依赖 send_drag 可用;逐字一致保 merge 无冲突)
 	event.velocity = speed
 	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
 	# timeline 注入复用本函数,自动跟随。

@@ -19,7 +19,6 @@ describe('F2 touch_drag 双侧字段契约', () => {
     // position 拆 x/y(对齐 send_touch),relative/speed/index 直读。
     // 2026-09-16 跨项目验证修复:引擎属性是 velocity(Godot 3 的 speed 已改名,赋值
     // event.speed 在 Godot 4 直接 SCRIPT ERROR);JSON 契约键 speed 不变(TOUCH_DRAG_FIELDS)。
-    // (与批A分支 d7b15fa4 同款复刻——批次D e2e 依赖 send_drag 可用,逐字一致保 merge 无冲突)
     expect(src).toContain('event.relative =');
     expect(src).toContain('event.velocity =');
     expect(src).not.toContain('event.speed =');

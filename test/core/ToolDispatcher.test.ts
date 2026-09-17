@@ -2046,8 +2046,10 @@ describe('ToolDispatcher validateGodotBinary wiring (P2-2)', () => {
     }
   });
 
-  it('validateGodotBinary=true + godot_path → 放行(对照)', async () => {
-    mockValidateGodotBinary.mockResolvedValue(true);
+  // Nit2 清偿(2026-09-17 批D审查): 消费方已改 validateGodotBinaryDetailed——
+  // 放行靠 Detailed 默认 {ok:true},用例名与显式设置同步对齐(旧 boolean mock 设置是无效残留)
+  it('validateGodotBinaryDetailed ok:true + godot_path → 放行(对照)', async () => {
+    mockValidateGodotBinaryDetailed.mockResolvedValue({ ok: true });
     const handleToolSpy = vi.fn().mockResolvedValue(mockToolResult);
     mockGetModuleForTool.mockReturnValue({ handleTool: handleToolSpy });
     const dispatcher = new ToolDispatcher(createOptions());

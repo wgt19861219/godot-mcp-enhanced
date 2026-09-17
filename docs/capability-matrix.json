@@ -4311,7 +4311,7 @@
           },
           "timeout": {
             "type": "number",
-            "description": "自动停止秒数（默认 30。游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race）",
+            "description": "自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）",
             "default": 30
           },
           "wait_for_bridge": {
@@ -4424,8 +4424,8 @@
       },
       "size": {
         "descBytes": 98,
-        "schemaBytes": 2680,
-        "totalBytes": 2778
+        "schemaBytes": 2897,
+        "totalBytes": 2995
       },
       "annotations": {
         "readOnlyHint": false,
