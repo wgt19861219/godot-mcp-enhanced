@@ -144,17 +144,23 @@ func _coerce_math_value(prop_type: int, value: Variant) -> Variant:
 	return null
 
 # E-1: 数学分量读取——Array 按索引,Dict 按 key(x/y/z/w 或 r/g/b/a);越界/缺键/值为 null 返 null。
-# 返 null 时 _coerce_math_value 视为分量缺失,调用方报错拒绝(防 float(null) 运行时崩溃)。
+# H-1(2026-09-17 审查 headless 侧收口,Task B): 分量取出后必须过类型白名单——容器/非法串
+# 分量穿透到 float()/int() 即 "Nonexistent constructor" SCRIPT ERROR(headless --script 下
+# 依赖"函数中断返回 null"的未定义行为兜底不可接受;真机 4.6.3 实测交互场景还可挂死)。
+# Keep in sync with mcp_bridge.gd _math_comp(Task A 0e426ab1 同款白名单形态)。
+# 仅 int/float/合法数字串放行,其余返 null(= 分量缺失,调用方走 cannot coerce 报错拒绝)。
 func _math_comp(value: Variant, index: int, key: String) -> Variant:
+	var out: Variant = null
 	if value is Array:
 		var arr: Array = value
-		if index < arr.size() and arr[index] != null:
-			return arr[index]
-		return null
-	if value is Dictionary:
+		if index < arr.size():
+			out = arr[index]
+	elif value is Dictionary:
 		var dict: Dictionary = value
-		if dict.has(key) and dict[key] != null:
-			return dict[key]
+		if dict.has(key):
+			out = dict[key]
+	if out is int or out is float or (out is String and String(out).is_valid_float()):
+		return out
 	return null
 
 func _set_property_with_coerce(node: Node, key: String, value: Variant) -> bool:

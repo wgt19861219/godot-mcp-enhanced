@@ -105,3 +105,41 @@ describe.skipIf(!hasGodot)('审查 I-F e2e: batch 失败注入/remove 落盘/par
     }
   }, 90_000);
 });
+
+// ─── Task B(2026-09-17 架构审查): H-1 headless 数学分量守卫 ──
+// 修复前: _math_comp 无类型白名单,容器分量({"x":{}})穿透到 float() = "Nonexistent 'float'
+// constructor" SCRIPT ERROR(真机 4.6.3 实证;上游 "cannot coerce" 是错误中断返回 null 的
+// 未定义行为兜底,交互场景实测可挂死)——同 Task A bridge 侧 I-C 结论的 headless 收口。
+describe.skipIf(!hasGodot)('Task B: H-1 数学分量守卫(GODOT_PATH=' + (hasGodot ? 'set' : 'unset') + ')', () => {
+  // 毒分量修复前在交互场景会挂死进程,timeout 收紧到 20s 快速失败 + 显式 timedOut 检出(共用 runOps 的 60s 太慢)
+  function runOpsFast(proj: string, op: string, params: Record<string, unknown>):
+    { status: number | null; stdout: string; stderr: string; timedOut: boolean } {
+    const opsScript = resolve('src/scripts/godot_operations.gd');
+    const r = spawnSync(GODOT_PATH, [
+      '--headless', '--path', proj, '--script', opsScript, op,
+      JSON.stringify(params),
+    ], { encoding: 'utf8', timeout: 20_000 });
+    const timedOut = !!r.error && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', timedOut };
+  }
+
+  it('H-1: add_node 毒分量 position={"x":{}, "y":2} → 白名单拒绝走可读错误 exit 1,无 SCRIPT ERROR,节点不落盘', () => {
+    const proj = makeProject('poisoncomp');
+    try {
+      const r = runOpsFast(proj, 'add_node', {
+        scene_path: 'res://scenes/main.tscn',
+        node_type: 'Node2D',
+        node_name: 'PoisonNode',
+        properties: { position: { x: {}, y: 2 } },
+      });
+      expect(r.timedOut, '进程不应挂死(修复前 float({}) SCRIPT ERROR 后交互场景可卡死)').toBe(false);
+      expect(`${r.stdout}\n${r.stderr}`).not.toMatch(/SCRIPT ERROR/);
+      expect(r.status, 'coerce 失败走 C-1 整节点失败 exit 1,stderr:' + r.stderr).toBe(1);
+      expect(r.stderr, '可读错误点名(上游 -8 同款文案)').toMatch(/cannot coerce/);
+      const scene = readFileSync(join(proj, 'scenes', 'main.tscn'), 'utf8');
+      expect(scene, '失败节点不落盘').not.toContain('PoisonNode');
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

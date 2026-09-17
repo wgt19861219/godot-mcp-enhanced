@@ -80,11 +80,24 @@ describe('E-1: headless 数学类型真转换(godot_operations.gd)', () => {
 
   it('E1-h: null 分量防御(报错拒绝,防 float(null) 运行时崩溃)', () => {
     const s = compFn();
-    expect(s.includes('!= null'), '_math_comp 缺 null 检查').toBe(true);
+    // H-1(2026-09-17,Task B)白名单形态:null/容器/非法串分量统一被类型白名单拒绝
+    // 返 null(旧 `!= null` 显式检查是其子集,已并入白名单)。真机行为锚定见
+    // scene-gd-operations-e2e.test.ts「Task B」describe(毒分量 add_node → exit 1 无 SCRIPT ERROR)。
+    expect(s.includes('out is int or out is float'), '_math_comp 缺分量类型白名单').toBe(true);
+    expect(s.includes('is_valid_float()'), '_math_comp 缺合法数字串放行').toBe(true);
+    expect(s.includes('return null'), '_math_comp 缺白名单拒绝路径').toBe(true);
     // 调用方对转换失败(返 null)报错拒绝,不再假成功
     const setS = setFn();
     expect(setS.includes('cannot coerce'), '调用方缺 cannot coerce 报错').toBe(true);
     expect(setS.includes('return false'), '转换失败应 return false').toBe(true);
+  });
+
+  it('E1-k: H-1 数学分量白名单与 bridge 副本 Keep-in-sync 声明(对齐 mcp_bridge.gd Task A 0e426ab1)', () => {
+    // 函数头注释在 slice 锚点(func 定义行)之前,故对全文断言
+    expect(gd.includes('Keep in sync with mcp_bridge.gd'), '缺 Keep-in-sync 双副本声明').toBe(true);
+    const s = compFn();
+    // 放行面仅三态:int / float / is_valid_float 数字串——其余(容器/null/bool/非法串)拒
+    expect(s.match(/out is int or out is float or \(out is String and String\(out\)\.is_valid_float\(\)\)/), '白名单三元条件不完整').toBeTruthy();
   });
 
   it('E1-i: 分量数校验保留(CMP-10 报错文案不回归)', () => {
