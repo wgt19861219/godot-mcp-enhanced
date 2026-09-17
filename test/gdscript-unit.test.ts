@@ -137,3 +137,119 @@ describe.skipIf(!hasGodot)('CommandHelpers 纯函数行为测试（报告③阶�
     expect(out(result, 'clean')).toBe('false');
   });
 });
+
+// ─── Task A(2026-09-17 架构审查 H-1/H-2): mcp_bridge 参数守卫行为测试 ──────────
+// 毒参数(null/容器)直驱 fixture 内 mcp_bridge.gd 实例(.new() 不入树 → _ready 不触发,
+// 零服务器副作用),断言守卫生效:无 SCRIPT ERROR + 可读回退,而非裸转中断。
+// 执行模式取舍(对齐 gdscript-bridge-error-capture.test.ts 踩坑记录):本文件既有的
+// _mcp_output/_mcp_done(wrapper 模式)对 mcp_bridge 实例字段绑定有怪异行为,故本段
+// 用 SceneTree full-class 模式 + print("RESULT key=") 解析;run_success=false 是预期
+// (RID leak cleanup),真失败信号 = SCRIPT ERROR / Parse Error,断言基于 RESULT 行。
+async function runBridgeGuardProbe(bodyLines: string[]): Promise<{ realError: boolean; values: Record<string, string> }> {
+  const code = [
+    'extends SceneTree',
+    '',
+    'func _init():',
+    '\tvar b = load("res://src/scripts/mcp_bridge.gd").new()',
+    ...bodyLines.map(l => '\t' + l),
+    '\tquit()',
+  ].join('\n');
+  const result = await executeGdscript({
+    godotPath: GODOT_PATH,
+    projectPath: CHECK_PROJECT,
+    timeout: 30,
+    code,
+  });
+  const raw = result.raw_output;
+  const realError = /\b(Parse Error|SCRIPT ERROR|Invalid |ENGINE ERROR)\b/.test(raw);
+  const values: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^RESULT\s+(\S+?)=(.*)$/);
+    if (m) {
+      values[m[1]!] = m[2]!;
+    }
+  }
+  return { realError, values };
+}
+
+describe.skipIf(!hasGodot)('mcp_bridge 参数守卫行为测试(H-1/H-2 毒参数负向)', () => {
+  it('_math_comp 分量白名单: 容器/null/非法数字串分量 → null;数值与合法数字串放行', async () => {
+    const { realError, values } = await runBridgeGuardProbe([
+      'print("RESULT dict_container=" + str(b._math_comp({"x": {}}, 0, "x")))',
+      'print("RESULT arr_container=" + str(b._math_comp([[], 2], 0, "x")))',
+      'print("RESULT comp_null=" + str(b._math_comp([null, 2], 0, "x")))',
+      'print("RESULT bad_str=" + str(b._math_comp({"x": "abc"}, 0, "x")))',
+      'print("RESULT good_str=" + str(b._math_comp({"x": "3.5"}, 0, "x")))',
+      'print("RESULT good_int=" + str(b._math_comp([7, 2], 1, "y")))',
+      'print("RESULT missing_key=" + str(b._math_comp({"y": 2}, 0, "x")))',
+      'print("RESULT oob_index=" + str(b._math_comp([1], 5, "x")))',
+    ]);
+    expect(realError, '不应有 SCRIPT ERROR(容器分量穿透到 float() 即崩)').toBe(false);
+    expect(values.dict_container).toBe('<null>');
+    expect(values.arr_container).toBe('<null>');
+    expect(values.comp_null).toBe('<null>');
+    expect(values.bad_str).toBe('<null>');
+    expect(values.good_str).toBe('3.5');
+    expect(values.good_int).toBe('2');
+    expect(values.missing_key).toBe('<null>');
+    expect(values.oob_index).toBe('<null>');
+  });
+
+  it('_coerce_math_value 毒分量(game_write set_node_property position={"x":{}} 路径)→ null 无 SCRIPT ERROR,上游走 -8 可读错误', async () => {
+    const { realError, values } = await runBridgeGuardProbe([
+      'print("RESULT coerce_dict_poison=" + str(b._coerce_math_value(TYPE_VECTOR2, {"x": {}, "y": 2})))',
+      'print("RESULT coerce_arr_poison=" + str(b._coerce_math_value(TYPE_VECTOR3, [{}, 2, 3])))',
+      'print("RESULT coerce_valid=" + str(b._coerce_math_value(TYPE_VECTOR2, {"x": 1.5, "y": 2})))',
+    ]);
+    expect(realError, '不应有 SCRIPT ERROR(H-1: float({}) = Nonexistent float constructor)').toBe(false);
+    expect(values.coerce_dict_poison).toBe('<null>');   // 上游 _cmd_set_node_property 返 -8 可读错误
+    expect(values.coerce_arr_poison).toBe('<null>');
+    expect(values.coerce_valid).toBe('(1.5, 2.0)');
+  });
+
+  it('_int_guarded 守卫全形态: 整值/整值 float/合法数字串放行,其余回 fallback', async () => {
+    const { realError, values } = await runBridgeGuardProbe([
+      'print("RESULT ig_int=" + str(b._int_guarded(7, -1)))',
+      'print("RESULT ig_float_whole=" + str(b._int_guarded(4.0, -1)))',
+      'print("RESULT ig_float_frac=" + str(b._int_guarded(4.7, -1)))',
+      'print("RESULT ig_inf=" + str(b._int_guarded(INF, -1)))',
+      'print("RESULT ig_nan=" + str(b._int_guarded(NAN, -1)))',
+      'print("RESULT ig_str=" + str(b._int_guarded("42", -1)))',
+      'print("RESULT ig_str_float=" + str(b._int_guarded("4.0", -1)))',
+      'print("RESULT ig_badstr=" + str(b._int_guarded("abc", -1)))',
+      'print("RESULT ig_null=" + str(b._int_guarded(null, -1)))',
+      'print("RESULT ig_dict=" + str(b._int_guarded({}, -1)))',
+      'print("RESULT ig_arr=" + str(b._int_guarded([], -1)))',
+      'print("RESULT ig_bool=" + str(b._int_guarded(true, -1)))',
+    ]);
+    expect(realError, '不应有 SCRIPT ERROR').toBe(false);
+    expect(values.ig_int).toBe('7');
+    expect(values.ig_float_whole).toBe('4');
+    expect(values.ig_float_frac).toBe('-1');
+    expect(values.ig_inf).toBe('-1');      // is_finite 拦截
+    expect(values.ig_nan).toBe('-1');
+    expect(values.ig_str).toBe('42');
+    expect(values.ig_str_float).toBe('-1'); // "4.0" 非合法 int 串(is_valid_int 拒)
+    expect(values.ig_badstr).toBe('-1');
+    expect(values.ig_null).toBe('-1');
+    expect(values.ig_dict).toBe('-1');
+    expect(values.ig_arr).toBe('-1');
+      expect(values.ig_bool).toBe('-1');     // bool 在 Godot 4 Variant 里不是 int(true is int == false)
+  });
+
+  it('_num 守卫既有行为复核(float 裸转统一复用面): null/容器 → fallback', async () => {
+    const { realError, values } = await runBridgeGuardProbe([
+      'print("RESULT num_null=" + str(b._num(null, 0.0)))',
+      'print("RESULT num_dict=" + str(b._num({}, 0.0)))',
+      'print("RESULT num_arr=" + str(b._num([], 7.5)))',
+      'print("RESULT num_badstr=" + str(b._num("abc", 7.5)))',
+      'print("RESULT num_str=" + str(b._num("3.5", 0.0)))',
+    ]);
+    expect(realError, '不应有 SCRIPT ERROR').toBe(false);
+    expect(values.num_null).toBe('0.0');
+    expect(values.num_dict).toBe('0.0');
+    expect(values.num_arr).toBe('7.5');
+    expect(values.num_badstr).toBe('7.5');
+    expect(values.num_str).toBe('3.5');
+  });
+});

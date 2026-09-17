@@ -1752,15 +1752,19 @@ func _coerce_math_value(prop_type: int, value: Variant) -> Variant:
 
 # E-2: 数学分量读取——Array 按索引,Dict 按 key(x/y/z/w 或 r/g/b/a);越界/缺键/值为 null 返 null。
 func _math_comp(value: Variant, index: int, key: String) -> Variant:
+	# H-1(2026-09-17 审查):分量取出后必须过类型白名单,容器分量进 float() 即 SCRIPT ERROR
+	# (同步分发无异常隔离→result:null)。对齐 _num 先例。
+	var out: Variant = null
 	if value is Array:
 		var arr: Array = value
-		if index < arr.size() and arr[index] != null:
-			return arr[index]
-		return null
-	if value is Dictionary:
+		if index < arr.size():
+			out = arr[index]
+	elif value is Dictionary:
 		var dict: Dictionary = value
-		if dict.has(key) and dict[key] != null:
-			return dict[key]
+		if dict.has(key):
+			out = dict[key]
+	if out is int or out is float or (out is String and String(out).is_valid_float()):
+		return out
 	return null
 
 
@@ -2482,6 +2486,16 @@ func _num(v: Variant, fallback: float) -> float:
 		return float(v)
 	if v is String and String(v).is_valid_float():
 		return float(v)
+	return fallback
+
+# H-2(2026-09-17 审查):int 守卫,对齐 _num 先例——仅整值/合法数字串放行,其余回 fallback。
+func _int_guarded(v: Variant, fallback: int) -> int:
+	if v is int:
+		return v
+	if v is float and is_finite(v) and v == floor(v):
+		return int(v)
+	if v is String and String(v).is_valid_int():
+		return int(v)
 	return fallback
 
 func _vec2_from_param(v: Variant, fallback: Vector2) -> Vector2:
