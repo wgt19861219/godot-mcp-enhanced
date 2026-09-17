@@ -41,6 +41,7 @@ const {
   mockPeekToken,
   mockCreatePendingToken,
   mockValidateGodotBinary,
+  mockValidateGodotBinaryDetailed,
 } = vi.hoisted(() => ({
   // C-2 关键:audit middleware 调 getActionRisk(toolName, action) 判定 risk;
   // 现有 ToolDispatcher.test.ts 的 tool-registry mock 缺此导出 → after 抛
@@ -56,6 +57,7 @@ const {
   mockPeekToken: vi.fn(),
   mockCreatePendingToken: vi.fn().mockReturnValue('tok-test'),
   mockValidateGodotBinary: vi.fn().mockResolvedValue(true),
+  mockValidateGodotBinaryDetailed: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
 vi.mock('../../src/core/tool-registry.js', () => ({
@@ -115,6 +117,7 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
 
 vi.mock('../../src/core/godot-finder.js', () => ({
   validateGodotBinary: mockValidateGodotBinary,
+  validateGodotBinaryDetailed: mockValidateGodotBinaryDetailed,
 }));
 
 // fs/promises 部分 mock:appendFile/mkdir 包一层 vi.fn(默认透传真实实现,真实落盘到临时目录),

@@ -619,14 +619,20 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         try {
           const { installOverride } = await import('../core/overrides.js');
           const entry = installOverride(sourceScriptPath, projectPath);
+          // D4 (2026-09-17 反馈批次D, 09-06 CardGame2 反馈): 三种安装形态都明示卸载义务——
+          // 取证脚本忘卸载 → autoload 残留 project.godot,GUT 等共享 project.godot 的测试门禁
+          // 同样执行 _ready(改存档/切场景)污染用例环境(2483/2484 一例)。
+          const mustUninstall = '取证/调试完成后必须 uninstall_override(同一 source_script_path)——'
+            + 'autoload 残留在 project.godot 会在共享它的测试门禁(GUT 等)里同样执行 _ready,污染用例环境;'
+            + 'uninstall 会一并清理 dest script 与伴生 .gd.uid 残留。';
           if (entry === null) {
-            return textResult(JSON.stringify({ success: true, message: 'Override already registered and content identical, skipped.', already_installed: true }));
+            return textResult(JSON.stringify({ success: true, message: 'Override already registered and content identical, skipped. ' + mustUninstall, already_installed: true }));
           }
           if (entry.updated) {
             // 反馈 2026-08-30: 源脚本内容漂移时重拷贝,autoload 注册不动
             return textResult(JSON.stringify({
               success: true,
-              message: `Override already registered; dest script updated to match source (content drift). Restart the game to load the new version.`,
+              message: `Override already registered; dest script updated to match source (content drift). Restart the game to load the new version. ${mustUninstall}`,
               autoload_key: entry.autoloadKey,
               dest_script: `res://${entry.destScriptName}`,
               updated: true,
@@ -634,7 +640,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           }
           return textResult(JSON.stringify({
             success: true,
-            message: `Override installed: ${entry.autoloadKey} (autoload 段末尾,游戏 autoload 之后加载,_ready 可直接访问游戏单例)`,
+            message: `Override installed: ${entry.autoloadKey} (autoload 段末尾,游戏 autoload 之后加载,_ready 可直接访问游戏单例)。${mustUninstall}`,
             autoload_key: entry.autoloadKey,
             dest_script: `res://${entry.destScriptName}`,
             project_root: entry.projectRoot,

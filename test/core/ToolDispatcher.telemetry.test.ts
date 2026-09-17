@@ -21,6 +21,7 @@ const {
   mockIsPathInAllowedRoots,
   mockSkipProjectPath,
   mockValidateGodotBinary,
+  mockValidateGodotBinaryDetailed,
   mockRecord,
   mockHashProject,
   mockIsTelemetryEnabled,
@@ -32,6 +33,7 @@ const {
   mockIsPathInAllowedRoots: vi.fn().mockReturnValue(true),
   mockSkipProjectPath: vi.fn().mockReturnValue(false),
   mockValidateGodotBinary: vi.fn().mockResolvedValue(true),
+  mockValidateGodotBinaryDetailed: vi.fn().mockResolvedValue({ ok: true }),
   mockRecord: vi.fn(),
   mockHashProject: vi.fn().mockReturnValue('deadbeef'),
   // T2: 可控 isTelemetryEnabled——T1 默认 true（保持 record 被调），T2 测试中切 false
@@ -108,6 +110,7 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
 
 vi.mock('../../src/core/godot-finder.js', () => ({
   validateGodotBinary: mockValidateGodotBinary,
+  validateGodotBinaryDetailed: mockValidateGodotBinaryDetailed,
 }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

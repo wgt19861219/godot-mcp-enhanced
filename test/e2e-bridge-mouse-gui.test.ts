@@ -222,6 +222,63 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('C1 send_mouse_click gui_input
     expect(last.global_position).toEqual([Number(ctlCenter.x), Number(ctlCenter.y)]);
     expect(last.position).toEqual([100, 100]);
   });
+
+  // D5 (2026-09-17 反馈批次D, 批次C审查 Nit3): touch/drag/key 注入链 device=0 对称
+  // 收口的行为级锚定——_input 探针按 device 值分布计数,注入事件须落 device=0 桶。
+  it('D5: send_touch/send_drag/send_key 注入事件的 device=0(probe 设备分布断言)', async (ctx) => {
+    if (_initError) return ctx.skip(_initError);
+
+    const base = await probeState();
+
+    const touch = await callTool({ action: 'game_input', method: 'send_touch', params: { x: 50, y: 50, pressed: true, index: 0 } });
+    expect(touch.isError, `sendTouch: ${touch.text.slice(0, 200)}`).toBe(false);
+    const drag = await callTool({ action: 'game_input', method: 'send_drag', params: { x: 60, y: 60, index: 0, relative: [10, 10] } });
+    expect(drag.isError, `sendDrag: ${drag.text.slice(0, 200)}`).toBe(false);
+    const key = await callTool({ action: 'game_input', method: 'send_key', params: { key: 'space', pressed: true } });
+    expect(key.isError, `sendKeys: ${key.text.slice(0, 200)}`).toBe(false);
+    await new Promise(r => setTimeout(r, 300));
+
+    const after = await probeState();
+    process.stderr.write(`[D5] touch/key probe: ${JSON.stringify(after)}\n`);
+
+    // touch+drag 两个事件都进管线,且全部落在 device=0 桶(无 -1/其他设备桶出现)
+    expect(Number(after.engine_touch_events)).toBeGreaterThanOrEqual(Number(base.engine_touch_events) + 2);
+    const touchCounts = (after.touch_device_counts ?? {}) as Record<string, number>;
+    const touchZero = Number(touchCounts['0'] ?? 0);
+    expect(touchZero, `touch/drag 事件须 device=0: ${JSON.stringify(touchCounts)}`).toBeGreaterThanOrEqual(Number((base.touch_device_counts as Record<string, number> | undefined)?.['0'] ?? 0) + 2);
+    expect(touchCounts['-1'], '不得出现 device=-1(默认未规范化)桶').toBeUndefined();
+
+    // key 事件同款 device=0
+    expect(Number(after.engine_key_events)).toBeGreaterThanOrEqual(Number(base.engine_key_events) + 1);
+    const keyCounts = (after.key_device_counts ?? {}) as Record<string, number>;
+    expect(Number(keyCounts['0'] ?? 0), `key 事件须 device=0: ${JSON.stringify(keyCounts)}`).toBeGreaterThanOrEqual(Number((base.key_device_counts as Record<string, number> | undefined)?.['0'] ?? 0) + 1);
+    expect(keyCounts['-1'], '不得出现 device=-1 桶').toBeUndefined();
+  });
+
+  // D2 (2026-09-17 反馈批次D, fr2 2026-09-02 反馈): find_nodes 对 CanvasLayer(非
+  // CanvasItem 节点)盲区核实——fixture _ready 动态挂 MapPanel(CanvasLayer, layer=12,
+  // 复刻反馈场景)。当前版本 _traverse_tree 全 Node 递归应无盲区;本用例即定谳证据 +
+  // 防回归锚定(未来若有人给遍历加 CanvasItem 过滤,此处红)。
+  it('D2: find_nodes 能搜到 CanvasLayer 节点(MapPanel,非 CanvasItem 无盲区)', async (ctx) => {
+    if (_initError) return ctx.skip(_initError);
+
+    const r = await callTool({ action: 'game_query', method: 'find_nodes', params: { pattern: '*Map*' } });
+    expect(r.isError, `findNodes: ${r.text.slice(0, 300)}`).toBe(false);
+    const parsed = JSON.parse(r.text) as { nodes?: Array<{ name?: string; type?: string; path?: string }>; count?: number };
+    process.stderr.write(`[D2] find_nodes *Map*: ${JSON.stringify(parsed)}\n`);
+
+    const map = parsed.nodes?.find(n => n.name === 'MapPanel');
+    expect(map, 'MapPanel(CanvasLayer)须出现在 find_nodes 结果——非 CanvasItem 无盲区').toBeDefined();
+    expect(map?.type).toBe('CanvasLayer');
+    expect(map?.path).toBe('/root/Main/MapPanel');
+    expect(Number(parsed.count)).toBeGreaterThanOrEqual(1);
+
+    // 对照:type 过滤直接按类名也应命中(CanvasLayer is_class 匹配)
+    const byType = await callTool({ action: 'game_query', method: 'find_nodes', params: { type: 'CanvasLayer' } });
+    expect(byType.isError).toBe(false);
+    const parsedType = JSON.parse(byType.text) as { nodes?: Array<{ name?: string }> };
+    expect(parsedType.nodes?.some(n => n.name === 'MapPanel'), 'type=CanvasLayer 也须命中').toBe(true);
+  });
 });
 
 describe.skipIf(!hasGodot || !hasFixture || !RUN)('C2 headless spawn 输入派发定谳 (L2)', { timeout: 180_000, sequential: true }, () => {

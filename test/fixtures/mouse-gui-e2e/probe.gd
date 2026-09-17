@@ -4,6 +4,8 @@
 # (MOUSE_FILTER_STOP + gui_input 信号,press 记录→release 位移判 is_tap,复刻
 # CardGame2 列表条目判定链)。_input 探针同时计数引擎管线到达 root 层的鼠标事件,
 # 用于区分「事件未进管线」vs「进了管线但 GUI 派发不到 Control」。
+# D5/D2 (2026-09-17) 反馈批次D 扩展:touch/key 注入探针(device 值分布,锚定
+# device=0 对称收口)+ CanvasLayer 子节点(核实 find_nodes 对非 CanvasItem 盲区)。
 # 所有暴露方法 get_* 前缀 = bridge call_method 只读白名单。
 extends Node2D
 
@@ -13,6 +15,10 @@ var control_taps := 0
 var button_press_count := 0
 var button_gui_count := 0
 var engine_mouse_events := 0
+var engine_touch_events := 0
+var touch_device_counts := {}
+var engine_key_events := 0
+var key_device_counts := {}
 
 var _press_pos := Vector2.ZERO
 var _press_valid := false
@@ -36,10 +42,26 @@ func _ready() -> void:
 	_btn.gui_input.connect(func(_ev: InputEvent) -> void: button_gui_count += 1)
 	add_child(_btn)
 
+	# D2 (2026-09-17 反馈批次D): 复刻 fr2 2026-09-02 反馈场景——MapPanel 是
+	# CanvasLayer(Node 直接子类,非 CanvasItem),layer=12。用于真机核实
+	# find_nodes(全 Node 递归)当前版本无盲区 + 防回归锚定。
+	var map_panel := CanvasLayer.new()
+	map_panel.name = "MapPanel"
+	map_panel.layer = 12
+	add_child(map_panel)
+
 
 func _input(ev: InputEvent) -> void:
 	if ev is InputEventMouse:
 		engine_mouse_events += 1
+	elif ev is InputEventScreenTouch or ev is InputEventScreenDrag:
+		engine_touch_events += 1
+		var d := str(ev.device)
+		touch_device_counts[d] = int(touch_device_counts.get(d, 0)) + 1
+	elif ev is InputEventKey:
+		engine_key_events += 1
+		var d := str(ev.device)
+		key_device_counts[d] = int(key_device_counts.get(d, 0)) + 1
 
 
 func _on_ctl_gui_input(ev: InputEvent) -> void:
@@ -92,4 +114,8 @@ func get_probe_state() -> Dictionary:
 		"button_press_count": button_press_count,
 		"button_gui_count": button_gui_count,
 		"engine_mouse_events": engine_mouse_events,
+		"engine_touch_events": engine_touch_events,
+		"touch_device_counts": touch_device_counts,
+		"engine_key_events": engine_key_events,
+		"key_device_counts": key_device_counts,
 	}

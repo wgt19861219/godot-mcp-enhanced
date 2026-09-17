@@ -219,6 +219,30 @@ describe('P2-1 overrides.ts', () => {
       const removed = uninstallOverride(srcScript, projectDir);
       expect(removed).toBe(false);
     });
+
+    // D4 (2026-09-17 反馈批次D, 09-06 CardGame2 反馈): Godot 4.4+ 为 .gd 生成伴生 .uid,
+    // 卸载删脚本不清 .uid 留孤儿(git status 残留误导排查)
+    it('D4: 清理伴生 .gd.uid 残留(存在时一并删除)', () => {
+      const srcScript = join(sourceScriptDir, 'log.gd');
+      writeFileSync(srcScript, 'extends Node\n', 'utf-8');
+      installOverride(srcScript, projectDir);
+      // 模拟 Godot 4.4+ 为拷贝进项目的脚本生成的伴生 .uid
+      writeFileSync(join(projectDir, 'mcpoverride_log.gd.uid'), 'uid://abcdefgh\n', 'utf-8');
+
+      const removed = uninstallOverride(srcScript, projectDir);
+      expect(removed).toBe(true);
+      expect(existsSync(join(projectDir, 'mcpoverride_log.gd'))).toBe(false);
+      expect(existsSync(join(projectDir, 'mcpoverride_log.gd.uid')), '.uid 孤儿须一并清理').toBe(false);
+    });
+
+    it('D4: 无伴生 .uid(旧版 Godot)时卸载正常(不报错)', () => {
+      const srcScript = join(sourceScriptDir, 'log.gd');
+      writeFileSync(srcScript, 'extends Node\n', 'utf-8');
+      installOverride(srcScript, projectDir);
+
+      const removed = uninstallOverride(srcScript, projectDir);
+      expect(removed).toBe(true);
+    });
   });
 
   describe('uninstallAllOverrides', () => {

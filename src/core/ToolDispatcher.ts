@@ -742,11 +742,27 @@ export class ToolDispatcher {
         };
       }
       // H-01: Validate the binary is actually Godot before allowing override
-      const { validateGodotBinary } = await import('../core/godot-finder.js');
-      if (!(await validateGodotBinary(godotOverride))) {
+      // D3 (2026-09-17 反馈批次D, 09-06 fr2 反馈): 失败时用分层 stage 组装诊断线索
+      // (校验器做了什么/为何判非法)——此前单句 "not a valid Godot binary" 对合法
+      // 4.7.2 console exe 被拒场景不给任何排查方向,被迫手动 spawn 绕过(>5min)。
+      const { validateGodotBinaryDetailed } = await import('../core/godot-finder.js');
+      const check = await validateGodotBinaryDetailed(godotOverride);
+      if (!check.ok) {
+        // stage 是结构化枚举;stdoutPreview 是 --version 输出(版本串,非路径,无 PII)
+        const why = check.stage === 'path-not-allowed'
+          ? 'path is outside the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist (env or ~/.godot-mcp/godot-paths.json). Fix: add the binary directory to the whitelist, or unset/clear the stale whitelist.'
+          : check.stage === 'is-directory'
+            ? 'path is a directory, not the Godot executable. Fix: point at the binary file itself (e.g. Godot_v4.7.2-stable_win64.exe).'
+            : check.stage === 'version-run-failed'
+              ? 'could not execute the binary with --version (spawn error / non-zero exit / 5s timeout). Fix: verify the file runs from a shell and is not blocked/quarantined.'
+              : `--version ran but its output did not match a Godot version signature${check.stdoutPreview ? ` (got: "${check.stdoutPreview}")` : ''}. Expected e.g. "4.7.2.stable.official...".`;
         return {
           override: undefined,
-          error: opsErrorResult('INVALID_PARAMS', `godot_path failed validation (not a valid Godot binary): ${godotOverride}`),
+          error: opsErrorResult(
+            'INVALID_PARAMS',
+            `godot_path failed validation: ${why} ` +
+            `(validator pipeline: whitelist check → directory check → run --version (5s timeout) → Godot signature check; path: "${godotOverride}")`,
+          ),
         };
       }
       return { override: () => Promise.resolve(godotOverride), error: null };

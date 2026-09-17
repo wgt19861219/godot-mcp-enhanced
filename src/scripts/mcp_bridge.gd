@@ -2353,6 +2353,9 @@ func _cmd_send_key(params: Dictionary) -> Variant:
 	# Godot 4 推荐 physical_keycode 映射;只设 keycode 在 physical 映射项目里不触发 ui_action。
 	event.physical_keycode = keycode
 	event.pressed = pressed
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链;不依赖
+	# 引擎对默认 -1 的未文档化规范化)。timeline 注入复用本函数,自动跟随。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "key": key}
 
@@ -2453,6 +2456,9 @@ func _cmd_send_touch(params: Dictionary) -> Variant:
 	event.position = Vector2(x, y)
 	event.pressed = pressed
 	event.index = index
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
+	# timeline 注入复用本函数,自动跟随。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "x": x, "y": y, "pressed": pressed, "index": index}
 
@@ -2502,7 +2508,15 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	event.position = Vector2(x, y)
 	event.index = index
 	event.relative = relative
-	event.speed = speed
+	# 跨项目验证发现(2026-09-16 反馈批A,CardGame2 Godot 4.7 真机):InputEventScreenDrag
+	# 的引擎属性是 velocity(Godot 3 的 speed 已改名),赋值/读取 speed 直接 SCRIPT ERROR —
+	# send_drag 在 Godot 4 上从未真正可用(6f997b4 修的是参数归一化,属性名错漏网)。
+	# MCP API 参数名 speed 保持不变(调用方契约),仅引擎属性侧改名。
+	# (本行与批A分支 d7b15fa4 同款复刻——批次D e2e 依赖 send_drag 可用;逐字一致保 merge 无冲突)
+	event.velocity = speed
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
+	# timeline 注入复用本函数,自动跟随。
+	event.device = 0
 	Input.parse_input_event(event)
 	# 审查 I-B(2026-09-03): 裸 Vector2 经 JSON.stringify 退化为 "(x, y)" 字符串(真机实证),
 	# 走 _jsonify 输出 {"x","y"}(对齐 wait_for_property 先例),响应可结构化消费。
@@ -2519,6 +2533,8 @@ func _cmd_send_text(params: Dictionary) -> Variant:
 	for ch in text:
 		var event := InputEventKey.new()
 		event.unicode = ch.unicode_at(0)
+		# 反馈批次D (2026-09-17): device=0 对称收口(同 _cmd_send_key)
+		event.device = 0
 		event.pressed = true
 		Input.parse_input_event(event)
 		event.pressed = false

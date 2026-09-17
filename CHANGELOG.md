@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 插件反馈批次 D（语义与易用：run_project timeout 语义 / find_nodes CanvasLayer 定谳 / godot_path 诊断线索 / install_override 卸载义务与 .uid 残留 / 注入链 device=0 对称收口）；不涉及规则模板 → 不触发版本 bump；npm publish / tag 待用户指令。
+
+### Fixed
+- **D3 godot_path 校验失败错误带诊断线索**（09-06 fr2 反馈：合法 4.7.2 console exe 被拒只剩单句 `not a valid Godot binary`，无从排查被迫手动 spawn）：`validateGodotBinaryDetailed` 分层返回失败 stage（path-not-allowed / is-directory / version-run-failed / not-godot-signature 含 --version 输出前 80 字符），错误消息带各 stage 的排查指引 + validator pipeline 说明（whitelist → directory → run --version(5s) → signature）；boolean 版签名保留供 finder 候选循环消费。
+- **D4 install_override 卸载义务明示 + uninstall 清残留 .uid**（09-06 CardGame2 反馈：取证脚本忘卸载 → autoload 残留 project.godot 污染 GUT 共享门禁 2483/2484；卸载后 `mcpoverride_*.gd.uid` 孤儿残留）：三种安装形态（新装/漂移更新/幂等跳过）响应均明示「取证完必 uninstall_override（会一并清 dest script 与伴生 .gd.uid）」；`uninstallOverride`/`uninstallAllOverrides` 删脚本后同款 best-effort 清 `*.gd.uid`（Godot 4.4+ 伴生文件）。
+- **D5 touch/drag/key/text 注入链 device=0 对称收口**（批次C审查 Nit3 挂账）：`_cmd_send_key`/`_cmd_send_touch`/`_cmd_send_drag`/`_cmd_send_text` 显式 `event.device = 0`（mouse 链批次C已收，本批补齐 InputEventKey/ScreenTouch/ScreenDrag——不依赖引擎对默认 -1 的未文档化规范化）；timeline 注入复用同函数自动跟随。行为级 e2e 锚定（probe 设备分布断言：真机 `touch_device_counts={"0":2}` / `key_device_counts={"0":1}`，无 -1 桶）。
+- **send_drag 引擎属性 velocity 修复复刻**（与批A分支 `d7b15fa4` 同款，批次D e2e 依赖 send_drag 可用——批次C/D 分支链不含批A提交，`event.speed = speed` 在 Godot 4 上赋值即 SCRIPT ERROR + Debugger Break 卡死游戏，本批 e2e 首跑实锤）：赋值行逐字复刻保 merge 无冲突；批A另修的录制读取 3 处（bridge/editor recording）留批A合并。
+
+### Added
+- **D1 run_project `timeout=0/-1` = 不自动停**（09-02 fr2 反馈：bridge 交互会话逐步驱动总时长天然超冷启动时长，timeout=90 到点静默 kill 游戏呈 BRIDGE_NOT_CONNECTED 假象，排障 8 分钟）：`computeRunTimeout` 显式 ≤0 归一 0 = 不设 auto-stop timer（undefined/NaN/空串/null 仍默认 30 防误伤；`timeout > 0` 消费守卫既有）；schema 与响应文本同步（`no auto-stop (timeout=0/-1; stop via stop_project)`，Bridge-not-ready 消息同款不再误示 0s）。真机冒烟：timeout=0 起 → 8s 后 `running:true` → stop_project 正常停。
+- **D2 find_nodes CanvasLayer 盲区定谳 + 防回归锚定**（09-02 fr2 反馈 pattern=`*Map*` 对 CanvasLayer 返回 count=0）：真机核实当前版本（P7 重写后）`_traverse_tree` 全 Node 递归**无盲区**——fixture 动态挂 MapPanel(CanvasLayer, layer=12) 复刻反馈场景，find_nodes 返回 `/root/Main/MapPanel` type=CanvasLayer（pattern 与 type 过滤双命中）；反馈根因同批A/B/C 模式（fr2 项目内 addons 旧版）。e2e 用例锚定，未来若给遍历加 CanvasItem 过滤即红。
+
 ### Added
 - Web GUI 监控面板：server 进程内嵌 HTTP+SSE（127.0.0.1 + token + Origin 白名单），四面板（运行会话/日志流/按项目工具统计/分钟时序），CLI `dashboard --web` 打开浏览器（`GODOT_MCP_WEB_GUI=0` 关闭，端口起点 `GODOT_MCP_WEB_GUI_PORT` 默认 9550）。
 - Web GUI 资源管理工作台（Plan A）：项目行「文件」进入文件树浏览（`.godot`/`.git` 等隐藏降噪）、CodeMirror 文本编辑（gd/json/md 高亮，按需同源 assets 加载）、三重护栏保存（READ_ONLY 403 门 + mtime 乐观锁 409 带最新内容 + percent-encode 集中备份）——readOnly 下 GET 放行仅禁写；raw/hex 端点与响应头防线（图片/音频/二进制采样，Plan B 预览消费）。
