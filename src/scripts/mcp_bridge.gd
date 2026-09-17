@@ -2461,7 +2461,7 @@ func _cmd_send_touch(params: Dictionary) -> Variant:
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
 		return {"error": {"code": -1, "message": "Invalid touch index: %s (must be non-negative integer)" % str(params.get("index", 0))}}
-	var index: int = int(params.get("index", 0))
+	var index: int = _int_guarded(params.get("index"), 0)
 	var event := InputEventScreenTouch.new()
 	event.position = Vector2(x, y)
 	event.pressed = pressed
@@ -2513,7 +2513,7 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
 		return {"error": {"code": -1, "message": "Invalid drag index: %s (must be non-negative integer)" % str(params.get("index", 0))}}
-	var index: int = int(params.get("index", 0))
+	var index: int = _int_guarded(params.get("index"), 0)
 	# 审查 Minor-10: 归一 fallback 静默无警示——形态非法静默归 (0,0) 且回显归一后值,
 	# 调用方无法区分「用户传 0」与「形态错被归零」(如 {"speed":"fast"} 静默零速)。补 warnings。
 	var warnings: Array = []
@@ -3707,7 +3707,7 @@ func _cmd_control_input_sequence(params: Dictionary, pid: int) -> Dictionary:
 		var e: Dictionary = ev
 		if not (e.has("at_frame") and e.has("type")):
 			return {"error": {"code": -1, "message": "timeline event missing at_frame/type"}}
-		var at_f := int(e["at_frame"])
+		var at_f := _int_guarded(e["at_frame"], 0)
 		if at_f < 1 or at_f > _INPUT_SEQ_MAX_AT_FRAME:
 			return {"error": {"code": -1, "message": "at_frame must be 1-%d, got %d" % [_INPUT_SEQ_MAX_AT_FRAME, at_f]}}
 		var t := str(e["type"])
@@ -3735,10 +3735,10 @@ func _cmd_control_input_sequence(params: Dictionary, pid: int) -> Dictionary:
 					return {"error": {"code": -1, "message": "Invalid %s: %s (at_frame=%d); must be [x,y] array or {x,y} object" % [vec_key, str(e[vec_key]), at_f]}}
 		validated.append(e)
 		max_at = maxi(max_at, at_f)
-	var settle: int = int(params.get("settle_frames", 0))
+	var settle: int = _int_guarded(params.get("settle_frames"), 0)
 	if settle < 0 or settle > _INPUT_SEQ_MAX_SETTLE:
 		return {"error": {"code": -1, "message": "settle_frames must be 0-%d, got %d" % [_INPUT_SEQ_MAX_SETTLE, settle]}}
-	var wall_budget_ms: int = int(params.get("wall_budget_ms", _CONTROL_DEFAULT_WALL_BUDGET_MS))
+	var wall_budget_ms: int = _int_guarded(params.get("wall_budget_ms"), _CONTROL_DEFAULT_WALL_BUDGET_MS)
 	# D-5 同款:压 50s,防等待期无字节被 idle 断连切断
 	wall_budget_ms = clampi(wall_budget_ms, 1000, 50000)
 	# 开窗(同 step_until):记 refreeze + paused 原值 + 临时解 pause 让游戏逐帧推进
@@ -3760,7 +3760,7 @@ func _inject_timeline_event(ev: Dictionary) -> Variant:
 			a.action = str(ev.get("name", ""))
 			a.pressed = bool(ev.get("pressed", true))
 			if ev.has("strength"):
-				a.strength = float(ev["strength"])
+				a.strength = _num(ev["strength"], 0.0)
 			Input.parse_input_event(a)
 			return {"success": true, "action": a.action, "pressed": a.pressed}
 		"key":

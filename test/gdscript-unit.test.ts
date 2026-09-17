@@ -237,6 +237,20 @@ describe.skipIf(!hasGodot)('mcp_bridge 参数守卫行为测试(H-1/H-2 毒参�
       expect(values.ig_bool).toBe('-1');     // bool 在 Godot 4 Variant 里不是 int(true is int == false)
   });
 
+  it('send_input_sequence 毒 at_frame(null/容器)→ 可读 error(at_frame must be 1-600)而非裸转中断', async () => {
+    const { realError, values } = await runBridgeGuardProbe([
+      'var r1 = b._cmd_control_input_sequence({"timeline": [{"at_frame": null, "type": "key", "key": "A"}]}, 1)',
+      'print("RESULT isq_null=" + JSON.stringify(r1))',
+      'var r2 = b._cmd_control_input_sequence({"timeline": [{"at_frame": {}, "type": "key", "key": "A"}]}, 1)',
+      'print("RESULT isq_dict=" + JSON.stringify(r2))',
+    ]);
+    expect(realError, '不应有 SCRIPT ERROR(H-2: int(null) = Nonexistent int constructor)').toBe(false);
+    expect(values.isq_null).toContain('"error"');
+    expect(values.isq_null).toContain('at_frame must be 1-600, got 0');
+    expect(values.isq_dict).toContain('"error"');
+    expect(values.isq_dict).toContain('at_frame must be 1-600, got 0');
+  });
+
   it('_num 守卫既有行为复核(float 裸转统一复用面): null/容器 → fallback', async () => {
     const { realError, values } = await runBridgeGuardProbe([
       'print("RESULT num_null=" + str(b._num(null, 0.0)))',
