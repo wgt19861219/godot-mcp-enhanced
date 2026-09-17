@@ -6,10 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-17 架构审查批 3(Task E:web-gui rotate-token/CLI 打码 + 纵深五小件,纯 TS 不 bump)。
 > 2026-09-17 架构审查批 3(Task D:web-gui server.ts 三项安全修复,纯 TS 不 bump)。
 > 2026-09-17 架构审查批 2(Task C:shutdown 完备性,纯 TS 不 bump)。
 
+### Added
+- **M-2 rotateSharedToken + `dashboard --rotate-token` + CLI 打码**(web-gui/cli):registry.ts 导出 `rotateSharedToken()`——删 token.txt → 生成新值 → 包根入口页(面板入口.html)存在时用新 token 重写(复用 `ensurePackageRootEntry`,portal⇄registry 循环 import 双方仅函数体内互调,ESM live bindings 安全);CLI `dashboard --rotate-token` 打印前 4 位打码形态(全量 token 不落终端);`dashboard --web` 默认 console 输出打码 URL,`--show-token` 显式全量(浏览器 opener 恒收全量,打开功能不变)。诚实边界:已运行实例内存 token 不热更新,须重启收敛新值(rotate 防守"后续不再认旧 token")。
+
 ### Fixed
+- **备份 .bak 补 Windows icacls**(web-gui,审查 Low):`saveText` 备份写后调 `hardenFilePermissionsWindows(bakPath)`(复用 registry.ts 导出)——.bak 含旧文件全文,Windows 无视 0o600,ACL 收紧对齐登记文件惯例;Linux .bak 0o600 既有行为锁定。
+- **readJsonBody 统一 64KB 上限**(web-gui,审查 Low):content-length 头预检 + chunked(无 CL)累计字节超限即弃读返回(不整读进内存),返回形态区分 `bad_json`/`too_large`(调用方 400/413);file save 调用方显式传 600KB(I-6 语义独立保留且防 chunked 绕过其 CL 预检),其余 POST 端点默认 64KB。
+- **CSP script-src 去 'unsafe-inline' 改 sha256 + frame-ancestors**(web-gui,审查 Low):html.ts 导出 `INDEX_SCRIPT_SHA256`(模块加载时对 INDEX_HTML 唯一内联 `<script>` 算 sha256/base64,脚本变更 hash 天然同步;提取对齐 HTML 解析语义——开始标签后首换行剥离 + CRLF 规范化);`WEB_GUI_CSP` 的 script-src 改 `'self' 'sha256-<hash>'`(assets 同源脚本不受影响),追加 `frame-ancestors 'none'`(clickjacking 面);style-src 'unsafe-inline' 保留(样式属性面)。测试以独立路径(split,非实现同款 regex)重算 hash 比对锁定。
+- **LogReader watcher/pollTimer 补 unref**(dashboard,审查 Low):`fs.watch` watcher(可选链兼容 Node <23.9)与轮询 timer 均 unref——对齐 server.ts 附属句柄先例,server 停止后 LogReader 残留句柄不再挂住进程退出。
 - **M-1 token 比较恒定时间 + /api/auth Origin 闸门**(web-gui):`tokenEquals(candidate)`(长度守卫 + `timingSafeEqual`)替换 `authorized()`//api/auth/两处 403-vs-401 判定共 4 个 `===/!== this.token` 字面比较点,防逐前缀定时探测;`/api/auth` 补 `originAllowed` 闸门(403 先于 token 判定)——种 cookie 的握手端点不再响应非本机本端口浏览器源(DNS rebinding 纵深)。源码契约测试锁定(timingSafeEqual import 落位 + 禁字面比较回退)。
 - **M-4 /api/health ACAO 白名单回显 + 响应体删 startedAt**(web-gui):ACAO 从 `*` 收紧为 `127.0.0.1|localhost` 的 9550-9569 段 Origin 回显(白名单正则由 CSP 同源常量机械生成,与 `WEB_GUI_CSP`/前端 recoverPanel 扫描范围天然同步;前端自愈跨端口探测仍可读),其他/无 Origin 不发 ACAO 头;响应体删 `startedAt`(前端 probeHealth 只消费 r.ok,registry 登记与 `open.ts` 列表不受影响)。
 - **M-3 READ_ONLY 跳过入口页写入 + env 开关**(web-gui):`refreshProjectEntries` 头部双短路——`isReadOnly()` 短路(READ_ONLY 语义不再被"向用户项目目录写 面板入口.html"维度穿透,start/scan 完成/add 成功三时点共用该方法一处全覆盖)+ `GODOT_MCP_WEB_GUI_ENTRY=0` 全局关闭入口页落盘(不想被写入项目目录的用户出口)。三时点负向断言 + 既有写入用例锁定行为不变。
@@ -18,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **M-10 inflight 双清**:close() 末尾(`server.close()` 前)新增 `safeStep('clearInflightFinal')` 再清一次本进程 in-flight 文件——首步清理后、close 窗口内并发工具调用的 `markInflight` 会重建文件,单清则正常退出也留孤儿 → 下个启动误报丧。
 
 ### Changed
+- **抽取 parseRegistrationFile**(web-gui,审查 Low):`listRegistrations` 与 `sweepStaleRegistrations` 共用的 JSON.parse + 三字段判型 + token 字符集白名单抽为单一校验来源,两处消费;纯重构行为不变(既有测试全锁定),新增直接单测覆盖损坏/判型/字符集/不存在 → null。
 - **H-3/O2 bridge 首连 Dashboard 装配迁入控制面**:删 src/tools/game-bridge.ts 模块顶层 `setOnBridgeConnected(() => launchDashboardOnce())` 副作用(re-export 保留消费方兼容),迁入 `GodotServer.run()` connect 后装配、`close()` finally 对称置 null——"装配-清理逐项配对"不变量不再被模块顶层副作用绕开;dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
 
 ## [0.33.6] - 2026-09-17
