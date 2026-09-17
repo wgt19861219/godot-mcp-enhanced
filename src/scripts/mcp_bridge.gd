@@ -1241,7 +1241,7 @@ func _cmd_get_tree(params: Dictionary) -> Variant:
 	if profile_res.has("error"):
 		return profile_res
 	var player_mode := str(profile_res["profile"]) == "player"
-	var max_depth: int = int(params.get("max_depth", 10))
+	var max_depth: int = _int_guarded(params.get("max_depth"), 10)
 	var root_node := get_tree().root
 	if root_node == null:
 		return {"tree": [], "scene": ""}
@@ -1349,7 +1349,7 @@ func _cmd_find_nodes(params: Dictionary) -> Dictionary:
 	var pattern: String = str(params.get("pattern", ""))
 	var type_filter: String = str(params.get("type", ""))
 	var group: String = str(params.get("group", ""))
-	var max_results: int = int(params.get("limit", 100))
+	var max_results: int = _int_guarded(params.get("limit"), 100)
 	if max_results > 500:
 		max_results = 500
 	# 坑2(2026-08-21 反馈批): 消费 root 参数——限定子树搜索范围(此前声明了却被忽略,
@@ -1373,7 +1373,7 @@ func _cmd_find_nodes(params: Dictionary) -> Dictionary:
 			return {"error": {"code": -8, "message": "near_node anchor not found: %s" % near_node_path}}
 		if not (near_anchor is Node2D or near_anchor is Node3D):
 			return {"error": {"code": -9, "message": "near_node anchor must be Node2D/Node3D (got %s)" % near_anchor.get_class()}}
-		near_max_distance = float(params.get("max_distance", 1000.0))
+		near_max_distance = _num(params.get("max_distance"), 1000.0)
 		if near_max_distance < 0.0:
 			return {"error": {"code": -10, "message": "max_distance must be >= 0 (got %f)" % near_max_distance}}
 		# P7 (2026-09-11): near × 投影联动(P5 钩子清偿——P5 时无投影层故注释"不适用",
@@ -2662,7 +2662,7 @@ func _cmd_get_viewport_info() -> Dictionary:
 func _cmd_get_errors(params: Dictionary) -> Dictionary:
 	if _error_capture == null:
 		return {"error": {"code": -32003, "message": "Error capture not initialized"}}
-	var since_seq := int(params.get("since_seq", 0))
+	var since_seq := _int_guarded(params.get("since_seq"), 0)
 	var clear := bool(params.get("clear", false))
 	return _error_capture.poll(since_seq, clear)
 
@@ -2707,7 +2707,7 @@ func _cmd_monitor_start(params: Dictionary, pid: int) -> Variant:
 	var player_mode := profile == "player"
 	var node_path: String = str(params.get("node_path", ""))
 	var properties = params.get("properties", [])
-	var interval: int = int(params.get("interval_frames", 10))
+	var interval: int = _int_guarded(params.get("interval_frames"), 10)
 
 	if node_path == "":
 		return {"error": {"code": -1, "message": "node_path is required"}}
@@ -3036,7 +3036,7 @@ func _cmd_watch_start(params: Dictionary, pid: int) -> Variant:
 	var profile: String = profile_res["profile"]
 	var node_path: String = str(params.get("node_path", ""))
 	var signal_name: String = str(params.get("signal_name", ""))
-	var max_events: int = int(params.get("max_events", 1000))
+	var max_events: int = _int_guarded(params.get("max_events"), 1000)
 
 	if node_path == "":
 		return {"error": {"code": -1, "message": "node_path is required"}}
@@ -3237,7 +3237,7 @@ func _cmd_find_ui_elements(params: Dictionary) -> Variant:
 	var pattern: String = str(params.get("pattern", ""))
 	var type_filter: String = str(params.get("type", ""))
 	var visible_only: bool = params.get("visible_only", true)
-	var max_results: int = int(params.get("limit", 200))
+	var max_results: int = _int_guarded(params.get("limit"), 200)
 	if max_results > 500:
 		max_results = 500
 
@@ -3953,10 +3953,23 @@ class _ErrorCapture extends Logger:
 
 	# 增量查询:返回 seq > since_seq 的条目 + 下次查询用的 next_seq 游标。
 	# clear=true 在查询后清空 buffer(读即焚,适合 AI 确认已处理完旧错误)。
+	# H-2(2026-09-17 审查):seq 裸转换 _int_guarded(回退 -1 = 永不命中,静默全滤)。
+	# DUPLICATE: Keep in sync with 外层 _int_guarded(语言约束实证:GDScript 内部类
+	# 无法访问外层实例方法/静态方法,Parse Error,只能同形态副本;e["seq"] 本身由
+	# _capture_entry 的内部计数器唯一写入,此处属顺手纵深而非外部攻击面)。
+	func _int_guarded(v: Variant, fallback: int) -> int:
+		if v is int:
+			return v
+		if v is float and is_finite(v) and v == floor(v):
+			return int(v)
+		if v is String and String(v).is_valid_int():
+			return int(v)
+		return fallback
+
 	func poll(since_seq: int, clear: bool) -> Dictionary:
 		var out: Array = []
 		for e in _entries:
-			if int(e["seq"]) > since_seq:
+			if _int_guarded(e["seq"], -1) > since_seq:
 				out.append(e)
 		var next := _seq
 		if clear:
