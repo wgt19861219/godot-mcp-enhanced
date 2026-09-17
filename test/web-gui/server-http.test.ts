@@ -60,16 +60,23 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
   // ── CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改精确
   //    sha256 放行 INDEX_HTML 内联脚本;补 frame-ancestors 'none'。hash 提取以独立
   //    路径(split,非实现同款 regex)重算比对,防实现提取逻辑漂移。
-  it('CSP 加固:script-src 含 sha256 且无 unsafe-inline;含 frame-ancestors;hash 与 INDEX_HTML 内联脚本独立重算一致', () => {
+  //    fix round 1(2026-09-17 主审 playwright 实证):浏览器对 inline script 的 hash
+  //    **不剥前导换行**(含前导换行版 txMCHDj5… 与浏览器期望逐字节匹配;原剥前导
+  //    换行实现 OZf9I8dd… 被真机 CSP violation 证伪)——独立重算同步含前导换行,
+  //    并把真实浏览器算出的 hash 作为硬编码锚锁进测试,此后提取规则再漂移会被锚抓住。
+  it('CSP 加固:script-src 含 sha256 且无 unsafe-inline;含 frame-ancestors;hash 与 INDEX_HTML 内联脚本独立重算一致 + 浏览器期望锚', () => {
     expect(WEB_GUI_CSP).toMatch(/script-src [^;]*'sha256-[A-Za-z0-9+/=]{43,44}'/);
     expect(WEB_GUI_CSP).not.toMatch(/script-src [^;]*'unsafe-inline'/);
     expect(WEB_GUI_CSP).toContain("frame-ancestors 'none'");
     expect(WEB_GUI_CSP).toContain("style-src 'unsafe-inline'");   // 样式属性面保留(非脚本执行面)
-    // 独立重算:split 提取(实现用 exec regex),CRLF 规范化 + 前导换行剥离(HTML spec)
+    // 硬编码锚:playwright 打开真实面板实例,浏览器 console 报的期望 hash(2026-09-17 实证)
+    expect(WEB_GUI_CSP).toContain("'sha256-txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8='");
+    // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
-    const body = after.slice(0, after.indexOf('</script>')).replace(/^\r?\n/, '').replace(/\r\n/g, '\n');
+    const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
+    expect(hash).toBe('txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8=');   // 独立重算与浏览器锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
