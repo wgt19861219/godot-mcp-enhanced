@@ -105,3 +105,65 @@ describe.skipIf(!hasGodot)('审查 I-F e2e: batch 失败注入/remove 落盘/par
     }
   }, 90_000);
 });
+
+// ─── Task B(2026-09-17 架构审查): H-1 headless 数学分量守卫 + add_node 被拦属性点名 ──
+// 修复前两个形态:
+// ① _math_comp 无类型白名单:容器分量({"x":{}})穿透到 float() = "Nonexistent 'float'
+//   constructor" SCRIPT ERROR 且 headless --script 进程挂起(真机 4.6.3 实证,同 Task A
+//   bridge 侧 I-C 结论);依赖"函数中断返回 null"的未定义行为兜底不可接受。
+// ② add_node 的 _is_safe_property 拦截无 else:被拦属性(script 等)静默跳过,节点照常
+//   落盘报成功——"看似成功实则没写"(batch_add_nodes/edit_node 均有点名,唯独 add_node 缺)。
+describe.skipIf(!hasGodot)('Task B: H-1 数学分量守卫 + add_node 被拦属性点名(GODOT_PATH=' + (hasGodot ? 'set' : 'unset') + ')', () => {
+  // 毒分量修复前会挂死进程,timeout 收紧到 20s 快速失败 + 显式 timedOut 检出(共用 runOps 的 60s 太慢)
+  function runOpsFast(proj: string, op: string, params: Record<string, unknown>):
+    { status: number | null; stdout: string; stderr: string; timedOut: boolean } {
+    const opsScript = resolve('src/scripts/godot_operations.gd');
+    const r = spawnSync(GODOT_PATH, [
+      '--headless', '--path', proj, '--script', opsScript, op,
+      JSON.stringify(params),
+    ], { encoding: 'utf8', timeout: 20_000 });
+    const timedOut = !!r.error && (r.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', timedOut };
+  }
+
+  it('H-1: add_node 毒分量 position={"x":{}, "y":2} → 白名单拒绝走可读错误 exit 1,无 SCRIPT ERROR 挂死,节点不落盘', () => {
+    const proj = makeProject('poisoncomp');
+    try {
+      const r = runOpsFast(proj, 'add_node', {
+        scene_path: 'res://scenes/main.tscn',
+        node_type: 'Node2D',
+        node_name: 'PoisonNode',
+        properties: { position: { x: {}, y: 2 } },
+      });
+      expect(r.timedOut, '进程不应挂死(修复前 float({}) SCRIPT ERROR 后 headless --script 卡死)').toBe(false);
+      expect(`${r.stdout}\n${r.stderr}`).not.toMatch(/SCRIPT ERROR/);
+      expect(r.status, 'coerce 失败走 C-1 整节点失败 exit 1,stderr:' + r.stderr).toBe(1);
+      expect(r.stderr, '可读错误点名(上游 -8 同款文案)').toMatch(/cannot coerce/);
+      const scene = readFileSync(join(proj, 'scenes', 'main.tscn'), 'utf8');
+      expect(scene, '失败节点不落盘').not.toContain('PoisonNode');
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('add_node 被拦属性(script)不判整笔失败: 节点落盘 + 合法属性写入 + stdout 警告点名 + stderr 点名', () => {
+    const proj = makeProject('blockprop');
+    try {
+      const r = runOpsFast(proj, 'add_node', {
+        scene_path: 'res://scenes/main.tscn',
+        node_type: 'Node2D',
+        node_name: 'BlockedPropNode',
+        properties: { script: 'res://evil.gd', position: [10, 20] },
+      });
+      expect(r.status, '节点主体应创建(被拦属性是安全策略拦截,非数据错误,不判整笔失败)stderr:' + r.stderr).toBe(0);
+      expect(r.stderr, 'log_error 点名被拦属性(对齐 edit_node 先例)').toMatch(/Blocked property: script/);
+      expect(r.stdout, 'stdout 警告点名(TS 成功路径透传 stdout,调用方必须知道哪些属性没写上)').toMatch(/[Bb]locked[^\n]*script/);
+      const scene = readFileSync(join(proj, 'scenes', 'main.tscn'), 'utf8');
+      expect(scene, '节点已创建落盘').toContain('BlockedPropNode');
+      expect(scene, '未被拦的合法属性正常写入').toMatch(/position/);
+      expect(scene, 'script 确实未写入').not.toContain('evil.gd');
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

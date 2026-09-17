@@ -10,6 +10,8 @@ import { readFileSync } from 'node:fs';
 // "修复模式落位"而非运行时行为。运行时行为由 headless 真跑覆盖(见 task-E-report.md)。
 
 const gd = readFileSync('src/scripts/godot_operations.gd', 'utf8');
+const editorGd = readFileSync('addons/godot_mcp_server/commands/command_helpers.gd', 'utf8');
+const bridgeGd = readFileSync('src/scripts/mcp_bridge.gd', 'utf8');
 
 function sliceBetween(startAnchor: string, endAnchor: string): string {
   const start = gd.indexOf(startAnchor);
@@ -80,11 +82,26 @@ describe('E-1: headless 数学类型真转换(godot_operations.gd)', () => {
 
   it('E1-h: null 分量防御(报错拒绝,防 float(null) 运行时崩溃)', () => {
     const s = compFn();
-    expect(s.includes('!= null'), '_math_comp 缺 null 检查').toBe(true);
+    // H-1(2026-09-17,Task B)白名单形态:null/容器/非法串分量统一被类型白名单拒绝
+    // 返 null(旧 `!= null` 显式检查是其子集,已并入白名单)。真机行为锚定见
+    // scene-gd-operations-e2e.test.ts「Task B」describe(毒分量 add_node → exit 1 无 SCRIPT ERROR)。
+    expect(s.includes('out is int or out is float'), '_math_comp 缺分量类型白名单').toBe(true);
+    expect(s.includes('is_valid_float()'), '_math_comp 缺合法数字串放行').toBe(true);
+    expect(s.includes('return null'), '_math_comp 缺白名单拒绝路径').toBe(true);
     // 调用方对转换失败(返 null)报错拒绝,不再假成功
     const setS = setFn();
     expect(setS.includes('cannot coerce'), '调用方缺 cannot coerce 报错').toBe(true);
     expect(setS.includes('return false'), '转换失败应 return false').toBe(true);
+  });
+
+  it('E1-k: H-1 数学分量白名单与三副本 Keep-in-sync 声明(headless ↔ bridge ↔ editor)', () => {
+    // 函数头注释在 slice 锚点(func 定义行)之前,故对全文断言(fix round 1 起升级为三副本指向)
+    expect(gd.includes('Keep in sync(三副本分量白名单)'), '缺三副本 Keep-in-sync 声明').toBe(true);
+    expect(gd.includes('mcp_bridge.gd _math_comp'), '缺 bridge 指向').toBe(true);
+    expect(gd.includes('command_helpers.gd _comp_white'), '缺 editor 指向').toBe(true);
+    const s = compFn();
+    // 放行面仅三态:int / float / is_valid_float 数字串——其余(容器/null/bool/非法串)拒
+    expect(s.match(/out is int or out is float or \(out is String and String\(out\)\.is_valid_float\(\)\)/), '白名单三元条件不完整').toBeTruthy();
   });
 
   it('E1-i: 分量数校验保留(CMP-10 报错文案不回归)', () => {
@@ -97,5 +114,27 @@ describe('E-1: headless 数学类型真转换(godot_operations.gd)', () => {
     const s = setFn();
     expect(s.includes('TYPE_VECTOR4 or prop_type == TYPE_VECTOR4I'), '缺 Vector4/4i 收集分支').toBe(true);
     expect(s.includes('TYPE_PLANE or prop_type == TYPE_QUATERNION'), '缺 Plane/Quaternion 收集分支').toBe(true);
+  });
+
+  it('E1-l: editor 第三副本(coerce_value_for_property)Array 分量白名单 + 三向 Keep-in-sync 链(fix round 1)', () => {
+    const start = editorGd.indexOf('static func coerce_value_for_property');
+    expect(start, 'editor 源副本函数未找到').toBeGreaterThanOrEqual(0);
+    const s = editorGd.slice(start, editorGd.indexOf('## C12:', start));
+    // 分量白名单守卫落位(_comp_white,形态对齐 headless/bridge 的 _math_comp)
+    expect(s.includes('_comp_white(a, 0)'), '缺 _comp_white 白名单取分量').toBe(true);
+    // 毒/缺分量 → 返回 null(不再透传原 Array 致 set 静默 no-op 假成功)
+    expect(s.includes('return null'), '缺守卫拒绝路径 return null').toBe(true);
+    // editor 侧反向 Keep-in-sync 指向两副本(注释放 _comp_white 函数头)
+    const compStart = editorGd.indexOf('static func _comp_white');
+    expect(compStart, '缺 _comp_white 定义').toBeGreaterThanOrEqual(0);
+    const compDoc = editorGd.slice(Math.max(0, compStart - 800), compStart);
+    expect(compDoc.includes('godot_operations.gd'), '反向缺 headless 指向').toBe(true);
+    expect(compDoc.includes('mcp_bridge.gd'), '反向缺 bridge 指向').toBe(true);
+    // bridge 侧 _math_comp 反向指向(reviewer Minor 1 清偿:注明三副本同步关系)
+    const bStart = bridgeGd.indexOf('func _math_comp');
+    expect(bStart, 'bridge _math_comp 未找到').toBeGreaterThanOrEqual(0);
+    const bDoc = bridgeGd.slice(Math.max(0, bStart - 600), bStart);
+    expect(bDoc.includes('godot_operations.gd'), 'bridge _math_comp 缺 headless 反向指向').toBe(true);
+    expect(bDoc.includes('command_helpers'), 'bridge _math_comp 缺 editor 反向指向').toBe(true);
   });
 });

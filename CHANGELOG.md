@@ -6,10 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-> 插件反馈批次 D（语义与易用：run_project timeout 语义 / find_nodes CanvasLayer 定谳 / godot_path 诊断线索 / install_override 卸载义务与 .uid 残留 / 注入链 device=0 对称收口）；不涉及规则模板 → 不触发版本 bump；npm publish / tag 待用户指令。
-> 批次A（bridge 同步与多实例连接：install force / clean_stale_secrets / ECONNREFUSED 端口降级 / 版本指纹 / send_drag velocity 引擎属性名修复）于 2026-09-17 合并归入本段——批A未 bump 版本，与批次D的 velocity 复刻同源（合并后同一修复）。
+## [0.33.6] - 2026-09-17
+
+> 2026-09-17 全仓架构审查 H-1/H-2 收口（bridge 参数守卫统一收口：`_math_comp` 分量白名单 + `_int_guarded` 守卫 + 19 处 params 裸转全量替换 + 契约负向断言扩全文件）；随本段一并定版此前 [Unreleased] 累积的插件反馈批次 D/A 条目（批次D：语义与易用 run_project timeout / find_nodes CanvasLayer / godot_path 诊断 / install_override 卸载 / device=0 对称收口；批次A：bridge 同步与多实例连接 install force / clean_stale_secrets / ECONNREFUSED 端口降级 / 版本指纹 / send_drag velocity）；npm publish / tag 待用户指令。
 
 ### Fixed
+- **H-1 `_math_comp` 分量类型白名单**（2026-09-17 架构审查：`set_node_property` 数学属性输入 `position={"x": {}, "y": 2}` 的容器/null 分量穿透到 `float()` 即 SCRIPT ERROR——同步分发无异常隔离 → 响应静默变 `result:null`/超时；批次 C 只收口顶层 x/y，分量层漏网）：分量取出后过 int/float/合法数字串白名单，其余返 null 走上游 -8「cannot coerce (missing/null component)」可读错误；行为级测试直驱 fixture 内 bridge 实例锚定（`test/gdscript-unit.test.ts` 毒参数负向段）。
+- **H-2 `_int_guarded` int 守卫 + 19 处 params 裸转全量替换**（守卫形态对齐 `_num` 先例：仅整值/合法数字串放行，其余回 fallback；float 裸转直接复用 `_num`）：get_tree max_depth / find_nodes limit·max_distance / get_errors since_seq / monitor interval_frames / watch max_events / find_ui_elements limit / playtest seed·hz·frames / step_until max_frames·wall_budget_ms / 弱网注入 latency·loss·jitter / send_touch·send_drag index / send_input_sequence settle_frames·wall_budget_ms；深预检首步 `int(e["at_frame"])` 毒参数（null/容器）回 0 落入既有 1-600 可读报错分支；`_process` 帧路径 `float(ev["strength"])` 换 `_num`；`_ErrorCapture.poll` 的 `int(e["seq"])` 同款守卫（GDScript 内部类无法访问外层实例方法——Parse Error 实证，同形态 DUPLICATE 副本带同步注释）。契约测试负向断言扩全文件（`int(params.get(`/`float(params.get(` 禁绝 + `_int_guarded` 存在锚——批次 C 只扫两个函数致漏网的教训）。
 - **D3 godot_path 校验失败错误带诊断线索**（09-06 fr2 反馈：合法 4.7.2 console exe 被拒只剩单句 `not a valid Godot binary`，无从排查被迫手动 spawn）：`validateGodotBinaryDetailed` 分层返回失败 stage（path-not-allowed / is-directory / version-run-failed / not-godot-signature 含 --version 输出前 80 字符），错误消息带各 stage 的排查指引 + validator pipeline 说明（whitelist → directory → run --version(5s) → signature）；boolean 版签名保留供 finder 候选循环消费。
 - **D4 install_override 卸载义务明示 + uninstall 清残留 .uid**（09-06 CardGame2 反馈：取证脚本忘卸载 → autoload 残留 project.godot 污染 GUT 共享门禁 2483/2484；卸载后 `mcpoverride_*.gd.uid` 孤儿残留）：三种安装形态（新装/漂移更新/幂等跳过）响应均明示「取证完必 uninstall_override（会一并清 dest script 与伴生 .gd.uid）」；`uninstallOverride`/`uninstallAllOverrides` 删脚本后同款 best-effort 清 `*.gd.uid`（Godot 4.4+ 伴生文件）。
 - **D5 touch/drag/key/text 注入链 device=0 对称收口**（批次C审查 Nit3 挂账）：`_cmd_send_key`/`_cmd_send_touch`/`_cmd_send_drag`/`_cmd_send_text` 显式 `event.device = 0`（mouse 链批次C已收，本批补齐 InputEventKey/ScreenTouch/ScreenDrag——不依赖引擎对默认 -1 的未文档化规范化）；timeline 注入复用同函数自动跟随。行为级 e2e 锚定（probe 设备分布断言：真机 `touch_device_counts={"0":2}` / `key_device_counts={"0":1}`，无 -1 桶）。

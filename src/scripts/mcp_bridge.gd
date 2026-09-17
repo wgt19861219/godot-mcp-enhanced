@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.33.5"
+const BRIDGE_SCRIPT_VERSION := "0.33.6"
 const INACTIVITY_TIMEOUT := 60.0
 
 # ─── Instance Registry (Phase 2b) ─────────────────────────────────────────
@@ -1241,7 +1241,7 @@ func _cmd_get_tree(params: Dictionary) -> Variant:
 	if profile_res.has("error"):
 		return profile_res
 	var player_mode := str(profile_res["profile"]) == "player"
-	var max_depth: int = int(params.get("max_depth", 10))
+	var max_depth: int = _int_guarded(params.get("max_depth"), 10)
 	var root_node := get_tree().root
 	if root_node == null:
 		return {"tree": [], "scene": ""}
@@ -1349,7 +1349,7 @@ func _cmd_find_nodes(params: Dictionary) -> Dictionary:
 	var pattern: String = str(params.get("pattern", ""))
 	var type_filter: String = str(params.get("type", ""))
 	var group: String = str(params.get("group", ""))
-	var max_results: int = int(params.get("limit", 100))
+	var max_results: int = _int_guarded(params.get("limit"), 100)
 	if max_results > 500:
 		max_results = 500
 	# 坑2(2026-08-21 反馈批): 消费 root 参数——限定子树搜索范围(此前声明了却被忽略,
@@ -1373,7 +1373,7 @@ func _cmd_find_nodes(params: Dictionary) -> Dictionary:
 			return {"error": {"code": -8, "message": "near_node anchor not found: %s" % near_node_path}}
 		if not (near_anchor is Node2D or near_anchor is Node3D):
 			return {"error": {"code": -9, "message": "near_node anchor must be Node2D/Node3D (got %s)" % near_anchor.get_class()}}
-		near_max_distance = float(params.get("max_distance", 1000.0))
+		near_max_distance = _num(params.get("max_distance"), 1000.0)
 		if near_max_distance < 0.0:
 			return {"error": {"code": -10, "message": "max_distance must be >= 0 (got %f)" % near_max_distance}}
 		# P7 (2026-09-11): near × 投影联动(P5 钩子清偿——P5 时无投影层故注释"不适用",
@@ -1689,10 +1689,11 @@ func _get_property_type(obj: Object, key: String) -> int:
 
 
 # E-2 (2026-08-14): MCP JSON Array/Dict 输入 → Godot 数学类型真转换(DUPLICATE 三副本之一)。
-# ⚠️ 三副本同步关系(改任一处须同步另外两处):
-#   源(editor 侧):   addons/godot_mcp_server/commands/command_helpers.gd coerce_value_for_property
-#   副本(headless):  src/scripts/godot_operations.gd _coerce_math_value
-#   副本(bridge 侧): 本文件 _coerce_math_value
+# ⚠️ 三副本同步关系(改任一处须同步另外两处;editor 侧是异构形态:Array-only +
+#   typeof(current) 分派 + _comp_white 分量白名单,2026-09-17 fix round 1 已收口同款守卫):
+#   源(editor 侧):   addons/godot_mcp_server/commands/command_helpers.gd coerce_value_for_property(_comp_white)
+#   副本(headless):  src/scripts/godot_operations.gd _coerce_math_value(_math_comp)
+#   副本(bridge 侧): 本文件 _coerce_math_value(_math_comp)
 # 另:文件内第四份同族 _coerce_bridge_single(call_method args 侧,CMP-9-B)按 ClassDB 方法
 # 声明类型逐参数强转(Vector2/3 显式接受 String 构造),与本函数按属性声明类型的分派是
 # 不同输入面——同步维护属性 coerce 时勿混淆两份的 String 语义(属性 set 拒绝,args 接受)。
@@ -1751,16 +1752,22 @@ func _coerce_math_value(prop_type: int, value: Variant) -> Variant:
 
 
 # E-2: 数学分量读取——Array 按索引,Dict 按 key(x/y/z/w 或 r/g/b/a);越界/缺键/值为 null 返 null。
+# Keep in sync(三副本分量白名单): godot_operations.gd _math_comp(headless)+
+# command_helpers.gd _comp_white(editor,fix round 1 收口)。
 func _math_comp(value: Variant, index: int, key: String) -> Variant:
+	# H-1(2026-09-17 审查):分量取出后必须过类型白名单,容器分量进 float() 即 SCRIPT ERROR
+	# (同步分发无异常隔离→result:null)。对齐 _num 先例。
+	var out: Variant = null
 	if value is Array:
 		var arr: Array = value
-		if index < arr.size() and arr[index] != null:
-			return arr[index]
-		return null
-	if value is Dictionary:
+		if index < arr.size():
+			out = arr[index]
+	elif value is Dictionary:
 		var dict: Dictionary = value
-		if dict.has(key) and dict[key] != null:
-			return dict[key]
+		if dict.has(key):
+			out = dict[key]
+	if out is int or out is float or (out is String and String(out).is_valid_float()):
+		return out
 	return null
 
 
@@ -2457,7 +2464,7 @@ func _cmd_send_touch(params: Dictionary) -> Variant:
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
 		return {"error": {"code": -1, "message": "Invalid touch index: %s (must be non-negative integer)" % str(params.get("index", 0))}}
-	var index: int = int(params.get("index", 0))
+	var index: int = _int_guarded(params.get("index"), 0)
 	var event := InputEventScreenTouch.new()
 	event.position = Vector2(x, y)
 	event.pressed = pressed
@@ -2484,6 +2491,16 @@ func _num(v: Variant, fallback: float) -> float:
 		return float(v)
 	return fallback
 
+# H-2(2026-09-17 审查):int 守卫,对齐 _num 先例——仅整值/合法数字串放行,其余回 fallback。
+func _int_guarded(v: Variant, fallback: int) -> int:
+	if v is int:
+		return v
+	if v is float and is_finite(v) and v == floor(v):
+		return int(v)
+	if v is String and String(v).is_valid_int():
+		return int(v)
+	return fallback
+
 func _vec2_from_param(v: Variant, fallback: Vector2) -> Vector2:
 	if v is Array:
 		return Vector2(
@@ -2499,7 +2516,7 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
 		return {"error": {"code": -1, "message": "Invalid drag index: %s (must be non-negative integer)" % str(params.get("index", 0))}}
-	var index: int = int(params.get("index", 0))
+	var index: int = _int_guarded(params.get("index"), 0)
 	# 审查 Minor-10: 归一 fallback 静默无警示——形态非法静默归 (0,0) 且回显归一后值,
 	# 调用方无法区分「用户传 0」与「形态错被归零」(如 {"speed":"fast"} 静默零速)。补 warnings。
 	var warnings: Array = []
@@ -2648,7 +2665,7 @@ func _cmd_get_viewport_info() -> Dictionary:
 func _cmd_get_errors(params: Dictionary) -> Dictionary:
 	if _error_capture == null:
 		return {"error": {"code": -32003, "message": "Error capture not initialized"}}
-	var since_seq := int(params.get("since_seq", 0))
+	var since_seq := _int_guarded(params.get("since_seq"), 0)
 	var clear := bool(params.get("clear", false))
 	return _error_capture.poll(since_seq, clear)
 
@@ -2693,7 +2710,7 @@ func _cmd_monitor_start(params: Dictionary, pid: int) -> Variant:
 	var player_mode := profile == "player"
 	var node_path: String = str(params.get("node_path", ""))
 	var properties = params.get("properties", [])
-	var interval: int = int(params.get("interval_frames", 10))
+	var interval: int = _int_guarded(params.get("interval_frames"), 10)
 
 	if node_path == "":
 		return {"error": {"code": -1, "message": "node_path is required"}}
@@ -3022,7 +3039,7 @@ func _cmd_watch_start(params: Dictionary, pid: int) -> Variant:
 	var profile: String = profile_res["profile"]
 	var node_path: String = str(params.get("node_path", ""))
 	var signal_name: String = str(params.get("signal_name", ""))
-	var max_events: int = int(params.get("max_events", 1000))
+	var max_events: int = _int_guarded(params.get("max_events"), 1000)
 
 	if node_path == "":
 		return {"error": {"code": -1, "message": "node_path is required"}}
@@ -3223,7 +3240,7 @@ func _cmd_find_ui_elements(params: Dictionary) -> Variant:
 	var pattern: String = str(params.get("pattern", ""))
 	var type_filter: String = str(params.get("type", ""))
 	var visible_only: bool = params.get("visible_only", true)
-	var max_results: int = int(params.get("limit", 200))
+	var max_results: int = _int_guarded(params.get("limit"), 200)
 	if max_results > 500:
 		max_results = 500
 
@@ -3326,7 +3343,7 @@ func _cmd_playtest_seed(params: Dictionary, pid: int) -> Variant:
 	# playtest 时拒绝，防 peer B 静默抢占 owner 覆盖全局 RNG 破坏 peer A 的确定性重放。
 	if _playtest_owner_pid != -1 and _playtest_owner_pid != pid:
 		return {"error": {"code": -1, "message": "playtest session held by another session (owner_pid=%d)" % _playtest_owner_pid}}
-	var seed_value: int = int(params.get("seed", 0))
+	var seed_value: int = _int_guarded(params.get("seed"), 0)
 	seed(seed_value)  # @GlobalScope.seed,影响全局 randi/randf
 	_playtest_active = true
 	# 2026-08-07 审查 P2 修复：记录 playtest 持有者，_cleanup_peer_state 只在 owner 断开时还原
@@ -3337,7 +3354,7 @@ func _cmd_playtest_fixed_delta(params: Dictionary, pid: int) -> Variant:
 	# 2026-08-14 审查 D-3 修复：owner 互斥（同 _cmd_playtest_seed，防抢占 physics 锁）
 	if _playtest_owner_pid != -1 and _playtest_owner_pid != pid:
 		return {"error": {"code": -1, "message": "playtest session held by another session (owner_pid=%d)" % _playtest_owner_pid}}
-	var hz: int = int(params.get("hz", 60))
+	var hz: int = _int_guarded(params.get("hz"), 60)
 	if hz < 1 or hz > 1000:
 		return {"error": {"code": -1, "message": "hz must be 1-1000, got %d" % hz}}
 	# 保存原值(restore 时还原)
@@ -3533,7 +3550,7 @@ func _cmd_playtest_step(params: Dictionary, pid: int) -> Dictionary:
 	# _process 每帧递减 frames_remaining(I-2 修复:加入帧不递减,下一帧起计),到 0 时 push 响应。
 	# 非真 await physics_frame coroutine(bridge TCP 同步模型不支持),而是 _process 计数器轮询,
 	# 每个递减对应一次 _process 调用 ≈ 推进一帧(physics 在 _process 前由引擎跑)。
-	var frames: int = int(params.get("frames", 1))
+	var frames: int = _int_guarded(params.get("frames"), 1)
 	if frames < 1 or frames > 60:
 		return {"error": {"code": -1, "message": "frames must be 1-60, got %d" % frames}}
 	# P2-2: report 参数校验(结构化终态读数);经临时变量随哨兵传 pending(数组走不了字符串编码)
@@ -3632,10 +3649,10 @@ func _cmd_control_step_until(params: Dictionary, pid: int) -> Dictionary:
 		if not _is_safe_value(cdict["value"]):
 			return {"error": {"code": -1, "message": "condition value failed _is_safe_value (几何/标量/PackedArray only)"}}
 		validated.append(cdict)
-	var max_frames: int = int(params.get("max_frames", _CONTROL_MAX_FRAMES))
+	var max_frames: int = _int_guarded(params.get("max_frames"), _CONTROL_MAX_FRAMES)
 	if max_frames < 1 or max_frames > _CONTROL_MAX_FRAMES:
 		return {"error": {"code": -1, "message": "max_frames must be 1-%d, got %d" % [_CONTROL_MAX_FRAMES, max_frames]}}
-	var wall_budget_ms: int = int(params.get("wall_budget_ms", _CONTROL_DEFAULT_WALL_BUDGET_MS))
+	var wall_budget_ms: int = _int_guarded(params.get("wall_budget_ms"), _CONTROL_DEFAULT_WALL_BUDGET_MS)
 	# 2026-08-14 审查 D-5 修复：上限压 50s（clamp）。等待期 bridge 无字节往来，60s 会被
 	# 同文件 INACTIVITY_TIMEOUT=60.0 idle 断连切断（响应丢失+状态突变），压到 50s 留 10s 余量。
 	wall_budget_ms = clampi(wall_budget_ms, 1000, 50000)
@@ -3693,7 +3710,7 @@ func _cmd_control_input_sequence(params: Dictionary, pid: int) -> Dictionary:
 		var e: Dictionary = ev
 		if not (e.has("at_frame") and e.has("type")):
 			return {"error": {"code": -1, "message": "timeline event missing at_frame/type"}}
-		var at_f := int(e["at_frame"])
+		var at_f := _int_guarded(e["at_frame"], 0)
 		if at_f < 1 or at_f > _INPUT_SEQ_MAX_AT_FRAME:
 			return {"error": {"code": -1, "message": "at_frame must be 1-%d, got %d" % [_INPUT_SEQ_MAX_AT_FRAME, at_f]}}
 		var t := str(e["type"])
@@ -3721,10 +3738,10 @@ func _cmd_control_input_sequence(params: Dictionary, pid: int) -> Dictionary:
 					return {"error": {"code": -1, "message": "Invalid %s: %s (at_frame=%d); must be [x,y] array or {x,y} object" % [vec_key, str(e[vec_key]), at_f]}}
 		validated.append(e)
 		max_at = maxi(max_at, at_f)
-	var settle: int = int(params.get("settle_frames", 0))
+	var settle: int = _int_guarded(params.get("settle_frames"), 0)
 	if settle < 0 or settle > _INPUT_SEQ_MAX_SETTLE:
 		return {"error": {"code": -1, "message": "settle_frames must be 0-%d, got %d" % [_INPUT_SEQ_MAX_SETTLE, settle]}}
-	var wall_budget_ms: int = int(params.get("wall_budget_ms", _CONTROL_DEFAULT_WALL_BUDGET_MS))
+	var wall_budget_ms: int = _int_guarded(params.get("wall_budget_ms"), _CONTROL_DEFAULT_WALL_BUDGET_MS)
 	# D-5 同款:压 50s,防等待期无字节被 idle 断连切断
 	wall_budget_ms = clampi(wall_budget_ms, 1000, 50000)
 	# 开窗(同 step_until):记 refreeze + paused 原值 + 临时解 pause 让游戏逐帧推进
@@ -3746,7 +3763,7 @@ func _inject_timeline_event(ev: Dictionary) -> Variant:
 			a.action = str(ev.get("name", ""))
 			a.pressed = bool(ev.get("pressed", true))
 			if ev.has("strength"):
-				a.strength = float(ev["strength"])
+				a.strength = _num(ev["strength"], 0.0)
 			Input.parse_input_event(a)
 			return {"success": true, "action": a.action, "pressed": a.pressed}
 		"key":
@@ -3939,10 +3956,23 @@ class _ErrorCapture extends Logger:
 
 	# 增量查询:返回 seq > since_seq 的条目 + 下次查询用的 next_seq 游标。
 	# clear=true 在查询后清空 buffer(读即焚,适合 AI 确认已处理完旧错误)。
+	# H-2(2026-09-17 审查):seq 裸转换 _int_guarded(回退 -1 = 永不命中,静默全滤)。
+	# DUPLICATE: Keep in sync with 外层 _int_guarded(语言约束实证:GDScript 内部类
+	# 无法访问外层实例方法/静态方法,Parse Error,只能同形态副本;e["seq"] 本身由
+	# _capture_entry 的内部计数器唯一写入,此处属顺手纵深而非外部攻击面)。
+	func _int_guarded(v: Variant, fallback: int) -> int:
+		if v is int:
+			return v
+		if v is float and is_finite(v) and v == floor(v):
+			return int(v)
+		if v is String and String(v).is_valid_int():
+			return int(v)
+		return fallback
+
 	func poll(since_seq: int, clear: bool) -> Dictionary:
 		var out: Array = []
 		for e in _entries:
-			if int(e["seq"]) > since_seq:
+			if _int_guarded(e["seq"], -1) > since_seq:
 				out.append(e)
 		var next := _seq
 		if clear:
@@ -4061,9 +4091,9 @@ class _ClickSignalRecorder:
 # ─── P3-1 (2026-09-11): 弱网注入命令 ────────────────────────────────────────
 
 func _cmd_network_set_conditions(params: Dictionary) -> Variant:
-	var latency := float(params.get("latency_ms", 0.0))
-	var loss := float(params.get("loss_pct", 0.0))
-	var jitter := float(params.get("jitter_ms", 0.0))
+	var latency := _num(params.get("latency_ms"), 0.0)
+	var loss := _num(params.get("loss_pct"), 0.0)
+	var jitter := _num(params.get("jitter_ms"), 0.0)
 	if latency < 0.0 or loss < 0.0 or loss > 100.0 or jitter < 0.0:
 		return {"error": {"code": -1, "message": "Invalid conditions: latency_ms/jitter_ms >= 0, 0 <= loss_pct <= 100 (got latency=%f loss=%f jitter=%f)" % [latency, loss, jitter]}}
 	var tree := get_tree()

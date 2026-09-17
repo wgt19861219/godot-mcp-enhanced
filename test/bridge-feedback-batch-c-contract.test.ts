@@ -55,3 +55,32 @@ describe('批次C: x/y 数值守卫收口(I-C 漏网点)', () => {
     expect(s.includes('float(params.get'), '不得残留裸 float(params.get(...))').toBe(false);
   });
 });
+
+// ─── Task A(2026-09-17 架构审查 H-1/H-2): 守卫函数 + 分量白名单落位锚 ──────────
+// 行为级直驱见 test/gdscript-unit.test.ts 的「mcp_bridge 参数守卫行为测试」段。
+describe('审查H-1/H-2: _int_guarded 守卫 + _math_comp 分量类型白名单', () => {
+  it('_int_guarded 存在且形态对齐 _num 先例(仅整值/合法数字串放行,其余回 fallback)', () => {
+    const s = funcSlice('_int_guarded');
+    expect(s.includes('v is int'), '须放行 int').toBe(true);
+    expect(s.includes('is_finite(v)'), 'float 分支须 is_finite 校验').toBe(true);
+    expect(s.includes('v == floor(v)'), 'float 分支须整值校验').toBe(true);
+    expect(s.includes('String(v).is_valid_int()'), 'String 分支须 is_valid_int 校验').toBe(true);
+    expect(s.includes('return fallback'), '其余回 fallback').toBe(true);
+  });
+
+  it('_math_comp 分量过类型白名单(容器分量不再穿透到下游 float()/int())', () => {
+    const s = funcSlice('_math_comp');
+    expect(
+      s.includes('out is int or out is float or (out is String and String(out).is_valid_float())'),
+      '分量须过 int/float/合法数字串白名单,其余返 null',
+    ).toBe(true);
+    expect(s.includes('return null'), '白名单外返 null(上游走 -8 可读错误分支)').toBe(true);
+  });
+
+  it('裸转禁绝必须全文件性质(批次C只扫两个函数致分量层/漏网点漏网的教训)', () => {
+    // H-1/H-2(2026-09-17 审查):守卫必须是全文件性质——批次C只扫两个函数致分量层/19处裸转漏网
+    expect(gd).not.toMatch(/int\(params\.get\(/);      // 全文件禁绝 int 裸转
+    expect(gd).not.toMatch(/float\(params\.get\(/);    // 全文件禁绝 float 裸转
+    expect(gd).toContain('func _int_guarded');          // 守卫存在锚
+  });
+});
