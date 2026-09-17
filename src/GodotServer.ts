@@ -813,6 +813,17 @@ export class GodotServer {
       // (killProcess 活跃 proc + setProcessBusy(false) + setRunningProcess(null))
       // 的 per-key 超集:status→stopping、killProcess、快照挪移均由其内部承接。
       await safeStep('killAllRunSessions', () => ps.killAllRunSessions());
+      // M-9 (2026-09-17 审查): killProcess 5s 超时兜底路径不等 proc close 事件,
+      // profiler 的 net.Server 须直关(此前依赖游戏进程退出触发 socket close 的间接
+      // 事件链,超时兜底路径下端口/句柄泄漏)。引用同步清对齐 runtime.ts stop 先例(I-1)。
+      await safeStep('stopFunctionProfiler', () => {
+        const ctx = this.dispatcher?.getContext();
+        const p = ctx?.functionProfiler;
+        if (p) {
+          try { p.close(); } catch { /* best-effort */ }
+          if (ctx) ctx.functionProfiler = undefined;
+        }
+      });
       // B-T4: 清理 in-flight short-running gdscript spawn（gdscript-executor 注册）。
       // 原 close 只 kill run_project 长进程,挂起脚本 + close → 孤儿无兜底。
       // getSpawnedGodotPids 此时通常已空（exit/error/timeout 三路径均 unregister），
@@ -835,6 +846,9 @@ export class GodotServer {
         await safeStep('stateStore.destroy', () => store.destroy());
       }
       try { this.agentCtx.destroy(); } catch { /* best-effort: 不阻断 server.close + 引用清理 */ }
+      // M-10 (2026-09-17 审查): 首步清理后,close 窗口内并发工具调用的 markInflight
+      // 会重建 in-flight 文件,末步再清一次(否则正常退出也留孤儿 → 下个启动误报丧)。
+      await safeStep('clearInflightFinal', () => clearAllInflight());
       await this.server.close();
       serverClosed = true;
     } finally {

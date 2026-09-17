@@ -103,6 +103,9 @@ import { killAllRunSessions } from '../src/core/process-state.js';
 import * as dapMod from '../src/tools/dap.js';
 import * as bridgeClientMod from '../src/core/bridge-client.js';
 import { _resetProjectPathCache } from '../src/core/path-utils.js';
+import { statSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EditorConnection } from '../src/core/EditorConnection.js';
 import { EditorToolExecutor } from '../src/core/EditorToolExecutor.js';
 
@@ -312,6 +315,50 @@ describe('GodotServer', () => {
         // 测试卫生:run() 触发 resolveProjectPath 写模块级 TTL 缓存(本测试 existsSync
         // mock=false 缓存 "undefined"),不重置会污染后续依赖 projectPath 的 editor 测试
         _resetProjectPathCache();
+      }
+    });
+
+    // ── 架构审查批 2 Task 2.3 (M-9): profiler 直关 ──────────────────────────────
+    it('close() 直关 functionProfiler(M-9:killProcess 5s 超时兜底不等 proc close 事件)', async () => {
+      const server = new GodotServer('/fake/ops.gd');
+      const ctx = server.dispatcher.getContext();
+      const profilerClose = vi.fn();
+      ctx.functionProfiler = { close: profilerClose };
+      await server.close();
+      expect(profilerClose).toHaveBeenCalledTimes(1);
+      expect(ctx.functionProfiler).toBeUndefined();  // 引用同步清(runtime.ts stop 同款)
+    });
+
+    // ── 架构审查批 2 Task 2.3 (M-10): inflight 双清 ─────────────────────────────
+    it('close() 末步 clearInflightFinal 清掉首清后窗口内并发 markInflight 重建的文件(M-10)', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'mcp-inflight-close-'));
+      process.env.GODOT_MCP_INFLIGHT_DIR = dir;  // env 注入隔离目录(inflight.ts 官方测试通道)
+      const file = join(dir, `inflight-${process.pid}.json`);
+      // 本文件 vi.mock('fs') 只覆写 existsSync,statSync 等透传真实 → 文件存在性断言用 statSync
+      const fileExists = () => { try { statSync(file); return true; } catch { return false; } };
+      const inflightMod = await import('../src/core/inflight.js');
+      const orig = inflightMod.clearAllInflight;
+      let calls = 0;
+      let existedAfterFirstMark = false;
+      const spy = vi.spyOn(inflightMod, 'clearAllInflight').mockImplementation(() => {
+        calls += 1;
+        orig();  // 真删(保持 GodotServer.close 首步语义不变)
+        if (calls === 1) {
+          // 模拟首清后、close 尾前的并发工具调用(M-10 竞态窗口):markInflight 重建文件
+          inflightMod.markInflight('fake-concurrent-tool');
+          existedAfterFirstMark = fileExists();
+        }
+      });
+      try {
+        const server = new GodotServer('/fake/ops.gd');
+        await server.close();
+        expect(calls, '首步 clearInflight + 末步 clearInflightFinal 双清').toBe(2);
+        expect(existedAfterFirstMark, '竞态场景成立前提:窗口内文件确被 markInflight 重建').toBe(true);
+        expect(fileExists(), '末步须清掉窗口内重建的 inflight 文件').toBe(false);
+      } finally {
+        spy.mockRestore();
+        delete process.env.GODOT_MCP_INFLIGHT_DIR;
+        rmSync(dir, { recursive: true, force: true });
       }
     });
   });

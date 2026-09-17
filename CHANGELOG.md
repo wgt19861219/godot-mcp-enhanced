@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-17 架构审查批 2(Task C:shutdown 完备性,纯 TS 不 bump)。
+
+### Fixed
+- **H-4 dap 会话纳入 `GodotServer.close()` 清理链**:新增 `closeAllDapSessions()`(src/tools/dap.ts 导出)——销毁全部 DAP TCP socket + 清 `_sessions`/`_breakpoints` 簿记,`_resetForTest` 复用同一清理循环(测试/生产同语义);`close()` 在 `clearInflight` 步后新增 `safeStep('closeDapSessions')`——此前 dap 长寿命 TCP 连接完全不在 close() 管辖(模块级 `_sessions`,热重启/测试隔离泄漏,对端 editor DAP server 侧残留会话)。
+- **M-9 close() 直关 functionProfiler**:`killAllRunSessions` 后新增 `safeStep('stopFunctionProfiler')` 直调 `ctx.functionProfiler.close()` 并同步清引用(runtime.ts stop 先例)——此前依赖游戏进程退出触发 socket close 的间接事件链,killProcess 5s 超时兜底路径不等 proc close 事件,net.Server 端口/句柄泄漏。
+- **M-10 inflight 双清**:close() 末尾(`server.close()` 前)新增 `safeStep('clearInflightFinal')` 再清一次本进程 in-flight 文件——首步清理后、close 窗口内并发工具调用的 `markInflight` 会重建文件,单清则正常退出也留孤儿 → 下个启动误报丧。
+
+### Changed
+- **H-3/O2 bridge 首连 Dashboard 装配迁入控制面**:删 src/tools/game-bridge.ts 模块顶层 `setOnBridgeConnected(() => launchDashboardOnce())` 副作用(re-export 保留消费方兼容),迁入 `GodotServer.run()` connect 后装配、`close()` finally 对称置 null——"装配-清理逐项配对"不变量不再被模块顶层副作用绕开;dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
+
 ## [0.33.6] - 2026-09-17
 
 > 2026-09-17 全仓架构审查 H-1/H-2 收口（bridge 参数守卫统一收口：`_math_comp` 分量白名单 + `_int_guarded` 守卫 + 19 处 params 裸转全量替换 + 契约负向断言扩全文件）；随本段一并定版此前 [Unreleased] 累积的插件反馈批次 D/A 条目（批次D：语义与易用 run_project timeout / find_nodes CanvasLayer / godot_path 诊断 / install_override 卸载 / device=0 对称收口；批次A：bridge 同步与多实例连接 install force / clean_stale_secrets / ECONNREFUSED 端口降级 / 版本指纹 / send_drag velocity）；npm publish / tag 待用户指令。
