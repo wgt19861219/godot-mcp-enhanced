@@ -1,5 +1,6 @@
 // test/web-gui/files-api.test.ts
 import { mkdtemp, rm, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -146,6 +147,28 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
       const projEnc = proj.replaceAll('\\', '%5C').replaceAll(':', '%3A');
       const st = await stat(join(backupDir, projEnc));
       expect(st.mode & 0o777).toBe(0o700);
+    });
+    it.skipIf(process.platform === 'win32')('备份 .bak 文件 0o600(内容为旧文件,同 registry 登记文件惯例)', async () => {
+      await writeFile(join(proj, 'main.gd'), 'PERMFILE', 'utf-8');
+      const cur = await api.readText(proj, 'main.gd');
+      await api.saveText(proj, 'main.gd', 'PERMFILE2', cur.mtime);
+      const projEnc = proj.replaceAll('\\', '%5C').replaceAll(':', '%3A');
+      const st = await stat(join(backupDir, projEnc, 'main.gd.bak'));
+      expect(st.mode & 0o777).toBe(0o600);
+    });
+    // ── 审查 Low(2026-09-17 批 3):备份写后补 hardenFilePermissionsWindows(Windows icacls)
+    //    源码契约——.bak 含旧文件全文(恢复价值),Windows 无视 0o600 须 icacls 收紧 ACL,
+    //    对齐 registry.ts/projects-store.ts 同域持久化文件惯例;行为级 icacls 语义由
+    //    registry 域既有用例覆盖(harden 本身 best-effort),此处锁调用落位防回退。
+    it('源码契约:saveText 备份写后调 hardenFilePermissionsWindows(Windows ACL 收紧)', async () => {
+      const src = readFileSync(new URL('../../src/web-gui/files-api.ts', import.meta.url), 'utf-8');
+      expect(src).toContain("from './registry.js'");
+      expect(src).toMatch(/hardenFilePermissionsWindows\(\s*bakPath\s*\)/);
+      // 落位在 .bak 写入之后(顺序契约:先写后加固,防"加固后覆盖回默认 ACL"反序)
+      const writeIdx = src.indexOf('writeFile(bakPath');
+      const hardenIdx = src.indexOf('hardenFilePermissionsWindows(bakPath)');
+      expect(writeIdx).toBeGreaterThan(-1);
+      expect(hardenIdx).toBeGreaterThan(writeIdx);
     });
     it('文件不存在一律 404(含 baseMtime=0,堵创建后门 I-5)', async () => {
       await expect(api.saveText(proj, 'new-file.gd', 'x', 0)).rejects.toMatchObject({ code: 'not_found' });

@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
 import { isPathInAllowedRoots, resolveWithinRoot } from '../core/path-utils.js';
+import { hardenFilePermissionsWindows } from './registry.js';
 
 export interface DirEntry { name: string; isDir: boolean; size: number; mtime: number; }
 export interface TextFileContent { content: string; mtime: number; size: number; }
@@ -136,7 +137,11 @@ export class FilesApi {
     const relEnc = rel.replaceAll('\\', '%5C').replaceAll(':', '%3A');
     const bakDir = join(this.backupDir, projEnc);
     await mkdir(bakDir, { recursive: true, mode: 0o700 });
-    await writeFile(join(bakDir, relEnc + '.bak'), await readFile(abs), { mode: 0o600 });
+    const bakPath = join(bakDir, relEnc + '.bak');
+    await writeFile(bakPath, await readFile(abs), { mode: 0o600 });
+    // 审查 Low(2026-09-17 批 3):.bak 含旧文件全文,Windows 无视 0o600 → icacls 收紧 ACL
+    // (对齐 registry.ts 登记文件/projects-store.ts 同域持久化文件惯例,best-effort)
+    hardenFilePermissionsWindows(bakPath);
     // 原子写(§3.3-4)
     const tmp = abs + '.mcp-tmp';
     await writeFile(tmp, content, 'utf-8');
