@@ -127,13 +127,22 @@ let _settings: DapSettings = {
   allow_remote_hosts: false,
 };
 
-/** 测试钩子:重置模块级状态(单测隔离)。 */
-export function _resetForTest(): void {
+/**
+ * H-4(2026-09-17 审查):GodotServer.close() 清理钩子——销毁全部 DAP TCP socket
+ * 并清 _sessions/_breakpoints 簿记。此前 dap socket 完全不在 close() 清理链,
+ * close 后热重启/测试隔离会泄漏长寿命 TCP 连接(对端 editor DAP server 侧残留会话)。
+ */
+export function closeAllDapSessions(): void {
   for (const s of _sessions.values()) {
     try { s.socket.destroy(); } catch { /* best-effort */ }
   }
   _sessions.clear();
   _breakpoints.clear();
+}
+
+/** 测试钩子:重置模块级状态(单测隔离)。复用 closeAllDapSessions 的清理循环(同语义去重)。 */
+export function _resetForTest(): void {
+  closeAllDapSessions();
   _sequence = 1;
   _settings = {
     host: DEFAULT_HOST,

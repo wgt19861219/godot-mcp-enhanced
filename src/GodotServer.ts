@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { readInstructions } from './core/instructions.js';
 import { registerBridgePushHandler, setBridgeProjectDir } from './tools/game-bridge.js';
+import { closeAllDapSessions } from './tools/dap.js';
 import {
   listResources as listMcpResources,
   listResourceTemplates as listMcpResourceTemplates,
@@ -66,6 +67,11 @@ import { setElicitServer } from './core/elicit.js';
 import { resolveProjectPath } from './core/path-utils.js';
 import { AgentContextManager } from './core/agent-context.js';
 import { FileStateStore } from './core/state-store.js';
+// O2 归位(2026-09-17 审查 H-3):bridge 首连拉起 Dashboard 的装配从 game-bridge 模块
+// 顶层副作用迁入控制面(下方 run() 装配 / close() 对称置 null);launcher 经控制面引用,
+// game-bridge 不再 import dashboard
+import { launchDashboardOnce } from './dashboard/launcher.js';
+import { setOnBridgeConnected } from './core/bridge-client.js';
 
 // Re-export for backward compatibility (tests import from GodotServer)
 export { clearGodotPathCache, getCachedGodotPath };
@@ -537,6 +543,11 @@ export class GodotServer {
     await this.server.connect(transport);
     log('Godot MCP Enhanced server running on stdio');
 
+    // O2 归位(2026-09-17 审查 H-3):首连拉起 Dashboard 从 game-bridge 模块顶层副作用
+    // 迁入控制面装配,close() 可对称清理;dashboard⇄game-bridge 的 import 链在控制面
+    // 汇合,方向不变(core/bridge-client 仍不依赖 dashboard)
+    setOnBridgeConnected(() => launchDashboardOnce());
+
     // Web GUI(设计 §3.2):connect 后即起,run() resolve 前三态已定(消除 index.ts 决策竞态)。
     // env=0 关闭(与 GODOT_MCP_NO_DASHBOARD 同模式);任何异常降级禁用,绝不拖垮主流程。
     if (process.env.GODOT_MCP_WEB_GUI !== '0') {
@@ -740,6 +751,9 @@ export class GodotServer {
     try {
       // P4-3: 清本进程 in-flight 记录文件(正常退出不留孤儿;异常死亡才留 → 下个启动报丧)
       await safeStep('clearInflight', () => clearAllInflight());
+      // H-4 (2026-09-17 审查): dap 会话纳入清理链——销毁全部 DAP TCP socket + 清簿记。
+      // 此前 dap socket 完全不在 close() 管辖(模块级 _sessions),热重启/测试隔离泄漏长寿命连接。
+      await safeStep('closeDapSessions', () => closeAllDapSessions());
       // Web GUI 停机(设计 §3.2):SSE end → closeAllConnections → close → 删登记(顺序在 WebGuiServer.stop 内)
       if (this.webGuiServer) {
         const gui = this.webGuiServer;
@@ -799,6 +813,17 @@ export class GodotServer {
       // (killProcess 活跃 proc + setProcessBusy(false) + setRunningProcess(null))
       // 的 per-key 超集:status→stopping、killProcess、快照挪移均由其内部承接。
       await safeStep('killAllRunSessions', () => ps.killAllRunSessions());
+      // M-9 (2026-09-17 审查): killProcess 5s 超时兜底路径不等 proc close 事件,
+      // profiler 的 net.Server 须直关(此前依赖游戏进程退出触发 socket close 的间接
+      // 事件链,超时兜底路径下端口/句柄泄漏)。引用同步清对齐 runtime.ts stop 先例(I-1)。
+      await safeStep('stopFunctionProfiler', () => {
+        const ctx = this.dispatcher?.getContext();
+        const p = ctx?.functionProfiler;
+        if (p) {
+          try { p.close(); } catch { /* best-effort */ }
+          if (ctx) ctx.functionProfiler = undefined;
+        }
+      });
       // B-T4: 清理 in-flight short-running gdscript spawn（gdscript-executor 注册）。
       // 原 close 只 kill run_project 长进程,挂起脚本 + close → 孤儿无兜底。
       // getSpawnedGodotPids 此时通常已空（exit/error/timeout 三路径均 unregister），
@@ -821,6 +846,9 @@ export class GodotServer {
         await safeStep('stateStore.destroy', () => store.destroy());
       }
       try { this.agentCtx.destroy(); } catch { /* best-effort: 不阻断 server.close + 引用清理 */ }
+      // M-10 (2026-09-17 审查): 首步清理后,close 窗口内并发工具调用的 markInflight
+      // 会重建 in-flight 文件,末步再清一次(否则正常退出也留孤儿 → 下个启动误报丧)。
+      await safeStep('clearInflightFinal', () => clearAllInflight());
       await this.server.close();
       serverClosed = true;
     } finally {
@@ -846,6 +874,9 @@ export class GodotServer {
       setDynamicSender(null);
       setToolCallDelegate(null);
       setBridgeProjectDir(null);
+      // H-3/O2 (2026-09-17 审查): run() 装配的 bridge 首连回调对置 null(与上方 setter
+      // 两件套清理同款——不走 safeStep,finally 直调保证必执行)
+      setOnBridgeConnected(null);
       // G-2 (:942③): 补漏两个模块级注入点 —— registerBridgePushHandler(:269 注册的
       // push handler 闭包持已 close 旧 server,不注销则热重启后 push 事件错路由到死 server)
       // 与 dynamicSchema.setFetcher(:229 注入的 fetcher 同样持旧 editorMgr 闭包)。

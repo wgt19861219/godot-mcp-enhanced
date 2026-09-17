@@ -33,7 +33,7 @@ export function launchDashboardOnce(): void {
   if (_launched) return;
 
   // Web GUI 激活时抑制 TUI(设计 §3.2 双保险):功能被 Web 面板全覆盖,双开纯冗余。
-  // 守在此入口统一覆盖两个触发点(index.ts 启动决策 + game-bridge.ts:69 bridge 首连回调)。
+  // 守在此入口统一覆盖两个触发点(index.ts 启动决策 + GodotServer.run() 装配的 bridge 首连回调)。
   // 不置位 _launched——web-gui 关闭/失败后的下一次调用仍可正常弹 TUI。
   if (isWebGuiActive()) return;
 

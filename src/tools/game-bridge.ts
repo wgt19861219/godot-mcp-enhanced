@@ -15,7 +15,6 @@ import { textResult, errorResult, getErrorMessage } from '../types.js';
 import { opsErrorResult } from './shared.js';
 import { requireProjectPath } from '../helpers.js';
 import { PathError } from '../core/tool-errors.js';
-import { launchDashboardOnce } from '../dashboard/launcher.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getLogger } from '../core/logger.js';
 import {
@@ -37,7 +36,6 @@ import {
   type BridgeResponse,
   setBridgeProjectDir,
   sendToBridge,
-  setOnBridgeConnected,
   _registerSubscription,
   _removeSubscription,
 } from '../core/bridge-client.js';
@@ -105,9 +103,9 @@ export function annotatePingWithVersion(
   return annotated;
 }
 
-// 首次连接成功自动拉起 Dashboard —— 经回调注入(core/bridge-client 不依赖 dashboard,
-// 防 core→dashboard→helpers→core 环;等价迁移原 _doConnect 内联调用点)
-setOnBridgeConnected(() => launchDashboardOnce());
+// 首次连接成功自动拉起 Dashboard 的装配已迁往 GodotServer.run()(O2 归位,2026-09-17
+// 审查 H-3):模块顶层副作用不受 close() 管辖,迁入控制面后 close() 可对称置 null 清理;
+// dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
 
 // G-5: 识别/迁移旧版(≤0.23.x)误写的带前缀 autoload 键(仅工具层 install/uninstall 用)
 const AUTOLOAD_KEY_LEGACY = 'autoload/MCPBridge';
