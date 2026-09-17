@@ -6,9 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-17 架构审查批 3(Task D:web-gui server.ts 三项安全修复,纯 TS 不 bump)。
 > 2026-09-17 架构审查批 2(Task C:shutdown 完备性,纯 TS 不 bump)。
 
 ### Fixed
+- **M-1 token 比较恒定时间 + /api/auth Origin 闸门**(web-gui):`tokenEquals(candidate)`(长度守卫 + `timingSafeEqual`)替换 `authorized()`//api/auth/两处 403-vs-401 判定共 4 个 `===/!== this.token` 字面比较点,防逐前缀定时探测;`/api/auth` 补 `originAllowed` 闸门(403 先于 token 判定)——种 cookie 的握手端点不再响应非本机本端口浏览器源(DNS rebinding 纵深)。源码契约测试锁定(timingSafeEqual import 落位 + 禁字面比较回退)。
+- **M-4 /api/health ACAO 白名单回显 + 响应体删 startedAt**(web-gui):ACAO 从 `*` 收紧为 `127.0.0.1|localhost` 的 9550-9569 段 Origin 回显(白名单正则由 CSP 同源常量机械生成,与 `WEB_GUI_CSP`/前端 recoverPanel 扫描范围天然同步;前端自愈跨端口探测仍可读),其他/无 Origin 不发 ACAO 头;响应体删 `startedAt`(前端 probeHealth 只消费 r.ok,registry 登记与 `open.ts` 列表不受影响)。
+- **M-3 READ_ONLY 跳过入口页写入 + env 开关**(web-gui):`refreshProjectEntries` 头部双短路——`isReadOnly()` 短路(READ_ONLY 语义不再被"向用户项目目录写 面板入口.html"维度穿透,start/scan 完成/add 成功三时点共用该方法一处全覆盖)+ `GODOT_MCP_WEB_GUI_ENTRY=0` 全局关闭入口页落盘(不想被写入项目目录的用户出口)。三时点负向断言 + 既有写入用例锁定行为不变。
 - **H-4 dap 会话纳入 `GodotServer.close()` 清理链**:新增 `closeAllDapSessions()`(src/tools/dap.ts 导出)——销毁全部 DAP TCP socket + 清 `_sessions`/`_breakpoints` 簿记,`_resetForTest` 复用同一清理循环(测试/生产同语义);`close()` 在 `clearInflight` 步后新增 `safeStep('closeDapSessions')`——此前 dap 长寿命 TCP 连接完全不在 close() 管辖(模块级 `_sessions`,热重启/测试隔离泄漏,对端 editor DAP server 侧残留会话)。
 - **M-9 close() 直关 functionProfiler**:`killAllRunSessions` 后新增 `safeStep('stopFunctionProfiler')` 直调 `ctx.functionProfiler.close()` 并同步清引用(runtime.ts stop 先例)——此前依赖游戏进程退出触发 socket close 的间接事件链,killProcess 5s 超时兜底路径不等 proc close 事件,net.Server 端口/句柄泄漏。
 - **M-10 inflight 双清**:close() 末尾(`server.close()` 前)新增 `safeStep('clearInflightFinal')` 再清一次本进程 in-flight 文件——首步清理后、close 窗口内并发工具调用的 `markInflight` 会重建文件,单清则正常退出也留孤儿 → 下个启动误报丧。
