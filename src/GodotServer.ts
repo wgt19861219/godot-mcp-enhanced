@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import { readInstructions } from './core/instructions.js';
 import { registerBridgePushHandler, setBridgeProjectDir } from './tools/game-bridge.js';
+import { closeAllDapSessions } from './tools/dap.js';
 import {
   listResources as listMcpResources,
   listResourceTemplates as listMcpResourceTemplates,
@@ -740,6 +741,9 @@ export class GodotServer {
     try {
       // P4-3: 清本进程 in-flight 记录文件(正常退出不留孤儿;异常死亡才留 → 下个启动报丧)
       await safeStep('clearInflight', () => clearAllInflight());
+      // H-4 (2026-09-17 审查): dap 会话纳入清理链——销毁全部 DAP TCP socket + 清簿记。
+      // 此前 dap socket 完全不在 close() 管辖(模块级 _sessions),热重启/测试隔离泄漏长寿命连接。
+      await safeStep('closeDapSessions', () => closeAllDapSessions());
       // Web GUI 停机(设计 §3.2):SSE end → closeAllConnections → close → 删登记(顺序在 WebGuiServer.stop 内)
       if (this.webGuiServer) {
         const gui = this.webGuiServer;

@@ -100,6 +100,7 @@ import { handleTool as instanceHandleTool, setInstanceManager, setInstanceRouter
 import * as bridgeMod from '../src/tools/game-bridge.js';
 import { dynamicSchema } from '../src/core/dynamic-schema.js';
 import { killAllRunSessions } from '../src/core/process-state.js';
+import * as dapMod from '../src/tools/dap.js';
 import { EditorConnection } from '../src/core/EditorConnection.js';
 import { EditorToolExecutor } from '../src/core/EditorToolExecutor.js';
 
@@ -277,6 +278,18 @@ describe('GodotServer', () => {
         expect(store.destroy).toHaveBeenCalled();  // flush 抛错不阻断同段 destroy
         expect(mockServerClose).toHaveBeenCalled();
       });
+    });
+
+    // ── 架构审查批 2 Task 2.1 (H-4): dap 会话纳入 close() 清理链 ──────────────────
+    it('close() 调 closeAllDapSessions(销毁全部 DAP TCP socket + 清簿记)', async () => {
+      const spy = vi.spyOn(dapMod, 'closeAllDapSessions');
+      try {
+        const server = new GodotServer('/fake/ops.gd');
+        await server.close();
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 
