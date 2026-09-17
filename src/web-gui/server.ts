@@ -98,6 +98,13 @@ export const WEB_GUI_CSP: string =
     .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
     .join('');
 
+/** /api/health ACAO 白名单(M-4,2026-09-17 审查批):仅 127.0.0.1|localhost 的
+ *  9550-9569 段 Origin 回显(前端自愈跨端口探测可读)。端口段由 CSP 同源常量
+ *  机械生成,与 WEB_GUI_CSP / html.ts recoverPanel 扫描范围天然同步不漂移。 */
+const HEALTH_ACAO_ORIGIN_RE = new RegExp(
+  `^http://(127\\.0\\.0\\.1|localhost):(${Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i).join('|')})$`,
+);
+
 // assets 固定清单(spec §4/I-2):白名单枚举而非目录扫描——含路径分隔符/编码(如
 // ..%2F)或不在清单的名字天然 404,无目录穿越面。Task 4 前端资源(Checkbox 任务书 §4)。
 const ASSET_FILES: ReadonlySet<string> = new Set([
@@ -121,7 +128,7 @@ export class WebGuiServer {
   private readonly opts: WebGuiServerOptions;
   private httpServer: Server | null = null;
   private portValue = 0;
-  // /api/health 响应用(2026-09-16 入口简化批);start() 时定格
+  // registry 登记时间戳用(start() 时定格;M-4 后 /api/health 响应不再携带,open.ts 列表仍消费)
   private startedAtIso = '';
   // ─── SSE + 日志数据流(设计 §3.3,Task 7) ───────────────────────────────────
   private sseClients = new Set<ServerResponse>();
@@ -288,16 +295,20 @@ export class WebGuiServer {
       }
       if (req.method !== 'GET') { res.writeHead(405).end(); return; }
       // /api/health 无鉴权探测端点(2026-09-16 入口简化批):前端自愈扫描端口段用。
-      // 响应只报 {ok,port,startedAt}——无 pid/token 等敏感字段;CORS * 供跨端口探测读
-      // (端口不同即跨源,需 ACAO 才能读到响应;信息面=活着+端口,泄露无害)。
+      // M-4(2026-09-17 审查批):ACAO 从 `*` 收紧为 Origin 白名单回显——仅
+      // http://127.0.0.1|localhost:9550-9569(自愈扫描范围,与 WEB_GUI_CSP 端口段
+      // 一一对应)回显该 Origin 供跨端口探测读;其他/无 Origin 不发 ACAO 头。
+      // 响应只报 {ok,port}——无 pid/token/startedAt 等字段(前端自愈只消费 r.ok)。
       if (url.pathname === '/api/health') {
+        const origin = req.headers.origin;
+        const acao = typeof origin === 'string' && HEALTH_ACAO_ORIGIN_RE.test(origin) ? origin : undefined;
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
-          'access-control-allow-origin': '*',
+          ...(acao ? { 'access-control-allow-origin': acao } : {}),
           'x-content-type-options': 'nosniff',
         });
-        res.end(JSON.stringify({ ok: true, port: this.portValue, startedAt: this.startedAtIso }));
+        res.end(JSON.stringify({ ok: true, port: this.portValue }));
         return;
       }
       if (url.pathname === '/') {

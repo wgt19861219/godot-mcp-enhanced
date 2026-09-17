@@ -293,18 +293,28 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(c.token).toBe('explicit-tok-0123456789abcdef012345');
   });
 
-  it('/api/health:无 token 200 + CORS * + {ok,port,startedAt} 无 pid/token 字段 + no-store', async () => {
+  // M-4(2026-09-17 审查批):ACAO 从 `*` 收紧为 9550-9569 段白名单回显(前端自愈
+  // 跨端口探测仍可读),响应体删 startedAt(无消费方,减少指纹面)。
+  it('/api/health:无 token 200 + ACAO 白名单回显(9550-9569 段) + {ok,port} 无 startedAt/pid/token + no-store', async () => {
     const t = await startTestServer(); active = t.srv;
     const r = await fetch(`${t.base}/api/health`);
     expect(r.status).toBe(200);
-    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();   // 无 Origin(非浏览器)不发 ACAO
     expect(r.headers.get('cache-control')).toBe('no-store');
     const body = await r.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.port).toBe(t.srv.port);
-    expect(typeof body.startedAt).toBe('string');
+    expect('startedAt' in body).toBe(false);
     expect('pid' in body).toBe(false);
     expect('token' in body).toBe(false);
+
+    const loop1 = await fetch(`${t.base}/api/health`, { headers: { origin: 'http://127.0.0.1:9555' } });
+    expect(loop1.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:9555');
+    const loop2 = await fetch(`${t.base}/api/health`, { headers: { origin: 'http://localhost:9560' } });
+    expect(loop2.headers.get('access-control-allow-origin')).toBe('http://localhost:9560');   // 956x 段也在白名单(9550-9569 全段,自愈扫描范围)
+    const evil = await fetch(`${t.base}/api/health`, { headers: { origin: 'https://evil.com' } });
+    expect(evil.headers.get('access-control-allow-origin')).toBeNull();   // 白名单外不回显
+    expect(evil.status).toBe(200);   // health 本身仍无鉴权可探测(活着+端口,无害)
   });
 
   // M-1(2026-09-17 审查批):token 比较必须恒定时间——timingSafeEqual 落位即被锁,
