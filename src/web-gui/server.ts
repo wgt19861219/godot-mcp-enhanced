@@ -847,6 +847,11 @@ export class WebGuiServer {
    *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
    *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。 */
   private refreshProjectEntries(): void {
+    // M-3(2026-09-17 审查):READ_ONLY 语义不得在"向用户项目目录写文件"维度被穿透
+    // (start/scan 完成/add 成功三时点共用本方法,头部短路全覆盖);
+    // GODOT_MCP_WEB_GUI_ENTRY=0 可全局关闭入口页落盘(不想被写入项目目录的用户出口)。
+    if (this.opts.isReadOnly?.()) return;
+    if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
     try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {
