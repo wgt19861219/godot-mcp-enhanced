@@ -310,13 +310,30 @@ export const INDEX_HTML: string = `<!doctype html>
     }).catch(function () { $('statusBar').textContent = '网络异常,移除请求未送达'; });
   }
 
+  // 响应体安全解析(2026-09-16 网络异常误报修复):server 鉴权失败只写状态码无响应体
+  // (writeHead(401/403).end()),先 r.json() 必 parse('') reject 落 catch,把「鉴权失效」
+  // 伪装成「网络异常,XX请求未送达」(真机反馈:扫描按钮 401 显示网络异常)。统一 text
+  // 先行:空体/非 JSON → body:null,控制流落第二层 !r.ok 分支按 status 给准确文案;
+  // 只有真网络层失败(连接拒绝/中断)才落 catch 的「网络异常」。
+  function safeBody(r) {
+    return r.text().then(function (t) {
+      var j = null;
+      try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
+      return { ok: r.ok, status: r.status, body: j };
+    });
+  }
+
   // 扫描:异步起,立即返回;进度与结果由 SSE projects 事件接管(spec §4/§5)
   function startScan() {
     $('statusBar').textContent = '扫描中…';
     fetch('/api/projects/scan', { method: 'POST', headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
-        if (!r.ok) { $('statusBar').textContent = '扫描失败: ' + JSON.stringify(r.body).slice(0, 80); return; }
+        if (!r.ok) {
+          $('statusBar').textContent = r.status === 401 ? '扫描失败: 鉴权失效,请从 面板入口.html 重新进入'
+            : '扫描失败: ' + JSON.stringify(r.body).slice(0, 80);
+          return;
+        }
         if (r.body && r.body.started === false) { $('statusBar').textContent = '扫描已在进行中,进度见状态栏'; return; }   // §3.1.1 互斥
         $('statusBar').textContent = '扫描中…';   // SSE 接管进度显示
       })
@@ -357,7 +374,7 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ path: p }),
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+    }).then(safeBody)   // safeBody 携带 status——旧打包漏 status,下面 403/404 分支从不命中
       .then(function (r) {
         var body = r.body || {};
         if (r.ok && body.ok === false) {   // 200 + {ok:false,reason}(Task 3 契约:duplicate|full)
@@ -365,8 +382,9 @@ export const INDEX_HTML: string = `<!doctype html>
           return;
         }
         if (!r.ok) {
-          $('statusBar').textContent = r.status === 403 ? '路径在白名单之外'
-            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)' : '添加失败: ' + JSON.stringify(body).slice(0, 80));
+          $('statusBar').textContent = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 403 ? '路径在白名单之外'
+            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)' : '添加失败: ' + JSON.stringify(body).slice(0, 80)));
           return;
         }
         $('statusBar').textContent = '已添加';
@@ -403,12 +421,13 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '读取目录中…';
     fetch('/api/projects/files?project=' + encodeURIComponent(filesState.project) + '&sub=' + encodeURIComponent(filesState.sub),
       { headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
         if (!r.ok) {
-          var msg = r.status === 403 ? '路径在白名单之外'
+          var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 403 ? '路径在白名单之外'
             : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)'
-            : (r.status === 503 ? '文件功能未配置' : JSON.stringify(r.body).slice(0, 80)));
+            : (r.status === 503 ? '文件功能未配置' : JSON.stringify(r.body).slice(0, 80))));
           $('statusBar').textContent = '目录读取失败: ' + msg;
           return;
         }
@@ -548,18 +567,10 @@ export const INDEX_HTML: string = `<!doctype html>
       box.appendChild(ph); host.appendChild(box);
       fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
         { headers: { 'x-gui-token': token } })
-        .then(function (r) {
-          // 401 空体防线(审查 I-1 / 复审 round 2):server 鉴权 401 只写状态码、无响应
-          // 体(server.ts 写头即 end),先 r.json() 必 parse('') reject 落 catch。此处返回
-          // 哨兵对象(非裸 return——undefined 穿透会让下一层 !r.ok 访问 undefined.ok 抛
-          // TypeError 再落 catch 覆盖文案),控制流落进第二层既有 !r.ok → 401 三元文案;
-          // body:null 对第二层安全(401/403/404 三元支均不读 body)。
-          if (!r.ok && r.status === 401) { return { ok: r.ok, status: r.status, body: null }; }
-          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
-        })
+        .then(safeBody)   // 401/403 空体防线(审查 I-1 → 2026-09-16 统一 safeBody,旧哨兵只挡 401)
         .then(function (r) {
           if (!r.ok) {
-            var msg = r.status === 401 ? '鉴权失效,请刷新页面'
+            var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
               : (r.status === 403 ? '路径在白名单之外'
               : (r.status === 404 ? '文件不存在' : JSON.stringify(r.body).slice(0, 80)));
             ph.textContent = '十六进制读取失败: ' + msg;
@@ -660,13 +671,14 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '读取文件中… ' + rel;
     fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=text',
       { headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
         if (!r.ok) {
-          var msg = r.status === 400 ? '不支持的扩展名(非文本类)'
+          var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 400 ? '不支持的扩展名(非文本类)'
             : (r.status === 403 ? '路径在白名单之外'
             : (r.status === 404 ? '文件不存在'
-            : (r.status === 413 ? '文件超限' : JSON.stringify(r.body).slice(0, 80))));
+            : (r.status === 413 ? '文件超限' : JSON.stringify(r.body).slice(0, 80)))));
           $('statusBar').textContent = '文件读取失败: ' + msg;
           return;
         }
@@ -743,7 +755,7 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ project: filesState.project, path: editorState.rel, content: content, baseMtime: editorState.baseMtime }),
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+    }).then(safeBody)
       .then(function (r) {
         if (btn) btn.disabled = false;
         if (r.ok) {
@@ -753,6 +765,7 @@ export const INDEX_HTML: string = `<!doctype html>
           return;
         }
         if (r.status === 409) { showConflict(r.body && r.body.latest); return; }
+        if (r.status === 401) { setEdStatus('保存失败: 鉴权失效,请从 面板入口.html 重新进入'); return; }
         if (r.status === 403) {   // 双源区分(对齐 startSession I-2 判定)
           if (JSON.stringify(r.body).indexOf('read-only') !== -1) { enterReadOnly(); return; }
           setEdStatus('保存失败: 路径在白名单之外');

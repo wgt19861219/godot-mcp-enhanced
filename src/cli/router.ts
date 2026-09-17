@@ -56,8 +56,9 @@ export async function routeCommand(args: string[]): Promise<void> {
     }
     case 'dashboard': {
       if (parsed.rest.includes('--web')) {
+        // --app(2026-09-16 独立窗口批):Edge/Chrome --app 模式独立 OS 窗口;探测不到降级标签页
         const { openWebDashboard } = await import('../web-gui/open.js');
-        const code = await openWebDashboard();
+        const code = await openWebDashboard({ appWindow: parsed.rest.includes('--app') });
         process.exit(code === 0 ? EXIT_CODES.EXIT_OK : EXIT_CODES.EXIT_OPERATION_FAILED);
       }
       const { launchDashboardOnce } = await import('../dashboard/launcher.js');
@@ -126,7 +127,7 @@ godot-mcp-enhanced — Godot AI 开发环境
   godot-mcp-enhanced skills [install]   打包的 Claude Code skills 列出/装入(install 支持 --target <目录> --force)
   godot-mcp-enhanced doctor           环境诊断
   godot-mcp-enhanced init <name>      创建 Godot 项目
-  godot-mcp-enhanced dashboard [--web]  启动监控面板（--web 打开浏览器版；默认 TUI）
+  godot-mcp-enhanced dashboard [--web [--app]]  启动监控面板（--web 浏览器版，--app 独立窗口；默认 TUI）
   godot-mcp-enhanced qa run <spec>    执行 QA 测试套件（夜间跑批）
   godot-mcp-enhanced install [tag]   从官方 releases 安装 Godot(默认 latest stable;零预装上手)
   godot-mcp-enhanced gif <project>  录制 demo GIF(bridge 定频截图;--fps/--seconds/--keys/--out)

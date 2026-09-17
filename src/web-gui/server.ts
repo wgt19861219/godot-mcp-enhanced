@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
+import { ensurePackageRootAppLauncher } from './app-window.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -821,9 +822,14 @@ export class WebGuiServer {
 
   /** 为包根、CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
    *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
-   *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。 */
+   *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。
+   *  包根另落双击件「面板独立窗口.bat」(独立窗口批 2026-09-16):App 模式直达入口页,
+   *  bat 自身零敏感信息(token 由入口页内嵌),非 win32 平台内部自动跳过。 */
   private refreshProjectEntries(): void {
-    try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
+    try {
+      ensurePackageRootEntry(this.packageRoot, this.token);
+      ensurePackageRootAppLauncher(this.packageRoot);
+    } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {
       if (list) for (const p of list) dirs.add(p.path);

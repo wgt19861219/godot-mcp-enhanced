@@ -1,20 +1,37 @@
 // CLI `dashboard --web`(设计 §6):聚合登记 → 探活清死 → 单个直开/多个菜单/零个提示。
 // 跨平台开浏览器:start(Win)/open(mac)/xdg-open(Linux);失败降级打印 URL 手动点。
+// App 窗口模式(2026-09-16):`--app` 时优先 Edge/Chrome `--app=<url>` 开独立窗口
+// (无地址栏/无标签页,任务栏独立图标可固定);探测不到 Edge/Chrome 降级普通标签页。
 
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { listRegistrations, type WebGuiRegistration } from './registry.js';
 import { ensurePortalPage } from './portal.js';
+import { findAppBrowserPath, buildFileUrl } from './app-window.js';
 
 export interface OpenWebDashboardOpts {
-  /** 浏览器打开函数(测试注入);缺省跨平台探测 */
-  opener?: (url: string) => void;
+  /** 浏览器打开函数(测试注入);缺省跨平台探测。第二参 appWindow=true 表示请求独立窗口。 */
+  opener?: (url: string, appWindow?: boolean) => void;
   /** 多实例选择器(测试注入);缺省读 stdin 编号菜单 */
   choose?: (entries: WebGuiRegistration[]) => Promise<WebGuiRegistration | null>;
   registryDir?: string;
   isPidAlive?: (pid: number) => boolean;
+  /** App 窗口模式:独立 OS 窗口(Edge/Chrome --app);找不到可用浏览器自动降级标签页。 */
+  appWindow?: boolean;
 }
 
-function defaultOpener(url: string): void {
+function defaultOpener(url: string, appWindow = false): void {
+  if (appWindow) {
+    const exe = findAppBrowserPath();
+    if (exe) {
+      // execFile 不经 shell:exe 来自固定候选清单 + existsSync,url 的 token 已过 registry
+      // 格式校验([A-Za-z0-9_-]+),无字符串拼接注入面。
+      execFile(exe, [`--app=${url}`], { windowsHide: true }, () => {
+        /* 失败降级:调用方已打印 URL,手动点 */
+      });
+      return;
+    }
+    console.log('未找到支持独立窗口的浏览器(Edge/Chrome),按普通标签页打开。');
+  }
   const platform = process.platform;
   const cmd = platform === 'win32' ? `start "" "${url}"`
     : platform === 'darwin' ? `open "${url}"`
@@ -45,15 +62,17 @@ async function defaultChoose(entries: WebGuiRegistration[]): Promise<WebGuiRegis
 }
 
 export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise<number> {
+  const open = opts.opener ?? defaultOpener;
   // 入口页幂等落盘(2026-09-16):file:/// 书签永远可用的跳转页,随 CLI 顺带确保存在
   const portalPath = ensurePortalPage(opts.registryDir);
   const entries = await listRegistrations({ dir: opts.registryDir, isPidAlive: opts.isPidAlive });
   if (entries.length === 0) {
     console.log('没有运行中的 MCP server(先在 AI 客户端里启动 godot-mcp-enhanced)。');
     console.log('已打开本地入口页(服务启动后它会自动跳转):');
-    const portalUrl = `file:///${portalPath.replace(/\\/g, '/')}`;
+    // buildFileUrl 统一编码出口(审查 Nit-1):中文/空格用户名路径裸拼进 --app= 有兼容风险
+    const portalUrl = buildFileUrl(portalPath);
     console.log(`  ${portalUrl}`);
-    (opts.opener ?? defaultOpener)(portalUrl);
+    open(portalUrl, opts.appWindow);
     return 1;
   }
   let picked: WebGuiRegistration | null;
@@ -66,6 +85,6 @@ export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise
   if (!picked) return 1;
   const url = `http://127.0.0.1:${picked.port}/?token=${picked.token}`;
   console.log(`Web GUI: ${url}`);
-  (opts.opener ?? defaultOpener)(url);
+  open(url, opts.appWindow);
   return 0;
 }

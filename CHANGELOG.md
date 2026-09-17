@@ -13,8 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Web GUI 资源管理工作台（Plan B）：二进制预览——图片/音频内联播放、其余二进制 hex 三列视图（4KB 采样+截断提示+下载链接）、目录路径 bad_request（M-3）。
 - Web GUI 项目目录入口页：server 启动/项目新增/扫描完成时为 server 包根（开发模式即本仓库根目录）、CWD 与全部登记的 Godot 项目目录幂等落一份 `面板入口.html`（内容与 portal.html 同源的扫描跳转页，`project.godot` 存在护栏防向任意目录塞文件，包根无条件写）——入口直接放用户天天开的文件夹，双击即用（registry 深路径 `~/.godot-mcp/web-gui/portal.html` 难找的真机反馈）；文件为运行时产物，已加 `.gitignore`。
 - Web GUI 零门槛授权：包根 `面板入口.html` 内嵌共享 token（跳转 URL 自动带 `?token=`，**双击直达免 CLI 首授权**，token 轮换随 server 启动自动重写；`0o600` + Windows icacls 收紧，非法形状防御性退化为无 token 版）——项目目录版不内嵌（目录可能被 git 跟踪/分享，token 进公开仓库会配合恶意网页形成攻击链），registry 版保持纯净模板；多实例场景入口页自带实例按钮列表。
+- Web GUI 面板独立窗口（App 模式）：CLI `dashboard --web --app` 与包根双击件 `面板独立窗口.bat` 以 Edge/Chrome `--app=<url>` 开独立 OS 窗口（无地址栏/无标签页，任务栏独立图标可固定）——页面内 JS 无法把已开标签转 App 窗口（须浏览器启动参数），故入口落在启动命令上；bat 为纯 ASCII + CRLF + `%%` 双写（cmd 变量展开安全），自包含 Edge→Chrome 探测链（`if not defined BROWSER` 前缀保首命中优先级）+ 无浏览器降级默认浏览器标签页；bat 打开的是同目录 `面板入口.html`（token 直达/断线扫描/多实例按钮全复用），自身零敏感信息；探测不到 Edge/Chrome 时 CLI 同样降级标签页并提示。
 
 ### Fixed
+- Web GUI「网络异常,XX请求未送达」误报（真机反馈：扫描按钮 401 显示网络异常）：server 鉴权失败只写状态码无响应体，前端无条件 `r.json()` 必 parse('') reject 落 catch，把「鉴权失效」伪装成「网络异常」——新增前端 `safeBody()`（text 先行，空体/非 JSON → body:null），六处 fetch（scan/add/files/file/save/hex）统一接入；各失败分支补 401 准确文案「鉴权失效,请从 面板入口.html 重新进入」（刷新不闭环：query 已被 replaceState 清、sessionStorage per-origin 迁移即丢，回入口页带 token 跳转才闭环）；顺带修复 add 响应打包漏 status 导致 403/404 分支从不命中的隐藏问题；hex 旧 401 哨兵升级为 safeBody（403 空体同覆盖）。
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
 ## [0.33.3] - 2026-09-14

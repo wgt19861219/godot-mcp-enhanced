@@ -551,6 +551,17 @@ describe('WebGuiServer 项目目录入口页(2026-09-16 项目入口批)', () =>
       const html = readFileSync(join(pkgRoot, '面板入口.html'), 'utf-8');
       expect(html).toContain(t.token);            // server 自身 token 内嵌 → 双击直达
       expect(html).toContain('9550');
+      // 独立窗口批(2026-09-16):win32 包根同时落双击件(URL 指向同目录入口页的 %% 转义
+      // 编码);其他平台 bat 无意义——平台门控是契约的一部分,断言明确不落盘
+      if (process.platform === 'win32') {
+        const bat = readFileSync(join(pkgRoot, '面板独立窗口.bat'), 'utf-8');
+        expect(bat).toContain('--app=');
+        expect(bat).toContain('%%E9%%9D%%A2');    // 入口页文件名「面」的 percent-encoding 双写
+        expect(bat).toContain('goto fallback');
+        expect(bat).not.toContain(t.token);       // bat 零敏感信息(token 由入口页内嵌)
+      } else {
+        expect(existsSync(join(pkgRoot, '面板独立窗口.bat'))).toBe(false);
+      }
     } finally {
       await rm(pkgRoot, { recursive: true, force: true });
     }
