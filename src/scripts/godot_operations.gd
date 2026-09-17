@@ -552,6 +552,11 @@ func add_node(params):
 
 	# 审查 C-1(2026-09-03): 属性失败曾仅 log_error(走 stderr)后继续落盘→exit 0 假成功,
 	# 错误行被 TS 成功路径(只取 stdout)整体丢弃。对齐 batch_add_nodes「任一属性失败→整节点失败」。
+	# Task B(2026-09-17 审查): _is_safe_property 拦截曾无 else 静默跳过——被拦属性(script 等)
+	# 节点照常落盘报成功,"看似成功实则没写"。与 coerce 失败(C-1 整节点失败)语义不同:
+	# 安全拦截不判整笔失败(节点主体仍创建),但必须点名上报(对齐 edit_node log_error +
+	# batch_add_nodes failed_props 清单先例)——stdout 警告行经 TS 成功路径透传直达调用方。
+	var blocked_props: Array = []
 	if params.has("properties"):
 		var properties = params.properties
 		for property in properties:
@@ -561,6 +566,9 @@ func add_node(params):
 					new_node.free()
 					cleanup_and_quit([scene_root], 1)
 					return
+			else:
+				log_error("Blocked property: " + property)
+				blocked_props.append(property)
 
 	parent.add_child(new_node)
 	new_node.owner = scene_root
@@ -575,6 +583,9 @@ func add_node(params):
 				cleanup_and_quit([scene_root], 1)
 				return
 			print("Node '%s' of type '%s' added successfully" % [params.node_name, params.node_type])
+			# Task B: 被拦属性警告走 stdout(TS 成功路径透传 index.ts:220,调用方必须知道哪些属性没写上)
+			if blocked_props.size() > 0:
+				print("Warning: %d blocked propert%s not set on node '%s': %s (security filter, node created without them)" % [blocked_props.size(), "y" if blocked_props.size() == 1 else "ies", params.node_name, ", ".join(PackedStringArray(blocked_props))])
 		else:
 			log_error("Failed to save scene: " + str(save_error))
 			cleanup_and_quit([scene_root], 1)
