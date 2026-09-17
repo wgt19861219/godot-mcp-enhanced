@@ -2507,15 +2507,16 @@ func _cmd_send_drag(params: Dictionary) -> Variant:
 	var event := InputEventScreenDrag.new()
 	event.position = Vector2(x, y)
 	event.index = index
+	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
+	# timeline 注入复用本函数,自动跟随。(插在 index 后避开 velocity 行区域——
+	# 该行由批A d7b15fa4 改名,分支合并时两侧改动重叠会冲突)
+	event.device = 0
 	event.relative = relative
 	# 跨项目验证发现(2026-09-16 反馈批A,CardGame2 Godot 4.7 真机):InputEventScreenDrag
 	# 的引擎属性是 velocity(Godot 3 的 speed 已改名),赋值/读取 speed 直接 SCRIPT ERROR —
 	# send_drag 在 Godot 4 上从未真正可用(6f997b4 修的是参数归一化,属性名错漏网)。
 	# MCP API 参数名 speed 保持不变(调用方契约),仅引擎属性侧改名。
 	event.velocity = speed
-	# 反馈批次D (2026-09-17, 批次C审查 Nit3): device=0 对称收口(同 mouse 链)。
-	# timeline 注入复用本函数,自动跟随。
-	event.device = 0
 	Input.parse_input_event(event)
 	# 审查 I-B(2026-09-03): 裸 Vector2 经 JSON.stringify 退化为 "(x, y)" 字符串(真机实证),
 	# 走 _jsonify 输出 {"x","y"}(对齐 wait_for_property 先例),响应可结构化消费。
