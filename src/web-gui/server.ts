@@ -6,6 +6,7 @@
 // 固定清单四端点 + CSP 放宽(script/style self + img/media self)+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -226,6 +227,15 @@ export class WebGuiServer {
 
   // ─── 鉴权(设计 §5) ────────────────────────────────────────────────────────
 
+  /** M-1(2026-09-17 审查):token 比较恒定时间——长度先守卫防长度泄露,
+   *  timingSafeEqual 防逐前缀定时探测。全部 token 比较点(含 /api/auth 握手)
+   *  必须经此方法,不得回退到 ===/!== 字面比较(源码契约测试锁定)。 */
+  private tokenEquals(candidate: string | undefined | null): boolean {
+    const a = Buffer.from(this.token, 'utf8');
+    const b = Buffer.from(String(candidate ?? ''), 'utf8');
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+
   private extractToken(req: IncomingMessage, url: URL): string | null {
     // 优先级:query > X-GUI-Token 头 > cookie(空值一律视为未提供,继续走下一通道)
     const q = url.searchParams.get('token');
@@ -254,7 +264,7 @@ export class WebGuiServer {
   }
 
   private authorized(req: IncomingMessage, url: URL): boolean {
-    return this.extractToken(req, url) === this.token && this.originAllowed(req);
+    return this.tokenEquals(this.extractToken(req, url)) && this.originAllowed(req);
   }
 
   // ─── 请求路由 ──────────────────────────────────────────────────────────────
@@ -312,8 +322,11 @@ export class WebGuiServer {
       // cookie 双通道握手端点(须在 authorized 之前注册:自身鉴权只用 query token):
       // 对 token → 200 + Set-Cookie 种 HttpOnly cookie,此后 EventSource/fetch 免 query
       // 也能过鉴权(免疫 URL query 被隐私扩展剥除/截断);错/缺 token → 401 不种 cookie。
+      // M-1(2026-09-17 审查):补 Origin 闸门(403 先于 token 判定)——种 cookie 的
+      // 端点不得响应非本机本端口的浏览器源,防 DNS rebinding/恶意页纵深探测。
       if (url.pathname === '/api/auth') {
-        if (url.searchParams.get('token') !== this.token) { res.writeHead(401).end(); return; }
+        if (!this.originAllowed(req)) { res.writeHead(403).end(); return; }
+        if (!this.tokenEquals(url.searchParams.get('token'))) { res.writeHead(401).end(); return; }
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'set-cookie': `gui-token=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
@@ -322,7 +335,7 @@ export class WebGuiServer {
         return;
       }
       if (!this.authorized(req, url)) {
-        const code = this.extractToken(req, url) === this.token ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
+        const code = this.tokenEquals(this.extractToken(req, url)) ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
         res.writeHead(code).end();
         return;
       }
@@ -391,7 +404,7 @@ export class WebGuiServer {
     };
     try {
       if (!this.authorized(req, url)) {
-        res.writeHead(this.extractToken(req, url) === this.token ? 403 : 401).end();
+        res.writeHead(this.tokenEquals(this.extractToken(req, url)) ? 403 : 401).end();
         return;
       }
 

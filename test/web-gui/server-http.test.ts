@@ -4,6 +4,7 @@
 // 面板控制第一版(2026-09-14 批准设计):POST /api/sessions/stop + /api/sessions/remove。
 
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,6 +124,21 @@ describe('cookie 双通道(/api/auth 握手 Set-Cookie + cookie 通道鉴权)', 
     const none = await fetch(`${t.base}/api/auth`);
     expect(none.status).toBe(401);
     expect(none.headers.get('set-cookie')).toBeNull();
+  });
+
+  // M-1(2026-09-17 审查批):握手端点补 Origin 闸门——种 cookie 的端点不得响应
+  // 非 127.0.0.1/localhost 本端口的浏览器源(DNS rebinding / 恶意页纵深防御)。
+  it('/api/auth Origin 闸门(M-1):错 Origin 即使 token 正确也 403 且不种 cookie;合法 Origin 200', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const evil = await fetch(`${t.base}/api/auth?token=${t.token}`, {
+      headers: { origin: 'http://evil.example' },
+    });
+    expect(evil.status).toBe(403);
+    expect(evil.headers.get('set-cookie')).toBeNull();
+    const good = await fetch(`${t.base}/api/auth?token=${t.token}`, {
+      headers: { origin: `http://127.0.0.1:${t.srv.port}` },
+    });
+    expect(good.status).toBe(200);
   });
 
   it('cookie 通道鉴权:对 cookie(无 query 无 X-GUI-Token)访问 /api/sessions → 200;错 cookie 值 → 401', async () => {
@@ -289,5 +305,16 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(typeof body.startedAt).toBe('string');
     expect('pid' in body).toBe(false);
     expect('token' in body).toBe(false);
+  });
+
+  // M-1(2026-09-17 审查批):token 比较必须恒定时间——timingSafeEqual 落位即被锁,
+  // 且不允许再出现 `=== this.token` / `!== this.token` 字面比较(防回退)。
+  // 恒定时间的行为级差异(逐前缀定时探测)在测试内不可测,以恒定时间实现 + 本契约
+  // 断言组合覆盖;错误 token 401 / 正确 token 200 的行为由上方既有用例锁定不回归。
+  it('源码契约(M-1):server.ts 引入 timingSafeEqual,无 === this.token / !== this.token 字面比较', () => {
+    const src = readFileSync(new URL('../../src/web-gui/server.ts', import.meta.url), 'utf-8');
+    expect(src).toContain("import { timingSafeEqual } from 'node:crypto'");
+    expect(src).not.toContain('=== this.token');
+    expect(src).not.toContain('!== this.token');
   });
 });
