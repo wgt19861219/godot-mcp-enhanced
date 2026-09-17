@@ -1,14 +1,18 @@
 // Web GUI per-pid 登记(设计 §3.1):每实例写自己的 ~/.godot-mcp/web-gui/<pid>.json,
 // 无并发写竞争(对齐 InstanceManager 模式);文件含 token 准入凭证,权限加固防同机他用户读取。
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { userInfo } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { getLogger } from '../core/logger.js';
+// 循环 import 声明(portal.ts ⇄ registry.ts):双方均只在函数体内互调、模块顶层零解引用,
+// ESM live bindings 下加载时序安全——portal 顶层只用 import 声明,registry 同款。
+import { ensurePackageRootEntry, PROJECT_ENTRY_NAME } from './portal.js';
 
 export interface WebGuiRegistration {
   pid: number;
@@ -63,6 +67,37 @@ export function getOrCreateSharedToken(opts: RegistryOpts = {}): string {
 
 function readFileSyncOpt(filePath: string): string | null {
   try { return readFileSync(filePath, 'utf-8').trim() || null; } catch { return null; }
+}
+
+/** 包根推导(server.ts packageRoot 同款):build/web-gui/registry.js → 上三级 = 包根
+ *  (src/web-gui/ 直跑与 vitest 同理)。rotate 的入口页重写缺省目标。 */
+function defaultPackageRoot(): string {
+  return dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+}
+
+export interface RotateTokenOpts extends RegistryOpts {
+  /** 入口页重写目标包根;缺省按本模块位置上三级推导(server.ts 同款)。 */
+  packageRoot?: string;
+}
+
+/**
+ * 轮换共享 token(M-2,2026-09-17 审查批):删 token.txt → getOrCreateSharedToken 生成新值
+ * → 若包根入口页(面板入口.html,内嵌 token 的落盘副本)存在则用新 token 重写 → 返回新值。
+ * 动机:token 疑似泄露(终端贴 URL/录屏/分享截图)后的主动止损出口——旧值作废,新实例/新会话
+ * 收敛新值。诚实边界:已运行实例的内存 token 不热更新,须重启才认新值(rotate 防守的是
+ * "后续不再认旧 token",不是即时踢线);入口页仅在已存在时重写,不新增写入面。
+ */
+export function rotateSharedToken(opts: RotateTokenOpts = {}): string {
+  const dir = opts.dir ?? webGuiRegistryDir();
+  try { unlinkSync(join(dir, 'token.txt')); } catch { /* ENOENT = 首启前 rotate,按不存在处理 */ }
+  const fresh = getOrCreateSharedToken(opts.dir ? { dir: opts.dir } : {});
+  const root = opts.packageRoot ?? defaultPackageRoot();
+  try {
+    if (existsSync(join(root, PROJECT_ENTRY_NAME))) ensurePackageRootEntry(root, fresh);
+  } catch (err) {
+    getLogger().warn('web-gui', `rotate: package root entry refresh failed: ${err instanceof Error ? err.message : err}`);
+  }
+  return fresh;
 }
 
 function defaultIsPidAlive(pid: number): boolean {

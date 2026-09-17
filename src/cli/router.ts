@@ -1,4 +1,5 @@
 import { EXIT_CODES } from '../core/exit-codes.js';
+import { hasFlag } from './args.js';
 
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
@@ -55,9 +56,17 @@ export async function routeCommand(args: string[]): Promise<void> {
       break;
     }
     case 'dashboard': {
-      if (parsed.rest.includes('--web')) {
+      // M-2(2026-09-17 审查批):--rotate-token 轮换共享 token(泄露止损出口),
+      // 打印打码形态(前 4 位)——全量 token 不落终端;处理完即退,不与 --web 组合。
+      if (hasFlag(parsed.rest, 'rotate-token')) {
+        const { rotateSharedToken } = await import('../web-gui/registry.js');
+        const newToken = rotateSharedToken();
+        console.log(`token rotated: ${newToken.slice(0, 4)}****(面板入口页已同步,运行中实例须重启生效)`);
+        process.exit(EXIT_CODES.EXIT_OK);
+      }
+      if (hasFlag(parsed.rest, 'web')) {
         const { openWebDashboard } = await import('../web-gui/open.js');
-        const code = await openWebDashboard();
+        const code = await openWebDashboard({ showToken: hasFlag(parsed.rest, 'show-token') });
         process.exit(code === 0 ? EXIT_CODES.EXIT_OK : EXIT_CODES.EXIT_OPERATION_FAILED);
       }
       const { launchDashboardOnce } = await import('../dashboard/launcher.js');
@@ -126,7 +135,7 @@ godot-mcp-enhanced — Godot AI 开发环境
   godot-mcp-enhanced skills [install]   打包的 Claude Code skills 列出/装入(install 支持 --target <目录> --force)
   godot-mcp-enhanced doctor           环境诊断
   godot-mcp-enhanced init <name>      创建 Godot 项目
-  godot-mcp-enhanced dashboard [--web]  启动监控面板（--web 打开浏览器版；默认 TUI）
+  godot-mcp-enhanced dashboard [--web]  启动监控面板（--web 打开浏览器版；--rotate-token 轮换共享 token；--show-token 配合 --web 显示完整 URL;默认 TUI）
   godot-mcp-enhanced qa run <spec>    执行 QA 测试套件（夜间跑批）
   godot-mcp-enhanced install [tag]   从官方 releases 安装 Godot(默认 latest stable;零预装上手)
   godot-mcp-enhanced gif <project>  录制 demo GIF(bridge 定频截图;--fps/--seconds/--keys/--out)

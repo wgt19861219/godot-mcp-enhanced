@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, afterAll, beforeAll } from 'vitest';
 import { WebGuiServer, isWebGuiActive, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { rotateSharedToken } from '../../src/web-gui/registry.js';
 import type { RunSessionDetailed } from '../../src/core/process-state.js';
 
 const FAKE_SESSIONS: RunSessionDetailed[] = [{
@@ -326,5 +327,32 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(src).toContain("import { timingSafeEqual } from 'node:crypto'");
     expect(src).not.toContain('=== this.token');
     expect(src).not.toContain('!== this.token');
+  });
+});
+
+// ── rotateSharedToken 与 server 联动(M-2,2026-09-17 审查批)──────────────────
+// 诚实边界:rotate 换的是 token.txt(共享持久 token 的真相源)——已运行实例的内存
+// token 不热更新,须重启才收敛新值;rotate 的防守对象是"新会话/新实例不再认旧 token"。
+describe('rotateSharedToken 与 server 联动(M-2)', () => {
+  it('rotate 后新起实例:旧 token 401 / 新 token 200;实例 token 收敛到文件新值', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'web-gui-rotate-'));
+    const mkOpts = (): WebGuiServerOptions => ({
+      getSessions: () => FAKE_SESSIONS, getIndexHtml: () => FAKE_HTML, portStart: 0, registryDir: dir,
+    });
+    const a = new WebGuiServer(mkOpts());
+    await a.start();
+    const oldToken = a.token;
+    const newToken = rotateSharedToken({ dir });
+    expect(newToken).not.toBe(oldToken);
+    const b = new WebGuiServer(mkOpts());
+    await b.start();
+    expect(b.token).toBe(newToken);   // 新实例从 token.txt 读到新值
+    const old = await fetch(`http://127.0.0.1:${b.port}/api/sessions?token=${oldToken}`);
+    expect(old.status).toBe(401);
+    const ok = await fetch(`http://127.0.0.1:${b.port}/api/sessions?token=${newToken}`);
+    expect(ok.status).toBe(200);
+    await a.stop();
+    await b.stop();
+    await rm(dir, { recursive: true, force: true });
   });
 });
