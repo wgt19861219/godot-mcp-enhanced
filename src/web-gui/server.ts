@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
+import { INDEX_SCRIPT_SHA256 } from './html.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -90,13 +91,18 @@ const PORT_ATTEMPTS = 20;
  * 跨端口 fetch /api/health——CSP 源表达式 'self' 含端口,跨端口即跨源被拦(真机实测)。
  * 端口段与 html.ts recoverPanel 的扫描范围(9550..9569)一一对应,改动须两处同步;
  * 127.0.0.1 与 localhost 双 host 都放(用户书签可能用任一形态)。
+ * CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改 sha256 精确
+ * 放行 INDEX_HTML 内联脚本(hash 模块加载时计算,html.ts INDEX_SCRIPT_SHA256),
+ * 注入的 HTML 与 INDEX_HTML 脚本不一致的测试场景仅 CSP 头与常量一致(浏览器才校验);
+ * frame-ancestors 'none' 防被嵌入 iframe(clickjacking 面)。
  */
 export const WEB_GUI_CSP: string =
-  "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; "
+  `default-src 'none'; script-src 'self' 'sha256-${INDEX_SCRIPT_SHA256}'; style-src 'unsafe-inline' 'self'; `
   + "img-src 'self'; media-src 'self'; connect-src 'self'"
   + Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i)
     .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
-    .join('');
+    .join('')
+  + "; frame-ancestors 'none'";
 
 /** /api/health ACAO 白名单(M-4,2026-09-17 审查批):仅 127.0.0.1|localhost 的
  *  9550-9569 段 Origin 回显(前端自愈跨端口探测可读)。端口段由 CSP 同源常量

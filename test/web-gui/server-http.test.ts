@@ -5,13 +5,15 @@
 
 import net from 'node:net';
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, afterAll, beforeAll } from 'vitest';
-import { WebGuiServer, isWebGuiActive, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions } from '../../src/web-gui/server.js';
 import { rotateSharedToken } from '../../src/web-gui/registry.js';
+import { INDEX_HTML } from '../../src/web-gui/html.js';
 import type { RunSessionDetailed } from '../../src/core/process-state.js';
 
 const FAKE_SESSIONS: RunSessionDetailed[] = [{
@@ -53,6 +55,29 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(res.headers.get('access-control-allow-origin')).toBeNull();   // 不发任何 CORS 头
+  });
+
+  // ── CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改精确
+  //    sha256 放行 INDEX_HTML 内联脚本;补 frame-ancestors 'none'。hash 提取以独立
+  //    路径(split,非实现同款 regex)重算比对,防实现提取逻辑漂移。
+  it('CSP 加固:script-src 含 sha256 且无 unsafe-inline;含 frame-ancestors;hash 与 INDEX_HTML 内联脚本独立重算一致', () => {
+    expect(WEB_GUI_CSP).toMatch(/script-src [^;]*'sha256-[A-Za-z0-9+/=]{43,44}'/);
+    expect(WEB_GUI_CSP).not.toMatch(/script-src [^;]*'unsafe-inline'/);
+    expect(WEB_GUI_CSP).toContain("frame-ancestors 'none'");
+    expect(WEB_GUI_CSP).toContain("style-src 'unsafe-inline'");   // 样式属性面保留(非脚本执行面)
+    // 独立重算:split 提取(实现用 exec regex),CRLF 规范化 + 前导换行剥离(HTML spec)
+    const after = INDEX_HTML.split('<script>')[1] ?? '';
+    const body = after.slice(0, after.indexOf('</script>')).replace(/^\r?\n/, '').replace(/\r\n/g, '\n');
+    const hash = createHash('sha256').update(body).digest('base64');
+    expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
+    // 响应头与导出常量一致(接线不漂移)
+    expect(after.length).toBeGreaterThan(0);
+  });
+
+  it('GET / 响应头 CSP 与 WEB_GUI_CSP 常量逐字一致', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const res = await fetch(t.base + '/');
+    expect(res.headers.get('content-security-policy')).toBe(WEB_GUI_CSP);
   });
 
   it('错 token 401;对 token(无 Origin,模拟 curl)放行 /api/sessions', async () => {

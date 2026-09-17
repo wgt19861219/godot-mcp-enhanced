@@ -2,6 +2,8 @@
 // token 经 URL query 进入 → sessionStorage → replaceState 清 query(设计 §5.2);
 // 动态内容一律 textContent(防日志内容 XSS);EventSource 断线原生重连,hello 即整体重置。
 
+import { createHash } from 'node:crypto';
+
 export const INDEX_HTML: string = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1039,3 +1041,17 @@ export const INDEX_HTML: string = `<!doctype html>
 </body>
 </html>
 `;
+
+/**
+ * INDEX_HTML 内联脚本的 sha256/base64(CSP script-src 精确放行,审查 Low 2026-09-17 批 3)。
+ * 模块加载时对模板静态计算——脚本内容变更后 hash 天然同步,无手工维护漂移面;
+ * INDEX_HTML 仅一段无属性 <script>(代码评审契约:新增内联脚本须并段或同步改 CSP 消费方)。
+ * 提取对齐 HTML 解析语义:开始标签后首个换行被剥离(HTML spec §script-data)、
+ * CRLF 规范化为 LF(parser 行为),尾换行保留——逐字节一致性是 CSP hash 生效前提。
+ */
+export const INDEX_SCRIPT_SHA256: string = (() => {
+  const m = /<script>\r?\n?([\s\S]*?)<\/script>/.exec(INDEX_HTML);
+  if (!m || m[1] === undefined) throw new Error('INDEX_HTML: inline <script> block not found for CSP hash');
+  const body = m[1].replace(/\r\n/g, '\n');
+  return createHash('sha256').update(body).digest('base64');
+})();
