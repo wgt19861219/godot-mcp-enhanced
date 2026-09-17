@@ -116,6 +116,10 @@ const FILE_ERR_STATUS: Record<FilesErrorCode, number> = {
   forbidden: 403, not_found: 404, too_large: 413, conflict: 409, bad_request: 400,
 };
 
+/** 通用 JSON body 上限(审查 Low,2026-09-17 批 3):除 file save(600KB 语义,I-6 独立
+ *  预检)外的 POST body 统一 64KB——projectPath/path 等合法字段远小于此,超限即恶意/失控。 */
+const JSON_BODY_MAX_BYTES = 64 * 1024;
+
 // 模块级激活标志:只读查询导出(launcher guard 消费),由本类 start/stop 驱动——
 // 非依赖注入 setter,不违反 AGENTS.md 模块级 setter 红线(设计 §3.1)。
 let _active = false;
@@ -397,14 +401,27 @@ export class WebGuiServer {
   // 语义与读路径一致,不放松。
 
   /** POST body 读取共用(自原 handleSessionControl 的 for-await 模式抽出)。
-   *  JSON 解析失败 → {ok:false}(调用方回 400 bad json)。 */
-  private async readJsonBody(req: IncomingMessage): Promise<{ ok: true; value: unknown } | { ok: false }> {
+   *  上限双守卫(审查 Low,2026-09-17 批 3):content-length 头预检 + chunked(无 CL)
+   *  累计字节断流——超限即弃读返回,不整读进内存。file save 调用方显式传 600KB
+   *  (I-6 语义),其余端点默认 64KB。
+   *  JSON 解析失败 → reason bad_json(调用方 400);超限 → too_large(调用方 413)。 */
+  private async readJsonBody(req: IncomingMessage, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'bad_json' | 'too_large' }> {
+    const cl = Number(req.headers['content-length'] ?? 0);
+    if (cl > maxBytes) return { ok: false, reason: 'too_large' };
     let raw = '';
-    for await (const chunk of req) raw += chunk;
+    let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        req.resume();   // 丢弃剩余 body(防连接悬挂/内存驻留),上层回 413
+        return { ok: false, reason: 'too_large' };
+      }
+      raw += chunk;
+    }
     try {
       return { ok: true, value: JSON.parse(raw) as unknown };
     } catch {
-      return { ok: false };
+      return { ok: false, reason: 'bad_json' };
     }
   }
 
@@ -435,8 +452,13 @@ export class WebGuiServer {
         }
         const f = this.opts.files;
         if (!f) return json(503, { error: 'not configured' });
-        const body = await this.readJsonBody(req);
-        if (!body.ok) return json(400, { error: 'bad json' });
+        // readJsonBody 传 600KB(与上方 CL 预检同值):file save 语义上限独立于通用 64KB,
+        // 且防 chunked 无 CL 绕过预检后整读进内存。
+        const body = await this.readJsonBody(req, 600 * 1024);
+        if (!body.ok) {
+          if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
+          return json(400, { error: 'bad json' });
+        }
         const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
         const { project, path, content, baseMtime } = fields as Partial<Record<'project' | 'path' | 'content' | 'baseMtime', unknown>>;
         if (typeof project !== 'string' || typeof path !== 'string' || typeof content !== 'string' || typeof baseMtime !== 'number') {
@@ -490,8 +512,12 @@ export class WebGuiServer {
         }
       }
 
+      // 通用 body 读取:64KB 统一上限(审查 Low);超限 413 先于 JSON 解析
       const body = await this.readJsonBody(req);
-      if (!body.ok) return json(400, { error: 'bad json' });
+      if (!body.ok) {
+        if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
+        return json(400, { error: 'bad json' });
+      }
       const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
 
       // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────

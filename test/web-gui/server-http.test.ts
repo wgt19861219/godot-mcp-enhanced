@@ -4,6 +4,7 @@
 // 面板控制第一版(2026-09-14 批准设计):POST /api/sessions/stop + /api/sessions/remove。
 
 import net from 'node:net';
+import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -244,6 +245,40 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(stopRes.status).toBe(400);
     const removeRes = await post(t.base, '/api/sessions/remove', t.token, 'nope');
     expect(removeRes.status).toBe(400);
+  });
+
+  // ── readJsonBody 统一上限(审查 Low,2026-09-17 批 3):通用 JSON POST 64KB 预检 ──
+  //    content-length 与 chunked(无 CL)两形态都拦;file save 的 600KB 语义独立保留
+  //    (server-files.test.ts 锁定,此处通用端点只认 64KB)。
+  it('通用 POST body >64KB(content-length 形式)→ 413;鉴权仍在预检之前(无 token 401 优先)', async () => {
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: true }) });
+    active = t.srv;
+    const big = await post(t.base, '/api/sessions/stop', t.token, { projectPath: 'D:/x', pad: 'x'.repeat(70 * 1024) });
+    expect(big.status).toBe(413);
+    expect(await big.json()).toEqual({ error: 'payload too large' });
+    // 鉴权先于预检:错 token + 超大 body → 401(不因 413 掩盖鉴权语义)
+    const unauth = await fetch(t.base + '/api/sessions/stop', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectPath: 'D:/x', pad: 'x'.repeat(70 * 1024) }),
+    });
+    expect(unauth.status).toBe(401);
+  });
+
+  it('通用 POST chunked 无 content-length:累计超 64KB → 413(不整读进内存)', async () => {
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: true }) });
+    active = t.srv;
+    const res = await new Promise<{ status: number }>((resolve, reject) => {
+      // 原生 http 客户端不设 content-length → 自动 chunked(undici fetch 会补 CL)
+      const req = http.request({
+        host: '127.0.0.1', port: t.srv.port, path: '/api/sessions/stop', method: 'POST',
+        headers: { 'x-gui-token': t.token, 'content-type': 'application/json' },
+      }, (r) => { r.resume(); r.on('end', () => resolve({ status: r.statusCode ?? 0 })); });
+      req.on('error', reject);
+      req.write('{"projectPath":"D:/x","pad":"');
+      for (let i = 0; i < 70; i++) req.write('x'.repeat(1024));   // 累计 ~70KB,分块喂
+      req.end('"}');
+    });
+    expect(res.status).toBe(413);
   });
 
   it('remove:ok → 200;alive → 409 {error:"session is still running"};not_found → 404;未注入 → 503', async () => {

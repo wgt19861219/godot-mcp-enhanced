@@ -122,6 +122,16 @@ describe('WebGuiServer files 端点+assets(spec §4/§5,2026-09-15 v2)', () => {
     expect(r.status).toBe(413);
   });
 
+  // ── readJsonBody 统一上限(审查 Low,2026-09-17 批 3)防误伤:file save 语义上限
+  //    是 600KB(有自己的 CL 预检),64KB 通用限不得拦下 64KB<x<600KB 的合法保存。
+  it('file POST 100KB(64KB<x<600KB)→ 不被 64KB 通用限误伤(200 保存成功)', async () => {
+    const t = await startSrv(); active = t.srv;
+    const cur = await (await fetch(t.base + `/api/projects/file?project=${encodeURIComponent(proj)}&path=main.gd&mode=text`, { headers: H(t.token) })).json();
+    const r = await fetch(t.base + '/api/projects/file', { method: 'POST', headers: { ...H(t.token), 'content-type': 'application/json' },
+      body: JSON.stringify({ project: proj, path: 'main.gd', content: 'x'.repeat(100 * 1024), baseMtime: cur.mtime }) });
+    expect(r.status).toBe(200);
+  });
+
   it('file POST readOnly → 403(spec §3.3-1 第一重护栏,审查 fix round 1)', async () => {
     const t = await startSrv({ isReadOnly: () => true }); active = t.srv;
     const r = await fetch(t.base + '/api/projects/file', { method: 'POST', headers: { ...H(t.token), 'content-type': 'application/json' },
