@@ -3340,7 +3340,7 @@ func _cmd_playtest_seed(params: Dictionary, pid: int) -> Variant:
 	# playtest 时拒绝，防 peer B 静默抢占 owner 覆盖全局 RNG 破坏 peer A 的确定性重放。
 	if _playtest_owner_pid != -1 and _playtest_owner_pid != pid:
 		return {"error": {"code": -1, "message": "playtest session held by another session (owner_pid=%d)" % _playtest_owner_pid}}
-	var seed_value: int = int(params.get("seed", 0))
+	var seed_value: int = _int_guarded(params.get("seed"), 0)
 	seed(seed_value)  # @GlobalScope.seed,影响全局 randi/randf
 	_playtest_active = true
 	# 2026-08-07 审查 P2 修复：记录 playtest 持有者，_cleanup_peer_state 只在 owner 断开时还原
@@ -3351,7 +3351,7 @@ func _cmd_playtest_fixed_delta(params: Dictionary, pid: int) -> Variant:
 	# 2026-08-14 审查 D-3 修复：owner 互斥（同 _cmd_playtest_seed，防抢占 physics 锁）
 	if _playtest_owner_pid != -1 and _playtest_owner_pid != pid:
 		return {"error": {"code": -1, "message": "playtest session held by another session (owner_pid=%d)" % _playtest_owner_pid}}
-	var hz: int = int(params.get("hz", 60))
+	var hz: int = _int_guarded(params.get("hz"), 60)
 	if hz < 1 or hz > 1000:
 		return {"error": {"code": -1, "message": "hz must be 1-1000, got %d" % hz}}
 	# 保存原值(restore 时还原)
@@ -3547,7 +3547,7 @@ func _cmd_playtest_step(params: Dictionary, pid: int) -> Dictionary:
 	# _process 每帧递减 frames_remaining(I-2 修复:加入帧不递减,下一帧起计),到 0 时 push 响应。
 	# 非真 await physics_frame coroutine(bridge TCP 同步模型不支持),而是 _process 计数器轮询,
 	# 每个递减对应一次 _process 调用 ≈ 推进一帧(physics 在 _process 前由引擎跑)。
-	var frames: int = int(params.get("frames", 1))
+	var frames: int = _int_guarded(params.get("frames"), 1)
 	if frames < 1 or frames > 60:
 		return {"error": {"code": -1, "message": "frames must be 1-60, got %d" % frames}}
 	# P2-2: report 参数校验(结构化终态读数);经临时变量随哨兵传 pending(数组走不了字符串编码)
@@ -3646,10 +3646,10 @@ func _cmd_control_step_until(params: Dictionary, pid: int) -> Dictionary:
 		if not _is_safe_value(cdict["value"]):
 			return {"error": {"code": -1, "message": "condition value failed _is_safe_value (几何/标量/PackedArray only)"}}
 		validated.append(cdict)
-	var max_frames: int = int(params.get("max_frames", _CONTROL_MAX_FRAMES))
+	var max_frames: int = _int_guarded(params.get("max_frames"), _CONTROL_MAX_FRAMES)
 	if max_frames < 1 or max_frames > _CONTROL_MAX_FRAMES:
 		return {"error": {"code": -1, "message": "max_frames must be 1-%d, got %d" % [_CONTROL_MAX_FRAMES, max_frames]}}
-	var wall_budget_ms: int = int(params.get("wall_budget_ms", _CONTROL_DEFAULT_WALL_BUDGET_MS))
+	var wall_budget_ms: int = _int_guarded(params.get("wall_budget_ms"), _CONTROL_DEFAULT_WALL_BUDGET_MS)
 	# 2026-08-14 审查 D-5 修复：上限压 50s（clamp）。等待期 bridge 无字节往来，60s 会被
 	# 同文件 INACTIVITY_TIMEOUT=60.0 idle 断连切断（响应丢失+状态突变），压到 50s 留 10s 余量。
 	wall_budget_ms = clampi(wall_budget_ms, 1000, 50000)
@@ -4088,9 +4088,9 @@ class _ClickSignalRecorder:
 # ─── P3-1 (2026-09-11): 弱网注入命令 ────────────────────────────────────────
 
 func _cmd_network_set_conditions(params: Dictionary) -> Variant:
-	var latency := float(params.get("latency_ms", 0.0))
-	var loss := float(params.get("loss_pct", 0.0))
-	var jitter := float(params.get("jitter_ms", 0.0))
+	var latency := _num(params.get("latency_ms"), 0.0)
+	var loss := _num(params.get("loss_pct"), 0.0)
+	var jitter := _num(params.get("jitter_ms"), 0.0)
 	if latency < 0.0 or loss < 0.0 or loss > 100.0 or jitter < 0.0:
 		return {"error": {"code": -1, "message": "Invalid conditions: latency_ms/jitter_ms >= 0, 0 <= loss_pct <= 100 (got latency=%f loss=%f jitter=%f)" % [latency, loss, jitter]}}
 	var tree := get_tree()
