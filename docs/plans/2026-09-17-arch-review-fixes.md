@@ -296,6 +296,8 @@ if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
 
 ## 批 4:bridge 行为对称(M-5 + M-6/O3 + M-8 + Low×2)
 
+> 范围增补(2026-09-17 批 1 终审 I-1):addons editor 命令族 33 处同款 `int/float(params.get(...))` 裸转(animtree_commands.gd:182 / asset_factory.gd:49-79×15 / custom_meshes.gd:14-205×19 / debug_commands.gd:107/124/325 / nav_commands.gd:273-274 / test_commands.gd:108)——2026-09-17 审查 H-2 的覆盖盲区(报告只锁 mcp_bridge.gd)。风险低于 bridge(editor 常驻不挂死 + TS zod 前置),按批 1 先例建 editor 侧守卫副本 + 契约负向断言。改 addons 触发 `npm run check:gdscript`。
+
 ### Task 4.1:uninstall 判活护栏(M-5)
 
 **Files:** Modify `src/tools/game-bridge.ts:694-702`(grep `mcp_bridge_.*secret` 的删除逻辑重定位)
