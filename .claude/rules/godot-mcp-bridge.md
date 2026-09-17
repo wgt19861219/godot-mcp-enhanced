@@ -48,6 +48,12 @@ Game Bridge 是 MCP 服务端与**运行中的游戏**之间的 TCP 通信层。
 | `send_text` | 输入文本（text） |
 | `send_input_sequence` | H1(2026-08-20) 帧定时输入时间线（timeline=[{at_frame:1-600 开窗后第N帧, type:"action"/"key"/"mouse_click"/"mouse_move"/"touch"/"drag", ...事件参数}], settle_frames, wall_budget_ms）。延迟响应;owner 互斥同 control 层;frozen 下自动开窗播放+完成 refreeze;与 playtest.seed/fixed_delta 组合=确定性完全体。action 事件需 name 在项目 InputMap |
 
+**输入注入管线要点（反馈批次C 2026-09-17 真机定谳）**：
+- 坐标口径：x/y 为**窗口/视口坐标**（非屏幕坐标、非控件本地坐标）。引擎派发时自动局部化——Control 的 `gui_input` 收到 `position` 为控件局部坐标、`global_position` 为窗口坐标；跨容器/CanvasLayer 取点用 `get_node_layout` 的 global 值
+- 覆盖面（e2e 锚定 `test/e2e-bridge-mouse-gui.test.ts`）：Button/TextureButton 的 pressed 链与普通 Control 的 `gui_input`（含 press→release 位移判 tap 的自定义判定链）均触发；headless 与带窗口 spawn 均正常派发；注入事件 device=0/global_position 与真实管线一致
+- 注入无效排查顺序：① 多实例连错——`ping` 核对 pid/project 指纹 ② 坐标口径错位（控件本地/父容器坐标误当窗口坐标）③ 项目内 addons 旧版——`game_bridge_install` 重装同步
+- 复杂交互（自定义 tap/drag 判定链）：press 与 release 分两次注入并间隔若干帧；帧对齐需求走 `send_input_sequence`
+
 ### 写入 — game_write
 
 | method | 说明 |

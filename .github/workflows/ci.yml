@@ -228,7 +228,7 @@ jobs:
         # bridge-feedback-pits/bridge-input-seq/gd-symmetry——其 L2 用例在 CI 从未跑过),
         # 并转对账制:check job 的 check-e2e-l2-coverage 步骤机械校验"引用 GODOT_MCP_E2E_L2
         # gate 的文件 ⊆ 本列表",新 L2 文件漏加即 CI 红,白名单漏加事故(p3/p8/p7 三连)不再可能。
-        run: xvfb-run -a -s '-screen 0 1920x1080x24' npx vitest run --no-file-parallelism test/e2e-full-tool-verification.test.ts test/e2e-p1-p5.test.ts test/tools/data-import-integration.test.ts test/e2e-resilience-headless.test.ts test/gdscript-unit.test.ts test/gdscript-bridge-error-capture.test.ts test/e2e-bridge-get-node-layout.test.ts test/p3-e2e.test.ts test/p8-e2e.test.ts test/p7-e2e.test.ts test/e2e-qa-suite.test.ts test/e2e-qa-assert-batch.test.ts test/e2e-bridge-feedback-pits.test.ts test/e2e-bridge-input-sequence.test.ts test/e2e-gd-symmetry.test.ts --reporter=json --outputFile=coverage/e2e-report-${{ matrix.name }}.json
+        run: xvfb-run -a -s '-screen 0 1920x1080x24' npx vitest run --no-file-parallelism test/e2e-full-tool-verification.test.ts test/e2e-p1-p5.test.ts test/tools/data-import-integration.test.ts test/e2e-resilience-headless.test.ts test/gdscript-unit.test.ts test/gdscript-bridge-error-capture.test.ts test/e2e-bridge-get-node-layout.test.ts test/p3-e2e.test.ts test/p8-e2e.test.ts test/p7-e2e.test.ts test/e2e-qa-suite.test.ts test/e2e-qa-assert-batch.test.ts test/e2e-bridge-feedback-pits.test.ts test/e2e-bridge-input-sequence.test.ts test/e2e-gd-symmetry.test.ts test/e2e-bridge-mouse-gui.test.ts --reporter=json --outputFile=coverage/e2e-report-${{ matrix.name }}.json
         env:
           GODOT_PATH: ${{ env.GODOT_PATH }}
           # 2026-08-06 审查测试-P2-4：L2 bridge 字段级守护。

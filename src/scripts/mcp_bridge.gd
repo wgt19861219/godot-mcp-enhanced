@@ -2399,8 +2399,11 @@ func _is_valid_touch_index(v: Variant) -> bool:
 
 
 func _cmd_send_mouse_click(params: Dictionary) -> Variant:
-	var x: float = float(params.get("x", 0))
-	var y: float = float(params.get("y", 0))
+	# 反馈批次C (2026-09-17):x/y 裸 float() 是 2026-09-03 审查 I-C 修复的漏网点
+	# (mouse_move/drag 已改 _num 守卫,此处漏改)——null/容器参数触发 SCRIPT ERROR,
+	# 同步分发无异常隔离 → 响应静默变 result:null(真机 headless 实证)。对齐 _num 收口。
+	var x: float = _num(params.get("x", 0), 0.0)
+	var y: float = _num(params.get("y", 0), 0.0)
 	var button: int = _mouse_button_from_value(params.get("button", 1))
 	if button == -1:
 		return {"error": {"code": -1, "message": "Invalid mouse button: %s (use 1-9 or left/right/middle)" % str(params.get("button", 1))}}
@@ -2410,6 +2413,9 @@ func _cmd_send_mouse_click(params: Dictionary) -> Variant:
 	event.button_index = button
 	event.pressed = pressed
 	event.global_position = Vector2(x, y)
+	# 反馈批次C (2026-09-17,09-10 建议①):显式 device=0 对齐真实鼠标事件(真实事件 device=0;
+	# 不设时默认 -1,当前引擎派发链会规范化为 0——真机 4.6.3 实测——但不依赖该未文档化行为)。
+	event.device = 0
 	Input.parse_input_event(event)
 	return {"success": true, "x": x, "y": y, "button": button}
 
@@ -2421,6 +2427,8 @@ func _cmd_send_mouse_move(params: Dictionary) -> Variant:
 	var event := InputEventMouseMotion.new()
 	event.position = Vector2(x, y)
 	event.global_position = Vector2(x, y)
+	# 反馈批次C (2026-09-17):device=0 对齐真实管线(同 _cmd_send_mouse_click)
+	event.device = 0
 	# 反馈 2026-08-22 (CardGame2): 可选 button_mask(1=left 2=right 4=middle 位掩码)——
 	# move 事件默认不带按键状态,非 drag motion;传掩码可模拟按住拖动(先 press 再带 mask 的 move)。
 	var mask := int(_num(params.get("button_mask", 0), 0.0))
@@ -2433,8 +2441,9 @@ func _cmd_send_mouse_move(params: Dictionary) -> Variant:
 
 # 阶段2b IMP-11: 触摸事件注入(对齐 recording_commands.gd :197 + recording.ts touch 回放契约)
 func _cmd_send_touch(params: Dictionary) -> Variant:
-	var x: float = float(params.get("x", 0))
-	var y: float = float(params.get("y", 0))
+	# 反馈批次C (2026-09-17):x/y 裸 float() 同 _cmd_send_mouse_click 的 I-C 漏网收口
+	var x: float = _num(params.get("x", 0), 0.0)
+	var y: float = _num(params.get("y", 0), 0.0)
 	var pressed: bool = params.get("pressed", true)
 	# 审查N-1(对称):index 严格校验,直接调用路径与 timeline 深预检同语义
 	if not _is_valid_touch_index(params.get("index", 0)):
@@ -3945,6 +3954,8 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 			press.pressed = true
 			press.position = center
 			press.global_position = center
+			# 反馈批次C (2026-09-17):device=0 对齐真实管线(同 _cmd_send_mouse_click)
+			press.device = 0
 			vp.push_input(press)
 			await get_tree().process_frame
 			await get_tree().process_frame
@@ -3953,6 +3964,7 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 			release.pressed = false
 			release.position = center
 			release.global_position = center
+			release.device = 0
 			vp.push_input(release)
 			await get_tree().process_frame
 			await get_tree().process_frame

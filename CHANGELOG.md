@@ -17,6 +17,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - dashboard TUI/aggregator：`meta.project_path` 恒 miss 死逻辑改读 `entry.project`；LogReader `getTodayFile()` UTC/本地日期错位（东八区每日 00:00-08:00 启动断流）。
 
+## [0.33.5] - 2026-09-17
+
+> 插件反馈批次 C（输入注入：09-10 send_mouse_click gui_input 不触发 / 09-12 headless 注入不派发，双双真机定谳为上游不可复现）；规则模板 bridge 输入节标注触发硬门禁 bump（N-C 条款）；npm publish / tag 待用户指令。
+
+### Fixed
+- **send_mouse_click/send_mouse_move/click_button real_event 注入事件显式 device=0**（09-10 反馈建议①）：global_position 上游 2026-05-29（ec65e2e5）起已在位、device 此前依赖引擎派发链对默认 -1 的未文档化规范化（真机 4.6.3 实测探针读到 0）——现在显式设置，消除对引擎内部行为的隐式依赖；timeline 注入复用同函数自动跟随。
+- **send_mouse_click/send_touch 的 x/y 裸 float() 收口为 _num 守卫**（2026-09-03 审查 I-C 漏网点：mouse_move/drag 已改守卫，这两处漏改）：null/容器参数触发 SCRIPT ERROR，同步分发无异常隔离 → 响应静默变 `result:null`（真机 headless 实证，第一轮 C2 复现即栽在此处）。
+
+### Added
+- **输入注入 e2e（带窗口 + headless 双形态）**：`test/e2e-bridge-mouse-gui.test.ts` + fixture `mouse-gui-e2e`（普通 Control gui_input + 复刻 CardGame2 press→release 位移判 tap 链 + Button 对照 + _input 管线探针）——锚定 09-10 反馈「非 Button 控件 gui_input 不触发」与 09-12「headless 整链不派发」均在上游当前版本**不可复现**（两形态全链正常：Button pressed / Control gui_input / tap 判定 / motion / _input 全触发）；headless describe 手动 spawn `--headless` 进程 + bridge 直连，防引擎未来行为回归。
+- **契约测试**：`test/bridge-feedback-batch-c-contract.test.ts` 锚定 device=0 三处落位 + x/y _num 守卫无裸转残留。
+- **规则文档标注**（bridge 双副本）：输入注入管线要点——坐标口径（窗口坐标 + 引擎派发自动局部化语义）、覆盖面实测结论、注入无效排查清单（多实例连错→坐标口径→addons 旧版）、复杂交互引导（press/release 分次注入 / send_input_sequence 帧对齐）。
+
 ## [0.33.4] - 2026-09-17
 
 > 插件反馈批次 B（scene 序列化：tscn 损坏/数据丢失类，CardGame2 2026-09-03~09-10 反馈）；规则模板白名单变更触发硬门禁 bump（N-C 条款）；npm publish / tag 待用户指令。

@@ -7,7 +7,7 @@
 - securityLevel：danger-api 11 / guarded 24 / safe 11
 - risk：read 133 / write 112 / destructive 10 / process 16
 - L2 覆盖：covered 0 / partial 0 / none 46
-- token 预算：tools/list ≈ 105668B / ~26417 tokens（description 15962B / schema 89706B，schema 占 85%）
+- token 预算：tools/list ≈ 105681B / ~26420 tokens（description 15962B / schema 89719B，schema 占 85%）
 - annotations：readOnly 10 / destructive 5 / idempotent 13
 > 注：标 read 但实际启进程/有副作用(项目有意信任不确认): `validation.run_and_verify`, `validation.verify_delivery`
 
@@ -83,7 +83,7 @@
 
 ## token 预算 TOP 5
 - `ui` (ui): desc 709B / schema 11011B / total 11720B
-- `game` (bridge): desc 393B / schema 7626B / total 8019B
+- `game` (bridge): desc 393B / schema 7639B / total 8032B
 - `scene` (core): desc 277B / schema 5980B / total 6257B
 - `workflow` (profiler): desc 228B / schema 4224B / total 4452B
 - `screenshot` (visual): desc 269B / schema 3737B / total 4006B
