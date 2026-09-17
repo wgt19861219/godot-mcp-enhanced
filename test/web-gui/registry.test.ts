@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken, rotateSharedToken } from '../../src/web-gui/registry.js';
+import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken, rotateSharedToken, parseRegistrationFile } from '../../src/web-gui/registry.js';
 import { PROJECT_ENTRY_NAME } from '../../src/web-gui/portal.js';
 
 const ALIVE = () => true;
@@ -125,5 +125,26 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     const page = readFileSync(join(root, PROJECT_ENTRY_NAME), 'utf-8');
     expect(page).not.toBe('OLD-PAGE');
     expect(page).toContain(t2);
+  });
+
+  // ── parseRegistrationFile 抽取(审查 Low,2026-09-17 批 3):listRegistrations 与
+  //    sweepStaleRegistrations 共用的形状校验单一来源,直接单测锁定判定语义 ──
+  it('parseRegistrationFile:合法登记读回;损坏 JSON/形状不符/坏 token 字符集 → null;不存在 → null', async () => {
+    const entry = { pid: 4242, port: 9550, token: 'tok_abc-123', startedAt: 't' };
+    writeFileSync(join(dir, '4242.json'), JSON.stringify(entry), 'utf-8');
+    await expect(parseRegistrationFile(dir, '4242.json')).resolves.toEqual(entry);
+    await expect(parseRegistrationFile(dir, 'no-such.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad1.json'), '{not-json', 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad1.json')).resolves.toBeNull();
+    // 三字段判型逐项:pid/port 非 number、token 非 string → null
+    writeFileSync(join(dir, 'bad2.json'), JSON.stringify({ pid: '4242', port: 9550, token: 't' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad2.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad3.json'), JSON.stringify({ pid: 1, port: '9550', token: 't' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad3.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad4.json'), JSON.stringify({ pid: 1, port: 9550, token: 42 }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad4.json')).resolves.toBeNull();
+    // token 字符集白名单(/^[A-Za-z0-9_-]+$/):shell 元字符/空格 → null
+    writeFileSync(join(dir, 'bad5.json'), JSON.stringify({ pid: 1, port: 9550, token: 'a b;rm' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad5.json')).resolves.toBeNull();
   });
 });

@@ -145,6 +145,22 @@ export async function removeRegistration(pid: number, opts: RegistryOpts = {}): 
   try { await unlink(join(dir, `${pid}.json`)); } catch { /* ENOENT 忽略——best-effort */ }
 }
 
+/**
+ * 登记文件读取 + 形状校验(审查 Low,2026-09-17 批 3 抽取):listRegistrations 与
+ * sweepStaleRegistrations 共用的单一校验来源。读失败/JSON 损坏/三字段判型不过/
+ * token 字符集白名单(/^[A-Za-z0-9_-]+$/,无 shell 元字符即安全等价)任一不过 → null;
+ * 合法返回 WebGuiRegistration。
+ */
+export async function parseRegistrationFile(dir: string, fileName: string): Promise<WebGuiRegistration | null> {
+  try {
+    const raw = JSON.parse(await readFile(join(dir, fileName), 'utf-8')) as WebGuiRegistration;
+    if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
 export async function listRegistrations(opts: RegistryOpts = {}): Promise<WebGuiRegistration[]> {
   const dir = opts.dir ?? webGuiRegistryDir();
   const isPidAlive = opts.isPidAlive ?? defaultIsPidAlive;
@@ -153,17 +169,14 @@ export async function listRegistrations(opts: RegistryOpts = {}): Promise<WebGui
   try { files = await readdir(dir); } catch { return out; }   // 目录不存在 = 无登记
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
-    try {
-      const raw = JSON.parse(await readFile(join(dir, f), 'utf-8')) as WebGuiRegistration;
-      // token 格式校验:字母数字下划线连字符集——无 shell 元字符即安全等价(关掉 defaultOpener exec 注入残余面)
-      if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) continue;
-      if (!isPidAlive(raw.pid)) {
-        // 死条目顺手清(SIGKILL 残留);按当前文件名删——文件名与内容 pid 不一致的异常残留文件也能清掉
-        await unlink(join(dir, f)).catch(() => {});
-        continue;
-      }
-      out.push(raw);
-    } catch { /* 损坏文件跳过 */ }
+    const raw = await parseRegistrationFile(dir, f);
+    if (!raw) continue;
+    if (!isPidAlive(raw.pid)) {
+      // 死条目顺手清(SIGKILL 残留);按当前文件名删——文件名与内容 pid 不一致的异常残留文件也能清掉
+      await unlink(join(dir, f)).catch(() => {});
+      continue;
+    }
+    out.push(raw);
   }
   return out;
 }
@@ -184,14 +197,12 @@ export async function sweepStaleRegistrations(opts: RegistryOpts = {}): Promise<
   try { files = await readdir(dir); } catch { return 0; }
   for (const f of files) {
     if (!f.endsWith('.json')) continue;
-    try {
-      const raw = JSON.parse(await readFile(join(dir, f), 'utf-8')) as WebGuiRegistration;
-      if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) continue;
-      if (!isPidAlive(raw.pid)) {
-        await unlink(join(dir, f)).catch(() => {});
-        removed++;
-      }
-    } catch { /* 损坏文件跳过 */ }
+    const raw = await parseRegistrationFile(dir, f);
+    if (!raw) continue;
+    if (!isPidAlive(raw.pid)) {
+      await unlink(join(dir, f)).catch(() => {});
+      removed++;
+    }
   }
   if (removed > 0) getLogger().info('web-gui', `registry sweep: removed ${removed} stale entr${removed === 1 ? 'y' : 'ies'}`);
   return removed;
