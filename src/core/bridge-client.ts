@@ -8,7 +8,7 @@
  * 依赖边界(与 core 层约束一致):
  * - 不依赖 tools(lint 门禁 no-restricted-imports 拦截)
  * - 不依赖 dashboard:连接成功时的 Dashboard 自动拉起经 setOnBridgeConnected
- *   回调注入(由 tools/game-bridge.ts 模块加载时接线),避免 core→dashboard→helpers→core 环
+ *   回调注入(由 GodotServer.run() 装配——2026-09-17 H-3/O2 归位),避免 core→dashboard→helpers→core 环
  * - parseAutoloadNames 取自 src 根 gdscript-executor(autoload 健康预检;
  *   gdscript-executor→tools/shared 的既有环是历史债,非本下沉引入)
  */
@@ -228,10 +228,10 @@ let _socketAuthenticated = false;
 let _socketBuffer = '';
 let _connectionLock: Promise<Socket> | null = null;
 
-// 首次连接成功回调(由 tools/game-bridge.ts 注入 launchDashboardOnce;core 不依赖 dashboard)
+// 首次连接成功回调(由 GodotServer.run() 装配 launchDashboardOnce——2026-09-17 H-3/O2 归位;core 不依赖 dashboard)
 let _onBridgeConnected: (() => void) | null = null;
 
-/** 注入"首次 bridge 连接成功"回调(tools 层接线 Dashboard 自动拉起);传 null 注销。 */
+/** 注入"首次 bridge 连接成功"回调(控制面 GodotServer.run() 接线 Dashboard 自动拉起);传 null 注销。 */
 export function setOnBridgeConnected(cb: (() => void) | null): void {
   _onBridgeConnected = cb;
 }
