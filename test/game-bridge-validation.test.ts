@@ -9,7 +9,7 @@
 //
 // 模式参考:game-bridge-wait.test.ts / game-bridge-playtest.test.ts(同目录"按职责切片 + 不 mock net")。
 import { describe, it, expect } from 'vitest';
-import { validateBridgePath, validateWaitPropertyParams, clampTimeoutMs } from '../src/tools/game-bridge.js';
+import { validateBridgePath, validateWaitPropertyParams, clampTimeoutMs, extractBridgeScriptVersion, annotatePingWithVersion } from '../src/tools/game-bridge.js';
 
 describe('validateBridgePath (T-1/I-1: /root/ 绝对路径校验)', () => {
   describe('T-1: game_write/wait/query 的 path 参数', () => {
@@ -179,5 +179,52 @@ describe('clampTimeoutMs (边界值,补当前零覆盖)', () => {
     expect(clampTimeoutMs(undefined, 50, 2000, 200)).toBe(200);
     expect(clampTimeoutMs(10, 50, 2000, 200)).toBe(50);
     expect(clampTimeoutMs(99999, 50, 2000, 200)).toBe(2000);
+  });
+});
+
+// ── A2 (2026-09-16 反馈批): bridge 版本指纹(纯函数,零 mock) ──────────────────
+describe('extractBridgeScriptVersion (A2: 从 bundled mcp_bridge.gd 提取版本指纹)', () => {
+  it('标准常量行 → 提取版本', () => {
+    expect(extractBridgeScriptVersion('const INACTIVITY_TIMEOUT := 60.0\nconst BRIDGE_SCRIPT_VERSION := "0.33.3"\n')).toBe('0.33.3');
+  });
+
+  it('无指纹(旧版 GD)→ null', () => {
+    expect(extractBridgeScriptVersion('const PROTOCOL_VERSION := "1.0"\n')).toBeNull();
+  });
+
+  it('空内容 / 非匹配形态 → null(不炸)', () => {
+    expect(extractBridgeScriptVersion('')).toBeNull();
+    expect(extractBridgeScriptVersion('const BRIDGE_SCRIPT_VERSION := 1.0\n')).toBeNull();  // 非 String 字面量
+  });
+});
+
+describe('annotatePingWithVersion (A2: ping 响应版本比对注解)', () => {
+  it('bundled 为 null(提取失败)→ 原样返回不注解', () => {
+    const result = { pong: true, bridgeVersion: '0.33.3' };
+    expect(annotatePingWithVersion(result, null)).toBe(result);
+  });
+
+  it('远端版本一致 → 只附加 bundledBridgeVersion,无 warning', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.33.3' }, '0.33.3');
+    expect(annotated.bundledBridgeVersion).toBe('0.33.3');
+    expect(annotated.versionWarning).toBeUndefined();
+  });
+
+  it('远端版本旧(五踩场景)→ versionWarning 含 force 刷新指引', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.32.21' }, '0.33.3');
+    expect(annotated.versionWarning).toContain('0.32.21');
+    expect(annotated.versionWarning).toContain('force: true');
+  });
+
+  it('远端无指纹(旧版 GD)→ warning 标注 unknown 而非 undefined', () => {
+    const annotated = annotatePingWithVersion({ pong: true }, '0.33.3');
+    expect(annotated.versionWarning).toContain('unknown (old GD without version fingerprint)');
+  });
+
+  it('不改入参(纯函数,返回新对象)', () => {
+    const result = { pong: true, bridgeVersion: '0.32.21' };
+    annotatePingWithVersion(result, '0.33.3');
+    expect(result.versionWarning).toBeUndefined();
+    expect(result.bundledBridgeVersion).toBeUndefined();
   });
 });

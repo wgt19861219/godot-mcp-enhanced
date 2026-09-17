@@ -30,7 +30,8 @@ describe('F2 touch_drag 双侧字段契约', () => {
     const src = read('addons/godot_mcp_server/commands/recording_commands.gd');
     expect(src).toContain('"touch_drag"'); // match 分支键
     expect(src).toContain('ie.relative =');
-    expect(src).toContain('ie.speed =');
+    expect(src).toContain('ie.velocity =');
+    expect(src).not.toContain('ie.speed =');
   });
 
   // TS 侧 canonical 集合(三端漂移时此断言先红)

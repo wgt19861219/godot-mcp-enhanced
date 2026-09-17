@@ -2169,6 +2169,16 @@
             "description": "game_bridge_install: 期望的起始监听端口(实际端口由游戏侧 env GODOT_MCP_BRIDGE_PORT 设起点,被占自动递增避让;此参数不影响行为,保留兼容)。实际端口见 ping 响应与实例 registry",
             "default": 9081
           },
+          "force": {
+            "type": "boolean",
+            "description": "install: 项目内 mcp_bridge.gd 与自带版本不同(旧版未同步)时 force=true 覆盖刷新,重启游戏生效。send_drag 等报 Method not found 时用本参数",
+            "default": false
+          },
+          "clean_stale_secrets": {
+            "type": "boolean",
+            "description": "install: 清理 .godot/ 陈旧 mcp_bridge_*.secret(按 registry 新鲜心跳判活,无心跳拒清防误删)。多实例 auth 失败/连错实例时用",
+            "default": false
+          },
           "source_script_path": {
             "type": "string",
             "description": "install_override/uninstall_override: 源调试脚本绝对路径（必须在 ALLOWED_PROJECT_PATHS 白名单内,拷贝到项目根注册为 MCPOVERRIDE_<basename> autoload;插入 [autoload] 段末尾=在游戏 autoload 之后加载,脚本 _ready 可直接访问游戏单例,无需 await <Singleton>.ready）"
@@ -2320,6 +2330,8 @@
       "optionalParams": [
         "project_path",
         "port",
+        "force",
+        "clean_stale_secrets",
         "source_script_path",
         "sub_action",
         "label",
@@ -2386,8 +2398,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 7639,
-        "totalBytes": 8032
+        "schemaBytes": 8093,
+        "totalBytes": 8486
       },
       "annotations": {
         "readOnlyHint": false,

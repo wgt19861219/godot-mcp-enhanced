@@ -26,10 +26,11 @@ const TARGET_FILES = {
   guide: 'docs/使用指南.md',
   changelog: 'CHANGELOG.md',
   readme: 'README.md',
+  bridgeGd: 'src/scripts/mcp_bridge.gd',
 };
 
 // A 类:写入目标(当前版本单值)
-const WRITE_TARGETS = ['manifest', 'pluginCfg', 'serverJson', 'dockerfile', 'guide'];
+const WRITE_TARGETS = ['manifest', 'pluginCfg', 'serverJson', 'dockerfile', 'guide', 'bridgeGd'];
 // B 类:仅校验(版本历史,首条版本号)
 const CHECK_ONLY = ['changelog', 'readme'];
 
@@ -83,6 +84,12 @@ function readVersionFromFile(filepath, logicalName) {
       if (!m) throw new AnchorError(filepath, '未找到版本表 | **vx.y.z** 行(格式可能被改动)');
       return m[1];
     }
+    case 'bridgeGd': {
+      // A2 (2026-09-16 反馈批): bridge 脚本分发版本指纹,与 package.json 同步防漂移
+      const m = content.match(/^const BRIDGE_SCRIPT_VERSION := "([^"\r]*)"/m);
+      if (!m) throw new AnchorError(filepath, '未找到 const BRIDGE_SCRIPT_VERSION := "..." 行(格式可能被改动)');
+      return m[1];
+    }
     default:
       throw new Error(`未知逻辑名: ${logicalName}`);
   }
@@ -111,6 +118,9 @@ function writeVersionToFile(filepath, logicalName, version) {
       break;
     case 'guide':
       updated = content.replace(/(\*\*版本\*\*：)[^\s｜\r]+/, `$1${version}`);
+      break;
+    case 'bridgeGd':
+      updated = content.replace(/(^const BRIDGE_SCRIPT_VERSION := ")[^"\r]*(")/m, `$1${version}$2`);
       break;
     default:
       throw new Error(`不可写的目标: ${logicalName}`);

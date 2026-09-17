@@ -24,7 +24,7 @@ function fixture(files: Record<string, string>): void {
   }
 }
 
-/** 生成 7 文件全一致的 fixture(CHANGELOG 默认含 [Unreleased] 段) */
+/** 生成 9 文件全一致的 fixture(CHANGELOG 默认含 [Unreleased] 段;A2 批后 bridgeGd 也是 A 类) */
 function baseFixture(version: string): Record<string, string> {
   return {
     'package.json': JSON.stringify({ name: 'test', version }, null, 2) + '\n',
@@ -35,6 +35,7 @@ function baseFixture(version: string): Record<string, string> {
     'docs/使用指南.md': `# 使用指南\n\n> **版本**：${version} ｜ **适用 Godot**：4.x\n`,
     'CHANGELOG.md': `# Changelog\n\n## [Unreleased]\n\n## [${version}] - 2026-06-27\n\n### Fixed\n\n- test\n`,
     'README.md': `# Test\n\n| 版本 | 日期 | 说明 |\n|------|------|------|\n| **v${version}** | 2026-06-27 | test |\n`,
+    'src/scripts/mcp_bridge.gd': `extends Node\nconst BRIDGE_SCRIPT_VERSION := "${version}"\n`,
   };
 }
 
@@ -78,6 +79,15 @@ describe('--check 校验模式', () => {
     const r = run(true);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('manifest.json');
+    expect(r.stderr).toContain('0.18.2');
+  });
+
+  it('A 类漂移(bridgeGd):mcp_bridge.gd 常量版本不一致 → exit 1 + 错误含 mcp_bridge.gd(A2 批新增 target)', () => {
+    fixture(baseFixture('0.19.1'));
+    writeFileSync(join(tmpRoot, 'src/scripts/mcp_bridge.gd'), 'extends Node\nconst BRIDGE_SCRIPT_VERSION := "0.18.2"\n', 'utf-8');
+    const r = run(true);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('mcp_bridge.gd');
     expect(r.stderr).toContain('0.18.2');
   });
 
@@ -176,6 +186,15 @@ describe('默认写入模式', () => {
     expect(run(true).status).toBe(0);
   });
 
+  it('写入模式(bridgeGd):漂移 → mcp_bridge.gd 常量被更新为 package 版本', () => {
+    fixture(baseFixture('0.20.0'));
+    writeFileSync(join(tmpRoot, 'src/scripts/mcp_bridge.gd'), 'extends Node\nconst BRIDGE_SCRIPT_VERSION := "0.19.0"\n', 'utf-8');
+    const r = run(false);
+    expect(r.status).toBe(0);
+    const gd = readFileSync(join(tmpRoot, 'src/scripts/mcp_bridge.gd'), 'utf-8');
+    expect(gd).toContain('const BRIDGE_SCRIPT_VERSION := "0.20.0"');
+  });
+
   it('prerelease 写入:package=0.20.0-rc.1,A 类漂移 → 写入接受后缀', () => {
     fixture({
       ...baseFixture('0.20.0-rc.1'),
@@ -201,6 +220,7 @@ describe('默认写入模式', () => {
       'docs/使用指南.md': `# 使用指南${eol}${eol}> **版本**：0.19.0 ｜ x${eol}`,
       'CHANGELOG.md': `# Changelog${eol}${eol}## [Unreleased]${eol}${eol}## [0.20.0] - 2026-06-27${eol}`,
       'README.md': `# Test${eol}${eol}| **v0.20.0** | 2026-06-27 |${eol}`,
+      'src/scripts/mcp_bridge.gd': `extends Node${eol}const BRIDGE_SCRIPT_VERSION := "0.19.0"${eol}`,
     });
     const r = run(false);
     expect(r.status).toBe(0);

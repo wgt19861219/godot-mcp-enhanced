@@ -48,7 +48,7 @@ vi.mock('child_process', async (importOriginal) => {
 });
 vi.mock('../src/dashboard/launcher.js', () => ({ launchDashboardOnce: vi.fn() }));
 
-import { handleTool, setBridgeProjectDir, isBridgeReady, _testBridgeCacheState, registerBridgePushHandler, sendToBridge } from '../src/tools/game-bridge.js';
+import { handleTool, setBridgeProjectDir, isBridgeReady, _testBridgeCacheState, registerBridgePushHandler, sendToBridge, _isPortFailed, resetBridgeState } from '../src/tools/game-bridge.js';
 import * as loggerMod from '../src/core/logger.js';
 
 // ===== helpers =====
@@ -191,6 +191,11 @@ describe('game-bridge error & path validation', () => {
       expect(parsed.error).not.toContain('ECONNREFUSED');  // 不泄露原始错误码给用户
       expect(parsed.suggestion).toEqual(expect.any(String));
       expect(parsed.suggestion.length).toBeGreaterThan(0);
+      // A3 (2026-09-16 反馈批): ECONNREFUSED 自动记入失败端口记忆 —— _doConnect error
+      // handler 调 _markPortFailed(fs mock 下 '/p' 无 registry/secret → 端口解析恒 9081),
+      // 下次 resolveBridgePort 避开该端口降级次新候选(陈旧 secret 误导的自愈链)。
+      expect(_isPortFailed(9081)).toBe(true);
+      resetBridgeState();  // 清失败记忆,防污染后续用例的端口解析
     });
   });
 
