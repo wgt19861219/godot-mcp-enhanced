@@ -186,6 +186,25 @@ const ERROR_PATTERNS: ErrorPattern[] = [
   },
 ];
 
+/** SCRIPT ERROR / ERROR 两分支共享的错误分类(2026-09-18 重复分析收敛):
+ *  按 ERROR_PATTERNS 顺序首个命中即返回;全部未命中返回调用方给定的默认 type/suggestion。
+ *  skipParseError=true 时跳过 parse_error pattern(SCRIPT ERROR 分支——parse error 已在上游独立处理)。 */
+function classifyError(
+  message: string,
+  defaultType: ParsedError['type'],
+  defaultSuggestion: string,
+  options: AnalyzeOptions | undefined,
+  skipParseError: boolean,
+): { type: ParsedError['type']; suggestion: string } {
+  for (const pattern of ERROR_PATTERNS) {
+    if (skipParseError && pattern.type === 'parse_error') continue; // parse_error 已在上游处理
+    if (pattern.test(message, options)) {
+      return { type: pattern.type, suggestion: pattern.suggestion(message) };
+    }
+  }
+  return { type: defaultType, suggestion: defaultSuggestion };
+}
+
 // ===== Location parser =====
 
 interface ParsedLocation {
@@ -315,18 +334,13 @@ export function analyzeOutput(output: string[], options?: AnalyzeOptions): Analy
       const message = trimmed.replace(/^SCRIPT ERROR:\s*/i, '').trim();
       const loc = parseLocation(output, i);
 
-      // Classify based on pattern
-      let errorType: ParsedError['type'] = 'script_error';
-      let suggestion = 'Review the script logic and ensure all variables and methods are correctly referenced.';
-
-      for (const pattern of ERROR_PATTERNS) {
-        if (pattern.type === 'parse_error') continue; // already handled above
-        if (pattern.test(message, options)) {
-          errorType = pattern.type;
-          suggestion = pattern.suggestion(message);
-          break;
-        }
-      }
+      const { type: errorType, suggestion } = classifyError(
+        message,
+        'script_error',
+        'Review the script logic and ensure all variables and methods are correctly referenced.',
+        options,
+        true,
+      );
 
       const error: ParsedError = {
         type: errorType,
@@ -348,16 +362,13 @@ export function analyzeOutput(output: string[], options?: AnalyzeOptions): Analy
       const message = trimmed.replace(/^ERROR:\s*/i, '').trim();
       const loc = parseLocation(output, i);
 
-      let errorType: ParsedError['type'] = 'runtime_error';
-      let suggestion = 'An engine error occurred. Check the Godot documentation for this error message.';
-
-      for (const pattern of ERROR_PATTERNS) {
-        if (pattern.test(message, options)) {
-          errorType = pattern.type;
-          suggestion = pattern.suggestion(message);
-          break;
-        }
-      }
+      const { type: errorType, suggestion } = classifyError(
+        message,
+        'runtime_error',
+        'An engine error occurred. Check the Godot documentation for this error message.',
+        options,
+        false,
+      );
 
       const error: ParsedError = {
         type: errorType,
