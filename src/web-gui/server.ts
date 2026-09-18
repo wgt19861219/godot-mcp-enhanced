@@ -410,11 +410,16 @@ export class WebGuiServer {
    *  上限双守卫(审查 Low,2026-09-17 批 3):content-length 头预检 + chunked(无 CL)
    *  累计字节断流——超限即弃读返回,不整读进内存。file save 调用方显式传 600KB
    *  (I-6 语义),其余端点默认 64KB。
+   *  解码(终审 R1,2026-09-18):chunk 收集为 Buffer[],读完后 Buffer.concat
+   *  一次 toString('utf8')——for-await 的每个 chunk 是 Buffer,若逐段 `+=`(逐段
+   *  隐式 toString)解码,多字节 UTF-8 序列(汉字 3 字节)跨 chunk 边界会被逐段
+   *  替换为 U+FFFD,而 U+FFFD 在 JSON 内合法 → JSON.parse 成功 → 损坏内容静默
+   *  落盘(file save 600KB 含中文注释场景)。
    *  JSON 解析失败 → reason bad_json(调用方 400);超限 → too_large(调用方 413)。 */
   private async readJsonBody(req: IncomingMessage, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'bad_json' | 'too_large' }> {
     const cl = Number(req.headers['content-length'] ?? 0);
     if (cl > maxBytes) return { ok: false, reason: 'too_large' };
-    let raw = '';
+    const chunks: Buffer[] = [];
     let total = 0;
     for await (const chunk of req) {
       total += chunk.length;
@@ -422,10 +427,10 @@ export class WebGuiServer {
         req.resume();   // 丢弃剩余 body(防连接悬挂/内存驻留),上层回 413
         return { ok: false, reason: 'too_large' };
       }
-      raw += chunk;
+      chunks.push(chunk);
     }
     try {
-      return { ok: true, value: JSON.parse(raw) as unknown };
+      return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown };
     } catch {
       return { ok: false, reason: 'bad_json' };
     }

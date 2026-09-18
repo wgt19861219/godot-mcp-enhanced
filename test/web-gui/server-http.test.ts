@@ -313,6 +313,38 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(res.status).toBe(413);
   });
 
+  // ── 终审 R1(2026-09-18):readJsonBody 跨 chunk 多字节 UTF-8 ────────────────
+  //    for-await 的每个 chunk 是 Buffer;旧实现 `raw += chunk` 触发逐段隐式
+  //    toString('utf8') 解码,多字节序列(汉字 3 字节)跨 chunk 边界时被逐段替换为
+  //    U+FFFD。U+FFFD 在 JSON 字符串内合法 → JSON.parse 成功 → 损坏内容静默落盘
+  //    (file save 600KB 含中文注释文件是真实场景;64KB 默认路径共用同函数)。
+  //    修复:Buffer[] 收集 + Buffer.concat 后一次解码。本用例把第一 chunk 末字节
+  //    切在 '二'(E4 BA 8C)3 字节序列的首字节 E4 上,断言回调收到的字段与原文
+  //    逐字相等(旧实现必红:'一' 后接 3 个 U+FFFD 再接 '三四…')。
+  it('跨 chunk 多字节 UTF-8:汉字 3 字节序列跨 chunk 边界 → 解析值与原文逐字相等(终审 R1)', async () => {
+    const seen: string[] = [];
+    const t = await startCtrlServer({ stopSession: async (p) => { seen.push(p); return { ok: true }; } });
+    active = t.srv;
+    const cn = '一二三四五六七八九十';
+    const payload = Buffer.from(JSON.stringify({ projectPath: cn }), 'utf8');
+    // '{"projectPath":"' 为 16 个 ASCII 字节,'一'(E4 B8 80)占 3 字节;
+    // 切点 20 → 第一块末字节 = '二' 的首字节 E4,第二块从 BA 8C 起。
+    expect(payload.subarray(19, 22)).toEqual(Buffer.from('二', 'utf8'));   // 守卫:切点确落在 '二' 序列内
+    const res = await new Promise<{ status: number }>((resolve, reject) => {
+      // 原生 http 客户端不设 content-length → 自动 chunked;write/end 各成独立
+      // HTTP chunk frame,服务端 for-await 分两段 Buffer 收到(frame 边界 = data 边界)
+      const req = http.request({
+        host: '127.0.0.1', port: t.srv.port, path: '/api/sessions/stop', method: 'POST',
+        headers: { 'x-gui-token': t.token, 'content-type': 'application/json; charset=utf-8' },
+      }, (r) => { r.resume(); r.on('end', () => resolve({ status: r.statusCode ?? 0 })); });
+      req.on('error', reject);
+      req.write(payload.subarray(0, 20));
+      req.end(payload.subarray(20));
+    });
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([cn]);   // 逐字相等:任何 U+FFFD 损坏在此被抓住
+  });
+
   it('remove:ok → 200;alive → 409 {error:"session is still running"};not_found → 404;未注入 → 503', async () => {
     const okSrv = await startCtrlServer({ removeSession: () => ({ ok: true }) });
     active = okSrv.srv;
