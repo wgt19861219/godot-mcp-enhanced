@@ -1,9 +1,11 @@
 // Web GUI 监控面板服务(设计 2026-09-14 v3.1):嵌 MCP server 进程,node:http + SSE,
-// 127.0.0.1 恒绑定 + per-process token + Origin 白名单 + 响应卫生(Inspector 壳)。
+// 127.0.0.1 恒绑定 + 共享 token(~/.godot-mcp/web-gui/token.txt,首实例生成后续复用;
+// tokenEquals 恒定时间比较,批3 M-1)+ Origin 白名单 + 响应卫生(Inspector 壳)。
 // 项目面板批(2026-09-15 spec §4/§5):GET /api/projects + POST scan/add/remove +
 // POST /api/sessions/start 五端点 + SSE projects 事件 + hello 扩展。
-// 资源工作台批(2026-09-15 v2 spec §4/§5):GET files/file + POST file + GET /assets
-// 固定清单四端点 + CSP 放宽(script/style self + img/media self)+ raw 响应头防线。
+// 资源工作台批(2026-09-15 spec §4/§5):GET files/file + POST file + GET /assets
+// 固定清单四端点 + CSP(script/style self + img/media self;script-src 另以
+// INDEX_SCRIPT_SHA256 精确放行唯一内联脚本,批3 去 'unsafe-inline')+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';

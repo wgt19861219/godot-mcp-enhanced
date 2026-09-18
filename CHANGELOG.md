@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-17 架构审查批 6(工程卫生:gitignore/README 安全陈述,纯 chore 不 bump)。Task 6.2 删 21 个已合并分支待用户确认后执行(plan 前提),app-window 分支处置留用户 review(决策点 1)。
+
+### Changed
+- **`.gitignore` 补 `面板独立窗口.bat` 与 `.playwright-mcp/`**(批6 Task 6.1):工作区两未跟踪项收口——bat 为 web-gui 独立窗口批的包根双击件(运行时产物)、`.playwright-mcp/` 为 playwright MCP 插件 console 日志(会话产物);追加行与 `feat/web-gui-app-window` 分支内 `.gitignore` 改动逐字一致(该分支将来合并时 git 对同内容两侧自动解,零冲突预铺)。
+- **README 安全体系补 Web GUI 姿态陈述**(批6 Task 6.3):安全体系列表新增一条——默认启动(`GODOT_MCP_WEB_GUI=0` 关闭)/仅监听 `127.0.0.1`/token 位置(`~/.godot-mcp/web-gui/` 含共享 `token.txt`)与轮换命令(`dashboard --rotate-token`,运行实例需重启收敛)/files API 复用 `ALLOWED_PROJECT_PATHS` 白名单 deny-by-default;四事实均经代码实测锚定(`GodotServer.ts` env 判定/`server.ts` 绑定/`registry.ts` token 路径/`files-api.ts` forbidden 分支)。
+
 ## [0.33.8] - 2026-09-18
 
 > 2026-09-17 架构审查批 5（O1 哨兵延迟通道收敛，plan M-7：五变体归一单例槽——行为敏感重构，e2e 守恒网先行）；改 `src/scripts/mcp_bridge.gd` 触发 bump；npm publish / tag 待用户指令。

@@ -117,6 +117,7 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 - **危险操作确认令牌** — 删节点等操作需显式确认
 - **输出标记防伪造** — 每次执行随机标记,防 GDScript 伪造 MCP 输出
 - **本地运行** — 无远程暴露,无第三方数据上传(注:启动时 update-checker 会查 npm registry,详见下方「匿名遥测」段)
+- **Web GUI 监控面板（server 进程内嵌）** — 默认启动（`GODOT_MCP_WEB_GUI=0` 关闭）,仅监听 `127.0.0.1`（无远程暴露）;per-pid 登记于 `~/.godot-mcp/web-gui/`（含共享 `token.txt`,首实例生成后续复用）,浏览器访问凭 token;泄露止损出口 `dashboard --rotate-token` 一键轮换（已运行实例需重启收敛新值）;files API 复用 `ALLOWED_PROJECT_PATHS` 白名单（deny-by-default,路径越界即 forbidden）。纵深细节见 `src/web-gui/server.ts`（token 恒定时间比较/Origin 白名单/CSP sha256）
 
 <details>
 <summary><b>⚠️ 诚实的边界(展开必读)</b></summary>
