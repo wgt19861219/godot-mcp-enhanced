@@ -3,8 +3,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, normalizeNodePath, gdEscape, escapeForGdLiteral, validateVector3, appendRuntimePersistWarning } from './shared.js';
+import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, normalizeNodePath, gdEscape, escapeForGdLiteral, validateVector3, runOpsScript } from './shared.js';
 import { validateTimeout } from './shared/validation.js';
 import { ff } from './shared/value-serializer.js';
 
@@ -495,17 +494,9 @@ export async function handleTool(
     // Determine timeout: baking may take longer
     // 2026-08-06 审查 P2：bake_mesh timeout 改可配（原硬编码 120s 不可配，大场景 bake 会超时强杀 Godot false-negative）
     // 对齐 blender.ts:47+68 validateTimeout 模式；bake 默认 120s clamp 30-600，其他 action 仍 30s
-    const timeout = action === 'bake_mesh'
+    const timeoutSec = action === 'bake_mesh'
       ? validateTimeout(args.timeout, 30, 600, 120)
       : 30;
-
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout,
-      loadAutoloads,
-    });
 
     const errorMapper = (msg: string) => {
       if (msg.includes('not found')) return NAV_ERROR_CODES.NODE_NOT_FOUND;
@@ -514,8 +505,9 @@ export async function handleTool(
       return NAV_ERROR_CODES.SCRIPT_EXEC_FAILED;
     };
 
-    const r = parseGdscriptResult(result, paramWarnings, errorMapper);
-    return NAV_PERSIST_ACTIONS.has(action) ? appendRuntimePersistWarning(r, `nav_${action}`) : r;
+    return runOpsScript({ godot, projectPath, script, loadAutoloads, timeoutSec,
+      errorMapper, paramWarnings,
+      warnRuntimePersist: NAV_PERSIST_ACTIONS.has(action), action: `nav_${action}` });
   } catch (err) {
     const msg = getErrorMessage(err);
     if (msg.includes('NodePath')) return opsErrorResult('INVALID_PATH', msg);

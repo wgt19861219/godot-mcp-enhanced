@@ -3,8 +3,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
-import { normalizeNodePath, gdEscape, escapeForGdLiteral, validateVector3, clampParam, SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, appendRuntimePersistWarning } from './shared.js';
+import { normalizeNodePath, gdEscape, escapeForGdLiteral, validateVector3, clampParam, SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, runOpsScript } from './shared.js';
 import { ff } from './shared/value-serializer.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -489,21 +488,13 @@ export async function handleTool(
         return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }
 
-    // Execute the generated GDScript
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout: 30,
-      loadAutoloads,
-    });
-
     const errorMapper = (msg: string) => {
       if (msg.includes('not found')) return ERROR_CODES.NODE_NOT_FOUND;
       return ERROR_CODES.SCRIPT_EXEC_FAILED;
     };
 
-    return appendRuntimePersistWarning(parseGdscriptResult(result, paramWarnings, errorMapper), action);
+    return runOpsScript({ godot, projectPath, script, loadAutoloads, timeoutSec: 30,
+      errorMapper, paramWarnings, warnRuntimePersist: true, action });
   } catch (err) {
     const msg = getErrorMessage(err);
     if (msg.includes('NodePath')) return opsErrorResult('INVALID_PATH', msg);

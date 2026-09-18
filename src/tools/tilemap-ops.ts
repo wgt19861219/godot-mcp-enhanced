@@ -2,9 +2,8 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
 import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
 import { normalizeNodePath, escapeForGdLiteral } from './shared.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, appendRuntimePersistWarning } from './shared.js';
+import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, runOpsScript } from './shared.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -466,19 +465,11 @@ export async function handleTool(
         return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }
 
-    // Execute the generated GDScript
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout: 30,
-      loadAutoloads,
-    });
-
     const errorMapper = (msg: string) =>
       msg.includes('Node not found') ? 'TILEMAP_NOT_FOUND' : 'SCRIPT_EXEC_FAILED';
 
-    return appendRuntimePersistWarning(parseGdscriptResult(result, [], errorMapper), action);
+    return runOpsScript({ godot, projectPath, script, loadAutoloads, timeoutSec: 30,
+      errorMapper, paramWarnings: [], warnRuntimePersist: true, action });
   } catch (err) {
     const msg = getErrorMessage(err);
     if (msg.includes('Coords') || msg.includes('integer')) return opsErrorResult('INVALID_TILE_COORDS', msg);
