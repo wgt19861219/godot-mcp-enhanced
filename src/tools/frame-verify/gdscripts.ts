@@ -4,14 +4,9 @@
 
 import { escapeForGdLiteral } from '../shared.js';
 
-export function extractFrameMetricsScript(framesDir: string): string {
-  // CRITICAL(gdscript-template-injection): 路径参数经转义后插值,防闭串注入。
-  // framesDir 来源可为 MCP 工具参数(frames_dir),不可信。与 physics-ops.ts:41 同模式。
-  // T2b: 路径转义用 escapeForGdLiteral(纯字面量内插,% 原样——gdEscape 双写 %% 会破坏含 % 的目录名)。
-  return `extends SceneTree
-
-var _frames_dir := "${escapeForGdLiteral(framesDir)}"
-var _outputs := []
+// 两模板共享的 GDScript 辅助函数段(输出协议 + 32×32 归一化 embed + 余弦点积)。
+// 生成的脚本必须自包含,故以常量拼接而非 Godot 侧共享。
+const SIM_HELPERS_GD = `var _outputs := []
 
 func _mcp_output(key, value):
 	_outputs.append({"key": key, "value": value})
@@ -44,7 +39,16 @@ func _cos(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
 	var s := 0.0
 	for i in range(a.size()):
 		s += a[i] * b[i]
-	return s
+	return s`;
+
+export function extractFrameMetricsScript(framesDir: string): string {
+  // CRITICAL(gdscript-template-injection): 路径参数经转义后插值,防闭串注入。
+  // framesDir 来源可为 MCP 工具参数(frames_dir),不可信。与 physics-ops.ts:41 同模式。
+  // T2b: 路径转义用 escapeForGdLiteral(纯字面量内插,% 原样——gdEscape 双写 %% 会破坏含 % 的目录名)。
+  return `extends SceneTree
+
+var _frames_dir := "${escapeForGdLiteral(framesDir)}"
+${SIM_HELPERS_GD}
 
 func _initialize():
 	var dir := DirAccess.open(_frames_dir)
@@ -85,40 +89,7 @@ func _initialize():
 export function referenceSimScript(screenshotPath: string, referencePath: string): string {
   return `extends SceneTree
 
-var _outputs := []
-
-func _mcp_output(key, value):
-	_outputs.append({"key": key, "value": value})
-
-func _mcp_done():
-	print(JSON.stringify(_outputs))
-	quit()
-
-func _embed(path: String) -> PackedFloat32Array:
-	var img := Image.load_from_file(path)
-	img.resize(32, 32)
-	var raw := img.get_data()
-	var v := PackedFloat32Array()
-	v.resize(32 * 32 * 3)
-	var sum_sq := 0.0
-	for i in range(32 * 32):
-		var r := raw[i * 4] / 255.0
-		var g := raw[i * 4 + 1] / 255.0
-		var b := raw[i * 4 + 2] / 255.0
-		v[i * 3] = r
-		v[i * 3 + 1] = g
-		v[i * 3 + 2] = b
-		sum_sq += r * r + g * g + b * b
-	var norm := sqrt(sum_sq) + 1e-8
-	for i in range(v.size()):
-		v[i] = v[i] / norm
-	return v
-
-func _cos(a: PackedFloat32Array, b: PackedFloat32Array) -> float:
-	var s := 0.0
-	for i in range(a.size()):
-		s += a[i] * b[i]
-	return s
+${SIM_HELPERS_GD}
 
 func _initialize():
 	var a := _embed("${escapeForGdLiteral(screenshotPath)}")
