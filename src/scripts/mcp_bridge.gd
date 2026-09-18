@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.33.8"
+const BRIDGE_SCRIPT_VERSION := "0.33.9"
 const INACTIVITY_TIMEOUT := 60.0
 
 # ─── Instance Registry (Phase 2b) ─────────────────────────────────────────
@@ -185,9 +185,26 @@ const EXTRA_METHODS_BLOCKLIST := [
 
 # ─── Lifecycle ─────────────────────────────────────────────────────────────
 
+# EXPORT-1: 任一 GODOT_MCP_BRIDGE_* 显式注入(与上游 buildSafeEnv 透传域一致)即视为
+# 调试意图——导出版守卫的豁免通道:玩家机不会碰巧设这些键,调试者可强制开启 bridge。
+func _no_bridge_env() -> bool:
+	for k in ["GODOT_MCP_BRIDGE_PORT", "GODOT_MCP_BRIDGE_PERSISTENT_SECRET", "GODOT_MCP_BRIDGE_ALLOWED_PROFILES"]:
+		if OS.get_environment(k) != "":
+			return false
+	return true
+
+
 func _ready() -> void:
 	# Godot 4.6+: extends 原生类(Node)的虚函数不可调 super()(4.6.2 Parse error "hasn't been defined"),移除 IMP-4 super()。该 convention 仅适用于 extends 自定义基类。
 	if Engine.is_editor_hint():
+		return
+	# EXPORT-1 (2026-09-18): 导出版攻击面剔除——autoload 注册使本脚本被导出器强制带进发布包,
+	# 此前仅挡 editor hint,玩家裸跑导出 exe 会监听 TCP+写 secret+_process 轮询(最小暴露违背)。
+	# 判据(实测矩阵,4.7.2):编辑器二进制的所有运行形态(-s/--path/F5/run_project spawn)均
+	# editor feature=true;导出 release 包 editor=false+release=true 唯一组合。--export-debug
+	# 包(editor=false+release=false)不在判定内——分发 debug 包的场景如需剔除再扩。
+	# 豁免:任一 GODOT_MCP_BRIDGE_* 显式注入(与 buildSafeEnv 透传域一致)=调试意图,强制开启。
+	if not OS.has_feature("editor") and OS.has_feature("release") and _no_bridge_env():
 		return
 	# CMP-2 (2026-08-08): 注册 runtime error 捕获(在 _start_server 前,确保任何启动错误也被捕)。
 	_error_capture = _ErrorCapture.new()
