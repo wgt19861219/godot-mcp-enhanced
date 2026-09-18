@@ -145,6 +145,11 @@ interface SyncSnapshot {
   /** 全仓审查(2026-09-12): GD 侧 256 节点上限截断标志(P10 审查 N-2 产出,原 TS 消费侧
    * 丢弃)——截断快照参与比对时结果不可信(两侧同截断→假阳性/不同截断→假阴性)。 */
   truncated: boolean;
+  /** M-6/O3(2026-09-17 审查): 快照来源维度——同 label 跨项目静默覆盖曾产出无意义 diff
+   *  零警告;host/client 多游戏同 label 场景必须可追溯来源。null=bridge 项目目录未设。 */
+  project_path: string | null;
+  /** M-6/O3: 快照来源端口(resolveBridgePort 时值;同项目双开 host/client 端口不同)。 */
+  port: number | null;
 }
 
 /** 内存快照表(进程生命周期;label → snapshot)。agent 断连重连不清——快照是比对原语不是会话态。 */
@@ -253,7 +258,7 @@ export function getToolDefinitions(): Tool[] {
           },
           label: {
             type: 'string',
-            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 时用 label_a/label_b。',
+            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;快照记录来源 project/port,compare 跨项目快照会带 cross_project 警告(同 label 跨项目覆盖时 snapshot 响应带 overwrote 警告)。compare 时用 label_a/label_b。',
           },
           label_a: {
             type: 'string',
@@ -1004,18 +1009,29 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             return res;
           }
           const truncated = parsed.truncated === true;
+          // M-6/O3: 记录快照来源(project+port)——同 label 跨项目静默覆盖/无意义 diff 的追溯锚
+          const snapProject = getBridgeProjectDir();
+          const snapPort = snapProject !== null ? resolveBridgePort(snapProject) : null;
+          const prev = _syncSnapshots.get(label);
+          const overwroteCrossProject = prev !== undefined
+            && prev.project_path !== null && snapProject !== null
+            && prev.project_path !== snapProject;
           _syncSnapshots.set(label, {
             instances: (parsed.instances ?? {}) as Record<string, unknown>,
             count: Number(parsed.count ?? 0),
             game_time_ms: Number(parsed.game_time_ms ?? 0),
             taken_at: Date.now(),
             truncated,
+            project_path: snapProject,
+            port: snapPort,
           });
           // 全仓审查: 透传截断标志并附警告——静默截断会让 compare 结果不可信(N-2 修复
           // 的消费侧接线,原 GD 产出但 TS 丢弃)。
           return textResult(JSON.stringify({
             label, count: parsed.count ?? 0, collected: parsed.collected ?? [], truncated,
+            project_path: snapProject, port: snapPort,
             ...(truncated ? { warning: 'state collection hit the 256-node cap and was truncated; compare results will not cover all nodes' } : {}),
+            ...(overwroteCrossProject ? { overwrote_cross_project: true, overwrite_warning: `label "${label}" previously held a snapshot from a different project (${prev.project_path}) — it has been overwritten and is no longer comparable against that project's snapshots` } : {}),
           }, null, 2));
         }
         if (sub === 'compare') {
@@ -1032,17 +1048,25 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           // 做同步判定(同截断→in_sync 假阳性;不同截断→missing 假阴性)。
           const truncatedA = snapA.truncated;
           const truncatedB = snapB.truncated;
+          // M-6/O3: 跨项目比对告警——两快照来自不同项目的 bridge(多游戏同 label 误比对),
+          // diff 结果几乎必然无意义(节点集互不可比);双方 null(项目目录未设)不告警。
+          const crossProject = snapA.project_path !== null && snapB.project_path !== null
+            && snapA.project_path !== snapB.project_path;
           return textResult(JSON.stringify({
             label_a: labelA, label_b: labelB, tolerance,
             game_time_a: snapA.game_time_ms, game_time_b: snapB.game_time_ms,
+            project_a: snapA.project_path, project_b: snapB.project_path,
+            port_a: snapA.port, port_b: snapB.port,
             truncated_a: truncatedA, truncated_b: truncatedB,
             ...(truncatedA || truncatedB ? { unreliable: true, warning: 'one or both snapshots were truncated at the 256-node cap; in_sync/missing fields do not cover all nodes' } : {}),
+            ...(crossProject ? { cross_project: true, cross_project_warning: `snapshots come from different projects (${snapA.project_path} vs ${snapB.project_path}) — node sets are not comparable across projects; take both snapshots from the same project's instances` } : {}),
             ...report,
           }, null, 2));
         }
         if (sub === 'list') {
           const items = [..._syncSnapshots.entries()].map(([label, snap]) => ({
             label, count: snap.count, game_time_ms: snap.game_time_ms, taken_at: new Date(snap.taken_at).toISOString(), truncated: snap.truncated,
+            project_path: snap.project_path, port: snap.port,
           }));
           return textResult(JSON.stringify({ snapshots: items, total: items.length }, null, 2));
         }

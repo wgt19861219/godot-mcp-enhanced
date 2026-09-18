@@ -853,3 +853,115 @@ describe('P3-2R: setBridgeProjectDir in-flight warn 守护', () => {
     }
   });
 });
+
+// ── M-6/O3 (2026-09-17 架构审查): sync_state 快照 project 维度 ────────────────
+// 原实现 SyncSnapshot 无 projectPath/port 字段——同 label 跨项目 snapshot 静默覆盖、
+// compare 两个不同项目的快照产出无意义 diff 零警告(host/client 多游戏同 label 场景)。
+// 修复:snapshot 记录 getBridgeProjectDir()+解析端口;compare 回显双方 project/port,
+// 跨项目置 cross_project:true 警告;同 label 跨项目覆盖时响应带 overwrote 警告。
+describe('M-6/O3: sync_state 快照 project 维度(跨项目比对告警)', () => {
+  /** collect_state 响应型 socket(每实例状态注入不同 game_time 便于区分)。 */
+  function collectStateSocket(gameTime: number): EventEmitter {
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : {
+              id: req.id,
+              result: {
+                instances: { '/root/Main': { _mcp_state: { hp: 100 } } },
+                count: 1, game_time_ms: gameTime, collected: ['/root/Main'], truncated: false,
+              },
+            };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    return sock;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    mockRead.mockReturnValue('test-secret');
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+  });
+
+  it('M-6a: snapshot 响应回显 project_path(来源可追溯)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(100);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, { projectDir: '/p' } as never);
+    expect(r?.isError).not.toBe(true);
+    expect(JSON.stringify(r)).toContain('/p');  // project_path 回显
+  });
+
+  it('M-6b: 跨项目 compare → cross_project:true + 警告 + 双方 project 回显', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(200);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    const ctxB = { projectDir: '/q' } as never;
+    const ra = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, ctxA);
+    expect(ra?.isError).not.toBe(true);
+    const rb = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'b' }, ctxB);
+    expect(rb?.isError).not.toBe(true);
+    const rc = await handleTool('game', { action: 'sync_state', sub_action: 'compare', label_a: 'a', label_b: 'b' }, ctxB);
+    expect(rc?.isError).not.toBe(true);
+    const parsed = JSON.parse((rc as { content: Array<{ text: string }> }).content[0].text);
+    expect(parsed.cross_project).toBe(true);          // 跨项目警告标志
+    expect(parsed.project_a).toContain('/p');          // 双方来源回显
+    expect(parsed.project_b).toContain('/q');
+    expect(parsed.cross_project_warning).toMatch(/different projects/i);
+  });
+
+  it('M-6c: 同项目 compare(同项目双开 host/client)→ 无 cross_project(主用例不误报)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(300);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, ctxA);
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'b' }, ctxA);
+    const rc = await handleTool('game', { action: 'sync_state', sub_action: 'compare', label_a: 'a', label_b: 'b' }, ctxA);
+    const parsed = JSON.parse((rc as { content: Array<{ text: string }> }).content[0].text);
+    expect(parsed.cross_project).toBeUndefined();  // 同项目不告警
+    expect(parsed.project_a).toContain('/p');       // 来源仍回显
+  });
+
+  it('M-6d: 同 label 跨项目覆盖 → 响应带 overwrote 警告(静默覆盖消除)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(400);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    const ctxB = { projectDir: '/q' } as never;
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'shared' }, ctxA);
+    const r2 = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'shared' }, ctxB);
+    const text = JSON.stringify(r2);
+    expect(text).toMatch(/overwrote|different project/i);  // 覆盖警告
+  });
+
+  it('M-6e: list 条目含 project_path(快照清单可追溯)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(500);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, { projectDir: '/p' } as never);
+    const rl = await handleTool('game', { action: 'sync_state', sub_action: 'list' }, { projectDir: '/p' } as never);
+    expect(JSON.stringify(rl)).toContain('/p');
+  });
+});
+
