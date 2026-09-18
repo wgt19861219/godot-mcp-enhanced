@@ -72,26 +72,11 @@ func handle_nav_create_region(params: Dictionary, request_id: int) -> Dictionary
 	# 原同步 handle_nav_create_region 保留作兜底；websocket_server.gd 分流 nav 到 _async 版。
 	# redo 路径仍乐观（editor undo 系统限制，spec §11）。
 	var root = CommandHelpers.get_edited_scene_root(_plugin)
-	if root == null:
-		return {"error": {"code": -32003, "message": "No scene currently open in editor"}}
-
-	var node_name: String = params.get("name", "NavRegion")
-	var parent_path: String = params.get("parent", "")
-	var parent_node: Node = CommandHelpers.find_node(root, parent_path) if parent_path != "" else root
-	if parent_node == null:
-		return {"error": {"code": -32002, "message": "Parent not found: " + parent_path}}
-
-	var nav = NavigationRegion3D.new()
-	nav.name = node_name
-
-	var pos = params.get("position")
-	if pos != null and pos is Dictionary:
-		nav.position = Vector3(float(pos.get("x", 0.0)), float(pos.get("y", 0.0)), float(pos.get("z", 0.0)))
-
-	# P0-2 修复: mesh 在入栈前初始化(附着 nav, 随 reference 保护, undo/redo 不丢)
-	var mesh = NavigationMesh.new()
-	mesh.geometry_parsed_collision_mask = 0xFFFFFFFF
-	nav.navigation_mesh = mesh
+	var created = _create_nav_region(params, root)
+	if created.has("error"):
+		return created
+	var nav = created.nav
+	var parent_node = created.parent
 
 	var want_bake: bool = params.get("bake", false)
 	var bake_result: bool = false
@@ -124,6 +109,29 @@ func handle_nav_create_region(params: Dictionary, request_id: int) -> Dictionary
 
 	return {"result": {"node_path": str(nav.get_path()), "type": "NavigationRegion3D", "baked": bake_result}}
 
+
+# 2026-09-18 重复收敛:sync/async 两版 nav_create_region 共享的节点构建前奏。
+# 返回 {"nav": nav, "parent": parent_node};失败返回 {"error": {...}}(code -32002/-32003)。
+# root==null(-32003)与 parent 未找到(-32002)检查均在此,两 handler 直接透传 error。
+func _create_nav_region(params: Dictionary, root: Node) -> Dictionary:
+	if root == null:
+		return {"error": {"code": -32003, "message": "No scene currently open in editor"}}
+	var node_name: String = params.get("name", "NavRegion")
+	var parent_path: String = params.get("parent", "")
+	var parent_node: Node = CommandHelpers.find_node(root, parent_path) if parent_path != "" else root
+	if parent_node == null:
+		return {"error": {"code": -32002, "message": "Parent not found: " + parent_path}}
+	var nav = NavigationRegion3D.new()
+	nav.name = node_name
+	var pos = params.get("position")
+	if pos != null and pos is Dictionary:
+		nav.position = Vector3(float(pos.get("x", 0.0)), float(pos.get("y", 0.0)), float(pos.get("z", 0.0)))
+	# P0-2: mesh 在入栈前初始化(附着 nav,随 reference 保护,undo/redo 不丢)
+	var mesh = NavigationMesh.new()
+	mesh.geometry_parsed_collision_mask = 0xFFFFFFFF
+	nav.navigation_mesh = mesh
+	return {"nav": nav, "parent": parent_node}
+
 const BAKE_WAIT_TIMEOUT_MS := 28000  # < client 30s 超时；nav_create_region 用
 const BAKE_MESH_WAIT_TIMEOUT_MS := 110000  # bake_mesh 长 timeout（== TS client timeoutMs:110000，EditorToolExecutor.ts:112；peer 异常断开时 orphan 由 §10 守卫兜底）
 
@@ -133,24 +141,11 @@ const BAKE_MESH_WAIT_TIMEOUT_MS := 110000  # bake_mesh 长 timeout（== TS clien
 # bake 保留为 do_method 入 undo（保 P1 redo 重 bake）。
 func handle_nav_create_region_async(params: Dictionary, request_id: int) -> Dictionary:
 	var root = CommandHelpers.get_edited_scene_root(_plugin)
-	if root == null:
-		return {"error": {"code": -32003, "message": "No scene currently open in editor"}}
-
-	var node_name: String = params.get("name", "NavRegion")
-	var parent_path: String = params.get("parent", "")
-	var parent_node: Node = CommandHelpers.find_node(root, parent_path) if parent_path != "" else root
-	if parent_node == null:
-		return {"error": {"code": -32002, "message": "Parent not found: " + parent_path}}
-
-	var nav = NavigationRegion3D.new()
-	nav.name = node_name
-	var pos = params.get("position")
-	if pos != null and pos is Dictionary:
-		nav.position = Vector3(float(pos.get("x", 0.0)), float(pos.get("y", 0.0)), float(pos.get("z", 0.0)))
-
-	var mesh = NavigationMesh.new()
-	mesh.geometry_parsed_collision_mask = 0xFFFFFFFF
-	nav.navigation_mesh = mesh
+	var created = _create_nav_region(params, root)
+	if created.has("error"):
+		return created
+	var nav = created.nav
+	var parent_node = created.parent
 
 	var want_bake: bool = params.get("bake", false)
 	var bake_result: bool = false
