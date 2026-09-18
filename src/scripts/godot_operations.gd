@@ -598,34 +598,47 @@ func add_node(params):
 	scene_root.free()
 
 
-func edit_node(params):
-	log_info("Editing node in scene: " + params.scene_path)
+# 2026-09-18 重复收敛:edit_node/remove_node 共享的场景加载与路径规范化前奏。
+# 返回 {"root": scene_root, "abs": absolute_scene_path, "full": full_scene_path};
+# 失败已 _exit_with(1),返回 {} 表示中止。
+# full 供两函数尾段 _verify_saved_scene 回读自检用(pack+save 链零改动)。
+func _load_scene_or_exit(params) -> Dictionary:
 	var full_scene_path = _sanitize_res_path(params.scene_path)
 	var absolute_scene_path = ProjectSettings.globalize_path(full_scene_path)
 	if not FileAccess.file_exists(absolute_scene_path):
 		log_error("Scene file does not exist: " + absolute_scene_path)
 		_exit_with(1)
-		return
+		return {}
 	var scene = load(full_scene_path)
 	if not scene:
 		log_error("Failed to load scene: " + full_scene_path)
 		_exit_with(1)
-		return
-	var scene_root = scene.instantiate()
-	# node_path 规范化：TS 侧 normalizeNodePath 传 "/root/Root/X" 格式，
-	# scene_root 是 instantiate 出来的 PackedScene 根，未挂 SceneTree，绝对路径找不到。
-	# 复用 add_node parent_path 规范化逻辑：剥 "/root/" / "root/" 前缀，转相对路径。
-	var node_path = params.node_path
+		return {}
+	return {"root": scene.instantiate(), "abs": absolute_scene_path, "full": full_scene_path}
+
+# TS 侧 normalizeNodePath 传 "/root/Root/X" 形式;scene_root 未挂 SceneTree,需剥前缀。
+# 再剥场景根名前缀(query_scene_tree 拷贝路径含根名,get_node_or_null 相对 scene_root 自身)。
+func _normalize_scene_node_path(node_path: String, scene_root) -> String:
 	if node_path.begins_with("/root/"):
 		node_path = node_path.substr(6)
 	elif node_path.begins_with("root/"):
 		node_path = node_path.substr(5)
 	elif node_path.begins_with("/"):
 		node_path = node_path.substr(1)
-	# 根名前缀剥离(对齐 remove_node):query_scene_tree 拷贝路径含场景根名,get_node_or_null
-	# 相对 scene_root 自身,不剥会误报 not found
 	if node_path.begins_with(scene_root.name + "/"):
 		node_path = node_path.substr(scene_root.name.length() + 1)
+	return node_path
+
+
+func edit_node(params):
+	log_info("Editing node in scene: " + params.scene_path)
+	var loaded = _load_scene_or_exit(params)
+	if loaded.is_empty():
+		return
+	var scene_root = loaded.root
+	var absolute_scene_path = loaded.abs
+	var full_scene_path = loaded.full
+	var node_path = _normalize_scene_node_path(params.node_path, scene_root)
 	var node = scene_root.get_node_or_null(node_path)
 	if node == null:
 		log_error("Node not found: " + params.node_path)
@@ -674,30 +687,13 @@ func edit_node(params):
 # load → instantiate → remove_child + free → pack → _save_atomic。
 func remove_node(params):
 	log_info("Removing node from scene: " + params.scene_path)
-	var full_scene_path = _sanitize_res_path(params.scene_path)
-	var absolute_scene_path = ProjectSettings.globalize_path(full_scene_path)
-	if not FileAccess.file_exists(absolute_scene_path):
-		log_error("Scene file does not exist: " + absolute_scene_path)
-		_exit_with(1)
+	var loaded = _load_scene_or_exit(params)
+	if loaded.is_empty():
 		return
-	var scene = load(full_scene_path)
-	if not scene:
-		log_error("Failed to load scene: " + full_scene_path)
-		_exit_with(1)
-		return
-	var scene_root = scene.instantiate()
-	# node_path 规范化：复用 edit_node 逻辑(TS 传 "/X/Y" 绝对路径形式)
-	var node_path = params.node_path
-	if node_path.begins_with("/root/"):
-		node_path = node_path.substr(6)
-	elif node_path.begins_with("root/"):
-		node_path = node_path.substr(5)
-	elif node_path.begins_with("/"):
-		node_path = node_path.substr(1)
-	# 对齐 add_node parent 特判(scene_root.name):get_node_or_null 相对 scene_root 自身,
-	# 用户从 query_scene_tree 拷的路径含场景根名(如 "Main/Child2")→剥根名前缀防误报 not found
-	if node_path.begins_with(scene_root.name + "/"):
-		node_path = node_path.substr(scene_root.name.length() + 1)
+	var scene_root = loaded.root
+	var absolute_scene_path = loaded.abs
+	var full_scene_path = loaded.full
+	var node_path = _normalize_scene_node_path(params.node_path, scene_root)
 	if node_path == "" or node_path == "." or node_path == scene_root.name:
 		log_error("Cannot remove root node")
 		cleanup_and_quit([scene_root], 1)
