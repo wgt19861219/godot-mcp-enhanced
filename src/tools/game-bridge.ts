@@ -687,13 +687,35 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           }
         }
 
-        // A-07 + A1: 清理所有端口的 secret(端口避让后 9081..909x 均可能有残留)
+        // A-07 + A1: 清理端口的 secret(端口避让后 9081..909x 均可能有残留)。
+        // M-5 (2026-09-17 审查): 删前判活——与 install 侧 clean_stale_secrets 的护栏哲学对称。
+        // 原行为无条件删光全部:同项目多实例在跑时,在跑实例的 secret 被一并删掉(进程内 auth
+        // 仍有效,但 TS 侧重连即断且无提示)。判活依据与 install 同源(liveHeartbeatPortsFor,
+        // machine registry 新鲜心跳);有活实例时只删无心跳端口的 secret 并点名保留项,
+        // 无任何新鲜心跳(游戏全停/旧版 GD/registry 不可读)才删光——uninstall 的移除语义
+        // 不被护栏阻塞(与 clean_stale_secrets 的"无法判活即拒清"相反,是有意的不对称:
+        // 后者目标是清理残留,删错活实例代价高;前者目标是卸载,游戏全停后残留必须能清)。
         const godotDir = join(projectPath, '.godot');
+        let secretNote = '';
         if (existsSync(godotDir)) {
           try {
-            for (const name of readdirSync(godotDir)) {
-              if (name.startsWith('mcp_bridge_') && name.endsWith('.secret')) {
-                try { unlinkSync(join(godotDir, name)); } catch { /* best effort */ }
+            const secretFiles = readdirSync(godotDir).filter(n => /^mcp_bridge_\d+\.secret$/.test(n));
+            if (secretFiles.length > 0) {
+              const livePorts = liveHeartbeatPortsFor(projectPath);
+              const deleted: string[] = [];
+              const kept: string[] = [];
+              for (const name of secretFiles) {
+                const port = Number(/^mcp_bridge_(\d+)\.secret$/.exec(name)?.[1]);
+                if (livePorts.size > 0 && livePorts.has(port)) {
+                  kept.push(name);  // 活实例:保留 secret,TS 侧重连不断
+                  continue;
+                }
+                try { unlinkSync(join(godotDir, name)); deleted.push(name); } catch { /* best effort */ }
+              }
+              if (kept.length > 0) {
+                secretNote = ` Kept ${kept.join(', ')} (fresh heartbeat — live instance(s) still running; their in-memory auth works, TS-side reconnect stays intact. Stop the game and re-run game_bridge_uninstall to remove them). Deleted: ${deleted.join(', ') || 'none'}.`;
+              } else if (deleted.length > 0) {
+                secretNote = ` Secrets removed: ${deleted.join(', ')}.`;
               }
             }
           } catch { /* best effort */ }
@@ -701,7 +723,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         invalidateBridgeSecret();
         invalidateBridgeConnection();
 
-        return textResult(JSON.stringify({ success: true, message: `MCP Bridge uninstalled.${uninstallNote}` }));
+        return textResult(JSON.stringify({ success: true, message: `MCP Bridge uninstalled.${uninstallNote}${secretNote}` }));
       }
 
       // P2-1: Autoload overrides —— 启动游戏前注入任意调试脚本(日志钩子/状态快照等)
