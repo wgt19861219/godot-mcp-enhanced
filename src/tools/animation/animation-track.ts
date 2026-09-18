@@ -3,9 +3,14 @@ import type { ToolContext, ToolResult } from '../../types.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
 import { requireProjectPath } from '../../helpers.js';
 import { executeGdscriptRuntime as executeGdscript } from '../../gdscript-executor.js';
-import { normalizeNodePath, gdEscape, escapeForGdLiteral } from '../shared.js';
+import { normalizeNodePath, escapeForGdLiteral } from '../shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from '../shared.js';
-import { TRACK_TYPES, ensureNumber, valueToGd, animErrorMapper } from './animation-shared.js';
+import {
+  TRACK_TYPES, ensureNumber, valueToGd, animErrorMapper,
+  animPreamble, trackRangeGuard, keyframeRangeGuard,
+  genRemoveTrackScript as genAnimationTrackRemove,
+  genRemoveKeyframeScript as genAnimationKeyframeRemove,
+} from './animation-shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -68,11 +73,10 @@ export function getToolDefinitions(): Tool[] {
 // ─── GDScript Generators ───────────────────────────────────────────────────
 
 function genAnimationTrackAdd(nodePath: string, animName: string, trackType: string, trackPath: string | undefined, insertAt: number | undefined): string {
-  const typeMap: Record<string, number> = {
-    value: 0, position_3d: 1, rotation_3d: 2, scale_3d: 3,
-    blend_shape: 4, method: 5, bezier: 6, audio: 7, animation: 8,
-  };
-  const typeVal = typeMap[trackType] ?? 0;
+  // TRACK_TYPES 常量顺序与 Godot TrackType 枚举值一致;非法类型回退 0(value),
+  // 保留原 typeMap[trackType] ?? 0 的防御语义(输出零漂移约束)。
+  const typeIdx = (TRACK_TYPES as readonly string[]).indexOf(trackType);
+  const typeVal = typeIdx >= 0 ? typeIdx : 0;
   const insertLine = insertAt !== undefined && insertAt >= 0
     ? `_anim.add_track(${typeVal}, ${insertAt})`
     : `_anim.add_track(${typeVal})`;
@@ -82,16 +86,7 @@ function genAnimationTrackAdd(nodePath: string, animName: string, trackType: str
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
+${animPreamble(nodePath, animName)}
 \t${insertLine}
 \tvar _idx: int = _anim.get_track_count() - 1${pathLine}
 \t_mcp_output("result", {"track_index": _idx, "track_type": ${typeVal}})
@@ -99,29 +94,8 @@ func _initialize():
 `;
 }
 
-function genAnimationTrackRemove(nodePath: string, animName: string, trackIdx: number): string {
-  return `${SCENE_TREE_HEADER}
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
-\tif ${trackIdx} < 0 or ${trackIdx} >= _anim.get_track_count():
-\t\t_mcp_output("error", "Track index out of range")
-\t\t_mcp_done()
-\t\treturn
-\t_anim.remove_track(${trackIdx})
-\t_mcp_output("result", {"removed_track": ${trackIdx}})
-\t_mcp_done()
-`;
-}
+// genAnimationTrackRemove/genAnimationKeyframeRemove 已收敛至 animation-shared.js 的
+// genRemoveTrackScript/genRemoveKeyframeScript(顶部 import 别名即本地绑定,底部 export 不变)。
 
 function genAnimationKeyframeAdd(nodePath: string, animName: string, trackIdx: number, time: number, value: unknown, transition: number | undefined): string {
   const transStr = transition ?? 1.0;
@@ -132,20 +106,8 @@ function genAnimationKeyframeAdd(nodePath: string, animName: string, trackIdx: n
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
-\tif ${trackIdx} < 0 or ${trackIdx} >= _anim.get_track_count():
-\t\t_mcp_output("error", "Track index out of range")
-\t\t_mcp_done()
-\t\treturn
+${animPreamble(nodePath, animName)}
+${trackRangeGuard(trackIdx)}
 \tvar _kf_idx: int = -1
 \tif _anim.track_get_type(${trackIdx}) == Animation.TYPE_VALUE or _anim.track_get_type(${trackIdx}) == Animation.TYPE_BEZIER:
 \t\t_kf_idx = _anim.track_insert_key(${trackIdx}, ${time}, ${valueStr}, ${transStr})
@@ -160,34 +122,6 @@ func _initialize():
 `;
 }
 
-function genAnimationKeyframeRemove(nodePath: string, animName: string, trackIdx: number, kfIdx: number): string {
-  return `${SCENE_TREE_HEADER}
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
-\tif ${trackIdx} < 0 or ${trackIdx} >= _anim.get_track_count():
-\t\t_mcp_output("error", "Track index out of range")
-\t\t_mcp_done()
-\t\treturn
-\tif ${kfIdx} < 0 or ${kfIdx} >= _anim.track_get_key_count(${trackIdx}):
-\t\t_mcp_output("error", "Keyframe index out of range")
-\t\t_mcp_done()
-\t\treturn
-\t_anim.track_remove_key(${trackIdx}, ${kfIdx})
-\t_mcp_output("result", {"removed_keyframe": ${kfIdx}, "track_index": ${trackIdx}})
-\t_mcp_done()
-`;
-}
-
 function genAnimationKeyframeUpdate(nodePath: string, animName: string, trackIdx: number, kfIdx: number, value: unknown, transition: number | undefined): string {
   const valueLine = value !== undefined
     ? `\t_anim.track_set_key_value(${trackIdx}, ${kfIdx}, ${valueToGd(value)})`
@@ -198,24 +132,9 @@ function genAnimationKeyframeUpdate(nodePath: string, animName: string, trackIdx
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
-\tif ${trackIdx} < 0 or ${trackIdx} >= _anim.get_track_count():
-\t\t_mcp_output("error", "Track index out of range")
-\t\t_mcp_done()
-\t\treturn
-\tif ${kfIdx} < 0 or ${kfIdx} >= _anim.track_get_key_count(${trackIdx}):
-\t\t_mcp_output("error", "Keyframe index out of range")
-\t\t_mcp_done()
-\t\treturn
+${animPreamble(nodePath, animName)}
+${trackRangeGuard(trackIdx)}
+${keyframeRangeGuard(trackIdx, kfIdx)}
 ${valueLine}
 ${transLine}
 \t_mcp_output("result", {"updated_keyframe": ${kfIdx}, "track_index": ${trackIdx}})
@@ -233,24 +152,9 @@ function genAnimationCurve(nodePath: string, animName: string, trackIdx: number,
   return `${SCENE_TREE_HEADER}
 func _initialize():
 \t_mcp_load_main_scene()
-\tvar _ap: AnimationPlayer = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif _ap == null or not (_ap is AnimationPlayer):
-\t\t_mcp_output("error", "AnimationPlayer not found")
-\t\t_mcp_done()
-\t\treturn
-\tif not _ap.has_animation("${gdEscape(animName)}"):
-\t\t_mcp_output("error", "Animation not found")
-\t\t_mcp_done()
-\t\treturn
-\tvar _anim: Animation = _ap.get_animation("${gdEscape(animName)}")
-\tif ${trackIdx} < 0 or ${trackIdx} >= _anim.get_track_count():
-\t\t_mcp_output("error", "Track index out of range")
-\t\t_mcp_done()
-\t\treturn
-\tif ${kfIdx} < 0 or ${kfIdx} >= _anim.track_get_key_count(${trackIdx}):
-\t\t_mcp_output("error", "Keyframe index out of range")
-\t\t_mcp_done()
-\t\treturn
+${animPreamble(nodePath, animName)}
+${trackRangeGuard(trackIdx)}
+${keyframeRangeGuard(trackIdx, kfIdx)}
 ${inLine}
 ${outLine}
 \t_mcp_output("result", {"track_index": ${trackIdx}, "keyframe_index": ${kfIdx}, "in_handle": ${inHandle ? `Vector2(${inHandle.x}, ${inHandle.y})` : 'null'}, "out_handle": ${outHandle ? `Vector2(${outHandle.x}, ${outHandle.y})` : 'null'}})

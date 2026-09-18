@@ -149,7 +149,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       "
     `);
   });
-  it('ops add_keyframe(含 method 分支)', () => {
+  it('ops add_keyframe(无 method_name)', () => {
     expect(genAddKeyframe(P, 'run', 0, 1.5, [1, 2, 3], 2.0)).toMatchInlineSnapshot(`
       "extends SceneTree
 
