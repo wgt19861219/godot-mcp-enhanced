@@ -105,7 +105,7 @@ func handle_test_assert(params: Dictionary) -> Dictionary:
 			if parent_node == null:
 				return {"result": {"passed": false, "message": "Parent node not found: " + parent_path}}
 			var count: int = parent_node.get_child_count()
-			var expected_count: int = int(params.get("count", -1))
+			var expected_count: int = CommandHelpers.int_guarded(params.get("count"), -1)
 			return {"result": {"passed": count == expected_count, "message": "Children: %d (expected: %d)" % [count, expected_count], "actual": count}}
 		_:
 			return {"error": {"code": -32004, "message": "Unknown assertion type: " + assertion_type}}

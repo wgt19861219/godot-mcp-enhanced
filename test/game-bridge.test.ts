@@ -22,10 +22,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { mockCreate, mockExists, mockRead, mockLstat, mockChmod, mockExec } = vi.hoisted(() => ({
+const { mockCreate, mockExists, mockRead, mockLstat, mockChmod, mockExec, mockReaddir } = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockExists: vi.fn(() => true),
   mockRead: vi.fn(() => 'test-secret'),
+  // Task 4.4: registry 目录读取 mock——默认空数组(确定性空 registry;此前 fs mock 无
+  // readdirSync 导出,bridge-client 拿 undefined 调用即 throw → catch 回落,行为等价但隐晦)。
+  mockReaddir: vi.fn(() => [] as string[]),
   // A4: 默认非 symlink;测试时 override 为 symlink 验证权限收紧未发生
   mockLstat: vi.fn(() => ({ isSymbolicLink: () => false })),
   // A4: 暴露 chmod/exec 作 spy,断言 symlink 时二者均未被调用(副作用未发生)
@@ -37,6 +40,7 @@ vi.mock('net', () => ({ createConnection: mockCreate }));
 vi.mock('fs', () => ({
   existsSync: mockExists,
   readFileSync: mockRead,
+  readdirSync: mockReaddir,
   writeFileSync: vi.fn(), copyFileSync: vi.fn(), unlinkSync: vi.fn(),
   chmodSync: mockChmod, statSync: vi.fn(), lstatSync: mockLstat,
   renameSync: vi.fn(),
@@ -850,6 +854,293 @@ describe('P3-2R: setBridgeProjectDir in-flight warn 守护', () => {
     } finally {
       loggerSpy.mockRestore();
       setBridgeProjectDir('/__reset__');
+    }
+  });
+});
+
+// ── M-6/O3 (2026-09-17 架构审查): sync_state 快照 project 维度 ────────────────
+// 原实现 SyncSnapshot 无 projectPath/port 字段——同 label 跨项目 snapshot 静默覆盖、
+// compare 两个不同项目的快照产出无意义 diff 零警告(host/client 多游戏同 label 场景)。
+// 修复:snapshot 记录 getBridgeProjectDir()+解析端口;compare 回显双方 project/port,
+// 跨项目置 cross_project:true 警告;同 label 跨项目覆盖时响应带 overwrote 警告。
+describe('M-6/O3: sync_state 快照 project 维度(跨项目比对告警)', () => {
+  /** collect_state 响应型 socket(每实例状态注入不同 game_time 便于区分)。 */
+  function collectStateSocket(gameTime: number): EventEmitter {
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : {
+              id: req.id,
+              result: {
+                instances: { '/root/Main': { _mcp_state: { hp: 100 } } },
+                count: 1, game_time_ms: gameTime, collected: ['/root/Main'], truncated: false,
+              },
+            };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    return sock;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    mockRead.mockReturnValue('test-secret');
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+  });
+
+  it('M-6a: snapshot 响应回显 project_path(来源可追溯)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(100);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, { projectDir: '/p' } as never);
+    expect(r?.isError).not.toBe(true);
+    expect(JSON.stringify(r)).toContain('/p');  // project_path 回显
+  });
+
+  it('M-6b: 跨项目 compare → cross_project:true + 警告 + 双方 project 回显', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(200);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    const ctxB = { projectDir: '/q' } as never;
+    const ra = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, ctxA);
+    expect(ra?.isError).not.toBe(true);
+    const rb = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'b' }, ctxB);
+    expect(rb?.isError).not.toBe(true);
+    const rc = await handleTool('game', { action: 'sync_state', sub_action: 'compare', label_a: 'a', label_b: 'b' }, ctxB);
+    expect(rc?.isError).not.toBe(true);
+    const parsed = JSON.parse((rc as { content: Array<{ text: string }> }).content[0].text);
+    expect(parsed.cross_project).toBe(true);          // 跨项目警告标志
+    expect(parsed.project_a).toContain('/p');          // 双方来源回显
+    expect(parsed.project_b).toContain('/q');
+    expect(parsed.cross_project_warning).toMatch(/different projects/i);
+  });
+
+  it('M-6c: 同项目 compare(同项目双开 host/client)→ 无 cross_project(主用例不误报)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(300);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, ctxA);
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'b' }, ctxA);
+    const rc = await handleTool('game', { action: 'sync_state', sub_action: 'compare', label_a: 'a', label_b: 'b' }, ctxA);
+    const parsed = JSON.parse((rc as { content: Array<{ text: string }> }).content[0].text);
+    expect(parsed.cross_project).toBeUndefined();  // 同项目不告警
+    expect(parsed.project_a).toContain('/p');       // 来源仍回显
+  });
+
+  it('M-6d: 同 label 跨项目覆盖 → 响应带 overwrote 警告(静默覆盖消除)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(400);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const ctxA = { projectDir: '/p' } as never;
+    const ctxB = { projectDir: '/q' } as never;
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'shared' }, ctxA);
+    const r2 = await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'shared' }, ctxB);
+    const text = JSON.stringify(r2);
+    expect(text).toMatch(/overwrote|different project/i);  // 覆盖警告
+  });
+
+  it('M-6e: list 条目含 project_path(快照清单可追溯)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = collectStateSocket(500);
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    await handleTool('game', { action: 'sync_state', sub_action: 'snapshot', label: 'a' }, { projectDir: '/p' } as never);
+    const rl = await handleTool('game', { action: 'sync_state', sub_action: 'list' }, { projectDir: '/p' } as never);
+    expect(JSON.stringify(rl)).toContain('/p');
+  });
+});
+
+// ── M-8 (2026-09-17 架构审查): -32601 自动版本比对 ────────────────────────────
+// 版本指纹此前只在 game_query ping 直连路径注解;agent 直接调 send_drag 等新命令撞上项目内
+// 旧版 mcp_bridge.gd 时只拿到光秃秃的 "Method not found",无版本线索(重装指引只在 GD 文案)。
+// 修复:错误路径收到 -32601 时自动补发一次 ping 比对 BRIDGE_SCRIPT_VERSION,把既有
+// versionWarning 逻辑的结果拼进错误文案;版本一致(命令真不存在)不追加。
+describe('M-8: -32601 自动版本比对(非 ping 路径也能看到旧版指引)', () => {
+  /** 按 method 分派响应的 socket:send_drag → -32601;ping → 带 bridgeVersion。 */
+  function dispatchSocket(remoteVersion: string): EventEmitter {
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        if (req.id === 0) {
+          sock.emit('data', Buffer.from(JSON.stringify({ id: 0, result: { authenticated: true } }) + '\n'));
+          return;
+        }
+        if (req.method === 'ping') {
+          sock.emit('data', Buffer.from(JSON.stringify({
+            id: req.id, result: { ok: true, bridgeVersion: remoteVersion },
+          }) + '\n'));
+          return;
+        }
+        sock.emit('data', Buffer.from(JSON.stringify({
+          id: req.id, error: { code: -32601, message: 'Method not found' },
+        }) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    return sock;
+  }
+  const CTX = { projectDir: '/p', opsScript: '/scripts/ops.gd' } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    // bundled mcp_bridge.gd 版本 0.33.7(其余路径照旧回 secret)
+    mockRead.mockImplementation((p: unknown) =>
+      String(p).includes('mcp_bridge.gd')
+        ? 'const BRIDGE_SCRIPT_VERSION := "0.33.7"\n'
+        : 'test-secret');
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+  });
+  afterEach(() => {
+    mockRead.mockReturnValue('test-secret');
+  });
+
+  it('M-8a: 直连路径(game_input send_drag)遇 -32601 + 远端旧版 → 错误文案内嵌 versionWarning', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.30.0');  // 项目内旧版拷贝
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    const text = JSON.stringify(r);
+    expect(text).toContain('Bridge error (-32601)');
+    expect(text).toMatch(/versionWarning|outdated copy/);       // 版本警告拼进文案
+    expect(text).toMatch(/game_bridge_install with force: true/); // 可操作指引
+  });
+
+  it('M-8b: bridgeAction 路径(custom_command 未声明)同样内嵌 versionWarning', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.30.0');
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'custom_command', method: 'custom.nope' }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(JSON.stringify(r)).toMatch(/outdated copy/);
+  });
+
+  it('M-8c: 远端版本与 bundled 一致(命令真不存在)→ 不追加 versionWarning(防噪音)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.33.7');  // 版本一致
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(JSON.stringify(r)).not.toMatch(/outdated copy/);
+  });
+
+  it('M-8d: 非 -32601 错误(auth -32001)不触发探测 ping(错误路径不加延迟)', async () => {
+    const sock = new EventEmitter();
+    let pingSent = false;
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      if (req.method === 'ping') pingSent = true;
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : { id: req.id, error: { code: -32001, message: 'auth required' } };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(pingSent).toBe(false);  // -32001 不探测
+  });
+});
+
+// ── Task 4.4 (2026-09-17 架查 Low): _doConnect 端口单次解析 —— secret 与 TCP 同源 ──
+// 修复前 secret 读取(findBridgeSecretPath)与 TCP 连接各自调一次 resolveBridgePort,两次
+// 解析间隙 registry 变化会 secret 读 A 端口、TCP 连 B 端口(auth 必败)。修复后单次解析传参。
+// 注:两形态在静态 registry 下行为一致,本测试是"secret 路径与连接端口配对"的回归锁
+// (未来任何人把两次解析改回来,若配对被破坏即可经此断言暴露),非时序红绿测试。
+describe('Task 4.4: _doConnect 端口单次解析(secret 读取与 TCP 连接同端口)', () => {
+  it('4.4e: registry 命中 9082 → secret 读 mcp_bridge_9082.secret 且 createConnection 连 9082', async () => {
+    // 经 mockReaddir/mockRead 提供伪 registry(fs 全 mock,不落盘):项目 '/p' 心跳端口 9082
+    const entryJson = JSON.stringify({
+      id: 'inst_1', projectPath: '/p', port: 9082, pid: 1,
+      lastSeenMs: Date.now() - 1_000,
+      lastSeen: new Date(Date.now() - 1_000).toISOString(),
+      capabilities: ['registry-heartbeat'],
+    });
+
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    mockReaddir.mockImplementation((p: unknown) =>
+      String(p).includes('fake-registry') ? ['inst_1.json'] : []);
+    mockRead.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s.includes('inst_1.json')) return entryJson;
+      if (s.includes('mcp_bridge.gd')) return 'const BRIDGE_SCRIPT_VERSION := "0.33.7"\n';
+      return 'test-secret';
+    });
+    process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = '/fake-registry';
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : { id: req.id, result: { ok: true } };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+
+    try {
+      const r = await handleTool('game', { action: 'game_query', method: 'ping' }, { projectDir: '/p' } as never);
+      expect(r?.isError).not.toBe(true);
+
+      // 配对断言:TCP 连的是 registry 解析端口 9082
+      const connectOpts = mockCreate.mock.calls.at(-1)?.[0] as { port?: number };
+      expect(connectOpts?.port).toBe(9082);
+      // secret 读取路径与连接端口同源(9082 的 secret,而非另一次解析的产物)
+      const secretReadPaths = mockRead.mock.calls.map(c => String(c[0]));
+      expect(secretReadPaths.some(p => p.includes('mcp_bridge_9082.secret'))).toBe(true);
+      expect(secretReadPaths.some(p => /mcp_bridge_90[0-9]\.secret/.test(p) && !p.includes('9082'))).toBe(false);
+    } finally {
+      delete process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+      mockRead.mockReturnValue('test-secret');
     }
   });
 });

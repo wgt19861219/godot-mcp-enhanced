@@ -30,7 +30,7 @@ function localIso(msAgo = 0): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function writeEntry(name: string, projectPath: string, port: number, lastSeenMsAgo = 0): void {
+function writeEntry(name: string, projectPath: string, port: number, lastSeenMsAgo = 0, extra: Record<string, unknown> = {}): void {
   const entry = {
     id: name.replace('.json', ''),
     projectPath,
@@ -38,6 +38,7 @@ function writeEntry(name: string, projectPath: string, port: number, lastSeenMsA
     pid: 12345,
     lastSeen: localIso(lastSeenMsAgo),
     capabilities: ['registry-heartbeat'],
+    ...extra,
   };
   writeFileSync(join(registryDir, name), JSON.stringify(entry), 'utf-8');
 }
@@ -277,5 +278,43 @@ describe('A4: liveHeartbeatPortsFor(clean_stale_secrets 判活集合)', () => {
 
   it('registry 目录不存在 → 空集(调用方按无法判活保守处理,P 空拒清)', () => {
     expect(liveHeartbeatPortsFor(proj, join(registryDir, 'no-such-dir')).size).toBe(0);
+  });
+});
+
+// ── Task 4.4 (2026-09-17 架构审查 Low): lastSeenMs 毫秒精度 + pid 决胜 ─────────
+// GD 旧心跳 lastSeen 是秒级串(Time.get_datetime_string_from_system)——同项目双开同秒启动
+// 的两实例 lastSeen 相等,resolveBridgePort 靠 readdir 目录顺序摇摆取胜者(非确定);且
+// liveHeartbeatPortsFor 对只有 lastSeenMs 的新条目(无串)会误判超龄。修复:GD 心跳新增
+// lastSeenMs(UTC epoch ms),TS 侧优先消费;lastSeen 相同(同秒/同毫秒)以 pid 决胜。
+describe('Task 4.4: lastSeenMs 毫秒精度 + pid 决胜(确定性端口解析)', () => {
+  const proj = join(tmpdir(), 'proj-ms');
+
+  it('4.4a: lastSeenMs 优先于 lastSeen 串(A 串更旧但 ms 更新 → A 胜,rolling upgrade 混居)', () => {
+    // A:串 60s 前(旧读法看它旧),lastSeenMs 1s 前(新读法看它最新)
+    writeEntry('111_1.json', proj, 9082, 60_000, { lastSeenMs: Date.now() - 1_000, pid: 100 });
+    // B:串 2s 前(旧读法看它最新),无 lastSeenMs
+    writeEntry('222_2.json', proj, 9084, 2_000);
+    expect(resolveBridgePort(proj, registryDir)).toBe(9082);  // 旧代码此处返回 9084(只看串)
+  });
+
+  it('4.4b: 仅 lastSeenMs(无串)的新鲜条目参与解析与判活(新 GD 首个心跳未写串的窗口)', () => {
+    writeEntry('111_1.json', proj, 9083, 60_000, { lastSeen: undefined, lastSeenMs: Date.now() - 1_000 });
+    // JSON.stringify 会丢 undefined 键 → 条目只有 lastSeenMs;旧代码 Date.parse(undefined)=NaN 跳过
+    expect(resolveBridgePort(proj, registryDir)).toBe(9083);
+    expect(liveHeartbeatPortsFor(proj, registryDir).has(9083)).toBe(true);
+  });
+
+  it('4.4c: lastSeenMs 相同 → pid 高者胜(确定性;同秒双开不再靠目录顺序碰运气)', () => {
+    const sameMs = Date.now() - 1_000;
+    // 'a.json' 字母序在前(pid 低)——旧代码在字母序 readdir(Windows)下选 a,新代码 pid 决胜选 b
+    writeEntry('a.json', proj, 9082, 60_000, { lastSeenMs: sameMs, pid: 100 });
+    writeEntry('b.json', proj, 9084, 60_000, { lastSeenMs: sameMs, pid: 200 });
+    expect(resolveBridgePort(proj, registryDir)).toBe(9084);
+  });
+
+  it('4.4d: lastSeenMs 超龄(>5min)同样被过滤(两种形态同一新鲜窗口)', () => {
+    writeEntry('111_1.json', proj, 9082, 60_000, { lastSeenMs: Date.now() - 6 * 60 * 1000 });
+    expect(resolveBridgePort(proj, registryDir)).toBe(9081);  // 回落
+    expect(liveHeartbeatPortsFor(proj, registryDir).size).toBe(0);
   });
 });

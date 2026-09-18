@@ -6,14 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-> 2026-09-17 架构审查批 3(Task E:web-gui rotate-token/CLI 打码 + 纵深五小件,纯 TS 不 bump)。
-> 2026-09-17 架构审查批 3(Task D:web-gui server.ts 三项安全修复,纯 TS 不 bump)。
-> 2026-09-17 架构审查批 2(Task C:shutdown 完备性,纯 TS 不 bump)。
+## [0.33.7] - 2026-09-18
+
+> 2026-09-17 架构审查批 4（bridge 行为对称：M-5 uninstall 判活 / M-6·O3 sync_state project 维度 / M-8 -32601 版本比对 / Low 心跳毫秒+TOCTOU + 批1 终审 I-1 editor 命令族 40 处裸转守卫——改 `src/scripts/mcp_bridge.gd` 触发 bump）；随本段一并定版此前 [Unreleased] 累积的批 2（shutdown 完备性）与批 3（web-gui 安全 hygiene）条目；npm publish / tag 待用户指令。
 
 ### Added
+- **M-6/O3 sync_state 快照 project/port 维度**（bridge）：`SyncSnapshot` 新增 `project_path`/`port` 字段（snapshot 时记录 `getBridgeProjectDir()`+`resolveBridgePort` 时值）——compare 响应回显双方 `project_a/project_b/port_a/port_b`，跨项目比对置 `cross_project: true` + `cross_project_warning`（两快照来自不同项目的 bridge，节点集互不可比，diff 无意义）；同 label 跨项目覆盖时 snapshot 响应带 `overwrote_cross_project` 警告（静默覆盖消除）；同项目双开（host/client 同游戏）不误报（port 不同仅回显不告警）；list 条目含来源维度。响应字段自描述，schema 描述仅加一句提示（P4-1 体积锁 8200B 内）。
+- **M-8 -32601 错误自动补 ping 版本比对**（bridge）：错误路径收到 -32601(method not found) 时自动补发一次 ping 比对 `BRIDGE_SCRIPT_VERSION`，把既有 `versionWarning`（旧版拷贝重装指引）拼进错误文案——此前版本指纹只在 `game_query ping` 直连路径注解，agent 直接调 `send_drag` 等新命令撞上项目内旧版 mcp_bridge.gd 只拿到光秃秃的 Method not found。覆盖四条错误路径（game_query/write/input 直连、bridgeAction、game_wait、game_playtest）；版本一致（命令真不存在）不追加；ping 失败 best-effort 维持原文案；ping 自身不探测（防递归）；非 -32601 不探测（不加延迟）。
 - **M-2 rotateSharedToken + `dashboard --rotate-token` + CLI 打码**(web-gui/cli):registry.ts 导出 `rotateSharedToken()`——删 token.txt → 生成新值 → 包根入口页(面板入口.html)存在时用新 token 重写(复用 `ensurePackageRootEntry`,portal⇄registry 循环 import 双方仅函数体内互调,ESM live bindings 安全);CLI `dashboard --rotate-token` 打印前 4 位打码形态(全量 token 不落终端);`dashboard --web` 默认 console 输出打码 URL,`--show-token` 显式全量(浏览器 opener 恒收全量,打开功能不变)。诚实边界:已运行实例内存 token 不热更新,须重启收敛新值(rotate 防守"后续不再认旧 token")。
 
 ### Fixed
+- **M-5 uninstall 判活护栏**（bridge）：`game_bridge_uninstall` 删 secret 前调 `liveHeartbeatPortsFor` 判活（与 install 侧 `clean_stale_secrets` 护栏哲学对称）——原行为无条件删光全部 `mcp_bridge_*.secret`，同项目多实例在跑时在跑实例的 secret 被一并删掉（进程内 auth 仍有效，但 TS 侧重连即断且文案无提示）；现只删无心跳端口的 secret，保留项在响应中点名并附"停游戏后重跑 uninstall"指引。无任何新鲜心跳（游戏全停/旧版 GD/registry 不可读）仍删光——uninstall 的移除语义不被护栏阻塞（与 clean_stale_secrets 的"无法判活即拒清"相反是有意的不对称：前者目标是卸载，后者目标是清理残留）。
+- **心跳 lastSeenMs 毫秒 + pid 决胜 + `_doConnect` 端口单次解析**（bridge，审查 Low）：GD `_write_registry_entry` 新增 `lastSeenMs`（`Time.get_unix_time_from_system()*1000`，UTC epoch 毫秒）——旧 `lastSeen` 串仅秒级精度，同项目双开同秒启动的两实例靠 readdir 目录顺序摇摆取胜者（Windows/Linux 顺序不同，非确定）；TS 侧 `entryLastSeenMs` 优先消费 ms 形态（rolling upgrade 两形态混居可直接比较），平票以 pid 决胜（高 pid=后起进程）；`liveHeartbeatPortsFor` 同步（仅 lastSeenMs 的新条目不再误判超龄）。`_doConnect` 端口单次解析后 secret 读取与 TCP 连接同源——此前各调一次 `resolveBridgePort`，两次解析间隙 registry 变化会 secret 读 A 端口、TCP 连 B 端口（auth 必败，secret 按端口分文件）；`findBridgeSecretPath` 并入 `readBridgeSecret(port?)`。
+- **I-1 editor 命令族 40 处 `int/float(params.get(...))` 裸转守卫收口**（批1 终审范围增补，2026-09-17 审查 H-2 的覆盖盲区——报告只锁 mcp_bridge.gd）：command_helpers.gd 新增 `num_guarded`/`int_guarded` 静态守卫（Keep in sync 两副本：mcp_bridge.gd `_num`/`_int_guarded` + editor 副本；headless 无数值守卫副本——TS 前置校验兜底，其分量白名单 `_math_comp` 另册同步）；`parse_vec3` Array 分量改经 `_comp_white` 白名单（毒分量按 0.0，对齐短数组 Vector3.ZERO 语义）；animtree(1)/nav(2)/debug(3)/test(1)/asset_factory(13)/custom_meshes(20) 全量替换；新契约测试 `editor-commands-guard-contract.test.ts` 负向断言全命令族禁绝裸转（教训对齐批1——批次C只扫两函数致漏网）。
 - **备份 .bak 补 Windows icacls**(web-gui,审查 Low):`saveText` 备份写后调 `hardenFilePermissionsWindows(bakPath)`(复用 registry.ts 导出)——.bak 含旧文件全文,Windows 无视 0o600,ACL 收紧对齐登记文件惯例;Linux .bak 0o600 既有行为锁定。
 - **readJsonBody 统一 64KB 上限**(web-gui,审查 Low):content-length 头预检 + chunked(无 CL)累计字节超限即弃读返回(不整读进内存),返回形态区分 `bad_json`/`too_large`(调用方 400/413);file save 调用方显式传 600KB(I-6 语义独立保留且防 chunked 绕过其 CL 预检),其余 POST 端点默认 64KB。
 - **CSP script-src 去 'unsafe-inline' 改 sha256 + frame-ancestors**(web-gui,审查 Low):html.ts 导出 `INDEX_SCRIPT_SHA256`(模块加载时对 INDEX_HTML 唯一内联 `<script>` 算 sha256/base64,脚本变更 hash 天然同步;提取仅 CRLF 归一、含前导换行(2026-09-17 playwright 浏览器实证,期望 hash 已硬编码锚进测试));`WEB_GUI_CSP` 的 script-src 改 `'self' 'sha256-<hash>'`(assets 同源脚本不受影响),追加 `frame-ancestors 'none'`(clickjacking 面);style-src 'unsafe-inline' 保留(样式属性面)。测试以独立路径(split,非实现同款 regex)重算 hash 比对锁定。

@@ -107,6 +107,31 @@ export function annotatePingWithVersion(
 // 审查 H-3):模块顶层副作用不受 close() 管辖,迁入控制面后 close() 可对称置 null 清理;
 // dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
 
+/** M-8(2026-09-17 审查):-32601(method not found)在项目内旧版 mcp_bridge.gd 拷贝上最常见的
+ *  成因是"TS 侧新增了命令、项目内 GD 还是旧版"——版本指纹此前只在 game_query ping 直连路径
+ *  注解(annotatePingWithVersion),非 ping 路径只拿到光秃秃的 Method not found,无重装线索。
+ *  这里在错误路径收到 -32601 时自动补发一次 ping 比对 BRIDGE_SCRIPT_VERSION,把既有
+ *  versionWarning 文案拼进错误结果;版本一致(命令真不存在)不追加。best-effort:探测 ping
+ *  失败(连接抖动/超时)维持原错误文案,绝不吞掉/延迟原错误本身。ping 自身不探测(防递归)。 */
+async function bridgeErrorText(
+  method: string,
+  err: { code: number; message: string },
+  ctx: ToolContext,
+): Promise<string> {
+  let suffix = '';
+  if (err.code === -32601 && method !== 'ping') {
+    try {
+      const probe = await sendToBridge('ping', {}, 5000);
+      const result = probe.result;
+      if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+        const annotated = annotatePingWithVersion(result as Record<string, unknown>, bundledBridgeVersion(ctx));
+        if (typeof annotated.versionWarning === 'string') suffix = `\n${annotated.versionWarning}`;
+      }
+    } catch { /* best-effort:ping 不通时原样返回 */ }
+  }
+  return `Bridge error (${err.code}): ${err.message}${suffix}`;
+}
+
 // G-5: 识别/迁移旧版(≤0.23.x)误写的带前缀 autoload 键(仅工具层 install/uninstall 用)
 const AUTOLOAD_KEY_LEGACY = 'autoload/MCPBridge';
 
@@ -145,6 +170,11 @@ interface SyncSnapshot {
   /** 全仓审查(2026-09-12): GD 侧 256 节点上限截断标志(P10 审查 N-2 产出,原 TS 消费侧
    * 丢弃)——截断快照参与比对时结果不可信(两侧同截断→假阳性/不同截断→假阴性)。 */
   truncated: boolean;
+  /** M-6/O3(2026-09-17 审查): 快照来源维度——同 label 跨项目静默覆盖曾产出无意义 diff
+   *  零警告;host/client 多游戏同 label 场景必须可追溯来源。null=bridge 项目目录未设。 */
+  project_path: string | null;
+  /** M-6/O3: 快照来源端口(resolveBridgePort 时值;同项目双开 host/client 端口不同)。 */
+  port: number | null;
 }
 
 /** 内存快照表(进程生命周期;label → snapshot)。agent 断连重连不清——快照是比对原语不是会话态。 */
@@ -253,7 +283,7 @@ export function getToolDefinitions(): Tool[] {
           },
           label: {
             type: 'string',
-            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 时用 label_a/label_b。',
+            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 跨项目快照带 cross_project 警告。compare 时用 label_a/label_b。',
           },
           label_a: {
             type: 'string',
@@ -509,7 +539,8 @@ async function bridgeAction(method: string, params: Record<string, unknown>, ctx
   // T-2 (2026-06-24 审查): bridge 返回 error 时(密钥失效 -32001/-32002/方法不存在等)用 errorResult
   // (isError=true),否则 MCP 客户端误判成功吞掉错误。原 textResult 默认 isError=false。
   if (resp.error) {
-    return errorResult(`Bridge error (${resp.error.code}): ${resp.error.message}`);
+    // M-8: -32601 经 bridgeErrorText 自动补 ping 版本比对(旧版 GD 指引拼进文案)
+    return errorResult(await bridgeErrorText(method, resp.error, ctx));
   }
   // A2 注:ping 版本注解在 game_query 直连路径(本函数不被 game_query 走到,见 case 注释)
   // G-1: 订阅登记表维护 — start 成功登记(重连后重发),stop 成功移除(不再重发)
@@ -687,13 +718,35 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           }
         }
 
-        // A-07 + A1: 清理所有端口的 secret(端口避让后 9081..909x 均可能有残留)
+        // A-07 + A1: 清理端口的 secret(端口避让后 9081..909x 均可能有残留)。
+        // M-5 (2026-09-17 审查): 删前判活——与 install 侧 clean_stale_secrets 的护栏哲学对称。
+        // 原行为无条件删光全部:同项目多实例在跑时,在跑实例的 secret 被一并删掉(进程内 auth
+        // 仍有效,但 TS 侧重连即断且无提示)。判活依据与 install 同源(liveHeartbeatPortsFor,
+        // machine registry 新鲜心跳);有活实例时只删无心跳端口的 secret 并点名保留项,
+        // 无任何新鲜心跳(游戏全停/旧版 GD/registry 不可读)才删光——uninstall 的移除语义
+        // 不被护栏阻塞(与 clean_stale_secrets 的"无法判活即拒清"相反,是有意的不对称:
+        // 后者目标是清理残留,删错活实例代价高;前者目标是卸载,游戏全停后残留必须能清)。
         const godotDir = join(projectPath, '.godot');
+        let secretNote = '';
         if (existsSync(godotDir)) {
           try {
-            for (const name of readdirSync(godotDir)) {
-              if (name.startsWith('mcp_bridge_') && name.endsWith('.secret')) {
-                try { unlinkSync(join(godotDir, name)); } catch { /* best effort */ }
+            const secretFiles = readdirSync(godotDir).filter(n => /^mcp_bridge_\d+\.secret$/.test(n));
+            if (secretFiles.length > 0) {
+              const livePorts = liveHeartbeatPortsFor(projectPath);
+              const deleted: string[] = [];
+              const kept: string[] = [];
+              for (const name of secretFiles) {
+                const port = Number(/^mcp_bridge_(\d+)\.secret$/.exec(name)?.[1]);
+                if (livePorts.size > 0 && livePorts.has(port)) {
+                  kept.push(name);  // 活实例:保留 secret,TS 侧重连不断
+                  continue;
+                }
+                try { unlinkSync(join(godotDir, name)); deleted.push(name); } catch { /* best effort */ }
+              }
+              if (kept.length > 0) {
+                secretNote = ` Kept ${kept.join(', ')} (fresh heartbeat — live instance(s) still running; their in-memory auth works, TS-side reconnect stays intact. Stop the game and re-run game_bridge_uninstall to remove them). Deleted: ${deleted.join(', ') || 'none'}.`;
+              } else if (deleted.length > 0) {
+                secretNote = ` Secrets removed: ${deleted.join(', ')}.`;
               }
             }
           } catch { /* best effort */ }
@@ -701,7 +754,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         invalidateBridgeSecret();
         invalidateBridgeConnection();
 
-        return textResult(JSON.stringify({ success: true, message: `MCP Bridge uninstalled.${uninstallNote}` }));
+        return textResult(JSON.stringify({ success: true, message: `MCP Bridge uninstalled.${uninstallNote}${secretNote}` }));
       }
 
       // P2-1: Autoload overrides —— 启动游戏前注入任意调试脚本(日志钩子/状态快照等)
@@ -797,7 +850,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (response.error.code === -32001 || response.error.code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${response.error.code}): ${response.error.message}`);  // T-2: textResult→errorResult(isError=true)
+          // M-8: -32601 自动版本比对;T-2: textResult→errorResult(isError=true)
+          return errorResult(await bridgeErrorText(method, response.error, ctx));
         }
         // A2 (2026-09-16 跨项目验证接线修正): game_query/write/input 走本直连路径而非
         // bridgeAction(共享 helper 只服务 watch/monitor 等)——ping 版本注解必须接在这里,
@@ -839,11 +893,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         );
 
         if (result.error) {
-          const code = (result.error as { code?: number }).code;
+          const waitErr = result.error as { code?: number; message?: string };
+          const code = waitErr.code;
           if (code === -32001 || code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${code}): ${(result.error as { message?: string }).message ?? 'wait failed'}`);  // T-2: textResult→errorResult(isError=true)
+          // M-8: -32601 自动版本比对;T-2: textResult→errorResult(isError=true)
+          return errorResult(await bridgeErrorText(method, { code: code ?? 0, message: waitErr.message ?? 'wait failed' }, ctx));
         }
         return textResult(JSON.stringify(result, null, 2));
       }
@@ -867,7 +923,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (response.error.code === -32001 || response.error.code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${response.error.code}): ${response.error.message}`);
+          // M-8: -32601 自动版本比对(playtest 命令族较新,项目内旧版 GD 高发面)
+          return errorResult(await bridgeErrorText(method, response.error, ctx));
         }
         return textResult(JSON.stringify(response.result, null, 2));
       }
@@ -982,18 +1039,29 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             return res;
           }
           const truncated = parsed.truncated === true;
+          // M-6/O3: 记录快照来源(project+port)——同 label 跨项目静默覆盖/无意义 diff 的追溯锚
+          const snapProject = getBridgeProjectDir();
+          const snapPort = snapProject !== null ? resolveBridgePort(snapProject) : null;
+          const prev = _syncSnapshots.get(label);
+          const overwroteCrossProject = prev !== undefined
+            && prev.project_path !== null && snapProject !== null
+            && prev.project_path !== snapProject;
           _syncSnapshots.set(label, {
             instances: (parsed.instances ?? {}) as Record<string, unknown>,
             count: Number(parsed.count ?? 0),
             game_time_ms: Number(parsed.game_time_ms ?? 0),
             taken_at: Date.now(),
             truncated,
+            project_path: snapProject,
+            port: snapPort,
           });
           // 全仓审查: 透传截断标志并附警告——静默截断会让 compare 结果不可信(N-2 修复
           // 的消费侧接线,原 GD 产出但 TS 丢弃)。
           return textResult(JSON.stringify({
             label, count: parsed.count ?? 0, collected: parsed.collected ?? [], truncated,
+            project_path: snapProject, port: snapPort,
             ...(truncated ? { warning: 'state collection hit the 256-node cap and was truncated; compare results will not cover all nodes' } : {}),
+            ...(overwroteCrossProject ? { overwrote_cross_project: true, overwrite_warning: `label "${label}" previously held a snapshot from a different project (${prev.project_path}) — it has been overwritten and is no longer comparable against that project's snapshots` } : {}),
           }, null, 2));
         }
         if (sub === 'compare') {
@@ -1010,17 +1078,25 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           // 做同步判定(同截断→in_sync 假阳性;不同截断→missing 假阴性)。
           const truncatedA = snapA.truncated;
           const truncatedB = snapB.truncated;
+          // M-6/O3: 跨项目比对告警——两快照来自不同项目的 bridge(多游戏同 label 误比对),
+          // diff 结果几乎必然无意义(节点集互不可比);双方 null(项目目录未设)不告警。
+          const crossProject = snapA.project_path !== null && snapB.project_path !== null
+            && snapA.project_path !== snapB.project_path;
           return textResult(JSON.stringify({
             label_a: labelA, label_b: labelB, tolerance,
             game_time_a: snapA.game_time_ms, game_time_b: snapB.game_time_ms,
+            project_a: snapA.project_path, project_b: snapB.project_path,
+            port_a: snapA.port, port_b: snapB.port,
             truncated_a: truncatedA, truncated_b: truncatedB,
             ...(truncatedA || truncatedB ? { unreliable: true, warning: 'one or both snapshots were truncated at the 256-node cap; in_sync/missing fields do not cover all nodes' } : {}),
+            ...(crossProject ? { cross_project: true, cross_project_warning: `snapshots come from different projects (${snapA.project_path} vs ${snapB.project_path}) — node sets are not comparable across projects; take both snapshots from the same project's instances` } : {}),
             ...report,
           }, null, 2));
         }
         if (sub === 'list') {
           const items = [..._syncSnapshots.entries()].map(([label, snap]) => ({
             label, count: snap.count, game_time_ms: snap.game_time_ms, taken_at: new Date(snap.taken_at).toISOString(), truncated: snap.truncated,
+            project_path: snap.project_path, port: snap.port,
           }));
           return textResult(JSON.stringify({ snapshots: items, total: items.length }, null, 2));
         }

@@ -46,37 +46,37 @@ static func create_mesh_uncached(shape: String, params: Dictionary) -> Mesh:
 			return m
 		"cylinder":
 			var m := CylinderMesh.new()
-			m.height = float(params.get("height", 1.0))
-			m.top_radius = float(params.get("radius", 0.5))
+			m.height = CommandHelpers.num_guarded(params.get("height"), 1.0)
+			m.top_radius = CommandHelpers.num_guarded(params.get("radius"), 0.5)
 			m.bottom_radius = m.top_radius
 			# P2-6: clampi 下限防 mesh 退化（对齐 custom_meshes.gd:16 的 clampi(..., 3, 128)）
-			m.radial_segments = clampi(int(params.get("radial_segments", 24)), 3, 128)
+			m.radial_segments = clampi(CommandHelpers.int_guarded(params.get("radial_segments"), 24), 3, 128)
 			return m
 		"sphere":
 			var m := SphereMesh.new()
-			m.radius = float(params.get("radius", 0.5))
-			m.radial_segments = clampi(int(params.get("radial_segments", 24)), 3, 128)
-			m.rings = clampi(int(params.get("rings", 16)), 3, 128)
+			m.radius = CommandHelpers.num_guarded(params.get("radius"), 0.5)
+			m.radial_segments = clampi(CommandHelpers.int_guarded(params.get("radial_segments"), 24), 3, 128)
+			m.rings = clampi(CommandHelpers.int_guarded(params.get("rings"), 16), 3, 128)
 			return m
 		"prism":
 			var m := PrismMesh.new()
 			m.size = _vec3(params, "size", Vector3.ONE)
-			m.left_to_right = float(params.get("left_to_right", 0.5))
+			m.left_to_right = CommandHelpers.num_guarded(params.get("left_to_right"), 0.5)
 			return m
 		"wall":  # 语义化 box：length/height/thickness
 			var m := BoxMesh.new()
 			m.size = Vector3(
-				float(params.get("length", 2.0)),
-				float(params.get("height", 1.0)),
-				float(params.get("thickness", 0.1))
+				CommandHelpers.num_guarded(params.get("length"), 2.0),
+				CommandHelpers.num_guarded(params.get("height"), 1.0),
+				CommandHelpers.num_guarded(params.get("thickness"), 0.1)
 			)
 			return m
 		"ramp":  # 语义化 prism：坡道（单件 PrismMesh；make_ramp 阻塞未移植，方案 A）
 			var m := PrismMesh.new()
 			m.size = Vector3(
-				float(params.get("length", 2.0)),
-				float(params.get("height", 1.0)),
-				float(params.get("width", 1.0))
+				CommandHelpers.num_guarded(params.get("length"), 2.0),
+				CommandHelpers.num_guarded(params.get("height"), 1.0),
+				CommandHelpers.num_guarded(params.get("width"), 1.0)
 			)
 			m.left_to_right = 0.0
 			return m

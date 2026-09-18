@@ -104,7 +104,7 @@ func get_command_docs() -> Dictionary:
 
 func handle_set_breakpoint(params: Dictionary) -> Dictionary:
 	var path: String = params.get("path", "")
-	var line: int = int(params.get("line", 0))
+	var line: int = CommandHelpers.int_guarded(params.get("line"), 0)
 	if path == "":
 		return {"error": {"code": -32602, "message": "path is required (res:// path to .gd script)"}}
 	if line < 1:
@@ -121,7 +121,7 @@ func handle_set_breakpoint(params: Dictionary) -> Dictionary:
 
 func handle_clear_breakpoint(params: Dictionary) -> Dictionary:
 	var path: String = params.get("path", "")
-	var line: int = int(params.get("line", 0))
+	var line: int = CommandHelpers.int_guarded(params.get("line"), 0)
 	if path == "":
 		return {"error": {"code": -32602, "message": "path is required (res:// path to .gd script)"}}
 	if line < 1:
@@ -322,7 +322,7 @@ func handle_inspect_frame(params: Dictionary) -> Dictionary:
 	if not br.ok: return br.error
 	var bridge: EditorDebuggerPlugin = br.bridge
 
-	var frame_index: int = int(params.get("frame_index", 0))
+	var frame_index: int = CommandHelpers.int_guarded(params.get("frame_index"), 0)
 
 	bridge.call("ensure_connected")
 	# A4: 单 session 解析(state/session 同源,消除 current_break+active_sessions[0] 错配)

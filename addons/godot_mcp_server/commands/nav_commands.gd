@@ -270,8 +270,8 @@ func handle_nav_create_agent(params: Dictionary, request_id: int) -> Dictionary:
 	if target_pos != null and target_pos is Dictionary:
 		agent.target_position = Vector3(float(target_pos.get("x", 0.0)), float(target_pos.get("y", 0.0)), float(target_pos.get("z", 0.0)))
 
-	agent.path_desired_distance = float(params.get("path_desired_distance", 0.5))
-	agent.target_desired_distance = float(params.get("target_desired_distance", 1.0))
+	agent.path_desired_distance = CommandHelpers.num_guarded(params.get("path_desired_distance"), 0.5)
+	agent.target_desired_distance = CommandHelpers.num_guarded(params.get("target_desired_distance"), 1.0)
 	agent.avoidance_enabled = params.get("avoidance_enabled", false)
 
 	if _undo_manager != null:

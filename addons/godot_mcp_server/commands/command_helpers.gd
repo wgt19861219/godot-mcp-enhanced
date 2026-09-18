@@ -79,7 +79,12 @@ static func parse_vec3(v: Variant) -> Vector3:
 	if v is Array:
 		var a: Array = v as Array
 		if a.size() >= 3:
-			return Vector3(float(a[0]), float(a[1]), float(a[2]))
+			# I-1(2026-09-17 审查批4): 分量经 _comp_white 白名单——毒分量({}/非法串)裸 float()
+			# 即 "Invalid type" SCRIPT ERROR;守卫后毒/缺分量按 0.0 处理(对齐短数组 Vector3.ZERO 语义)。
+			return Vector3(
+				num_guarded(_comp_white(a, 0), 0.0),
+				num_guarded(_comp_white(a, 1), 0.0),
+				num_guarded(_comp_white(a, 2), 0.0))
 		return Vector3.ZERO
 	if v is PackedFloat64Array:
 		var p: PackedFloat64Array = v as PackedFloat64Array
@@ -179,6 +184,31 @@ static func _comp_white(a: Array, index: int) -> Variant:
 		if out is int or out is float or (out is String and String(out).is_valid_float()):
 			return out
 	return null
+
+
+## I-1(2026-09-17 审查批4,批1 终审范围增补): editor 命令族数值参数守卫——毒参数
+## (null/容器/非法串)裸 float()/int() = "Invalid type" SCRIPT ERROR(editor 常驻不挂死,
+## 但中断命令处理且错误不回显)。仅 int/float/合法数字串放行,其余回 fallback。
+## Keep in sync(数值守卫两副本): src/scripts/mcp_bridge.gd _num/_int_guarded(bridge)+ 本文件
+## (editor,public 形态跨文件 CommandHelpers. 前缀调用)。headless(godot_operations.gd)
+## 无数值守卫副本——其命令走 TS 工具层前置校验(如 navigation.ts validateVector3),且
+## headless 进程一次性不常驻;其分量层白名单是 _math_comp(与 _comp_white 同族,另册同步)。
+static func num_guarded(v: Variant, fallback: float) -> float:
+	if v is int or v is float:
+		return float(v)
+	if v is String and String(v).is_valid_float():
+		return float(v)
+	return fallback
+
+
+static func int_guarded(v: Variant, fallback: int) -> int:
+	if v is int:
+		return v
+	if v is float and is_finite(v) and v == floor(v):
+		return int(v)
+	if v is String and String(v).is_valid_int():
+		return int(v)
+	return fallback
 
 
 ## C12: 查属性的 PROPERTY_USAGE_* flag（via get_property_list）。

@@ -179,7 +179,7 @@ func handle_animtree_add_transition(params: Dictionary) -> Dictionary:
 		return {"error": {"code": -32004, "message": "from_state and to_state are required"}}
 
 	var transition = AnimationNodeStateMachineTransition.new()
-	transition.xfade_time = float(params.get("xfade_time", 0.0))
+	transition.xfade_time = CommandHelpers.num_guarded(params.get("xfade_time"), 0.0)
 
 	var conditions = params.get("conditions", [])
 	if conditions != null and conditions is Array:

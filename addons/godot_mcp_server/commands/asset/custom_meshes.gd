@@ -11,9 +11,9 @@ extends RefCounted
 # 侧面斜法线与底面 -Y 被 generate_normals 平滑成圆角，重蹈 I-3）。
 # 侧面斜法线 = 母线 (r,yb)→(0,yt) 的朝外垂直方向 (cos(a)*h, r, sin(a)*h)/L；apex 奇点用 UP。
 static func make_cone(params: Dictionary) -> ArrayMesh:
-	var height: float = float(params.get("height", 1.0))
-	var radius: float = float(params.get("radius", 0.5))
-	var segments: int = clampi(int(params.get("segments", 24)), 3, 128)
+	var height: float = CommandHelpers.num_guarded(params.get("height"), 1.0)
+	var radius: float = CommandHelpers.num_guarded(params.get("radius"), 0.5)
+	var segments: int = clampi(CommandHelpers.int_guarded(params.get("segments"), 24), 3, 128)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var yb := -height / 2.0
@@ -50,10 +50,10 @@ static func make_cone(params: Dictionary) -> ArrayMesh:
 # P1-7：4 面（外侧面/内侧面/顶环/底环）各自手设法线，不调 index()/generate_normals()
 # （否则环顶点被合并 → 外侧径向与底环 -Y 等被平滑成圆角，重蹈 I-3）。
 static func make_tube(params: Dictionary) -> ArrayMesh:
-	var height: float = float(params.get("height", 1.0))
-	var radius: float = float(params.get("radius", 0.5))
-	var thickness: float = float(params.get("thickness", 0.1))
-	var segments: int = clampi(int(params.get("segments", 24)), 3, 128)
+	var height: float = CommandHelpers.num_guarded(params.get("height"), 1.0)
+	var radius: float = CommandHelpers.num_guarded(params.get("radius"), 0.5)
+	var thickness: float = CommandHelpers.num_guarded(params.get("thickness"), 0.1)
+	var segments: int = clampi(CommandHelpers.int_guarded(params.get("segments"), 24), 3, 128)
 	var inner := maxf(radius - thickness, 0.001)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -131,10 +131,10 @@ static func make_tube(params: Dictionary) -> ArrayMesh:
 
 # --- torus 圆环 ---
 static func make_torus(params: Dictionary) -> ArrayMesh:
-	var R: float = float(params.get("major_radius", 0.5))
-	var r: float = float(params.get("minor_radius", 0.2))
-	var ms: int = clampi(int(params.get("major_segments", 32)), 3, 128)
-	var ns: int = clampi(int(params.get("minor_segments", 16)), 3, 128)
+	var R: float = CommandHelpers.num_guarded(params.get("major_radius"), 0.5)
+	var r: float = CommandHelpers.num_guarded(params.get("minor_radius"), 0.2)
+	var ms: int = clampi(CommandHelpers.int_guarded(params.get("major_segments"), 32), 3, 128)
+	var ns: int = clampi(CommandHelpers.int_guarded(params.get("minor_segments"), 16), 3, 128)
 	# F1(2026-07-29): ms/ns 各 ≤128 隐含 ms×ns ≤ 16384，顶点 ≈ 9.8 万 < 20 万上限，无需额外乘积守卫。
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -167,10 +167,10 @@ static func _torus_vertex(R: float, r: float, a: float, b: float) -> Vector3:
 
 # --- stairs 楼梯（多台阶 → 单 ArrayMesh，A3）---
 static func make_stairs(params: Dictionary) -> ArrayMesh:
-	var steps: int = clampi(int(params.get("steps", 5)), 1, 200)
-	var sh: float = float(params.get("step_height", 0.2))
-	var sd: float = float(params.get("step_depth", 0.3))
-	var w: float = float(params.get("width", 1.2))
+	var steps: int = clampi(CommandHelpers.int_guarded(params.get("steps"), 5), 1, 200)
+	var sh: float = CommandHelpers.num_guarded(params.get("step_height"), 0.2)
+	var sd: float = CommandHelpers.num_guarded(params.get("step_depth"), 0.3)
+	var w: float = CommandHelpers.num_guarded(params.get("width"), 1.2)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for i in steps:
@@ -198,11 +198,11 @@ static func _post_xs(length: float, posts: int, start_post: bool, end_post: bool
 # --- fence 栅栏（柱 + 横档 → 单 ArrayMesh，A3）---
 # v5：柱循环改为调 _post_xs 纯函数；start_post/end_post 控制首/末柱（continuous 端柱共享，默认 true 零回归）
 static func make_fence(params: Dictionary) -> ArrayMesh:
-	var length: float = float(params.get("length", 3.0))
-	var height: float = float(params.get("height", 1.2))
-	var posts: int = clampi(int(params.get("posts", 4)), 1, 200)
-	var pr: float = float(params.get("post_radius", 0.05))
-	var rt: float = float(params.get("rail_thickness", 0.04))
+	var length: float = CommandHelpers.num_guarded(params.get("length"), 3.0)
+	var height: float = CommandHelpers.num_guarded(params.get("height"), 1.2)
+	var posts: int = clampi(CommandHelpers.int_guarded(params.get("posts"), 4), 1, 200)
+	var pr: float = CommandHelpers.num_guarded(params.get("post_radius"), 0.05)
+	var rt: float = CommandHelpers.num_guarded(params.get("rail_thickness"), 0.04)
 	var start_post: bool = bool(params.get("start_post", true))
 	var end_post: bool = bool(params.get("end_post", true))
 	var st := SurfaceTool.new()

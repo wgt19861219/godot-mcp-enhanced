@@ -218,3 +218,73 @@ describe('A2: game_bridge_uninstall 内容比对守卫', () => {
     expect(existsSync(join(godotDir, 'other_cache.bin'))).toBe(true);  // 非 secret 文件不动
   });
 });
+
+// ── M-5 (2026-09-17 架构审查): uninstall 判活护栏 ─────────────────────────────
+// 原行为无条件删光全部 mcp_bridge_*.secret——同项目多实例在跑时,在跑实例的 secret 被一并
+// 删掉(进程内 auth 仍有效,但 TS 侧重连即断且文案无提示);与 install 侧 clean_stale_secrets
+// 的"判活后才动手"护栏哲学不对称。修复:删前查 machine registry 新鲜心跳(liveHeartbeatPortsFor),
+// 有活实例时只删无心跳端口的 secret,响应点名保留项;无任何心跳(游戏全停/旧版 GD)才删光。
+describe('M-5: game_bridge_uninstall 判活护栏(与 install 侧护栏哲学对称)', () => {
+  let machineRegistryDir: string;
+
+  beforeEach(() => {
+    machineRegistryDir = join(tmpRoot, 'machine-registry-m5');
+    mkdirSync(machineRegistryDir, { recursive: true });
+    process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = machineRegistryDir;
+  });
+  afterEach(() => {
+    delete process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+  });
+
+  function registerAutoload(): void {
+    writeFileSync(join(projectDir, 'project.godot'), BASE_CONFIG + '[autoload]\nMCPBridge="*res://mcp_bridge.gd"\n', 'utf-8');
+  }
+  function writeHeartbeat(port: number, ageMs: number): void {
+    writeFileSync(join(machineRegistryDir, `inst_${port}.json`), JSON.stringify({
+      id: `inst_${port}`, projectPath: projectDir, port,
+      lastSeen: new Date(Date.now() - ageMs).toISOString(),
+      capabilities: ['registry-heartbeat'],
+    }), 'utf-8');
+  }
+  function writeSecrets(): string {
+    const godotDir = join(projectDir, '.godot');
+    mkdirSync(godotDir, { recursive: true });
+    writeFileSync(join(godotDir, 'mcp_bridge_9081.secret'), 'a'.repeat(32), 'utf-8');
+    writeFileSync(join(godotDir, 'mcp_bridge_9082.secret'), 'b'.repeat(32), 'utf-8');
+    return godotDir;
+  }
+
+  it('M-5: 9081 有新鲜心跳(在跑实例)→ 只删 9082 残留,保留 9081 且响应点名保留项', async () => {
+    registerAutoload();
+    const godotDir = writeSecrets();
+    writeHeartbeat(9081, 10_000);  // 10s 前心跳,新鲜(在跑)
+    const r = await handleTool('game', { action: 'game_bridge_uninstall', project_path: projectDir }, ctx());
+    expect(r?.isError).toBeFalsy();
+    expect(existsSync(join(godotDir, 'mcp_bridge_9081.secret'))).toBe(true);   // 活实例保留(修复点)
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(false);  // 残留照删
+    const text = resultText(r);
+    expect(text).toContain('mcp_bridge_9081.secret');  // 点名保留项
+    expect(text).toContain('mcp_bridge_9082.secret');  // 已删项也在清单
+    expect(text).toContain('live');                    // 保留理由:心跳判活
+  });
+
+  it('M-5: 无任何新鲜心跳(游戏全停)→ 删光全部(原行为保留,uninstall 语义不受护栏阻塞)', async () => {
+    registerAutoload();
+    const godotDir = writeSecrets();
+    writeHeartbeat(9081, 10 * 60_000);  // 10 分钟前,超龄(窗口 5min)→ 无活实例
+    const r = await handleTool('game', { action: 'game_bridge_uninstall', project_path: projectDir }, ctx());
+    expect(r?.isError).toBeFalsy();
+    expect(existsSync(join(godotDir, 'mcp_bridge_9081.secret'))).toBe(false);
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(false);
+  });
+
+  it('M-5: registry 不可读 → 判活空集,删光(保守方向=不阻塞 uninstall,与 clean_stale_secrets 拒清相反是有意的)', async () => {
+    registerAutoload();
+    const godotDir = writeSecrets();
+    process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = join(machineRegistryDir, 'no-such-dir');
+    const r = await handleTool('game', { action: 'game_bridge_uninstall', project_path: projectDir }, ctx());
+    expect(r?.isError).toBeFalsy();
+    expect(existsSync(join(godotDir, 'mcp_bridge_9081.secret'))).toBe(false);
+    expect(existsSync(join(godotDir, 'mcp_bridge_9082.secret'))).toBe(false);
+  });
+});

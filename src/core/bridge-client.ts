@@ -111,6 +111,15 @@ export function normalizeProjectKey(p: string): string {
   return process.platform === 'win32' ? r.toLowerCase() : r;
 }
 
+/** Task 4.4(2026-09-17 审查 Low): registry 条目新鲜度取值(epoch ms)——优先 lastSeenMs
+ *  (新版 GD 心跳写入,Time.get_unix_time_from_system()*1000,UTC epoch 毫秒精度),旧条目
+ *  回落无时区 ISO 串(秒级,JS 按本地时区解析——GD 写本地墙钟、TS 同机读,同机一致)。
+ *  两形态均为 epoch ms,rolling upgrade 混居可直接比较。无有效时间返回 NaN(调用方跳过)。 */
+function entryLastSeenMs(entry: { lastSeen?: unknown; lastSeenMs?: unknown }): number {
+  if (typeof entry.lastSeenMs === 'number' && Number.isFinite(entry.lastSeenMs)) return entry.lastSeenMs;
+  return typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
+}
+
 /** 解析 projectPath 对应 bridge 实例的实际监听端口(见区块注释);失败回落 BRIDGE_PORT。
  *  registryDir 参数仅供单测注入,生产走 machineRegistryInstancesDir()。 */
 export function resolveBridgePort(projectPath: string, registryDir: string = machineRegistryInstancesDir()): number {
@@ -119,10 +128,10 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
     const dir = registryDir;
     const want = normalizeProjectKey(projectPath);
     const now = Date.now();
-    let best: { port: number; lastSeen: number } | null = null;
+    let best: { port: number; lastSeen: number; pid: number } | null = null;
     for (const name of readdirSync(dir)) {
       if (!name.endsWith('.json')) continue;
-      let entry: { projectPath?: unknown; port?: unknown; lastSeen?: unknown; capabilities?: unknown };
+      let entry: { projectPath?: unknown; port?: unknown; lastSeen?: unknown; lastSeenMs?: unknown; pid?: unknown; capabilities?: unknown };
       try {
         entry = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as typeof entry;
       } catch { continue; }  // 损坏条目(崩溃 .tmp 残留等)容错跳过
@@ -130,12 +139,17 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
       // 同目录还住着 server 自注册条目(capabilities=['ts-http-receiver']),只认 bridge 心跳条目
       if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
       if (typeof entry.projectPath !== 'string' || normalizeProjectKey(entry.projectPath) !== want) continue;
-      // GD Time.get_datetime_string_from_system() 输出无时区 ISO 串,JS 按本地时区解析,同机一致。
-      const lastSeen = typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
+      const lastSeen = entryLastSeenMs(entry);
       if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
       // A3: 失败记忆期内的端口跳过(刚 ECONNREFUSED 过的实例条目仍可能新鲜),降级次新心跳。
       if (_isPortFailed(entry.port)) continue;
-      if (!best || lastSeen > best.lastSeen) best = { port: entry.port, lastSeen };
+      // Task 4.4(2026-09-17 审查 Low): lastSeen 相同(旧串同秒/同毫秒双开)→ pid 决胜——
+      // 高 pid=后起进程;此前平票靠 readdir 目录顺序摇摆取胜利者(非确定,Windows/Linux
+      // 顺序不同),现平票语义固定。pid 缺失(旧条目)按 0 参与,不改变先后判定。
+      const pid = typeof entry.pid === 'number' && Number.isFinite(entry.pid) ? entry.pid : 0;
+      if (!best || lastSeen > best.lastSeen || (lastSeen === best.lastSeen && pid > best.pid)) {
+        best = { port: entry.port, lastSeen, pid };
+      }
     }
     if (best) return best.port;
     return scanSecretWindow(projectPath);
@@ -165,12 +179,12 @@ export function liveHeartbeatPortsFor(
       if (!name.endsWith('.json')) continue;
       try {
         const entry = JSON.parse(readFileSync(join(registryDir, name), 'utf-8')) as {
-          port?: unknown; projectPath?: unknown; lastSeen?: unknown; capabilities?: unknown;
+          port?: unknown; projectPath?: unknown; lastSeen?: unknown; lastSeenMs?: unknown; capabilities?: unknown;
         };
         if (typeof entry.port !== 'number') continue;
         if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
         if (typeof entry.projectPath !== 'string' || normalizeProjectKey(entry.projectPath) !== want) continue;
-        const lastSeen = typeof entry.lastSeen === 'string' ? Date.parse(entry.lastSeen) : NaN;
+        const lastSeen = entryLastSeenMs(entry);  // Task 4.4: lastSeenMs 优先(同 resolveBridgePort)
         if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
         ports.add(entry.port);
       } catch { /* 损坏条目容错跳过 */ }
@@ -324,20 +338,16 @@ function _stopKeepalive(): void {
   }
 }
 
-/** Find the bridge secret file in project .godot dir. Throws if project dir not set.
- *  A1: 不缓存路径 —— 多实例起停会使 registry 解析出的端口变化,每次按 resolveBridgePort 现算
- *  (secret 内容缓存见 readBridgeSecret,不受影响)。 */
-function findBridgeSecretPath(): string {
+/** 读 bridge secret 文件内容(5min TTL 缓存)。Task 4.4(2026-09-17 审查 Low): port 参数由
+ *  _doConnect 单次解析后显式传入(secret 读取与 TCP 连接同端口);未传时现解析(旧语义)。
+ *  多实例起停会使 registry 解析出的端口变化,路径不缓存(secret 内容缓存不受影响)。 */
+function readBridgeSecret(port?: number): string | null {
+  if (_cachedSecret !== null && Date.now() - _cachedSecretAt < SECRET_CACHE_TTL) return _cachedSecret;
+  _cachedSecret = null;
   if (!_projectDir) {
     throw new Error('Bridge secret path requested before game_bridge_install set project directory');
   }
-  return bridgeSecretPathFor(_projectDir, resolveBridgePort(_projectDir));
-}
-
-function readBridgeSecret(): string | null {
-  if (_cachedSecret !== null && Date.now() - _cachedSecretAt < SECRET_CACHE_TTL) return _cachedSecret;
-  _cachedSecret = null;
-  const secretPath = findBridgeSecretPath();
+  const secretPath = bridgeSecretPathFor(_projectDir, port ?? resolveBridgePort(_projectDir));
   try {
     // A4 (2026-07-23 审查): symlink 检查必须在权限收紧之前——否则 secretPath 若是 symlink
     // 指向受害者文件,icacls/chmod 已篡改其 ACL/mode 才被拒(DoS)。对齐 editor-auth.ts:75-81。
@@ -424,7 +434,12 @@ async function _doConnect(timeout: number): Promise<Socket> {
     }
   }
 
-  const secret = readBridgeSecret();
+  // Task 4.4(2026-09-17 审查 Low): 端口单次解析——secret 读取与 TCP 连接此前各调一次
+  // resolveBridgePort,两次解析间隙 registry 变化(新实例心跳写入/旧条目超龄淘汰)会
+  // secret 读 A 端口、TCP 连 B 端口 → auth 必败(secret 按端口分文件)。单次解析后
+  // readBridgeSecret 与 createConnection 共用同一端口(TOCTOU 窗口消除)。
+  const port = resolveBridgePort(_projectDir ?? '');
+  const secret = readBridgeSecret(port);
   if (!secret) {
     if (!_projectDir) {
       throw new BridgeNotConnectedError(
@@ -433,14 +448,13 @@ async function _doConnect(timeout: number): Promise<Socket> {
       );
     }
     throw new BridgeNotConnectedError(
-      `Bridge secret not found at ${findBridgeSecretPath()}. ` +
+      `Bridge secret not found at ${bridgeSecretPathFor(_projectDir, port)}. ` +
       'Ensure the game is running with the MCP Bridge autoload installed.'
     );
   }
 
   return new Promise((resolve, reject) => {
-    // A1: 实际端口来自 registry 解析(多实例避让后可能非 9081)
-    const port = resolveBridgePort(_projectDir ?? '');
+    // A1: 实际端口来自上方单次解析(多实例避让后可能非 9081;Task 4.4 与 secret 同源)
     const sock = createConnection({ port, host: BRIDGE_HOST }, () => {
       sock.write(JSON.stringify({ id: 0, method: 'auth', params: { secret } }) + '\n');
     });
