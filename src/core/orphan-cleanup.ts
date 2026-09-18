@@ -87,6 +87,50 @@ export async function killOrphanGodotProcesses(
 }
 
 /**
+ * orphan 扫描双 shell 分支共享骨架(2026-09-18 重复分析收敛):
+ * settled + ORPHAN_SCAN_TIMEOUT_MS 定时器 + out/stderr 收集 + error handler。
+ * 平台差异以闭包注入:parsePids(pid 解析)与 killPid(杀进程方式)逐字搬移自原两分支。
+ */
+function runShellScan(
+  command: string, shellArgs: string[],
+  parsePids: (out: string) => number[],
+  killPid: (pid: number) => void,
+  excludePids: number[],
+): Promise<number> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const ps = spawn(command, shellArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    // P2: unref orphan-scan spawn so close() doesn't block Node exit on in-flight scan.
+    // 可选链:测试 mock 的 spawn 返回值无 unref(真实 ChildProcess 有)。
+    ps.unref?.();
+    // I-03 fix: 15s timeout to prevent hanging on unresponsive WMI/shell
+    const timer = setTimeout(() => {
+      if (!settled && !ps.killed) { settled = true; ps.kill(); resolve(0); }
+    }, ORPHAN_SCAN_TIMEOUT_MS);
+    let out = '';
+    let stderr = '';
+    ps.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    ps.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+    ps.on('close', () => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      const pids = parsePids(out).filter(n => n > 0 && !excludePids.includes(n));
+      for (const pid of pids) killPid(pid);
+      if (stderr) getLogger().debug('orphan-cleanup', `orphan scan stderr: ${stderr.slice(0, 200)}`);
+      resolve(pids.length);
+    });
+    ps.on('error', (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      getLogger().debug('orphan-cleanup', `orphan scan error: ${err.message}`);
+      resolve(0);
+    });
+  });
+}
+
+/**
  * V-01 全系统扫描(仅 fullSystemScan=true 时调用)。
  * 扫描命令行含 projectDir 的 Godot 进程并清理,跳过 excludePids(在管活进程,设计 §4.4)。
  * 保留 escapePsSingleQuote / escapeShellArg 转义(注入防护)。
@@ -97,103 +141,39 @@ async function fullSystemScanGodot(projectDir: string, excludePids: number[]): P
 
   if (isWin) {
     const safePath = escapePsSingleQuote(normalizedDir);
-    return new Promise((resolve) => {
-      let settled = false;
-      const ps = spawn('powershell', [
-        '-NoProfile', '-Command',
-        // I-01 fix: use ('*'+$path+'*') instead of "*$path*" to avoid $ expansion in -like
-        // D4 fix: -like treats '['/']'/'*'/'?' as wildcards → path containing them mismatches.
-        //         Switch the path test to literal .Contains($path); keep '-like ''*--path*'''
-        //         (literal, no wildcard chars). '$_.CommandLine -and' guards null/empty
-        //         (-and short-circuits before .Contains so null CommandLine won't throw).
-        `$path = '${safePath}'; ` +
-        `Get-CimInstance Win32_Process -Filter "Name LIKE 'Godot%'" | ` +
-        `Where-Object { $_.CommandLine -and $_.CommandLine -like '*--path*' -and $_.CommandLine.Contains($path) -and -not ($_.CommandLine -like '*--editor*') } | ` +
-        `Select-Object -ExpandProperty ProcessId | ForEach-Object { Write-Output $_ }`
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
-      // P2: unref orphan-scan spawn so close() doesn't block Node exit on in-flight scan (15s timeout window).
-      // 可选链:测试 mock 的 spawn 返回值无 unref(真实 ChildProcess 有)。
-      ps.unref?.();
-
-      // I-03 fix: 15s timeout to prevent hanging on unresponsive WMI/shell
-      const timer = setTimeout(() => {
-        if (!settled && !ps.killed) {
-          settled = true;
-          ps.kill();
-          resolve(0);
-        }
-      }, ORPHAN_SCAN_TIMEOUT_MS);
-
-      let out = '';
-      let stderr = '';
-      ps.stdout.on('data', (d: Buffer) => { out += d.toString(); });
-      ps.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-      ps.on('close', () => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
-        const pids = out.trim().split('\n').map(Number).filter(n => n > 0 && !excludePids.includes(n));
-        for (const pid of pids) {
-          try {
-            // P1: same async-error guard as forceKillTree — a spawn 'error' without
-            // a listener crashes via uncaughtException. best-effort orphan kill.
-            const tk = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
-            tk.on('error', () => {});
-          } catch { /* best effort */ }
-        }
-        if (stderr) getLogger().debug('orphan-cleanup', `orphan scan stderr: ${stderr.slice(0, 200)}`);
-        resolve(pids.length);
-      });
-      ps.on('error', (err) => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
-        getLogger().debug('orphan-cleanup', `orphan scan error: ${err.message}`);
-        resolve(0);
-      });
-    });
+    // I-01 fix: use ('*'+$path+'*') instead of "*$path*" to avoid $ expansion in -like
+    // D4 fix: -like treats '['/']'/'*'/'?' as wildcards → path containing them mismatches.
+    //         Switch the path test to literal .Contains($path); keep '-like ''*--path*'''
+    //         (literal, no wildcard chars). '$_.CommandLine -and' guards null/empty
+    //         (-and short-circuits before .Contains so null CommandLine won't throw).
+    const psArgs = [
+      '-NoProfile', '-Command',
+      `$path = '${safePath}'; ` +
+      `Get-CimInstance Win32_Process -Filter "Name LIKE 'Godot%'" | ` +
+      `Where-Object { $_.CommandLine -and $_.CommandLine -like '*--path*' -and $_.CommandLine.Contains($path) -and -not ($_.CommandLine -like '*--editor*') } | ` +
+      `Select-Object -ExpandProperty ProcessId | ForEach-Object { Write-Output $_ }`
+    ];
+    return runShellScan('powershell', psArgs,
+      (out) => out.trim().split('\n').map(Number),
+      (pid) => {
+        try {
+          // P1: same async-error guard as forceKillTree — a spawn 'error' without
+          // a listener crashes via uncaughtException. best-effort orphan kill.
+          const tk = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore' });
+          tk.on('error', () => {});
+        } catch { /* best effort */ }
+      },
+      excludePids);
   } else {
     // I-02 fix: use single-quoted shell argument with proper escaping
     const safeDir = escapeShellArg(normalizedDir);
-    return new Promise((resolve) => {
-      let settled = false;
-      const ps = spawn('sh', ['-c',
-        `pgrep -f godot | xargs -I{} sh -c 'cat /proc/{}/cmdline 2>/dev/null | tr "\\0" " " | grep -v -- "--editor" | grep -F -- '${safeDir}' && echo {}'`
-      ], { stdio: ['pipe', 'pipe', 'pipe'] });
-      // P2: unref orphan-scan spawn(同 powershell 分支)。
-      ps.unref?.();
-
-      const timer = setTimeout(() => {
-        if (!settled && !ps.killed) {
-          settled = true;
-          ps.kill();
-          resolve(0);
-        }
-      }, ORPHAN_SCAN_TIMEOUT_MS);
-
-      let out = '';
-      let stderr = '';
-      ps.stdout.on('data', (d: Buffer) => { out += d.toString(); });
-      ps.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
-      ps.on('close', () => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
-        const lines = out.trim().split('\n').filter(l => /^\d+$/.test(l.trim()));
-        const pids = lines.map(Number).filter(n => n > 0 && !excludePids.includes(n));
-        for (const pid of pids) {
-          try { process.kill(pid, 'SIGTERM'); } catch { /* best effort */ }
-        }
-        if (stderr) getLogger().debug('orphan-cleanup', `orphan scan stderr: ${stderr.slice(0, 200)}`);
-        resolve(pids.length);
-      });
-      ps.on('error', (err) => {
-        clearTimeout(timer);
-        if (settled) return;
-        settled = true;
-        getLogger().debug('orphan-cleanup', `orphan scan error: ${err.message}`);
-        resolve(0);
-      });
-    });
+    return runShellScan('sh', ['-c',
+      `pgrep -f godot | xargs -I{} sh -c 'cat /proc/{}/cmdline 2>/dev/null | tr "\\0" " " | grep -v -- "--editor" | grep -F -- '${safeDir}' && echo {}'`
+    ],
+      (out) => out.trim().split('\n').filter(l => /^\d+$/.test(l.trim())).map(Number),
+      (pid) => {
+        try { process.kill(pid, 'SIGTERM'); } catch { /* best effort */ }
+      },
+      excludePids);
   }
 }
