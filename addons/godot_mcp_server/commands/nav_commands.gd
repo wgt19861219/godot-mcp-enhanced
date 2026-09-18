@@ -128,7 +128,10 @@ func _create_nav_region(params: Dictionary, root: Node) -> Dictionary:
 		nav.position = Vector3(float(pos.get("x", 0.0)), float(pos.get("y", 0.0)), float(pos.get("z", 0.0)))
 	# P0-2: mesh 在入栈前初始化(附着 nav,随 reference 保护,undo/redo 不丢)
 	var mesh = NavigationMesh.new()
-	mesh.geometry_parsed_collision_mask = 0xFFFFFFFF
+	# 属性名 geometry_collision_mask(4.x 官方);原拼 geometry_parsed_collision_mask 自
+	# d46cdaff 起不存在,任何 4.x 运行时 SCRIPT ERROR(editor 冒烟 2026-09-18 抓获)。
+	# 默认值即 0xFFFFFFFF,显式赋值维持 P0-2 防御语义。
+	mesh.geometry_collision_mask = 0xFFFFFFFF
 	nav.navigation_mesh = mesh
 	return {"nav": nav, "parent": parent_node}
 
