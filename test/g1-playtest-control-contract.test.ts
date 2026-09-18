@@ -212,6 +212,6 @@ describe('D-6 [P3]: freeze 期间 playtest.step 守卫(防假成功)', () => {
     expect(
       s.indexOf('if _control_frozen:'),
       'frozen 守卫应先于哨兵返回'
-    ).toBeLessThan(s.indexOf('__playtest_step__'));
+    ).toBeLessThan(s.indexOf('"__deferred__": "playtest_step"'));  // O1 收敛(批5):原 __playtest_step__ 锚
   });
 });

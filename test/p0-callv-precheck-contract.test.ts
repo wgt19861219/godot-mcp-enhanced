@@ -19,11 +19,11 @@ describe('P0-1: callv 参数预检(GD 源码契约)', () => {
     const slice = gd.slice(fnStart, fnEnd);
     const coercePos = slice.indexOf('_coerce_bridge_args(node, method, args)');
     const precheckPos = slice.indexOf('_call_args_precheck_error(node, method, _coerced)');
-    const asyncPos = slice.indexOf('__call_method_async__');
+    const asyncPos = slice.indexOf('"__deferred__": "call_method_async"');  // O1 收敛(批5):原 __call_method_async__ 锚
     const callvPos = slice.indexOf('node.callv(method, _coerced)');
     expect(coercePos, '缺 coerce 调用').toBeGreaterThan(-1);
     expect(precheckPos, '缺预检调用').toBeGreaterThan(-1);
-    expect(asyncPos, '缺协程哨兵(定位锚)').toBeGreaterThan(-1);
+    expect(asyncPos, '缺协程延迟哨兵(定位锚)').toBeGreaterThan(-1);
     expect(callvPos, '缺 callv(定位锚)').toBeGreaterThan(-1);
     // 顺序:coerce → precheck → 协程哨兵 → callv
     expect(precheckPos, '预检必须在 coerce 之后').toBeGreaterThan(coercePos);
