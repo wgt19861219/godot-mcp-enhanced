@@ -2,9 +2,8 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
 import {
-  SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult,
+  SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, runOpsScript,
   gdEscape, escapeForGdLiteral, normalizeNodePath, validateIdentifier, validateVector3,
 } from './shared.js';
 
@@ -294,20 +293,13 @@ export async function handleTool(
         return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }
 
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout: 30,
-      loadAutoloads,
-    });
-
     const errorMapper = (msg: string) =>
       msg.includes('not found') ? ERROR_CODES.NODE_NOT_FOUND :
       msg.includes('not a Skeleton3D') ? ERROR_CODES.INVALID_TYPE :
       ERROR_CODES.SCRIPT_EXEC_FAILED;
 
-    return parseGdscriptResult(result, [], errorMapper);
+    return runOpsScript({ godot, projectPath, script, loadAutoloads, timeoutSec: 30,
+      errorMapper, paramWarnings: [], action });
   } catch (err) {
     const msg = getErrorMessage(err);
     if (msg.includes('Identifier')) return opsErrorResult(ERROR_CODES.INVALID_PROPERTY, msg);
