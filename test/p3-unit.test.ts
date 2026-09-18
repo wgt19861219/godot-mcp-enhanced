@@ -121,7 +121,8 @@ describe('P3 源码契约(mcp_bridge.gd 字面量,cmp-9 模式)', () => {
   });
 
   it('SRC-d: click_button real_event 哨兵 + 等帧验证协程', () => {
-    expect(BRIDGE_GD).toContain('__click_verify__');
+    // O1 收敛(批5):原 __click_verify__ 专用哨兵统一为 __deferred__ kind=click_verify
+    expect(BRIDGE_GD).toContain('"__deferred__": "click_verify"');
     expect(BRIDGE_GD).toContain('_await_click_verify_and_respond');
     expect(BRIDGE_GD).toContain('"mode": "real_event"');
     expect(BRIDGE_GD).toContain('"verified": pressed_count > 0');

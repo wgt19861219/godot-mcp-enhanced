@@ -91,9 +91,11 @@ describe('P2-4 mcp_bridge.gd playtest 契约(审查 I-3)', () => {
   });
 
   describe('I-2 守护:step 走 _process 计数器(非 coroutine),frames=1 边界', () => {
-    it('step 哨兵字符串格式正确(_handle_message 返回)', () => {
-      // _handle_message 对 step 返回 __PLAYTEST_STEP__<frames>__
-      expect(GD).toMatch(/__PLAYTEST_STEP__%d__/);
+    it('step 哨兵格式正确(O1 收敛:统一 __deferred__ kind=playtest_step)', () => {
+      // O1 收敛(2026-09-18 批5):原 "__PLAYTEST_STEP__%d__" 把帧数编码进字符串,收敛为统一
+      // "__DEFERRED__" 哨兵,frames/report/profile 平铺进 payload(语义守恒见 e2e-gd-symmetry 守恒用例)
+      expect(GD).toMatch(/"__deferred__": "playtest_step"/);
+      expect(GD).toMatch(/"__DEFERRED__"/);
     });
 
     it('_process 末尾有 pending 处理 + _added_this_frame 边界守卫(I-2 修复)', () => {

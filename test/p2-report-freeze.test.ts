@@ -40,13 +40,13 @@ describe('P2-2/2-3: bridge 源码契约', () => {
     // step 入口
     const stepFn = fnSlice('_cmd_playtest_step');
     expect(stepFn.includes('_validate_report_spec(params)'), 'step 入口校验').toBe(true);
-    expect(stepFn.includes('_pending_playtest_step_report'), 'step 临时变量').toBe(true);
+    expect(stepFn.includes('"__deferred__": "playtest_step"'), 'step 延迟哨兵(O1 批5:report/profile 平铺进 payload,原临时变量已收敛)').toBe(true);
     // step_until 入口(哨兵构造带 report)
     const suFn = fnSlice('_cmd_control_step_until');
     expect(suFn.includes('_validate_report_spec(params)'), 'step_until 入口校验').toBe(true);
     expect(suFn.includes('"report": su_vr[1]'), '哨兵携带 report').toBe(true);
     // 两路 pending 存 report + 完成响应求值
-    expect((gd.match(/"report": _step_report,|"report": su_payload\.get\("report"/g) ?? []).length, '两路 pending 存 report').toBe(2);
+    expect((gd.match(/"report": p\.get\("report", \[\]\)/g) ?? []).length, '两路 pending 存 report').toBe(2);
     expect((gd.match(/_eval_structured_report\(_step_report_specs|_eval_structured_report\(_su_report_specs/g) ?? []).length, '两路完成响应求值').toBe(2);
   });
 

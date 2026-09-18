@@ -54,10 +54,13 @@ describe('坑4: call_method 协程双模式契约', () => {
     expect(s.includes('await_completion=true'), '标记说明须指引用 await_completion').toBe(true);
   });
 
-  it('await_completion 模式:哨兵 __call_method_async__ 走延迟响应通道', () => {
-    expect(gd.includes('"__call_method_async__"'), '_cmd_call_method 须返哨兵标记').toBe(true);
-    expect(gd.includes('"__CALL_METHOD_ASYNC__"'), '_handle_message 须映射哨兵字符串').toBe(true);
-    expect(gd.includes('begins_with("__CALL_METHOD_ASYNC__")'), '_poll_peers 须消费哨兵').toBe(true);
+  it('await_completion 模式:延迟通道 O1 收敛——__deferred__ kind=call_method_async', () => {
+    // O1 收敛(2026-09-18 批5):原 __call_method_async__/__CALL_METHOD_ASYNC__ 双哨兵 + 模块级
+    // 临时变量 _pending_call_method_result,收敛为 handler 平铺 {"__deferred__": kind, ...payload}
+    // + 识别端统一 "__DEFERRED__" + 消费端 kind 分派(延迟响应语义不变,e2e 坑4 三条守恒)。
+    expect(gd.includes('"__deferred__": "call_method_async"'), '_cmd_call_method 须返统一哨兵 kind').toBe(true);
+    expect(gd.includes('"__DEFERRED__"'), '_handle_message/消费端须统一哨兵字符串').toBe(true);
+    expect(gd.includes('d_kind == "call_method_async"'), '消费端须按 kind 分派 call_method_async').toBe(true);
   });
 
   it('等待协程:await callv + 完成后 peer 查找推送(peer 断开丢响应)+ 节点失效守卫', () => {

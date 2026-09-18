@@ -140,6 +140,29 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('批 2 GD 对称性 e2e (L2)',
     expect(parsed.predicate_met, '数值 0.0>=0 应立即满足').toBe(true);
   });
 
+  it('批5守恒O1: playtest.step 延迟响应——frames_stepped + frame_count + report 搭车求值', { timeout: 30_000 }, async () => {
+    // O1 哨兵收敛(2026-09-18 批5)守恒网:playtest.step 是五条延迟通道之一
+    // (哨兵字符串→pending 登记→N 帧后 _process 推送)。重构前后此用例语义必须不变:
+    // frames_stepped=true、frame_count 正整数、report=[{path,property}] 求值随响应返回。
+    // property 用 visible(name 在 BLOCKED_PROPERTIES,Node2D.visible 恒 true 断言最稳)。
+    const r = await callTool({
+      action: 'game_playtest', method: 'playtest.step',
+      params: { frames: 5, report: [{ path: '/root/Main', property: 'visible' }] },
+      timeout: 20000,
+    });
+    expect(r.isError, `playtest.step errored: ${r.text.slice(0, 300)}`).toBe(false);
+    const parsed = JSON.parse(r.text) as {
+      frames_stepped?: boolean; frame_count?: number;
+      report?: Array<{ path: string; property: string; value?: unknown; error?: string }>;
+    };
+    expect(parsed.frames_stepped, '延迟通道完成后应 frames_stepped=true').toBe(true);
+    expect(typeof parsed.frame_count, 'frame_count 应为数字').toBe('number');
+    expect(parsed.frame_count ?? 0).toBeGreaterThan(0);
+    expect(parsed.report, 'report 搭车求值应随延迟响应返回').toEqual([
+      { path: '/root/Main', property: 'visible', value: true },
+    ]);
+  });
+
   it('审查G-2: send_mouse_click button:"left" 映射 MOUSE_BUTTON_LEFT(不再 int()=0 谎报)', { timeout: 20_000 }, async () => {
     const r = await callTool({
       action: 'game_input', method: 'send_mouse_click',

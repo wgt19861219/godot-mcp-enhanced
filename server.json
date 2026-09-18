@@ -6,12 +6,12 @@
     "url": "https://github.com/wgt19861219/godot-mcp-enhanced",
     "source": "github"
   },
-  "version": "0.33.7",
+  "version": "0.33.8",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "godot-mcp-enhanced",
-      "version": "0.33.7",
+      "version": "0.33.8",
       "transport": {
         "type": "stdio"
       },
