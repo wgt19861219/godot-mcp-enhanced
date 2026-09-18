@@ -874,6 +874,7 @@ func _write_registry_entry() -> void:
 		"port": _port,
 		"pid": OS.get_process_id(),
 		"lastSeen": Time.get_datetime_string_from_system(),
+		"lastSeenMs": int(Time.get_unix_time_from_system() * 1000.0),
 		"godotVersion": Engine.get_version_info().get("string", "unknown"),
 		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
 		"capabilities": ["registry-heartbeat"],

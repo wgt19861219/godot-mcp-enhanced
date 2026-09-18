@@ -22,10 +22,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
-const { mockCreate, mockExists, mockRead, mockLstat, mockChmod, mockExec } = vi.hoisted(() => ({
+const { mockCreate, mockExists, mockRead, mockLstat, mockChmod, mockExec, mockReaddir } = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockExists: vi.fn(() => true),
   mockRead: vi.fn(() => 'test-secret'),
+  // Task 4.4: registry 目录读取 mock——默认空数组(确定性空 registry;此前 fs mock 无
+  // readdirSync 导出,bridge-client 拿 undefined 调用即 throw → catch 回落,行为等价但隐晦)。
+  mockReaddir: vi.fn(() => [] as string[]),
   // A4: 默认非 symlink;测试时 override 为 symlink 验证权限收紧未发生
   mockLstat: vi.fn(() => ({ isSymbolicLink: () => false })),
   // A4: 暴露 chmod/exec 作 spy,断言 symlink 时二者均未被调用(副作用未发生)
@@ -37,6 +40,7 @@ vi.mock('net', () => ({ createConnection: mockCreate }));
 vi.mock('fs', () => ({
   existsSync: mockExists,
   readFileSync: mockRead,
+  readdirSync: mockReaddir,
   writeFileSync: vi.fn(), copyFileSync: vi.fn(), unlinkSync: vi.fn(),
   chmodSync: mockChmod, statSync: vi.fn(), lstatSync: mockLstat,
   renameSync: vi.fn(),
@@ -1073,5 +1077,70 @@ describe('M-8: -32601 自动版本比对(非 ping 路径也能看到旧版指引
     const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
     expect(r?.isError).toBe(true);
     expect(pingSent).toBe(false);  // -32001 不探测
+  });
+});
+
+// ── Task 4.4 (2026-09-17 架查 Low): _doConnect 端口单次解析 —— secret 与 TCP 同源 ──
+// 修复前 secret 读取(findBridgeSecretPath)与 TCP 连接各自调一次 resolveBridgePort,两次
+// 解析间隙 registry 变化会 secret 读 A 端口、TCP 连 B 端口(auth 必败)。修复后单次解析传参。
+// 注:两形态在静态 registry 下行为一致,本测试是"secret 路径与连接端口配对"的回归锁
+// (未来任何人把两次解析改回来,若配对被破坏即可经此断言暴露),非时序红绿测试。
+describe('Task 4.4: _doConnect 端口单次解析(secret 读取与 TCP 连接同端口)', () => {
+  it('4.4e: registry 命中 9082 → secret 读 mcp_bridge_9082.secret 且 createConnection 连 9082', async () => {
+    // 经 mockReaddir/mockRead 提供伪 registry(fs 全 mock,不落盘):项目 '/p' 心跳端口 9082
+    const entryJson = JSON.stringify({
+      id: 'inst_1', projectPath: '/p', port: 9082, pid: 1,
+      lastSeenMs: Date.now() - 1_000,
+      lastSeen: new Date(Date.now() - 1_000).toISOString(),
+      capabilities: ['registry-heartbeat'],
+    });
+
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    mockReaddir.mockImplementation((p: unknown) =>
+      String(p).includes('fake-registry') ? ['inst_1.json'] : []);
+    mockRead.mockImplementation((p: unknown) => {
+      const s = String(p);
+      if (s.includes('inst_1.json')) return entryJson;
+      if (s.includes('mcp_bridge.gd')) return 'const BRIDGE_SCRIPT_VERSION := "0.33.7"\n';
+      return 'test-secret';
+    });
+    process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = '/fake-registry';
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : { id: req.id, result: { ok: true } };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+
+    try {
+      const r = await handleTool('game', { action: 'game_query', method: 'ping' }, { projectDir: '/p' } as never);
+      expect(r?.isError).not.toBe(true);
+
+      // 配对断言:TCP 连的是 registry 解析端口 9082
+      const connectOpts = mockCreate.mock.calls.at(-1)?.[0] as { port?: number };
+      expect(connectOpts?.port).toBe(9082);
+      // secret 读取路径与连接端口同源(9082 的 secret,而非另一次解析的产物)
+      const secretReadPaths = mockRead.mock.calls.map(c => String(c[0]));
+      expect(secretReadPaths.some(p => p.includes('mcp_bridge_9082.secret'))).toBe(true);
+      expect(secretReadPaths.some(p => /mcp_bridge_90[0-9]\.secret/.test(p) && !p.includes('9082'))).toBe(false);
+    } finally {
+      delete process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+      mockRead.mockReturnValue('test-secret');
+    }
   });
 });

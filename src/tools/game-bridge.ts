@@ -283,7 +283,7 @@ export function getToolDefinitions(): Tool[] {
           },
           label: {
             type: 'string',
-            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;快照记录来源 project/port,compare 跨项目快照会带 cross_project 警告(同 label 跨项目覆盖时 snapshot 响应带 overwrote 警告)。compare 时用 label_a/label_b。',
+            description: 'sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 跨项目快照带 cross_project 警告。compare 时用 label_a/label_b。',
           },
           label_a: {
             type: 'string',
