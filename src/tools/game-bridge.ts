@@ -107,6 +107,31 @@ export function annotatePingWithVersion(
 // 审查 H-3):模块顶层副作用不受 close() 管辖,迁入控制面后 close() 可对称置 null 清理;
 // dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
 
+/** M-8(2026-09-17 审查):-32601(method not found)在项目内旧版 mcp_bridge.gd 拷贝上最常见的
+ *  成因是"TS 侧新增了命令、项目内 GD 还是旧版"——版本指纹此前只在 game_query ping 直连路径
+ *  注解(annotatePingWithVersion),非 ping 路径只拿到光秃秃的 Method not found,无重装线索。
+ *  这里在错误路径收到 -32601 时自动补发一次 ping 比对 BRIDGE_SCRIPT_VERSION,把既有
+ *  versionWarning 文案拼进错误结果;版本一致(命令真不存在)不追加。best-effort:探测 ping
+ *  失败(连接抖动/超时)维持原错误文案,绝不吞掉/延迟原错误本身。ping 自身不探测(防递归)。 */
+async function bridgeErrorText(
+  method: string,
+  err: { code: number; message: string },
+  ctx: ToolContext,
+): Promise<string> {
+  let suffix = '';
+  if (err.code === -32601 && method !== 'ping') {
+    try {
+      const probe = await sendToBridge('ping', {}, 5000);
+      const result = probe.result;
+      if (result !== null && typeof result === 'object' && !Array.isArray(result)) {
+        const annotated = annotatePingWithVersion(result as Record<string, unknown>, bundledBridgeVersion(ctx));
+        if (typeof annotated.versionWarning === 'string') suffix = `\n${annotated.versionWarning}`;
+      }
+    } catch { /* best-effort:ping 不通时原样返回 */ }
+  }
+  return `Bridge error (${err.code}): ${err.message}${suffix}`;
+}
+
 // G-5: 识别/迁移旧版(≤0.23.x)误写的带前缀 autoload 键(仅工具层 install/uninstall 用)
 const AUTOLOAD_KEY_LEGACY = 'autoload/MCPBridge';
 
@@ -514,7 +539,8 @@ async function bridgeAction(method: string, params: Record<string, unknown>, ctx
   // T-2 (2026-06-24 审查): bridge 返回 error 时(密钥失效 -32001/-32002/方法不存在等)用 errorResult
   // (isError=true),否则 MCP 客户端误判成功吞掉错误。原 textResult 默认 isError=false。
   if (resp.error) {
-    return errorResult(`Bridge error (${resp.error.code}): ${resp.error.message}`);
+    // M-8: -32601 经 bridgeErrorText 自动补 ping 版本比对(旧版 GD 指引拼进文案)
+    return errorResult(await bridgeErrorText(method, resp.error, ctx));
   }
   // A2 注:ping 版本注解在 game_query 直连路径(本函数不被 game_query 走到,见 case 注释)
   // G-1: 订阅登记表维护 — start 成功登记(重连后重发),stop 成功移除(不再重发)
@@ -824,7 +850,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (response.error.code === -32001 || response.error.code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${response.error.code}): ${response.error.message}`);  // T-2: textResult→errorResult(isError=true)
+          // M-8: -32601 自动版本比对;T-2: textResult→errorResult(isError=true)
+          return errorResult(await bridgeErrorText(method, response.error, ctx));
         }
         // A2 (2026-09-16 跨项目验证接线修正): game_query/write/input 走本直连路径而非
         // bridgeAction(共享 helper 只服务 watch/monitor 等)——ping 版本注解必须接在这里,
@@ -866,11 +893,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         );
 
         if (result.error) {
-          const code = (result.error as { code?: number }).code;
+          const waitErr = result.error as { code?: number; message?: string };
+          const code = waitErr.code;
           if (code === -32001 || code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${code}): ${(result.error as { message?: string }).message ?? 'wait failed'}`);  // T-2: textResult→errorResult(isError=true)
+          // M-8: -32601 自动版本比对;T-2: textResult→errorResult(isError=true)
+          return errorResult(await bridgeErrorText(method, { code: code ?? 0, message: waitErr.message ?? 'wait failed' }, ctx));
         }
         return textResult(JSON.stringify(result, null, 2));
       }
@@ -894,7 +923,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (response.error.code === -32001 || response.error.code === -32002) {
             invalidateBridgeSecret();
           }
-          return errorResult(`Bridge error (${response.error.code}): ${response.error.message}`);
+          // M-8: -32601 自动版本比对(playtest 命令族较新,项目内旧版 GD 高发面)
+          return errorResult(await bridgeErrorText(method, response.error, ctx));
         }
         return textResult(JSON.stringify(response.result, null, 2));
       }

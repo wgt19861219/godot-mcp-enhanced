@@ -965,3 +965,113 @@ describe('M-6/O3: sync_state 快照 project 维度(跨项目比对告警)', () =
   });
 });
 
+// ── M-8 (2026-09-17 架构审查): -32601 自动版本比对 ────────────────────────────
+// 版本指纹此前只在 game_query ping 直连路径注解;agent 直接调 send_drag 等新命令撞上项目内
+// 旧版 mcp_bridge.gd 时只拿到光秃秃的 "Method not found",无版本线索(重装指引只在 GD 文案)。
+// 修复:错误路径收到 -32601 时自动补发一次 ping 比对 BRIDGE_SCRIPT_VERSION,把既有
+// versionWarning 逻辑的结果拼进错误文案;版本一致(命令真不存在)不追加。
+describe('M-8: -32601 自动版本比对(非 ping 路径也能看到旧版指引)', () => {
+  /** 按 method 分派响应的 socket:send_drag → -32601;ping → 带 bridgeVersion。 */
+  function dispatchSocket(remoteVersion: string): EventEmitter {
+    const sock = new EventEmitter();
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      queueMicrotask(() => {
+        if (req.id === 0) {
+          sock.emit('data', Buffer.from(JSON.stringify({ id: 0, result: { authenticated: true } }) + '\n'));
+          return;
+        }
+        if (req.method === 'ping') {
+          sock.emit('data', Buffer.from(JSON.stringify({
+            id: req.id, result: { ok: true, bridgeVersion: remoteVersion },
+          }) + '\n'));
+          return;
+        }
+        sock.emit('data', Buffer.from(JSON.stringify({
+          id: req.id, error: { code: -32601, message: 'Method not found' },
+        }) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    return sock;
+  }
+  const CTX = { projectDir: '/p', opsScript: '/scripts/ops.gd' } as never;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    // bundled mcp_bridge.gd 版本 0.33.7(其余路径照旧回 secret)
+    mockRead.mockImplementation((p: unknown) =>
+      String(p).includes('mcp_bridge.gd')
+        ? 'const BRIDGE_SCRIPT_VERSION := "0.33.7"\n'
+        : 'test-secret');
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+  });
+  afterEach(() => {
+    mockRead.mockReturnValue('test-secret');
+  });
+
+  it('M-8a: 直连路径(game_input send_drag)遇 -32601 + 远端旧版 → 错误文案内嵌 versionWarning', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.30.0');  // 项目内旧版拷贝
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    const text = JSON.stringify(r);
+    expect(text).toContain('Bridge error (-32601)');
+    expect(text).toMatch(/versionWarning|outdated copy/);       // 版本警告拼进文案
+    expect(text).toMatch(/game_bridge_install with force: true/); // 可操作指引
+  });
+
+  it('M-8b: bridgeAction 路径(custom_command 未声明)同样内嵌 versionWarning', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.30.0');
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'custom_command', method: 'custom.nope' }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(JSON.stringify(r)).toMatch(/outdated copy/);
+  });
+
+  it('M-8c: 远端版本与 bundled 一致(命令真不存在)→ 不追加 versionWarning(防噪音)', async () => {
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      const sock = dispatchSocket('0.33.7');  // 版本一致
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(JSON.stringify(r)).not.toMatch(/outdated copy/);
+  });
+
+  it('M-8d: 非 -32601 错误(auth -32001)不触发探测 ping(错误路径不加延迟)', async () => {
+    const sock = new EventEmitter();
+    let pingSent = false;
+    (sock as any).write = vi.fn((data: string) => {
+      let req: { id?: number; method?: string };
+      try { req = JSON.parse(data); } catch { return; }
+      if (req.method === 'ping') pingSent = true;
+      queueMicrotask(() => {
+        const resp = req.id === 0
+          ? { id: 0, result: { authenticated: true } }
+          : { id: req.id, error: { code: -32001, message: 'auth required' } };
+        sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+      });
+    });
+    (sock as any).destroy = vi.fn();
+    (sock as any).writable = true;
+    mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+      queueMicrotask(() => cb && cb());
+      return sock;
+    });
+    const r = await handleTool('game', { action: 'game_input', method: 'send_drag', params: {} }, CTX);
+    expect(r?.isError).toBe(true);
+    expect(pingSent).toBe(false);  // -32001 不探测
+  });
+});
