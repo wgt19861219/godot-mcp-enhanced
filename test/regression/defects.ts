@@ -1443,10 +1443,12 @@ export const FIXED_DEFECTS: DefectEntry[] = [
     // P2(2026-07-29 报告5 F1): custom_meshes 细分参数 max(int(...),N) 只取下限不取上限 → 认证客户端传超大值
     // 在 @tool 编辑器主线程同步建顶点 → 卡死/OOM。fix: 改 clampi(int(...),N,CAP)。path_generator sample count 同理加上限。
     // detect: custom_meshes 含裸 max(int(params.get 且无 clampi 覆盖 = 复发。
+    // I-1(2026-09-17 审查批4)守卫化后内层形态为 CommandHelpers.int_guarded(params.get——
+    // 谓词忠实意图是"有 clampi 上限覆盖",内层裸转/守卫两形态都满足;上限盖住即 fixed。
     detect: () => {
       const cm = readSrc('addons/godot_mcp_server/commands/asset/custom_meshes.gd');
       const bareMax = (cm.match(/max\(int\(params\.get/g) || []).length;
-      const clampi = (cm.match(/clampi\(int\(params\.get/g) || []).length;
+      const clampi = (cm.match(/clampi\((?:int|CommandHelpers\.int_guarded)\(params\.get/g) || []).length;
       const pg = readSrc('addons/godot_mcp_server/commands/asset/path_generator.gd');
       const pathCountCap = /count\s*>\s*\d{4,}|count exceeds maximum/i.test(pg);
       return (bareMax === 0 && clampi >= 6 && pathCountCap) ? 0 : 1;
