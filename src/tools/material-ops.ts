@@ -402,9 +402,10 @@ func _initialize():
 
 // ─── GDScript Generators: shader_edit ──────────────────────────────────────
 
-export function genShaderReadScript(nodePath: string, materialIndex: number): string {
-  return `${SCENE_TREE_HEADER}
-func _initialize():
+// 共享前奏:节点定位 → 材质三层 fallback(material → surface_override → mesh.surface)→
+// ShaderMaterial 校验。四个 shader_edit 系生成函数复用(2026-09-18 重复分析收敛)。
+function shaderMatPreamble(nodePath: string, materialIndex: number): string {
+  return `func _initialize():
 \t_mcp_load_main_scene()
 \tvar node = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
 \tif node == null:
@@ -425,7 +426,12 @@ func _initialize():
 \tif not mat is ShaderMaterial:
 \t\t_mcp_output("error", "Not a ShaderMaterial")
 \t\t_mcp_done()
-\t\treturn
+\t\treturn`;
+}
+
+export function genShaderReadScript(nodePath: string, materialIndex: number): string {
+  return `${SCENE_TREE_HEADER}
+${shaderMatPreamble(nodePath, materialIndex)}
 \tif mat.shader == null:
 \t\t_mcp_output("error", "No shader assigned")
 \t\t_mcp_done()
@@ -442,28 +448,7 @@ export function genShaderWriteScript(
   // 用 escapeForGdLiteral(不双写 %),原 gdEscape 会把 shader 中的 % 损坏为 %%。
   const jsonCode = escapeForGdLiteral(JSON.stringify(code));
   return `${SCENE_TREE_HEADER}
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar node = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif node == null:
-\t\t_mcp_output("error", "Node not found: ${escapeForGdLiteral(nodePath)}")
-\t\t_mcp_done()
-\t\treturn
-\tvar mat = node.get("material")
-\tif mat == null and node.has_method("get_surface_override_material"):
-\t\tmat = node.get_surface_override_material(${materialIndex})
-\tif mat == null:
-\t\tvar _mesh = node.get("mesh")
-\t\tif _mesh != null and _mesh.has_method("surface_get_material"):
-\t\t\tmat = _mesh.surface_get_material(${materialIndex})
-\tif mat == null:
-\t\t_mcp_output("error", "No material on node")
-\t\t_mcp_done()
-\t\treturn
-\tif not mat is ShaderMaterial:
-\t\t_mcp_output("error", "Not a ShaderMaterial")
-\t\t_mcp_done()
-\t\treturn
+${shaderMatPreamble(nodePath, materialIndex)}
 \tmat.shader = mat.shader.duplicate()
 \tvar _code_json: String = "${jsonCode}"
 \tvar _parsed: Variant = JSON.parse_string(_code_json)
@@ -490,28 +475,7 @@ export function genShaderLoadFileScript(
   nodePath: string, materialIndex: number, filePath: string
 ): string {
   return `${SCENE_TREE_HEADER}
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar node = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif node == null:
-\t\t_mcp_output("error", "Node not found: ${escapeForGdLiteral(nodePath)}")
-\t\t_mcp_done()
-\t\treturn
-\tvar mat = node.get("material")
-\tif mat == null and node.has_method("get_surface_override_material"):
-\t\tmat = node.get_surface_override_material(${materialIndex})
-\tif mat == null:
-\t\tvar _mesh = node.get("mesh")
-\t\tif _mesh != null and _mesh.has_method("surface_get_material"):
-\t\t\tmat = _mesh.surface_get_material(${materialIndex})
-\tif mat == null:
-\t\t_mcp_output("error", "No material on node")
-\t\t_mcp_done()
-\t\treturn
-\tif not mat is ShaderMaterial:
-\t\t_mcp_output("error", "Not a ShaderMaterial")
-\t\t_mcp_done()
-\t\treturn
+${shaderMatPreamble(nodePath, materialIndex)}
 \tif not ResourceLoader.exists("${escapeForGdLiteral(filePath)}"):
 \t\t_mcp_output("error", "Shader file not found: ${escapeForGdLiteral(filePath)}")
 \t\t_mcp_done()
@@ -553,28 +517,7 @@ export function genShaderApplyTemplateScript(
   // 用 escapeForGdLiteral(不双写 %),原 gdEscape 会把 shader 中的 % 损坏为 %%。
   const jsonCode = escapeForGdLiteral(JSON.stringify(code));
   return `${SCENE_TREE_HEADER}
-func _initialize():
-\t_mcp_load_main_scene()
-\tvar node = _mcp_get_node("${escapeForGdLiteral(nodePath)}")
-\tif node == null:
-\t\t_mcp_output("error", "Node not found: ${escapeForGdLiteral(nodePath)}")
-\t\t_mcp_done()
-\t\treturn
-\tvar mat = node.get("material")
-\tif mat == null and node.has_method("get_surface_override_material"):
-\t\tmat = node.get_surface_override_material(${materialIndex})
-\tif mat == null:
-\t\tvar _mesh = node.get("mesh")
-\t\tif _mesh != null and _mesh.has_method("surface_get_material"):
-\t\t\tmat = _mesh.surface_get_material(${materialIndex})
-\tif mat == null:
-\t\t_mcp_output("error", "No material on node")
-\t\t_mcp_done()
-\t\treturn
-\tif not mat is ShaderMaterial:
-\t\t_mcp_output("error", "Not a ShaderMaterial")
-\t\t_mcp_done()
-\t\treturn
+${shaderMatPreamble(nodePath, materialIndex)}
 \tmat.shader = mat.shader.duplicate()
 \tvar _code_json: String = "${jsonCode}"
 \tvar _parsed: Variant = JSON.parse_string(_code_json)
