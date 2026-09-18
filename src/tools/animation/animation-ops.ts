@@ -532,6 +532,9 @@ func _initialize():
 // Export genAnimationBlend for testing
 export { genAnimationBlend };
 
+// Export ops track/keyframe generators for testing (dedup 锁定基线测试, 2026-09-18)
+export { genAddTrack, genRemoveTrack, genAddKeyframe, genRemoveKeyframe, genUpdateKeyframe };
+
 // Re-export from animation-track for backward compatibility (tests)
 export {
   genAnimationTrackAdd,
