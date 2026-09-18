@@ -78,7 +78,7 @@ var _playtest_owner_pid: int = -1
 # owner_pid 独占(仿 _playtest_owner_pid,防多 peer 误清);step_until 走延迟通道(同 playtest.step,O1 批5 统一 __deferred__)
 var _control_frozen: bool = false
 var _control_owner_pid: int = -1
-var _control_step_until_pending: Array = []  # [{peer_id,pid,id,frames_remaining,wall_deadline_ms,conditions,_added_this_frame}]
+var _control_step_until_pending: Array = []  # [{peer_id,pid,id,frames_remaining,max_frames,wall_deadline_ms,conditions,refreeze,report,profile,_added_this_frame}]
 # H1 (2026-08-20) 帧定时输入时间线:同款延迟通道。开窗后逐帧计数,at_frame 匹配帧注入事件
 # (注入复用 _cmd_send_*,零重复);完成/墙钟超时 push 响应 +(若原 frozen)refreeze。
 var _control_input_seq_pending: Array = []  # [{peer_id,pid,id,timeline,frames_budget,wall_deadline_ms,frame_counter,applied,refreeze,_added_this_frame}]
