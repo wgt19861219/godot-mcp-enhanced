@@ -74,3 +74,8 @@ test/fixtures/real-project/GeneratedAssets/
 
 # web-gui 项目入口批(2026-09-16):server 启动时幂等落盘的运行时入口页(包根/项目目录),不进 git
 面板入口.html
+# web-gui 独立窗口批(2026-09-16):包根双击件(App 模式启动器),运行时产物不进 git
+面板独立窗口.bat
+
+# playwright MCP 插件 console 日志(会话产物,非仓库内容)
+.playwright-mcp/
