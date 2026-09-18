@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.33.8] - 2026-09-18
+
+> 2026-09-17 架构审查批 5（O1 哨兵延迟通道收敛，plan M-7：五变体归一单例槽——行为敏感重构，e2e 守恒网先行）；改 `src/scripts/mcp_bridge.gd` 触发 bump；npm publish / tag 待用户指令。
+
+### Changed
+- **O1 哨兵延迟通道收敛——单例槽 `_deferred`**（bridge，重构行为守恒）：五条延迟通道（call_method await_completion 坑4 / click_button real_event P3-2 / playtest.step P2-4 / step_until G1 / input_sequence H1）原为"handler 私有临时变量×5（`_pending_*`）+ 五种哨兵字符串（`__PLAYTEST_STEP__%d__` 等）+ 消费端五段 elif"——每新增延迟命令要动 4 处（变量声明/handler/识别/消费），五变体行为不对称，且 playtest.step 的 frames 编码进字符串、report/profile 走模块级临时变量（为绕过"字符串哨兵装不下数组"而生）。收敛为三段式：handler 平铺返 `{"__deferred__": kind, ...payload}` → `_handle_message` 单键识别（剥离哨兵键得 payload，请求 id 并入——删 `_last_step_request_id`）存单例槽 `_deferred`、统一返 `"__DEFERRED__"` → `_process_buffer_bytes` 按 kind 分派（五分支体沿用原逻辑仅改数据来源，未知 kind push_warning 不炸）。存→取同一 `_process_buffer_bytes` tick 内完成，单槽与原临时变量同语义无并发窗口。净 -10 行。
+- **守恒网先行**（批5 Task 5.1）：playtest.step 此前无真机 e2e（仅 TS 元数据/超时计算测试），补守恒用例（frames_stepped/frame_count/report 搭车求值，`test/e2e-gd-symmetry.test.ts`）——五条延迟命令 e2e 守恒全覆盖（call_method await 坑4×3 / input_sequence×5 / click real_event CLICK-b / step_until×3 既有），重构前后同绿；契约测试 5 文件断言锚同步（旧哨兵字面 → `__deferred__` kind 形态：`bridge-feedback-pits-contract` / `playtest-gd-contract` / `g1-playtest-control-contract` / `p0-callv-precheck-contract` / `p3-unit`）。
+
 ## [0.33.7] - 2026-09-18
 
 > 2026-09-17 架构审查批 4（bridge 行为对称：M-5 uninstall 判活 / M-6·O3 sync_state project 维度 / M-8 -32601 版本比对 / Low 心跳毫秒+TOCTOU + 批1 终审 I-1 editor 命令族 40 处裸转守卫——改 `src/scripts/mcp_bridge.gd` 触发 bump）；随本段一并定版此前 [Unreleased] 累积的批 2（shutdown 完备性）与批 3（web-gui 安全 hygiene）条目；npm publish / tag 待用户指令。

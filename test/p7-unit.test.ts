@@ -136,8 +136,8 @@ describe('P7: 语义观察层 — GD 源码契约', () => {
     expect(GD.includes('"code": -22')).toBe(true);
     expect(cmBlock.includes('"player_mode": player_mode')).toBe(true);
     expect(cmBlock.includes('await_completion 旁路')).toBe(true);
-    // report 搭车: profile 随 pending 传 + 求值投影
-    expect(GD.includes('"profile": _step_profile,  # B-1: report 求值按此档位投影')).toBe(true);
+    // report 搭车: profile 随 pending 传 + 求值投影(O1 批5:消费端从 _deferred payload 取,原 _step_profile 局部变量收敛)
+    expect(GD.includes('"profile": str(p.get("profile", "debug")),  # B-1: report 求值按此档位投影')).toBe(true);
     expect(GD.includes('_eval_structured_report(_step_report_specs, str(entry.get("profile", "debug")))')).toBe(true);
     expect(GD.includes('_eval_structured_report(_su_report_specs, str(su_entry.get("profile", "debug")))')).toBe(true);
     // conditions: player 档同 wait_for_property 语义
