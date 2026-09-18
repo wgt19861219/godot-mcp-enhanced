@@ -89,7 +89,7 @@ export const FIXED_DEFECTS: DefectEntry[] = [
       // 纯字面量内插的正确入口(% 不双写,debated in task-2b)。
       // 2026-09-18(批4 Task 4.4): 白名单加 SIM_HELPERS_GD——模块内硬编码常量(输出协议/
       // embed/_cos 辅助段,TS 层共享常量拼接),无外部输入参与,不属于本 DEFECT 的注入面。
-      const frame = countMatchesInFile('src/tools/frame-verify/gdscripts.ts', /\$\{(?!gdEscape\(|escapeForGdLiteral\(|SIM_HELPERS_GD)[^}]*\}/g);
+      const frame = countMatchesInFile('src/tools/frame-verify/gdscripts.ts', /\$\{(?!gdEscape\(|escapeForGdLiteral\(|SIM_HELPERS_GD\})[^}]*\}/g);
       return exec + frame;
     } },
   { key: 'frame-sequence-quota-bypass', status: 'fixed', severity: 'IMPORTANT', dimension: 'Security',
