@@ -886,7 +886,8 @@ export class WebGuiServer {
   private refreshProjectEntries(): void {
     // M-3(2026-09-17 审查):READ_ONLY 语义不得在"向用户项目目录写文件"维度被穿透
     // (start/scan 完成/add 成功三时点共用本方法,头部短路全覆盖);
-    // GODOT_MCP_WEB_GUI_ENTRY=0 可全局关闭入口页落盘(不想被写入项目目录的用户出口)。
+    // GODOT_MCP_WEB_GUI_ENTRY=0 跳过项目目录/CWD 入口页落盘(不想被写入项目目录的用户
+    // 出口);registry 目录 portal.html(start() 的 ensurePortalPage)不受本开关管辖,仍写。
     if (this.opts.isReadOnly?.()) return;
     if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
     try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
