@@ -2,8 +2,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
-import { normalizeNodePath, gdEscape, escapeForGdLiteral, ensureNumber, SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';
+import { normalizeNodePath, gdEscape, escapeForGdLiteral, ensureNumber, SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, runOpsScript } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -437,15 +436,9 @@ export async function handleTool(
         return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }
 
-    const result = await executeGdscript({
-      godotPath,
-      projectPath,
-      code,
-      timeout: 30,
-      loadAutoloads: args.load_autoloads !== false,
-    });
-
-    return parseGdscriptResult(result, [], animtreeErrorMapper);
+    return runOpsScript({ godot: godotPath, projectPath, script: code,
+      loadAutoloads: args.load_autoloads !== false, timeoutSec: 30,
+      errorMapper: animtreeErrorMapper, paramWarnings: [], action });
   } catch (err) {
     return opsErrorResult('INVALID_PARAMS', err instanceof Error ? err.message : String(err));
   }

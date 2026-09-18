@@ -5,3 +5,4 @@ export * from './shared/validation.js';
 export * from '../core/shared/errors.js';
 export * from './shared/assertions.js';
 export * from './shared/persistence-warning.js';
+export * from './shared/ops-runner.js';

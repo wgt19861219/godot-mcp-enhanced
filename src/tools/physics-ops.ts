@@ -3,8 +3,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
 import { requireProjectPath } from '../helpers.js';
-import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, escapeForGdLiteral, normalizeNodePath, validateVector3, appendRuntimePersistWarning } from './shared.js';
+import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, escapeForGdLiteral, normalizeNodePath, validateVector3, runOpsScript } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -432,19 +431,12 @@ export async function handleTool(
         return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
     }
 
-    const result = await executeGdscript({
-      godotPath: godot,
-      projectPath,
-      code: script,
-      timeout: 30,
-      loadAutoloads,
-    });
-
     const errorMapper = (msg: string) =>
       msg.includes('not found') ? ERROR_CODES.NODE_NOT_FOUND : ERROR_CODES.SCRIPT_EXEC_FAILED;
 
-    const r = parseGdscriptResult(result, [], errorMapper);
-    return PHYSICS_PERSIST_ACTIONS.has(action) ? appendRuntimePersistWarning(r, `physics_${action}`) : r;
+    return runOpsScript({ godot, projectPath, script, loadAutoloads, timeoutSec: 30,
+      errorMapper, paramWarnings: [],
+      warnRuntimePersist: PHYSICS_PERSIST_ACTIONS.has(action), action: `physics_${action}` });
   } catch (err) {
     const msg = getErrorMessage(err);
     if (msg.includes('NodePath')) return opsErrorResult('INVALID_PATH', msg);
