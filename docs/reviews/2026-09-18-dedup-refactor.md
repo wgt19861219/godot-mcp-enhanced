@@ -50,7 +50,7 @@ GD 剩余 top 全为「不触碰清单」有意冗余（godot_operations↔mcp_b
 
 **观察点 1 条（信息级）**：`shared.ts → ops-runner.ts → gdscript-executor.ts → shared.ts` 良性循环 import——gdscript-executor 对 barrel 绑定全部使用点在函数体内（无顶层初始化依赖），ESM live binding + build 零错 + 全量绿佐证无害；未来若在 gdscript-executor 顶层使用 barrel 绑定此环变敏感。
 
-**流程遗留 1 条（移交用户）**：批5 nav helper 的 editor 手工冒烟未做（headless 环境限制；`check:gdscript` 完整编译 + nav 相关 50 测试已覆盖语法与契约层）——建议下次打开编辑器会话时调一次 `nav_create_region` 目视确认。
+**流程遗留 1 条（已闭环，2026-09-18 当日）**：批5 nav helper 的 editor 手工冒烟原未做（headless 环境限制）。当日补做：直连插件 WS（auth + `nav_create_region`）实测 **抓获一个既有 bug**——`geometry_parsed_collision_mask` 属性名拼错（自 P3 批次 d46cdaff，任何 4.x 运行时 SCRIPT ERROR → `result: null`），与批 5 无关（批 5 仅搬运该行）；修复于分支 `fix/nav-mesh-property-name`（正确名 `geometry_collision_mask`），复测 nav 创建 ×2 成功 + 0 SCRIPT ERROR + undo manager e2e（E2E_EDITOR=1）真跑通过。附带坑：手工开编辑器退出时 Godot 会把 fixture `project.godot` 的 P0-2 双 key 写掉 base key（判默认值丢弃），`git checkout` 恢复即过契约测试。
 
 ## 仓库级约束独立核查（不只对照方案清单）
 
