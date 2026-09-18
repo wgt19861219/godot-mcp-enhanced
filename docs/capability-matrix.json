@@ -1,5 +1,5 @@
 {
-  "version": "0.33.6",
+  "version": "0.33.7",
   "tools": [
     {
       "name": "analysis",
@@ -2195,7 +2195,7 @@
           },
           "label": {
             "type": "string",
-            "description": "sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 时用 label_a/label_b。"
+            "description": "sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 跨项目快照带 cross_project 警告。compare 时用 label_a/label_b。"
           },
           "label_a": {
             "type": "string",
@@ -2398,8 +2398,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 8093,
-        "totalBytes": 8486
+        "schemaBytes": 8143,
+        "totalBytes": 8536
       },
       "annotations": {
         "readOnlyHint": false,
