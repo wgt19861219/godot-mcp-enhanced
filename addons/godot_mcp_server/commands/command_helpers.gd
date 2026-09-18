@@ -189,9 +189,10 @@ static func _comp_white(a: Array, index: int) -> Variant:
 ## I-1(2026-09-17 审查批4,批1 终审范围增补): editor 命令族数值参数守卫——毒参数
 ## (null/容器/非法串)裸 float()/int() = "Invalid type" SCRIPT ERROR(editor 常驻不挂死,
 ## 但中断命令处理且错误不回显)。仅 int/float/合法数字串放行,其余回 fallback。
-## Keep in sync(三副本数值守卫): src/scripts/mcp_bridge.gd _num/_int_guarded(bridge)+
-## src/scripts/godot_operations.gd 同名(headless)——本文件是 editor 第三副本(public 形态,
-## 跨文件经 CommandHelpers. 前缀调用)。
+## Keep in sync(数值守卫两副本): src/scripts/mcp_bridge.gd _num/_int_guarded(bridge)+ 本文件
+## (editor,public 形态跨文件 CommandHelpers. 前缀调用)。headless(godot_operations.gd)
+## 无数值守卫副本——其命令走 TS 工具层前置校验(如 navigation.ts validateVector3),且
+## headless 进程一次性不常驻;其分量层白名单是 _math_comp(与 _comp_white 同族,另册同步)。
 static func num_guarded(v: Variant, fallback: float) -> float:
 	if v is int or v is float:
 		return float(v)

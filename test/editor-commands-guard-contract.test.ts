@@ -4,8 +4,8 @@
 // 不挂死 + TS zod 前置),但毒参数(null/容器/非法串)仍触发 SCRIPT ERROR 中断命令处理。
 //
 // 守卫先例:批1 在 command_helpers.gd 建 editor 侧守卫副本(_comp_white);本批补数值守卫
-// num_guarded/int_guarded(Keep in sync 三副本:mcp_bridge.gd _num/_int_guarded +
-// godot_operations.gd 同名 + 本文件)。
+// num_guarded/int_guarded(Keep in sync 两副本:mcp_bridge.gd _num/_int_guarded + 本文件;
+// headless 无数值守卫副本——TS 前置校验兜底,其分量白名单 _math_comp 另册同步)。
 //
 // ⚠️ 局限(对齐 gd-symmetry-contract 范式):源码字符串断言验证"守卫模式全量落位"而非运行时
 // 行为;运行时行为由 npm run check:gdscript(项目级完整编译)+ gdscript-unit 行为级用例覆盖。
