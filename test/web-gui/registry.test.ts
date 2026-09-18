@@ -1,9 +1,10 @@
 // test/web-gui/registry.test.ts
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken } from '../../src/web-gui/registry.js';
+import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken, rotateSharedToken, parseRegistrationFile } from '../../src/web-gui/registry.js';
+import { PROJECT_ENTRY_NAME } from '../../src/web-gui/portal.js';
 
 const ALIVE = () => true;
 const DEAD = () => false;
@@ -99,5 +100,51 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     const t = getOrCreateSharedToken({ dir });
     expect(t).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(t).not.toBe('bad token with spaces!!');
+  });
+
+  // ── rotateSharedToken(M-2,2026-09-17 审查批:token 疑似泄露后的主动轮换) ──
+  it('rotateSharedToken:返回新值 ≠ 旧值;token.txt 已换;后续 getOrCreateSharedToken 复读新值', () => {
+    const t1 = getOrCreateSharedToken({ dir });
+    const t2 = rotateSharedToken({ dir });
+    expect(t2).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+    expect(t2).not.toBe(t1);
+    expect(readFileSync(join(dir, 'token.txt'), 'utf-8').trim()).toBe(t2);
+    expect(getOrCreateSharedToken({ dir })).toBe(t2);
+  });
+
+  it('rotateSharedToken:包根入口页不存在则不创建;存在则用新 token 重写', () => {
+    const root = join(dir, 'pkg-root');
+    mkdirSync(root, { recursive: true });
+    getOrCreateSharedToken({ dir });
+    // 入口页不存在:rotate 只换 token,不落新文件(不向未授权目录写)
+    rotateSharedToken({ dir, packageRoot: root });
+    expect(existsSync(join(root, PROJECT_ENTRY_NAME))).toBe(false);
+    // 入口页存在(旧 token 版):rotate 后内容换成内嵌新 token 的页面
+    writeFileSync(join(root, PROJECT_ENTRY_NAME), 'OLD-PAGE', 'utf-8');
+    const t2 = rotateSharedToken({ dir, packageRoot: root });
+    const page = readFileSync(join(root, PROJECT_ENTRY_NAME), 'utf-8');
+    expect(page).not.toBe('OLD-PAGE');
+    expect(page).toContain(t2);
+  });
+
+  // ── parseRegistrationFile 抽取(审查 Low,2026-09-17 批 3):listRegistrations 与
+  //    sweepStaleRegistrations 共用的形状校验单一来源,直接单测锁定判定语义 ──
+  it('parseRegistrationFile:合法登记读回;损坏 JSON/形状不符/坏 token 字符集 → null;不存在 → null', async () => {
+    const entry = { pid: 4242, port: 9550, token: 'tok_abc-123', startedAt: 't' };
+    writeFileSync(join(dir, '4242.json'), JSON.stringify(entry), 'utf-8');
+    await expect(parseRegistrationFile(dir, '4242.json')).resolves.toEqual(entry);
+    await expect(parseRegistrationFile(dir, 'no-such.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad1.json'), '{not-json', 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad1.json')).resolves.toBeNull();
+    // 三字段判型逐项:pid/port 非 number、token 非 string → null
+    writeFileSync(join(dir, 'bad2.json'), JSON.stringify({ pid: '4242', port: 9550, token: 't' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad2.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad3.json'), JSON.stringify({ pid: 1, port: '9550', token: 't' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad3.json')).resolves.toBeNull();
+    writeFileSync(join(dir, 'bad4.json'), JSON.stringify({ pid: 1, port: 9550, token: 42 }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad4.json')).resolves.toBeNull();
+    // token 字符集白名单(/^[A-Za-z0-9_-]+$/):shell 元字符/空格 → null
+    writeFileSync(join(dir, 'bad5.json'), JSON.stringify({ pid: 1, port: 9550, token: 'a b;rm' }), 'utf-8');
+    await expect(parseRegistrationFile(dir, 'bad5.json')).resolves.toBeNull();
   });
 });

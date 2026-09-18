@@ -7,7 +7,7 @@
 //    同款清理模式)后 isWebGuiActive()=false 且端口无泄漏(同 portStart 再起能成功)。
 // GodotServer 层 env 门(GODOT_MCP_WEB_GUI='0' 不构造)在 env-gate.test.ts(vi.mock server.js)。
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +56,29 @@ describe('dashboard --web(设计 §6)', () => {
       choose: async () => null,
     });
     expect(cancelled).not.toBe(0);
+  });
+
+  // ── M-2(2026-09-17 审查批):CLI 输出默认打码,--show-token 显式全量 ──────────
+  it('M-2 打码:默认 console 输出不含全量 token(opener 仍收全量 URL);showToken=true 输出全量', async () => {
+    const LONG = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2';   // 43 字符,真实形状
+    await writeRegistration({ pid: process.pid, port: 9550, token: LONG, startedAt: 't' }, { dir });
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.join(' ')); });
+    const urls: string[] = [];
+    try {
+      await openWebDashboard({ opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE });
+      const out = logs.join('\n');
+      expect(out).not.toContain(LONG);   // 全量 token 不落终端(终端日志/录屏泄露面)
+      expect(out).toContain(`${LONG.slice(0, 4)}****`);   // 打码形态:前 4 位 + ****
+      expect(urls).toEqual([`http://127.0.0.1:9550/?token=${LONG}`]);   // 浏览器打开功能不变(仍带全量)
+
+      logs.length = 0; urls.length = 0;
+      await openWebDashboard({ opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE, showToken: true });
+      expect(logs.join('\n')).toContain(`http://127.0.0.1:9550/?token=${LONG}`);   // --show-token 显式全量
+      expect(urls).toEqual([`http://127.0.0.1:9550/?token=${LONG}`]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

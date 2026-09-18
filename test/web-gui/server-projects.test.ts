@@ -555,4 +555,65 @@ describe('WebGuiServer 项目目录入口页(2026-09-16 项目入口批)', () =>
       await rm(pkgRoot, { recursive: true, force: true });
     }
   });
+
+  // ─── M-3(2026-09-17 审查批):READ_ONLY 语义不得被"向用户项目目录写文件"穿透 ──
+  // 三时点(start / scan 完成 / add 成功)共用 refreshProjectEntries,头部双短路
+  // 全覆盖;GODOT_MCP_WEB_GUI_ENTRY=0 为不想被写入项目目录的用户出口。
+  // "开关 unset 且非只读 → 行为不变"由上方三个既有写入用例锁定,不重复。
+
+  it('READ_ONLY=true(M-3):start 后不写 面板入口.html(项目目录与包根均无新增)', async () => {
+    rmSync(join(projDir, '面板入口.html'), { force: true });   // 清既有写入用例残留,保证负向断言前提
+    const pkgRoot = await mkdtemp(join(tmpdir(), 'web-gui-ro-pkg-'));
+    try {
+      const t = await startSrv({
+        isReadOnly: () => true,
+        packageRootDir: pkgRoot,
+        projects: mockProjects({ list: [{ ...DEMO_VIEW, path: projDir }] }),
+      }); active = t.srv;
+      await new Promise(r => setTimeout(r, 300));   // 负向等待:fire-and-forget 落盘窗口,若未短路数百 ms 内必然落盘
+      expect(existsSync(join(projDir, '面板入口.html'))).toBe(false);
+      expect(existsSync(join(pkgRoot, '面板入口.html'))).toBe(false);
+    } finally {
+      await rm(pkgRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('READ_ONLY=true(M-3):scan 完成 / add 成功后也不写(写路径时点全覆盖)', async () => {
+    rmSync(join(projDir, '面板入口.html'), { force: true });
+    let list: ProjectView[] = [];
+    const t = await startSrv({
+      isReadOnly: () => true,
+      projects: {
+        list: async () => list,
+        scan: async () => ({ started: true, added: 0 }),
+        add: async (p: string) => { list = [{ ...DEMO_VIEW, path: p }]; return { ok: true }; },
+        remove: async () => ({ ok: true }),
+      },
+    }); active = t.srv;
+    const scan = await fetch(`${t.base}/api/projects/scan`, { method: 'POST', headers: { 'x-gui-token': t.token } });
+    expect(scan.status).toBe(200);
+    const add = await fetch(`${t.base}/api/projects/add`, {
+      method: 'POST', headers: { 'x-gui-token': t.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ path: projDir }),
+    });
+    expect(add.status).toBe(200);
+    await new Promise(r => setTimeout(r, 300));
+    expect(existsSync(join(projDir, '面板入口.html'))).toBe(false);
+  });
+
+  it('GODOT_MCP_WEB_GUI_ENTRY=0(M-3):全局关闭入口页落盘(start 时点即短路)', async () => {
+    rmSync(join(projDir, '面板入口.html'), { force: true });
+    const prev = process.env.GODOT_MCP_WEB_GUI_ENTRY;
+    process.env.GODOT_MCP_WEB_GUI_ENTRY = '0';
+    try {
+      const t = await startSrv({
+        projects: mockProjects({ list: [{ ...DEMO_VIEW, path: projDir }] }),
+      }); active = t.srv;
+      await new Promise(r => setTimeout(r, 300));
+      expect(existsSync(join(projDir, '面板入口.html'))).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.GODOT_MCP_WEB_GUI_ENTRY;
+      else process.env.GODOT_MCP_WEB_GUI_ENTRY = prev;
+    }
+  });
 });

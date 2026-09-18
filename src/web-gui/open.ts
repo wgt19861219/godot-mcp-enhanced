@@ -12,6 +12,10 @@ export interface OpenWebDashboardOpts {
   choose?: (entries: WebGuiRegistration[]) => Promise<WebGuiRegistration | null>;
   registryDir?: string;
   isPidAlive?: (pid: number) => boolean;
+  /** M-2(2026-09-17 审查批):console 输出全量 token URL(--show-token 旗标接线);
+   *  缺省 false 打码(前 4 位)——终端日志/录屏/分享截图的泄露面收口。浏览器 opener
+   *  恒收全量 URL(打开功能不受打码影响)。 */
+  showToken?: boolean;
 }
 
 function defaultOpener(url: string): void {
@@ -65,7 +69,11 @@ export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise
   }
   if (!picked) return 1;
   const url = `http://127.0.0.1:${picked.port}/?token=${picked.token}`;
-  console.log(`Web GUI: ${url}`);
+  // M-2(2026-09-17 审查批):console 默认打码——全量 token 不落终端(日志/录屏/分享
+  // 截图的泄露面);--show-token(showToken)显式输出全量 URL;opener 恒收全量(功能不变)。
+  console.log(opts.showToken
+    ? `Web GUI: ${url}`
+    : `Web GUI: http://127.0.0.1:${picked.port}/?token=${picked.token.slice(0, 4)}****(--show-token 显示完整 URL)`);
   (opts.opener ?? defaultOpener)(url);
   return 0;
 }

@@ -4,11 +4,16 @@
 // 面板控制第一版(2026-09-14 批准设计):POST /api/sessions/stop + /api/sessions/remove。
 
 import net from 'node:net';
+import http from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, afterAll, beforeAll } from 'vitest';
-import { WebGuiServer, isWebGuiActive, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { rotateSharedToken } from '../../src/web-gui/registry.js';
+import { INDEX_HTML } from '../../src/web-gui/html.js';
 import type { RunSessionDetailed } from '../../src/core/process-state.js';
 
 const FAKE_SESSIONS: RunSessionDetailed[] = [{
@@ -50,6 +55,36 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(res.headers.get('access-control-allow-origin')).toBeNull();   // 不发任何 CORS 头
+  });
+
+  // ── CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改精确
+  //    sha256 放行 INDEX_HTML 内联脚本;补 frame-ancestors 'none'。hash 提取以独立
+  //    路径(split,非实现同款 regex)重算比对,防实现提取逻辑漂移。
+  //    fix round 1(2026-09-17 主审 playwright 实证):浏览器对 inline script 的 hash
+  //    **不剥前导换行**(含前导换行版 txMCHDj5… 与浏览器期望逐字节匹配;原剥前导
+  //    换行实现 OZf9I8dd… 被真机 CSP violation 证伪)——独立重算同步含前导换行,
+  //    并把真实浏览器算出的 hash 作为硬编码锚锁进测试,此后提取规则再漂移会被锚抓住。
+  it('CSP 加固:script-src 含 sha256 且无 unsafe-inline;含 frame-ancestors;hash 与 INDEX_HTML 内联脚本独立重算一致 + 浏览器期望锚', () => {
+    expect(WEB_GUI_CSP).toMatch(/script-src [^;]*'sha256-[A-Za-z0-9+/=]{43,44}'/);
+    expect(WEB_GUI_CSP).not.toMatch(/script-src [^;]*'unsafe-inline'/);
+    expect(WEB_GUI_CSP).toContain("frame-ancestors 'none'");
+    expect(WEB_GUI_CSP).toContain("style-src 'unsafe-inline'");   // 样式属性面保留(非脚本执行面)
+    // 硬编码锚:playwright 打开真实面板实例,浏览器 console 报的期望 hash(2026-09-17 实证)
+    expect(WEB_GUI_CSP).toContain("'sha256-txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8='");
+    // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
+    const after = INDEX_HTML.split('<script>')[1] ?? '';
+    const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
+    const hash = createHash('sha256').update(body).digest('base64');
+    expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
+    expect(hash).toBe('txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8=');   // 独立重算与浏览器锚互证
+    // 响应头与导出常量一致(接线不漂移)
+    expect(after.length).toBeGreaterThan(0);
+  });
+
+  it('GET / 响应头 CSP 与 WEB_GUI_CSP 常量逐字一致', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const res = await fetch(t.base + '/');
+    expect(res.headers.get('content-security-policy')).toBe(WEB_GUI_CSP);
   });
 
   it('错 token 401;对 token(无 Origin,模拟 curl)放行 /api/sessions', async () => {
@@ -123,6 +158,21 @@ describe('cookie 双通道(/api/auth 握手 Set-Cookie + cookie 通道鉴权)', 
     const none = await fetch(`${t.base}/api/auth`);
     expect(none.status).toBe(401);
     expect(none.headers.get('set-cookie')).toBeNull();
+  });
+
+  // M-1(2026-09-17 审查批):握手端点补 Origin 闸门——种 cookie 的端点不得响应
+  // 非 127.0.0.1/localhost 本端口的浏览器源(DNS rebinding / 恶意页纵深防御)。
+  it('/api/auth Origin 闸门(M-1):错 Origin 即使 token 正确也 403 且不种 cookie;合法 Origin 200', async () => {
+    const t = await startTestServer(); active = t.srv;
+    const evil = await fetch(`${t.base}/api/auth?token=${t.token}`, {
+      headers: { origin: 'http://evil.example' },
+    });
+    expect(evil.status).toBe(403);
+    expect(evil.headers.get('set-cookie')).toBeNull();
+    const good = await fetch(`${t.base}/api/auth?token=${t.token}`, {
+      headers: { origin: `http://127.0.0.1:${t.srv.port}` },
+    });
+    expect(good.status).toBe(200);
   });
 
   it('cookie 通道鉴权:对 cookie(无 query 无 X-GUI-Token)访问 /api/sessions → 200;错 cookie 值 → 401', async () => {
@@ -229,6 +279,72 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(removeRes.status).toBe(400);
   });
 
+  // ── readJsonBody 统一上限(审查 Low,2026-09-17 批 3):通用 JSON POST 64KB 预检 ──
+  //    content-length 与 chunked(无 CL)两形态都拦;file save 的 600KB 语义独立保留
+  //    (server-files.test.ts 锁定,此处通用端点只认 64KB)。
+  it('通用 POST body >64KB(content-length 形式)→ 413;鉴权仍在预检之前(无 token 401 优先)', async () => {
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: true }) });
+    active = t.srv;
+    const big = await post(t.base, '/api/sessions/stop', t.token, { projectPath: 'D:/x', pad: 'x'.repeat(70 * 1024) });
+    expect(big.status).toBe(413);
+    expect(await big.json()).toEqual({ error: 'payload too large' });
+    // 鉴权先于预检:错 token + 超大 body → 401(不因 413 掩盖鉴权语义)
+    const unauth = await fetch(t.base + '/api/sessions/stop', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectPath: 'D:/x', pad: 'x'.repeat(70 * 1024) }),
+    });
+    expect(unauth.status).toBe(401);
+  });
+
+  it('通用 POST chunked 无 content-length:累计超 64KB → 413(不整读进内存)', async () => {
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: true }) });
+    active = t.srv;
+    const res = await new Promise<{ status: number }>((resolve, reject) => {
+      // 原生 http 客户端不设 content-length → 自动 chunked(undici fetch 会补 CL)
+      const req = http.request({
+        host: '127.0.0.1', port: t.srv.port, path: '/api/sessions/stop', method: 'POST',
+        headers: { 'x-gui-token': t.token, 'content-type': 'application/json' },
+      }, (r) => { r.resume(); r.on('end', () => resolve({ status: r.statusCode ?? 0 })); });
+      req.on('error', reject);
+      req.write('{"projectPath":"D:/x","pad":"');
+      for (let i = 0; i < 70; i++) req.write('x'.repeat(1024));   // 累计 ~70KB,分块喂
+      req.end('"}');
+    });
+    expect(res.status).toBe(413);
+  });
+
+  // ── 终审 R1(2026-09-18):readJsonBody 跨 chunk 多字节 UTF-8 ────────────────
+  //    for-await 的每个 chunk 是 Buffer;旧实现 `raw += chunk` 触发逐段隐式
+  //    toString('utf8') 解码,多字节序列(汉字 3 字节)跨 chunk 边界时被逐段替换为
+  //    U+FFFD。U+FFFD 在 JSON 字符串内合法 → JSON.parse 成功 → 损坏内容静默落盘
+  //    (file save 600KB 含中文注释文件是真实场景;64KB 默认路径共用同函数)。
+  //    修复:Buffer[] 收集 + Buffer.concat 后一次解码。本用例把第一 chunk 末字节
+  //    切在 '二'(E4 BA 8C)3 字节序列的首字节 E4 上,断言回调收到的字段与原文
+  //    逐字相等(旧实现必红:'一' 后接 3 个 U+FFFD 再接 '三四…')。
+  it('跨 chunk 多字节 UTF-8:汉字 3 字节序列跨 chunk 边界 → 解析值与原文逐字相等(终审 R1)', async () => {
+    const seen: string[] = [];
+    const t = await startCtrlServer({ stopSession: async (p) => { seen.push(p); return { ok: true }; } });
+    active = t.srv;
+    const cn = '一二三四五六七八九十';
+    const payload = Buffer.from(JSON.stringify({ projectPath: cn }), 'utf8');
+    // '{"projectPath":"' 为 16 个 ASCII 字节,'一'(E4 B8 80)占 3 字节;
+    // 切点 20 → 第一块末字节 = '二' 的首字节 E4,第二块从 BA 8C 起。
+    expect(payload.subarray(19, 22)).toEqual(Buffer.from('二', 'utf8'));   // 守卫:切点确落在 '二' 序列内
+    const res = await new Promise<{ status: number }>((resolve, reject) => {
+      // 原生 http 客户端不设 content-length → 自动 chunked;write/end 各成独立
+      // HTTP chunk frame,服务端 for-await 分两段 Buffer 收到(frame 边界 = data 边界)
+      const req = http.request({
+        host: '127.0.0.1', port: t.srv.port, path: '/api/sessions/stop', method: 'POST',
+        headers: { 'x-gui-token': t.token, 'content-type': 'application/json; charset=utf-8' },
+      }, (r) => { r.resume(); r.on('end', () => resolve({ status: r.statusCode ?? 0 })); });
+      req.on('error', reject);
+      req.write(payload.subarray(0, 20));
+      req.end(payload.subarray(20));
+    });
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([cn]);   // 逐字相等:任何 U+FFFD 损坏在此被抓住
+  });
+
   it('remove:ok → 200;alive → 409 {error:"session is still running"};not_found → 404;未注入 → 503', async () => {
     const okSrv = await startCtrlServer({ removeSession: () => ({ ok: true }) });
     active = okSrv.srv;
@@ -277,17 +393,65 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(c.token).toBe('explicit-tok-0123456789abcdef012345');
   });
 
-  it('/api/health:无 token 200 + CORS * + {ok,port,startedAt} 无 pid/token 字段 + no-store', async () => {
+  // M-4(2026-09-17 审查批):ACAO 从 `*` 收紧为 9550-9569 段白名单回显(前端自愈
+  // 跨端口探测仍可读),响应体删 startedAt(无消费方,减少指纹面)。
+  it('/api/health:无 token 200 + ACAO 白名单回显(9550-9569 段) + {ok,port} 无 startedAt/pid/token + no-store', async () => {
     const t = await startTestServer(); active = t.srv;
     const r = await fetch(`${t.base}/api/health`);
     expect(r.status).toBe(200);
-    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-origin')).toBeNull();   // 无 Origin(非浏览器)不发 ACAO
     expect(r.headers.get('cache-control')).toBe('no-store');
     const body = await r.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
     expect(body.port).toBe(t.srv.port);
-    expect(typeof body.startedAt).toBe('string');
+    expect('startedAt' in body).toBe(false);
     expect('pid' in body).toBe(false);
     expect('token' in body).toBe(false);
+
+    const loop1 = await fetch(`${t.base}/api/health`, { headers: { origin: 'http://127.0.0.1:9555' } });
+    expect(loop1.headers.get('access-control-allow-origin')).toBe('http://127.0.0.1:9555');
+    const loop2 = await fetch(`${t.base}/api/health`, { headers: { origin: 'http://localhost:9560' } });
+    expect(loop2.headers.get('access-control-allow-origin')).toBe('http://localhost:9560');   // 956x 段也在白名单(9550-9569 全段,自愈扫描范围)
+    const evil = await fetch(`${t.base}/api/health`, { headers: { origin: 'https://evil.com' } });
+    expect(evil.headers.get('access-control-allow-origin')).toBeNull();   // 白名单外不回显
+    expect(evil.status).toBe(200);   // health 本身仍无鉴权可探测(活着+端口,无害)
+  });
+
+  // M-1(2026-09-17 审查批):token 比较必须恒定时间——timingSafeEqual 落位即被锁,
+  // 且不允许再出现 `=== this.token` / `!== this.token` 字面比较(防回退)。
+  // 恒定时间的行为级差异(逐前缀定时探测)在测试内不可测,以恒定时间实现 + 本契约
+  // 断言组合覆盖;错误 token 401 / 正确 token 200 的行为由上方既有用例锁定不回归。
+  it('源码契约(M-1):server.ts 引入 timingSafeEqual,无 === this.token / !== this.token 字面比较', () => {
+    const src = readFileSync(new URL('../../src/web-gui/server.ts', import.meta.url), 'utf-8');
+    expect(src).toContain("import { timingSafeEqual } from 'node:crypto'");
+    expect(src).not.toContain('=== this.token');
+    expect(src).not.toContain('!== this.token');
+  });
+});
+
+// ── rotateSharedToken 与 server 联动(M-2,2026-09-17 审查批)──────────────────
+// 诚实边界:rotate 换的是 token.txt(共享持久 token 的真相源)——已运行实例的内存
+// token 不热更新,须重启才收敛新值;rotate 的防守对象是"新会话/新实例不再认旧 token"。
+describe('rotateSharedToken 与 server 联动(M-2)', () => {
+  it('rotate 后新起实例:旧 token 401 / 新 token 200;实例 token 收敛到文件新值', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'web-gui-rotate-'));
+    const mkOpts = (): WebGuiServerOptions => ({
+      getSessions: () => FAKE_SESSIONS, getIndexHtml: () => FAKE_HTML, portStart: 0, registryDir: dir,
+    });
+    const a = new WebGuiServer(mkOpts());
+    await a.start();
+    const oldToken = a.token;
+    const newToken = rotateSharedToken({ dir });
+    expect(newToken).not.toBe(oldToken);
+    const b = new WebGuiServer(mkOpts());
+    await b.start();
+    expect(b.token).toBe(newToken);   // 新实例从 token.txt 读到新值
+    const old = await fetch(`http://127.0.0.1:${b.port}/api/sessions?token=${oldToken}`);
+    expect(old.status).toBe(401);
+    const ok = await fetch(`http://127.0.0.1:${b.port}/api/sessions?token=${newToken}`);
+    expect(ok.status).toBe(200);
+    await a.stop();
+    await b.stop();
+    await rm(dir, { recursive: true, force: true });
   });
 });

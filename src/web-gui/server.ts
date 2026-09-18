@@ -6,12 +6,14 @@
 // 固定清单四端点 + CSP 放宽(script/style self + img/media self)+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
+import { INDEX_SCRIPT_SHA256 } from './html.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 import { LogReader } from '../dashboard/log-reader.js';
@@ -89,13 +91,25 @@ const PORT_ATTEMPTS = 20;
  * 跨端口 fetch /api/health——CSP 源表达式 'self' 含端口,跨端口即跨源被拦(真机实测)。
  * 端口段与 html.ts recoverPanel 的扫描范围(9550..9569)一一对应,改动须两处同步;
  * 127.0.0.1 与 localhost 双 host 都放(用户书签可能用任一形态)。
+ * CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改 sha256 精确
+ * 放行 INDEX_HTML 内联脚本(hash 模块加载时计算,html.ts INDEX_SCRIPT_SHA256),
+ * 注入的 HTML 与 INDEX_HTML 脚本不一致的测试场景仅 CSP 头与常量一致(浏览器才校验);
+ * frame-ancestors 'none' 防被嵌入 iframe(clickjacking 面)。
  */
 export const WEB_GUI_CSP: string =
-  "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src 'unsafe-inline' 'self'; "
+  `default-src 'none'; script-src 'self' 'sha256-${INDEX_SCRIPT_SHA256}'; style-src 'unsafe-inline' 'self'; `
   + "img-src 'self'; media-src 'self'; connect-src 'self'"
   + Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i)
     .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
-    .join('');
+    .join('')
+  + "; frame-ancestors 'none'";
+
+/** /api/health ACAO 白名单(M-4,2026-09-17 审查批):仅 127.0.0.1|localhost 的
+ *  9550-9569 段 Origin 回显(前端自愈跨端口探测可读)。端口段由 CSP 同源常量
+ *  机械生成,与 WEB_GUI_CSP / html.ts recoverPanel 扫描范围天然同步不漂移。 */
+const HEALTH_ACAO_ORIGIN_RE = new RegExp(
+  `^http://(127\\.0\\.0\\.1|localhost):(${Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i).join('|')})$`,
+);
 
 // assets 固定清单(spec §4/I-2):白名单枚举而非目录扫描——含路径分隔符/编码(如
 // ..%2F)或不在清单的名字天然 404,无目录穿越面。Task 4 前端资源(Checkbox 任务书 §4)。
@@ -107,6 +121,10 @@ const ASSET_FILES: ReadonlySet<string> = new Set([
 const FILE_ERR_STATUS: Record<FilesErrorCode, number> = {
   forbidden: 403, not_found: 404, too_large: 413, conflict: 409, bad_request: 400,
 };
+
+/** 通用 JSON body 上限(审查 Low,2026-09-17 批 3):除 file save(600KB 语义,I-6 独立
+ *  预检)外的 POST body 统一 64KB——projectPath/path 等合法字段远小于此,超限即恶意/失控。 */
+const JSON_BODY_MAX_BYTES = 64 * 1024;
 
 // 模块级激活标志:只读查询导出(launcher guard 消费),由本类 start/stop 驱动——
 // 非依赖注入 setter,不违反 AGENTS.md 模块级 setter 红线(设计 §3.1)。
@@ -120,7 +138,7 @@ export class WebGuiServer {
   private readonly opts: WebGuiServerOptions;
   private httpServer: Server | null = null;
   private portValue = 0;
-  // /api/health 响应用(2026-09-16 入口简化批);start() 时定格
+  // registry 登记时间戳用(start() 时定格;M-4 后 /api/health 响应不再携带,open.ts 列表仍消费)
   private startedAtIso = '';
   // ─── SSE + 日志数据流(设计 §3.3,Task 7) ───────────────────────────────────
   private sseClients = new Set<ServerResponse>();
@@ -226,6 +244,15 @@ export class WebGuiServer {
 
   // ─── 鉴权(设计 §5) ────────────────────────────────────────────────────────
 
+  /** M-1(2026-09-17 审查):token 比较恒定时间——长度先守卫防长度泄露,
+   *  timingSafeEqual 防逐前缀定时探测。全部 token 比较点(含 /api/auth 握手)
+   *  必须经此方法,不得回退到 ===/!== 字面比较(源码契约测试锁定)。 */
+  private tokenEquals(candidate: string | undefined | null): boolean {
+    const a = Buffer.from(this.token, 'utf8');
+    const b = Buffer.from(String(candidate ?? ''), 'utf8');
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+
   private extractToken(req: IncomingMessage, url: URL): string | null {
     // 优先级:query > X-GUI-Token 头 > cookie(空值一律视为未提供,继续走下一通道)
     const q = url.searchParams.get('token');
@@ -254,7 +281,7 @@ export class WebGuiServer {
   }
 
   private authorized(req: IncomingMessage, url: URL): boolean {
-    return this.extractToken(req, url) === this.token && this.originAllowed(req);
+    return this.tokenEquals(this.extractToken(req, url)) && this.originAllowed(req);
   }
 
   // ─── 请求路由 ──────────────────────────────────────────────────────────────
@@ -278,16 +305,20 @@ export class WebGuiServer {
       }
       if (req.method !== 'GET') { res.writeHead(405).end(); return; }
       // /api/health 无鉴权探测端点(2026-09-16 入口简化批):前端自愈扫描端口段用。
-      // 响应只报 {ok,port,startedAt}——无 pid/token 等敏感字段;CORS * 供跨端口探测读
-      // (端口不同即跨源,需 ACAO 才能读到响应;信息面=活着+端口,泄露无害)。
+      // M-4(2026-09-17 审查批):ACAO 从 `*` 收紧为 Origin 白名单回显——仅
+      // http://127.0.0.1|localhost:9550-9569(自愈扫描范围,与 WEB_GUI_CSP 端口段
+      // 一一对应)回显该 Origin 供跨端口探测读;其他/无 Origin 不发 ACAO 头。
+      // 响应只报 {ok,port}——无 pid/token/startedAt 等字段(前端自愈只消费 r.ok)。
       if (url.pathname === '/api/health') {
+        const origin = req.headers.origin;
+        const acao = typeof origin === 'string' && HEALTH_ACAO_ORIGIN_RE.test(origin) ? origin : undefined;
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
-          'access-control-allow-origin': '*',
+          ...(acao ? { 'access-control-allow-origin': acao } : {}),
           'x-content-type-options': 'nosniff',
         });
-        res.end(JSON.stringify({ ok: true, port: this.portValue, startedAt: this.startedAtIso }));
+        res.end(JSON.stringify({ ok: true, port: this.portValue }));
         return;
       }
       if (url.pathname === '/') {
@@ -312,8 +343,11 @@ export class WebGuiServer {
       // cookie 双通道握手端点(须在 authorized 之前注册:自身鉴权只用 query token):
       // 对 token → 200 + Set-Cookie 种 HttpOnly cookie,此后 EventSource/fetch 免 query
       // 也能过鉴权(免疫 URL query 被隐私扩展剥除/截断);错/缺 token → 401 不种 cookie。
+      // M-1(2026-09-17 审查):补 Origin 闸门(403 先于 token 判定)——种 cookie 的
+      // 端点不得响应非本机本端口的浏览器源,防 DNS rebinding/恶意页纵深探测。
       if (url.pathname === '/api/auth') {
-        if (url.searchParams.get('token') !== this.token) { res.writeHead(401).end(); return; }
+        if (!this.originAllowed(req)) { res.writeHead(403).end(); return; }
+        if (!this.tokenEquals(url.searchParams.get('token'))) { res.writeHead(401).end(); return; }
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'set-cookie': `gui-token=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
@@ -322,7 +356,7 @@ export class WebGuiServer {
         return;
       }
       if (!this.authorized(req, url)) {
-        const code = this.extractToken(req, url) === this.token ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
+        const code = this.tokenEquals(this.extractToken(req, url)) ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
         res.writeHead(code).end();
         return;
       }
@@ -373,14 +407,32 @@ export class WebGuiServer {
   // 语义与读路径一致,不放松。
 
   /** POST body 读取共用(自原 handleSessionControl 的 for-await 模式抽出)。
-   *  JSON 解析失败 → {ok:false}(调用方回 400 bad json)。 */
-  private async readJsonBody(req: IncomingMessage): Promise<{ ok: true; value: unknown } | { ok: false }> {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
+   *  上限双守卫(审查 Low,2026-09-17 批 3):content-length 头预检 + chunked(无 CL)
+   *  累计字节断流——超限即弃读返回,不整读进内存。file save 调用方显式传 600KB
+   *  (I-6 语义),其余端点默认 64KB。
+   *  解码(终审 R1,2026-09-18):chunk 收集为 Buffer[],读完后 Buffer.concat
+   *  一次 toString('utf8')——for-await 的每个 chunk 是 Buffer,若逐段 `+=`(逐段
+   *  隐式 toString)解码,多字节 UTF-8 序列(汉字 3 字节)跨 chunk 边界会被逐段
+   *  替换为 U+FFFD,而 U+FFFD 在 JSON 内合法 → JSON.parse 成功 → 损坏内容静默
+   *  落盘(file save 600KB 含中文注释场景)。
+   *  JSON 解析失败 → reason bad_json(调用方 400);超限 → too_large(调用方 413)。 */
+  private async readJsonBody(req: IncomingMessage, maxBytes: number = JSON_BODY_MAX_BYTES): Promise<{ ok: true; value: unknown } | { ok: false; reason: 'bad_json' | 'too_large' }> {
+    const cl = Number(req.headers['content-length'] ?? 0);
+    if (cl > maxBytes) return { ok: false, reason: 'too_large' };
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        req.resume();   // 丢弃剩余 body(防连接悬挂/内存驻留),上层回 413
+        return { ok: false, reason: 'too_large' };
+      }
+      chunks.push(chunk);
+    }
     try {
-      return { ok: true, value: JSON.parse(raw) as unknown };
+      return { ok: true, value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown };
     } catch {
-      return { ok: false };
+      return { ok: false, reason: 'bad_json' };
     }
   }
 
@@ -391,7 +443,7 @@ export class WebGuiServer {
     };
     try {
       if (!this.authorized(req, url)) {
-        res.writeHead(this.extractToken(req, url) === this.token ? 403 : 401).end();
+        res.writeHead(this.tokenEquals(this.extractToken(req, url)) ? 403 : 401).end();
         return;
       }
 
@@ -411,8 +463,13 @@ export class WebGuiServer {
         }
         const f = this.opts.files;
         if (!f) return json(503, { error: 'not configured' });
-        const body = await this.readJsonBody(req);
-        if (!body.ok) return json(400, { error: 'bad json' });
+        // readJsonBody 传 600KB(与上方 CL 预检同值):file save 语义上限独立于通用 64KB,
+        // 且防 chunked 无 CL 绕过预检后整读进内存。
+        const body = await this.readJsonBody(req, 600 * 1024);
+        if (!body.ok) {
+          if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
+          return json(400, { error: 'bad json' });
+        }
         const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
         const { project, path, content, baseMtime } = fields as Partial<Record<'project' | 'path' | 'content' | 'baseMtime', unknown>>;
         if (typeof project !== 'string' || typeof path !== 'string' || typeof content !== 'string' || typeof baseMtime !== 'number') {
@@ -466,8 +523,12 @@ export class WebGuiServer {
         }
       }
 
+      // 通用 body 读取:64KB 统一上限(审查 Low);超限 413 先于 JSON 解析
       const body = await this.readJsonBody(req);
-      if (!body.ok) return json(400, { error: 'bad json' });
+      if (!body.ok) {
+        if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
+        return json(400, { error: 'bad json' });
+      }
       const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
 
       // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────
@@ -823,6 +884,12 @@ export class WebGuiServer {
    *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
    *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。 */
   private refreshProjectEntries(): void {
+    // M-3(2026-09-17 审查):READ_ONLY 语义不得在"向用户项目目录写文件"维度被穿透
+    // (start/scan 完成/add 成功三时点共用本方法,头部短路全覆盖);
+    // GODOT_MCP_WEB_GUI_ENTRY=0 跳过项目目录/CWD 入口页落盘(不想被写入项目目录的用户
+    // 出口);registry 目录 portal.html(start() 的 ensurePortalPage)不受本开关管辖,仍写。
+    if (this.opts.isReadOnly?.()) return;
+    if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
     try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {

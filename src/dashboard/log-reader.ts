@@ -122,6 +122,9 @@ class LogReader extends EventEmitter {
           this.checkForNewData();
         }
       });
+      // 审查 Low(2026-09-17 批 3):附属句柄不阻塞进程退出——server.ts 数据流定时器
+      // unref 同款先例(M-8);FSWatcher 支持 unref,stop() 之外的持有期不挂住进程。
+      this.watcher.unref?.();
     } catch (err) {
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
     }
@@ -131,6 +134,7 @@ class LogReader extends EventEmitter {
     this.pollTimer = setInterval(() => {
       if (!this.stopped) this.checkForNewData();
     }, this.pollIntervalMs);
+    this.pollTimer.unref?.();   // 同上(审查 Low):轮询定时器不阻塞进程退出
   }
 
   private checkForNewData(): void {
