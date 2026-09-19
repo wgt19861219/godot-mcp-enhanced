@@ -175,5 +175,31 @@ describe('configure 命令', () => {
       const claude = ALL_ADAPTERS.find(a => a.name === 'Claude Code')!;
       expect(claude.configure).toHaveBeenCalled(); // 警告不阻断
     });
+
+    it('批4-T9: configure 成功 → machine-audit 落 caller=cli:configure 条目(安全敏感写面留痕)', async () => {
+      // FAKE_HOME 隔离 machine-audit 落点(对齐 godot-installer.test.ts N-4 模式)
+      const { readFileSync, existsSync } = await import('node:fs');
+      const { getMachineAuditFile } = await import('../../src/core/audit-log.js');
+      vi.stubEnv('HOME', testDir);
+      vi.stubEnv('USERPROFILE', testDir);
+      try {
+        await runConfigure(['claude-code']);
+        expect(exitSpy).not.toHaveBeenCalled();
+        // 审计 fire-and-forget,轮询等落盘(最多 ~1s)
+        let last = '';
+        for (let i = 0; i < 20 && !last; i++) {
+          try { last = readFileSync(getMachineAuditFile(), 'utf8').trim().split('\n').at(-1) ?? ''; } catch { /* 尚未落盘 */ }
+          if (!last) await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(last, `machine-audit 应有条目: ${getMachineAuditFile()} exists=${existsSync(getMachineAuditFile())}`).not.toBe('');
+        const e = JSON.parse(last) as Record<string, unknown>;
+        expect(e.tool).toBe('cli');
+        expect(e.action).toBe('configure_client');
+        expect(e.caller).toBe('cli:configure');
+        expect((e.details as { client?: string })?.client).toBe('Claude Code');
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 });

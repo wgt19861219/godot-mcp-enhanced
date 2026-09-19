@@ -88,12 +88,40 @@ export interface AuditEntry {
   duration_ms: number;
   caller?: string;          // 1C (2026-09-19): best-effort 调用者标识(_meta.agentId,MCP 未标准化,通常 undefined)
   details?: {
-    before_values?: Record<string, unknown>;  // project.godot 等(阶段2 工具上报)
+    before_values?: Record<string, unknown>;  // 批4-T3: 工具经 structuredContent._audit 上报的写前旧值(首个生产者: project write_config)
     batch?: boolean;          // project_replace/create_project 批量(主路径 + 标记)
     truncated?: boolean;      // changed_files 超 MAX_CHANGED_FILES 截断
     confirmed?: boolean;      // B-1:确认后真实执行(区别于令牌请求的虚假记录)
     [key: string]: unknown;   // 自由载荷:各工具/CLI 自定义键(如 cli install 的 versionTag/binaryUrl)
   };
+}
+
+/** 批4-T3(五维评估 P1): 工具→审计上报通道。约定:工具可在 result.structuredContent._audit
+ *  放 { before_values?: Record<string, unknown> }(写前旧值,供 suggest_rollback 的
+ *  project.godot 恢复分支消费)。本函数提取 hint 并返回剥离 _audit 键后的 result——
+ *  after hook 的返回值会传回 MCP 客户端,剥离防 _audit 成为半公共 API。
+ *  非法形态(非对象/无 before_values)静默忽略返回原 result(审计提示是 best-effort,不阻断工具)。
+ *  structuredContent 约束为 unknown 而非 Record:SDK CallToolResult 的该字段是具体
+ *  union 类型,过窄约束会与真实 ToolResult 不兼容(批4 实测)。 */
+export interface AuditHint {
+  before_values?: Record<string, unknown>;
+}
+
+export function extractAuditHint<T extends { structuredContent?: unknown }>(
+  result: T,
+): { hint: AuditHint | undefined; result: T } {
+  const raw = result.structuredContent;
+  if (typeof raw !== 'object' || raw === null) return { hint: undefined, result };
+  const sc = raw as Record<string, unknown>;
+  const bv = sc._audit;
+  if (typeof bv !== 'object' || bv === null) return { hint: undefined, result };
+  const beforeValues = (bv as Record<string, unknown>).before_values;
+  if (typeof beforeValues !== 'object' || beforeValues === null) return { hint: undefined, result };
+  // 剥离 _audit(浅拷贝 structuredContent,不动原对象其余字段)
+  const cleanedSc: Record<string, unknown> = { ...sc };
+  delete cleanedSc._audit;
+  const cleaned = { ...result, structuredContent: cleanedSc } as T;
+  return { hint: { before_values: beforeValues as Record<string, unknown> }, result: cleaned };
 }
 
 /**

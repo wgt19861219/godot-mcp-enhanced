@@ -14,6 +14,7 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { opt, hasFlag } from './args.js';
+import { auditSkillsInstall } from './audit-helper.js';
 
 /** 打包内 skills 分发目录(相对本文件:build/cli/ → 包根 skills/) */
 export function packagedSkillsDir(): string {
@@ -98,6 +99,8 @@ export async function runSkills(args: string[]): Promise<void> {
     }
     const targetDir = explicitTarget ?? join(homedir(), '.claude', 'skills');
     const { installed, skipped } = installSkills(skillsDir, targetDir, force);
+    // 批4-T9(五维评估 P2): CLI 写面留痕——写 ~/.claude/skills/(机器级,非项目内)
+    if (installed.length > 0) auditSkillsInstall(installed.length);
     console.log(`Target: ${targetDir}\n`);
     for (const name of installed) console.log(`  ✓ ${name}: installed`);
     for (const name of skipped) console.log(`  ⊘ ${name}: already exists (use --force to overwrite)`);

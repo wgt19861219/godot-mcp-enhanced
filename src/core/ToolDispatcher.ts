@@ -39,7 +39,7 @@ import { validateArgs } from './args-validator.js';
 import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
 import { opsErrorResult, COMMON_ERROR_CODES } from './shared/errors.js';
 import { classifyError, newTraceId, InternalError } from './tool-errors.js';
-import { isAuditEnabled, appendAuditLine, inferChangedFiles, isTokenRequestResult, recordAuditWriteFailure, isAuditStrict } from './audit-log.js';
+import { isAuditEnabled, appendAuditLine, inferChangedFiles, isTokenRequestResult, recordAuditWriteFailure, isAuditStrict, extractAuditHint } from './audit-log.js';
 import { truncateResponse } from './response-limiter.js';
 import { isErrorText } from './response-format.js';
 import * as ps from './process-state.js';
@@ -250,7 +250,13 @@ export class ToolDispatcher {
       : VALID_LOG_LEVELS.has(rawLogLevel) ? (rawLogLevel as LogLevel)
       : null;  // 非法值视为 null(旧行为);SEP-2577 建议返 -32602 但 enhanced 在 middleware 层不阻断
 
-    const ctx: DispatchContext = { toolName: name, args, startTime, phase: 'before', traceId: newTraceId(), caller: agentId };
+    // 批4-T4(五维评估 P1): caller 归因归一——通道前缀(mcp / web-gui:<子系统> / cli:<命令>)
+    // 使审计可区分操作来源(批4 前唯一数据源 _meta.agentId 通常 undefined,caller 恒缺省,
+    // "AI 经 MCP vs 用户 CLI vs HTTP 面"不可分辨)。agentId 是 MCP 规范未定义字段(见上注),
+    // 客户端注入时自动升级为 mcp:<agentId> 细粒度归因。
+    const callerLabel = agentId !== undefined && agentId !== '' ? `mcp:${agentId}` : 'mcp';
+
+    const ctx: DispatchContext = { toolName: name, args, startTime, phase: 'before', traceId: newTraceId(), caller: callerLabel };
 
     // P1-7 (SEP-2577): per-request logLevel 包裹整个工具调用链(middleware + executeToolCall +
     // dispatchTool + confirm_and_execute)。withRequestLogLevelAsync 在 await 期间保持
@@ -271,7 +277,7 @@ export class ToolDispatcher {
           markInflight(name);
           try {
             return await withToolHeartbeat(progressEmitter, name, () =>
-              this.executeToolCall(name, args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, agentId));
+              this.executeToolCall(name, args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, callerLabel));
           } finally {
             clearInflight(name);
           }
@@ -354,7 +360,8 @@ export class ToolDispatcher {
       }
 
       // ── 1. ReadOnlyGuard ──
-      const guardResult = this.readOnlyGuard.check(name);
+      // 批4-T5: 传 action 做 action 级只读判定(readonly 工具的非 read action 拒)
+      const guardResult = this.readOnlyGuard.check(name, typeof args.action === 'string' ? args.action : undefined);
       if (guardResult.blocked) {
         return opsErrorResult(String(guardResult.errorCode ?? 'READ_ONLY'), guardResult.message ?? 'Operation blocked in read-only mode');
       }
@@ -387,14 +394,14 @@ export class ToolDispatcher {
           console.warn(`[SECURITY] GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true — confirm_and_execute 跳过 elicitation (token:${String(token).slice(0, 8)} tool:${pending.toolName})。仅可信本地/CI,生产保持默认未设。`);
           // 跳到执行段（下面 confirmedPending 赋值后共用）
           const __confirmedResult = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
-          const __auditFailed = await this._auditConfirmedExecution(pending, startTime, __confirmedResult, traceId, callerAgentId);
-          if (__auditFailed) {
+          const __audit = await this._auditConfirmedExecution(pending, startTime, __confirmedResult, traceId, callerAgentId);
+          if (__audit.strict) {
             // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
             return opsErrorResult('AUDIT_WRITE_FAILED',
               `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
               `Side effects may already have occurred — verify manually.`);
           }
-          return __confirmedResult;
+          return __audit.result;  // 批4-T3: 剥离 _audit 后的结果
         }
 
         if (confirmed === undefined) {
@@ -432,14 +439,14 @@ export class ToolDispatcher {
         const pending = consumeToken(token);
         if (!pending) return opsErrorResult('TOKEN_EXPIRED', 'Confirmation token expired during MRTR round-trip');
         const __confirmedResult2 = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
-        const __auditFailed2 = await this._auditConfirmedExecution(pending, startTime, __confirmedResult2, traceId, callerAgentId);
-        if (__auditFailed2) {
+        const __audit2 = await this._auditConfirmedExecution(pending, startTime, __confirmedResult2, traceId, callerAgentId);
+        if (__audit2.strict) {
           // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
           return opsErrorResult('AUDIT_WRITE_FAILED',
             `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
             `Side effects may already have occurred — verify manually.`);
         }
-        return __confirmedResult2;
+        return __audit2.result;  // 批4-T3: 剥离 _audit 后的结果
       }
 
       // ── 3. 确认令牌检查（IMP-6: 前置 legacy 映射，防 legacy name 如 remove_node 绕过 guard）──
@@ -596,9 +603,18 @@ export class ToolDispatcher {
           ? ctx.args.project_path : (ps.getProjectDir() || resolveProjectPath());
         if (!projectPath) return result;
         const isError = result.isError === true || this.checkJsonSuccessFalse(result);
+        // 批4-T3: 提取工具上报的审计提示(structuredContent._audit.before_values)并入 details,
+        // 返回剥离 _audit 后的 result(防其传回 MCP 客户端成为半公共 API)
+        const { hint: auditHint, result: cleanedResult } = extractAuditHint(result);
         const { files, batch } = inferChangedFiles(auditTool, auditAction, ctx.args, projectPath);
         const auditDetails: Record<string, unknown> | undefined =
-          (batch || unmappedDetails) ? { ...(batch ? { batch: true } : {}), ...(unmappedDetails ?? {}) } : undefined;
+          (batch || unmappedDetails || auditHint?.before_values)
+            ? {
+                ...(batch ? { batch: true } : {}),
+                ...(unmappedDetails ?? {}),
+                ...(auditHint?.before_values ? { before_values: auditHint.before_values } : {}),
+              }
+            : undefined;
         try {
           await appendAuditLine(projectPath, {
             timestamp: new Date().toISOString(),
@@ -625,7 +641,7 @@ export class ToolDispatcher {
               `Error: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
-        return result;
+        return cleanedResult;
       },
     });
 
@@ -828,7 +844,8 @@ export class ToolDispatcher {
     clientTasksCapable?: boolean,
   ): Promise<ToolResult> {
     // 二次 guard 检查
-    const confirmedGuardResult = this.readOnlyGuard.check(pending.toolName);
+    // 批4-T5: 传 pending action 做 action 级只读判定
+    const confirmedGuardResult = this.readOnlyGuard.check(pending.toolName, typeof pending.args.action === 'string' ? pending.args.action : undefined);
     if (confirmedGuardResult.blocked) {
       return opsErrorResult(String(confirmedGuardResult.errorCode ?? 'READ_ONLY'), confirmedGuardResult.message ?? 'Operation blocked in read-only mode');
     }
@@ -858,12 +875,14 @@ export class ToolDispatcher {
     result: ToolResult,
     traceId: string,
     callerAgentId?: string,
-  ): Promise<boolean> {
+  ): Promise<{ strict: boolean; result: ToolResult }> {
     // 全 body 包 try/catch:审计是 best-effort side effect,任何失败(含 mock 环境 getActionRisk
     // 未提供 / 路径不可写 / inferChangedFiles 异常)都不影响工具结果(对齐 G2 catch 哲学;
-    // 1A:失败计数+首次 warn,STRICT 模式返回 true 由调用方改判)。
+    // 1A:失败计数+首次 warn,STRICT 模式返回 strict=true 由调用方改判)。
+    // 批4-T3: 返回剥离 _audit 后的 result——confirm 路径绕过 middleware,由本函数统一
+    // 完成审计提示提取(与 middleware after hook 同款 extractAuditHint)与剥离。
     try {
-      if (!isAuditEnabled()) return false;
+      if (!isAuditEnabled()) return { strict: false, result };
       // C-3 (2026-08-14): 与 audit middleware 同步接 resolveDynamicTool 反查 ——
       // pending.toolName 可能是动态平铺名(engine_call_method),平铺名 getActionRisk
       // 恒 undefined → 确认执行的动态写操作零审计。反查回静态 (tool, action) 再判风险/落盘。
@@ -874,18 +893,19 @@ export class ToolDispatcher {
       let risk = getActionRisk(auditTool, auditAction);
       // 1B (2026-09-19): 与 audit middleware 的 fail-closed 对齐——risk 未知按保守档落审计。
       // (确认门未映射动态工具 fail-closed 强制确认在先,此处正常不可达,防御性对齐;
-      //  I-1 同款 readonly 豁免:readonly 工具不可能进 confirm 路径,防御性 return false。)
+      //  I-1 同款 readonly 豁免:readonly 工具不可能进 confirm 路径,防御性 return。)
       let unmappedDetails: Record<string, unknown> | undefined;
       if (!risk) {
-        if (isReadOnly(auditTool)) return false;
+        if (isReadOnly(auditTool)) return { strict: false, result };
         risk = 'write';
         unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
       }
-      if (risk === 'read') return false; // confirm 的都是非 read,防御
+      if (risk === 'read') return { strict: false, result: extractAuditHint(result).result }; // confirm 的都是非 read,防御;仍剥离 _audit
       const projectPath = (typeof pending.args.project_path === 'string' && pending.args.project_path)
         ? pending.args.project_path : resolveProjectPath();
-      if (!projectPath) return false;
+      if (!projectPath) return { strict: false, result: extractAuditHint(result).result };
       const isError = result.isError === true || this.checkJsonSuccessFalse(result);
+      const { hint: auditHint, result: cleanedResult } = extractAuditHint(result);
       const { files } = inferChangedFiles(auditTool, auditAction, pending.args, projectPath);
       await appendAuditLine(projectPath, {
         timestamp: new Date().toISOString(),
@@ -898,13 +918,17 @@ export class ToolDispatcher {
         changed_files: files,
         duration_ms: Date.now() - startTime,
         ...(callerAgentId !== undefined ? { caller: callerAgentId } : {}),  // 1C: best-effort 调用者归因
-        details: { confirmed: true, ...(unmappedDetails ?? {}) }, // 标记:确认后真实执行(区别于令牌请求的虚假记录)
+        details: {
+          confirmed: true, // 标记:确认后真实执行(区别于令牌请求的虚假记录)
+          ...(unmappedDetails ?? {}),
+          ...(auditHint?.before_values ? { before_values: auditHint.before_values } : {}),  // 批4-T3
+        },
       });
-      return false;
+      return { strict: false, result: cleanedResult };
     } catch (e) {
       // 1A:审计失败可观测(计数+首次 warn);默认不影响工具结果
       recordAuditWriteFailure(e);
-      return isAuditStrict();
+      return { strict: isAuditStrict(), result: extractAuditHint(result).result };
     }
   }
 

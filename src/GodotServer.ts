@@ -48,7 +48,7 @@ import { InstanceRouter, type RouterDependencies } from './core/instance-router.
 import { setInstanceManager, setInstanceRouter } from './tools/instance-tools.js';
 import { cancelAndAwaitWorkingRun, getRun, listRuns, requestCancel, setTerminalNotifier } from './tools/qa/registry.js';
 import { toWireTask, toTaskPayload, assertTaskWire } from './tools/qa/task-view.js';
-import { appendAuditLine, isAuditEnabled } from './core/audit-log.js';
+import { appendAuditLine, isAuditEnabled, appendMachineAuditLine } from './core/audit-log.js';
 import { buildAuthHeaders } from './core/instance-api-auth.js';
 import { InstanceHttpServer } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
@@ -542,6 +542,27 @@ export class GodotServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     log('Godot MCP Enhanced server running on stdio');
+
+    // 批4-T7(五维评估 P2 抗抵赖): server 启动事件落机器级审计——含审计开关状态。
+    // 关键设计:本留痕不经 isAuditEnabled 检查(appendMachineAuditLine 天然不受控),
+    // 否则 GODOT_MCP_AUDIT=false 时零留痕,事后无法区分"没操作"与"审计被关"。
+    // best-effort:失败仅 warn 不阻断启动(对齐 G2 catch 哲学)。
+    try {
+      await appendMachineAuditLine({
+        trace_id: `server-startup-${Date.now().toString(36)}`,
+        tool: 'server', action: 'startup', risk: 'process',
+        ok: true, project_path: '', changed_files: [],
+        duration_ms: 0, caller: 'mcp-server',
+        details: {
+          audit_enabled: isAuditEnabled(),  // false 也如实留痕(本留痕不经开关,这正是意义所在)
+          audit_strict: process.env.GODOT_MCP_AUDIT_STRICT === 'true',
+          read_only: this.options.readOnly === true,
+          web_gui: process.env.GODOT_MCP_WEB_GUI !== '0',
+        },
+      });
+    } catch (e) {
+      log(`startup audit line failed (best-effort): ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     // O2 归位(2026-09-17 审查 H-3):首连拉起 Dashboard 从 game-bridge 模块顶层副作用
     // 迁入控制面装配,close() 可对称清理;dashboard⇄game-bridge 的 import 链在控制面

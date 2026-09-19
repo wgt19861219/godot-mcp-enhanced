@@ -1,6 +1,6 @@
 import { expect, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
-import { EditorConnection } from '../src/core/EditorConnection.js';
+import { EditorConnection, LEGACY_AUTH_RETRY_TTL_MS } from '../src/core/EditorConnection.js';
 import { WebSocketServer } from 'ws';
 
 describe('EditorConnection', () => {
@@ -639,6 +639,7 @@ describe('EditorConnection', () => {
     // 模拟重连(降级记忆生效:直接明文,不再发 auth_begin)
     const conn2 = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
     conn2._useLegacyAuth = conn._useLegacyAuth;  // 复制降级记忆(测试模拟同实例重连语义)
+    conn2._legacyAuthSince = conn._legacyAuthSince;  // 批4-T2: 配套时间戳必须同复制(缺省 0 会被判 TTL 已过期而重试探测)
     await conn2.connect();
     expect(methodsSecond).toEqual(['auth']);
     conn2.disconnect();
@@ -660,4 +661,136 @@ describe('EditorConnection', () => {
     expect(receivedMethods).toEqual(['auth_begin']);
     conn.disconnect();
   }, 10_000);
+
+  // ── 批4-T1(五维评估 P2): auth_proof 响应语义校验(对齐 bridge 侧) ──────────
+
+  it('批4-T1: auth_proof 回 authenticated:false → 认证失败且不降级(明文 auth 不发)', async () => {
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { challenge: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' } }));
+          return;
+        }
+        if (msg.method === 'auth_proof') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { authenticated: false } }));
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'proof-rejected-secret' });
+    await expect(() => conn.connect()).rejects.toThrow(/authenticated is not true/i);
+    // proof 阶段失败不降级:无明文 auth(secret 不上线)
+    expect(receivedMethods).toEqual(['auth_begin', 'auth_proof']);
+    conn.disconnect();
+  });
+
+  it('批4-T1: 半协议异构端恒回空 result → 认证失败(不再"任何 result 即认证成功")', async () => {
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { challenge: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' } }));
+          return;
+        }
+        if (msg.method === 'auth_proof') {
+          // 半协议异构端:proof 也回空 result(不带 authenticated 字段)
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }));
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'empty-result-secret' });
+    await expect(() => conn.connect()).rejects.toThrow(/authenticated is not true/i);
+    expect(receivedMethods).toEqual(['auth_begin', 'auth_proof']);
+    conn.disconnect();
+  });
+
+  // ── 批4-T2(五维评估 P2): 降级记忆 TTL 复位 ──────────
+
+  it('批4-T2: 降级记忆 TTL 过期后重连——先重试 auth_begin,新端 proof 成功即恢复 CR 模式', async () => {
+    const SECRET = 'ttl-retry-secret';
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        if (msg.method === 'auth_begin') {
+          // TTL 过期后插件已升级:回 challenge
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { challenge: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' } }));
+          return;
+        }
+        if (msg.method === 'auth_proof') {
+          const expected = createHmac('sha256', SECRET).update('a1b2c3d4e5f60718293a4b5c6d7e8f90', 'utf8').digest('hex');
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { authenticated: msg.params?.proof === expected } }));
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: SECRET });
+    // 预置"已降级且 TTL 已过期"状态(模拟:曾降级过,10 分钟已过)
+    conn._useLegacyAuth = true;
+    conn._legacyAuthSince = Date.now() - LEGACY_AUTH_RETRY_TTL_MS - 1;
+    await conn.connect();
+    // TTL 过期 → 不直接明文,先重试 CR 且成功
+    expect(receivedMethods).toEqual(['auth_begin', 'auth_proof']);
+    expect(conn._useLegacyAuth).toBe(false);  // 降级记忆已复位
+    expect(conn._legacyAuthSince).toBe(0);
+    const result = await conn.request('test_method', {});
+    expect(result).toEqual({ status: 'ok' });
+    conn.disconnect();
+  });
+
+  it('批4-T2: 降级记忆 TTL 过期后重连——对端仍是旧端(-32001)→ 再次降级并重置 TTL', async () => {
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'still-old-secret' });
+    conn._useLegacyAuth = true;
+    conn._legacyAuthSince = Date.now() - LEGACY_AUTH_RETRY_TTL_MS - 1;
+    await conn.connect();
+    // TTL 过期 → 重试 auth_begin 被拒 → 再次降级明文
+    expect(receivedMethods).toEqual(['auth_begin', 'auth']);
+    expect(conn._useLegacyAuth).toBe(true);
+    expect(conn._legacyAuthSince).toBeGreaterThan(Date.now() - 5000);  // TTL 已重置为当下
+    conn.disconnect();
+  });
+
+  it('批4-T2: 降级记忆 TTL 内重连——直接明文不再探测(既有行为兼容锁)', async () => {
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'within-ttl-secret' });
+    conn._useLegacyAuth = true;
+    conn._legacyAuthSince = Date.now();  // 刚降级,TTL 未过
+    await conn.connect();
+    expect(receivedMethods).toEqual(['auth']);  // 直接明文,无 auth_begin
+    conn.disconnect();
+  });
 });

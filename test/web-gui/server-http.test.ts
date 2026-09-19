@@ -431,6 +431,32 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     expect(src).not.toContain('=== this.token');
     expect(src).not.toContain('!== this.token');
   });
+
+  // ── 批4-T8(五维评估 P2): 写端点审计补线——此前仅 files-api 一处,sessions/process 零留痕
+  it('批4-T8: sessions/stop 成功 → 审计落 caller=web-gui:sessions 条目(与 MCP stop_project 对称)', async () => {
+    const tmpProj = await mkdtemp(join(tmpdir(), 'gme-t8proj-'));
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: true }) });
+    active = t.srv;
+    try {
+      const res = await post(t.base, '/api/sessions/stop', t.token, { projectPath: tmpProj });
+      expect(res.status).toBe(200);
+      const auditPath = join(tmpProj, '.godot', 'mcp_audit.jsonl');
+      let last = '';
+      for (let i = 0; i < 20 && !last; i++) {
+        try { last = readFileSync(auditPath, 'utf8').trim().split('\n').at(-1) ?? ''; } catch { /* 尚未落盘 */ }
+        if (!last) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(last, '审计行应落盘(fire-and-forget 轮询)').not.toBe('');
+      const e = JSON.parse(last) as Record<string, unknown>;
+      expect(e.tool).toBe('web-gui');
+      expect(e.action).toBe('stop');
+      expect(e.risk).toBe('process');
+      expect(e.caller).toBe('web-gui:sessions');   // 批4-T4 通道前缀
+      expect(typeof e.trace_id).toBe('string');
+    } finally {
+      await rm(tmpProj, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── rotateSharedToken 与 server 联动(M-2,2026-09-17 审查批)──────────────────

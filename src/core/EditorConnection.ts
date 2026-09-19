@@ -14,6 +14,11 @@ const AUTH_LOCKOUT_MS = 300_000; // 5 minutes
 // 3A (2026-09-19 安全加固批3): auth_begin 探测超时——哑占位者(占端口的假监听进程)对
 // 任何消息都不回应,短超时探测失败后不降级,防把 secret 主动送给假监听者。
 const AUTH_BEGIN_PROBE_TIMEOUT_MS = 1500;
+// 批4-T2(五维评估 P2): 降级记忆 TTL——记忆过期后下次连接重试 challenge-response,
+// 缩窄"一次诱导降级 → 进程生命周期内持续明文"的窗口(N-2 残余面收敛)。
+// 10min:旧插件会话不被反复打扰(到期仅多一次失败的 auth_begin 往返),攻击窗口从
+// 进程生命周期上限缩到 10 分钟。导出供 bridge-client 共用与测试注入。
+export const LEGACY_AUTH_RETRY_TTL_MS = 10 * 60 * 1000;
 
 interface EditorConnectionOptions {
   port: number;
@@ -45,8 +50,10 @@ export class EditorConnection {
   private connectAttempt = false;
   private connectGeneration = 0;  // ipc P1-4: 防 disconnect 后进行中的 connect() 复活已断开连接
   /** 3A (2026-09-19 安全加固批3): 明文 auth 降级记忆——auth_begin 收到旧端 error 响应后
-   *  置 true,本实例后续连接直接走 legacyPlaintextAuth(免每次探测)。 */
+   *  置 true,本实例后续连接直接走 legacyPlaintextAuth(免每次探测)。
+   *  批4-T2: 配套 _legacyAuthSince 时间戳,TTL 过期后下次连接重试 CR(成功即复位)。 */
   private _useLegacyAuth = false;
+  private _legacyAuthSince = 0;
 
   private disconnectHandlers = new Set<() => void>();
   private reconnectHandlers = new Set<() => void>();
@@ -494,7 +501,9 @@ export class EditorConnection {
    *  secret 本身,无法连真插件横向复用。
    *
    *  降级矩阵(兼容矩阵的关键风险控制):
-   *  - 实例记忆 _useLegacyAuth=true → 直接明文(旧端已确认,免每次探测)
+   *  - 实例记忆 _useLegacyAuth=true 且未过 TTL → 直接明文(旧端已确认,免每次探测)
+   *  - 批4-T2: 降级记忆 TTL(LEGACY_AUTH_RETRY_TTL_MS)过期 → 下次连接重试 CR,
+   *    成功即复位记忆(插件升级后免重启恢复 proof 模式);再降级则重置 TTL。
    *  - auth_begin 收到 JSON-RPC error 响应(err.code 为 number,对端至少是真 JSON-RPC
    *    服务端——旧插件回 -32001 后 close)→ 记忆降级 + warn。
    *    [已知残余面]协议感知的假监听者可伪造 -32001 诱降级收 secret——localhost 明文
@@ -502,12 +511,21 @@ export class EditorConnection {
    *  - 探测超时(哑占位者不回应)→ **不降级**直接 fail(secret 不上线)。
    *  - GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true → 非成功 challenge 路径一律 fail。 */
   private async performAuth(): Promise<void> {
-    if (this._useLegacyAuth) return this.legacyPlaintextAuth();
+    // 批4-T2: 降级记忆 TTL 内直接明文;过期则往下重试 CR(成功复位,失败按降级矩阵处置)
+    if (this._useLegacyAuth && Date.now() - this._legacyAuthSince < LEGACY_AUTH_RETRY_TTL_MS) {
+      return this.legacyPlaintextAuth();
+    }
     if (!this.ws || !this.editorSecret) {
       throw new ConnectionError('Cannot authenticate: not connected or no secret');
     }
     try {
       await this.challengeResponseAuth();
+      // 批4-T2: CR 重试成功(TTL 过期后插件已升级的场景)→ 复位降级记忆
+      if (this._useLegacyAuth) {
+        this._useLegacyAuth = false;
+        this._legacyAuthSince = 0;
+        getLogger().info('editor', 'challenge-response retry succeeded — legacy auth fallback memory cleared');
+      }
       return;
     } catch (err) {
       const e = err as Error & { crFallback?: boolean };
@@ -517,10 +535,11 @@ export class EditorConnection {
       }
       if (e.crFallback === true) {
         this._useLegacyAuth = true;
+        this._legacyAuthSince = Date.now();
         getLogger().warn('editor',
           'auth_begin rejected/invalid peer response — falling back to legacy plaintext auth ' +
           '(editor 插件版本过旧?). secret 将明文经 ws:// 传输(localhost 模型);' +
-          'N-2(审查): _useLegacyAuth 为实例级降级记忆且不复位,升级插件后需**重启 MCP server**才恢复 proof 模式. ' +
+          '批4-T2: 降级记忆带 TTL(' + (LEGACY_AUTH_RETRY_TTL_MS / 60000) + 'min),过期后自动重试 proof 模式,无需重启. ' +
           '[已知残余面]协议感知的假监听者可伪造响应诱降级收 secret——GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true 可硬锁.');
         return this.legacyPlaintextAuth();
       }
@@ -555,7 +574,15 @@ export class EditorConnection {
     }
     // proof 阶段失败直接上抛(无 crFallback 标记 → 不降级:secret 错再发明文只会多泄露一次)
     const proof = createHmac('sha256', secret).update(challenge, 'utf8').digest('hex');
-    await this.request('auth_proof', { proof });
+    // 批4-T1(五维评估 P2): auth_proof 响应语义校验对齐 bridge 侧(bridge-client 的
+    // authenticated===false 立即失败)——对端回 result 但 authenticated 非 truthy(如恒回
+    // 空 result 的半协议异构端)视为认证失败,不再"任何 result 即认证成功"。
+    // 兼容性:能走到本分支的对端必是支持 CR 的 GD 端(旧端在 auth_begin 即降级),
+    // 其成功路径必回 {authenticated:true}(websocket_server.gd auth_proof 分支)。
+    const proofRes = (await this.request('auth_proof', { proof })) as { authenticated?: unknown } | null;
+    if (proofRes?.authenticated !== true) {
+      throw new ConnectionError('auth_proof rejected by peer (authenticated is not true)');
+    }
     this.authenticated = true;
   }
 

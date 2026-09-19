@@ -68,12 +68,14 @@ export async function openWebDashboard(opts: OpenWebDashboardOpts = {}): Promise
     picked = await choose(entries);
   }
   if (!picked) return 1;
-  const url = `http://127.0.0.1:${picked.port}/?token=${picked.token}`;
+  // 批4-T10(五维评估 P3): query → hash 传 token——浏览器历史/服务器日志不再留全量 token
+  // (前端 html.ts hash 通道提取已支持,批2 portal 链路同款;EventSource 的 query 限制不在此面)。
+  const url = `http://127.0.0.1:${picked.port}/#token=${picked.token}`;
   // M-2(2026-09-17 审查批):console 默认打码——全量 token 不落终端(日志/录屏/分享
   // 截图的泄露面);--show-token(showToken)显式输出全量 URL;opener 恒收全量(功能不变)。
   console.log(opts.showToken
     ? `Web GUI: ${url}`
-    : `Web GUI: http://127.0.0.1:${picked.port}/?token=${picked.token.slice(0, 4)}****(--show-token 显示完整 URL)`);
+    : `Web GUI: http://127.0.0.1:${picked.port}/#token=${picked.token.slice(0, 4)}****(--show-token 显示完整 URL)`);
   (opts.opener ?? defaultOpener)(url);
   return 0;
 }

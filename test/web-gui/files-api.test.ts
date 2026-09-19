@@ -197,7 +197,35 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
       expect(e.action).toBe('write_file');
       expect(e.risk).toBe('write');
       expect(e.changed_files).toEqual(['main.gd']);
-      expect(e.caller).toBe('web-gui');
+      // 批4-T8: caller 细分通道前缀(原先恒 'web-gui' 不可区分来源)
+      expect(e.caller).toBe('web-gui:files');
+    });
+
+    // ── 批4-T6(五维评估 P2): saveText 写 .gd 接全仓沙箱扫描 ──
+
+    it('批4-T6: 含危险模式的 .gd → bad_request 拒写且文件内容不变', async () => {
+      await writeFile(join(proj, 'main.gd'), 'extends Node2D\n', 'utf-8');
+      const cur = await api.readText(proj, 'main.gd');
+      const evil = 'extends Node2D\nvar x = OS.execute("cmd", ["/c", "whoami"])\n';
+      const err = await api.saveText(proj, 'main.gd', evil, cur.mtime).catch(e => e as FilesError);
+      expect(err).toBeInstanceOf(FilesError);
+      expect(err.code).toBe('bad_request');
+      expect(String(err.message)).toContain('sandbox');
+      // 文件未被改写
+      expect(await readFile(join(proj, 'main.gd'), 'utf-8')).toBe('extends Node2D\n');
+    });
+
+    it('批4-T6: 正常 .gd 照常可写(无拦截面)', async () => {
+      const cur = await api.readText(proj, 'main.gd');
+      await api.saveText(proj, 'main.gd', 'extends Node2D\nvar hp := 100\n', cur.mtime);
+      expect(await readFile(join(proj, 'main.gd'), 'utf-8')).toContain('hp := 100');
+    });
+
+    it('批4-T6: .bat 含危险内容仍可写(无 shell 扫描器,例外锁——防未来误扩)', async () => {
+      await writeFile(join(proj, 'run.bat'), 'echo old\n', 'utf-8');
+      const st = await (await import('node:fs/promises')).stat(join(proj, 'run.bat'));
+      await api.saveText(proj, 'run.bat', 'echo dangerous content\n', st.mtimeMs);
+      expect(await readFile(join(proj, 'run.bat'), 'utf-8')).toContain('dangerous content');
     });
   });
 

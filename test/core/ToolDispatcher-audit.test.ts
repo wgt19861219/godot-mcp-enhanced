@@ -239,6 +239,7 @@ describe('ToolDispatcher audit middleware 集成', () => {
     expect(e.changed_files).toContain('res://a.gd'); // inferChangedFiles 从 script_path 推断
     expect(typeof e.trace_id).toBe('string');
     expect(typeof e.duration_ms).toBe('number');
+    expect(e.caller).toBe('mcp'); // 批4-T4: caller 归一——匿名 MCP 调用恒 'mcp'(不再缺省)
   });
 
   it('场景①b: read 风险 action 不落盘(audit 只记 write/destructive/process)', async () => {
@@ -485,5 +486,79 @@ describe('ToolDispatcher audit middleware 集成', () => {
     } finally {
       startSpy.mockRestore();
     }
+  });
+
+  // ── 场景⑧(批4-T3): 工具→审计上报通道(structuredContent._audit.before_values) ──
+
+  it('场景⑧: 工具返回 _audit.before_values → 审计 details 落盘 + 返回结果剥离 _audit(批4-T3)', async () => {
+    stubWriteScriptRisk();
+    moduleHandleTool.mockResolvedValueOnce({
+      content: [{ type: 'text' as const, text: JSON.stringify({ status: 'ok', success: true }) }],
+      structuredContent: { status: 'ok', _audit: { before_values: { 'application/config/name': 'OldName' } } },
+    } satisfies ToolResult);
+    const dispatcher = new ToolDispatcher(createOptions());
+
+    const res = await dispatcher.handleCall({
+      params: {
+        name: 'script',
+        arguments: { action: 'write_script', project_path: tmpProject, script_path: 'res://a.gd' },
+      },
+    });
+
+    // 返回客户端的结果已剥离 _audit(防成为半公共 API),其余字段保留
+    expect(res.isError).not.toBe(true);
+    const sc = (res as ToolResult).structuredContent as Record<string, unknown> | undefined;
+    expect(sc).toBeDefined();
+    expect(sc?._audit).toBeUndefined();
+    expect(sc?.status).toBe('ok');
+
+    // 审计落盘含 before_values(此前该字段零生产者,suggest_rollback 恢复分支死路径)
+    const entries = readAuditEntries(tmpProject);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.details?.before_values).toEqual({ 'application/config/name': 'OldName' });
+  });
+
+  it('场景⑧b: confirm 路径同样提取 before_values 且返回结果剥离(批4-T3)', async () => {
+    stubWriteScriptRisk();
+    process.env.GODOT_MCP_ALLOW_UNSAFE_CONFIRM = 'true';
+    mockConsumeToken.mockReturnValue({
+      toolName: 'script',
+      args: { action: 'write_script', project_path: tmpProject, script_path: 'res://t3.gd' },
+    });
+    moduleHandleTool.mockResolvedValueOnce({
+      content: [{ type: 'text' as const, text: JSON.stringify({ status: 'ok', success: true }) }],
+      structuredContent: { _audit: { before_values: { x: 1 } } },
+    } satisfies ToolResult);
+    const dispatcher = new ToolDispatcher(createOptions());
+
+    const res = await dispatcher.handleCall({
+      params: { name: 'confirm_and_execute', arguments: { token: 'tok-t3' } },
+    });
+
+    expect(res.isError).not.toBe(true);
+    expect((res as ToolResult).structuredContent?._audit).toBeUndefined();
+    const entries = readAuditEntries(tmpProject);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.details?.confirmed).toBe(true);
+    expect(entries[0]!.details?.before_values).toEqual({ x: 1 });
+  });
+
+  // ── 场景⑨(批4-T4): caller 归因归一 ──
+
+  it('场景⑨: _meta.agentId 注入 → caller=mcp:<agentId>(客户端支持时自动细粒度归因)', async () => {
+    stubWriteScriptRisk();
+    const dispatcher = new ToolDispatcher(createOptions());
+
+    await dispatcher.handleCall({
+      params: {
+        name: 'script',
+        arguments: { action: 'write_script', project_path: tmpProject, script_path: 'res://agent.gd' },
+        _meta: { agentId: 'agent-42' },
+      },
+    });
+
+    const entries = readAuditEntries(tmpProject);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.caller).toBe('mcp:agent-42');
   });
 });

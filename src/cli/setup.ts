@@ -3,6 +3,7 @@ import { join } from 'path';
 import { findGodot } from '../core/godot-finder.js';
 import { ALL_ADAPTERS } from './clients/index.js';
 import { getErrorMessage } from '../types.js';
+import { auditClientConfigured } from './audit-helper.js';
 
 /** I-08: 检测 MCP command/args — 改进安装方式判断(setup/configure 共用) */
 export function detectMcpCommand(): { command: string; args: string[] } {
@@ -82,6 +83,8 @@ export async function runSetup(_args: string[]): Promise<void> {
       await adapter.configure(projectDir, godotPath, command, mcpArgs);
       console.log(`  ✓ ${adapter.name} (${adapter.scope}): configured`);
       configured++;
+      // 批4-T9(五维评估 P2): 改 MCP 客户端配置是安全敏感写面,机器级留痕(此前零审计)
+      auditClientConfigured('cli:setup', adapter.name, adapter.scope, projectDir);
     } catch (err) {
       console.error(`  ✗ ${adapter.name} (${adapter.scope}): ${getErrorMessage(err)}`);
     }

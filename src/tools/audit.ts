@@ -24,8 +24,10 @@ export function getToolDefinitions(): Tool[] {
     description: '操作审计日志查询(G3)。action=get_log 读 {project}/.godot/mcp_audit.jsonl 统计回放'
       + '(操作计数/风险高亮/最近条目/时间范围),external=true 改读外置副本(~/.godot-mcp/audit/,'
       + '防篡改参照——项目内副本可被项目脚本触及,外置受 GDScript 沙箱覆盖)并附 divergence 比对;'
-      + 'action=suggest_rollback 对指定条目给诚实回滚建议(create 类可删/project.godot before_values/其余靠 Git)。'
-      + 'write/destructive 操作经 audit after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏)。',
+      + 'action=suggest_rollback 对指定条目给诚实回滚建议(create 类可删/project.godot 项可用'
+      + 'details.before_values 恢复旧值(write_config 落盘时上报)/其余靠 Git)。'
+      + 'write/destructive 操作经 audit after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏;'
+      + '注意:execute 类如 execute_gdscript 代码内动态写文件不可静态推断,其 changed_files 恒为空)。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -106,7 +108,7 @@ export async function handleTool(
       return textResult(
         JSON.stringify(
           opsSuccess({ entry, suggestion }, [
-            'supported=true 仅 create 类可自动删 / project.godot 需 before_values;其余靠 Git(诚实)',
+            'supported=true 仅 create 类可自动删 / project.godot 项按 details.before_values 恢复旧值(write_config 上报);其余靠 Git(诚实)',
           ]),
         ),
       );
