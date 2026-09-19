@@ -6,8 +6,11 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
 import { isPathInAllowedRoots, resolveWithinRoot } from '../core/path-utils.js';
-import { appendAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import { hardenFilePermissionsWindows } from './registry.js';
+import { auditWebGui } from './audit-helper.js';
+// 批4-T6(五维评估 P2): saveText 写 .gd 接全仓沙箱扫描——此前是"全仓写 .gd 必扫描"
+// (script.ts scanScriptSandboxOrThrow 声明)之外的第 4 个入口(web-gui 默认开启)。
+import { scanGdscriptSandbox } from '../gdscript-executor.js';
 
 export interface DirEntry { name: string; isDir: boolean; size: number; mtime: number; }
 export interface TextFileContent { content: string; mtime: number; size: number; }
@@ -121,8 +124,21 @@ export class FilesApi {
   }
 
   async saveText(projectPath: string, rel: string, content: string, baseMtime: number): Promise<{ mtime: number }> {
+    const started = new Date();
     const abs = resolveInProject(projectPath, rel);
-    if (!TEXT_EXTS.has(ext(basename(abs)))) throw new FilesError('bad_request', 'not a text extension');
+    const fileExt = ext(basename(abs));
+    if (!TEXT_EXTS.has(fileExt)) throw new FilesError('bad_request', 'not a text extension');
+    // 批4-T6(五维评估 P2): .gd 接全仓沙箱扫描(与 MCP 通道 write_script 同一防线,
+    // 修复前是"全仓写 .gd 必扫描"声明外的第 4 入口)。bat/sh/ps1 无对应扫描器,明确
+    // 不覆盖(威胁模型内 web-gui token 持有者本可直接写盘——方案 §4 裁决)。
+    if (fileExt === 'gd') {
+      const violations = scanGdscriptSandbox(content);
+      if (violations.length > 0) {
+        throw new FilesError('bad_request',
+          `content blocked by gdscript sandbox scanner: ${violations[0]}`
+          + ' (含危险模式的 .gd 请经 MCP 通道写入,那里有 out-of-band 确认门)');
+      }
+    }
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found (creation not supported)'); }
     if (st.mtimeMs !== baseMtime) {   // 乐观锁(§3.3-2):冲突带最新内容供前端提示
       const latest = await readFile(abs, 'utf-8');
@@ -149,17 +165,9 @@ export class FilesApi {
     await rename(tmp, abs);
     const after = await stat(abs);
     // 2C (2026-09-19 安全加固批2): Web GUI 旁路写接审计——files-api 不经 ToolDispatcher,
-    // 此前 HTTP 文件写零留痕(可核查缺口)。best-effort:失败计数不阻断保存(对齐 G2 catch 哲学);
-    // 同时经 appendAuditLine 双写外置副本(2A)。changed_files 记项目相对路径(PII 护栏)。
-    if (isAuditEnabled()) {
-      void appendAuditLine(projectPath, {
-        timestamp: new Date().toISOString(),
-        trace_id: 'web-gui-files',
-        tool: 'web-gui', action: 'write_file', risk: 'write',
-        ok: true, project_path: projectPath, changed_files: [rel], duration_ms: 0,
-        caller: 'web-gui',
-      }).catch((e) => { recordAuditWriteFailure(e); });
-    }
+    // 此前 HTTP 文件写零留痕(可核查缺口)。批4-T8: 重构复用 audit-helper 统一出口
+    // (caller 细分 web-gui:files;trace_id/duration/ok 诚实化),仍双写外置副本(2A)。
+    auditWebGui('files', 'write_file', 'write', projectPath, { changedFiles: [rel], durationMs: Date.now() - started.getTime() });
     return { mtime: after.mtimeMs };
   }
 }

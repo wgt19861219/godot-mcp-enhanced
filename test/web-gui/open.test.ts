@@ -38,7 +38,7 @@ describe('dashboard --web(设计 §6)', () => {
     const urls: string[] = [];
     const code = await openWebDashboard({ opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE });
     expect(code).toBe(0);
-    expect(urls).toEqual(['http://127.0.0.1:9550/?token=tok1']);
+    expect(urls).toEqual(['http://127.0.0.1:9550/#token=tok1']);
   });
 
   it('多个:choose 选择后被打开;取消返回非 0', async () => {
@@ -50,7 +50,7 @@ describe('dashboard --web(设计 §6)', () => {
       choose: async (entries) => entries.find(e => e.port === 9551) ?? null,
     });
     expect(code).toBe(0);
-    expect(urls).toEqual(['http://127.0.0.1:9551/?token=b']);
+    expect(urls).toEqual(['http://127.0.0.1:9551/#token=b']);
     const cancelled = await openWebDashboard({
       opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE,
       choose: async () => null,
@@ -70,12 +70,12 @@ describe('dashboard --web(设计 §6)', () => {
       const out = logs.join('\n');
       expect(out).not.toContain(LONG);   // 全量 token 不落终端(终端日志/录屏泄露面)
       expect(out).toContain(`${LONG.slice(0, 4)}****`);   // 打码形态:前 4 位 + ****
-      expect(urls).toEqual([`http://127.0.0.1:9550/?token=${LONG}`]);   // 浏览器打开功能不变(仍带全量)
+      expect(urls).toEqual([`http://127.0.0.1:9550/#token=${LONG}`]);   // 浏览器打开功能不变(仍带全量)
 
       logs.length = 0; urls.length = 0;
       await openWebDashboard({ opener: u => urls.push(u), registryDir: dir, isPidAlive: ALIVE, showToken: true });
-      expect(logs.join('\n')).toContain(`http://127.0.0.1:9550/?token=${LONG}`);   // --show-token 显式全量
-      expect(urls).toEqual([`http://127.0.0.1:9550/?token=${LONG}`]);
+      expect(logs.join('\n')).toContain(`http://127.0.0.1:9550/#token=${LONG}`);   // --show-token 显式全量
+      expect(urls).toEqual([`http://127.0.0.1:9550/#token=${LONG}`]);
     } finally {
       spy.mockRestore();
     }

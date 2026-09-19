@@ -18,6 +18,9 @@ import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } fr
 import { INDEX_SCRIPT_SHA256 } from './html.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
+// 批4-T8(五维评估 P2 抗抵赖): 写端点统一审计出口——sessions/process、projects/write
+// 补线(批2 仅 files-api 一处),caller 细分 web-gui:<子系统>
+import { auditWebGui } from './audit-helper.js';
 import { LogReader } from '../dashboard/log-reader.js';
 import { Aggregator } from '../dashboard/aggregator.js';
 import type { ToolStats, TimeSeriesBucket } from '../dashboard/aggregator.js';
@@ -552,6 +555,7 @@ export class WebGuiServer {
         }
         if (r.ok) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=200`);
+          auditWebGui('projects', 'add', 'write', path);   // 批4-T8: 改监控清单留痕(此前零审计)
           await this.broadcastProjects();
           this.refreshProjectEntries();   // 新项目目录放入口页(项目入口批 2026-09-16)
           return json(200, { ok: true });
@@ -584,6 +588,7 @@ export class WebGuiServer {
         }
         if (r.ok) {
           getLogger().info('web-gui', `action=projects_remove path=${path} result=200`);
+          auditWebGui('projects', 'remove', 'write', path);   // 批4-T8: 改监控清单留痕
           await this.broadcastProjects();
           return json(200, { ok: true });
         }
@@ -626,6 +631,7 @@ export class WebGuiServer {
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
         getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=200`);
+        auditWebGui('sessions', 'start', 'process', projectPath, { details: { mode } });   // 批4-T8: 起进程留痕
         await this.broadcastProjects();
         return json(200, { ok: true });
       }
@@ -640,7 +646,10 @@ export class WebGuiServer {
         if (!fn) return json(503, { error: 'not configured' });
         try {
           const r = await fn(projectPath);
-          if (r.ok) return json(200, { ok: true });
+          if (r.ok) {
+            auditWebGui('sessions', 'stop', 'process', projectPath);   // 批4-T8: 杀进程留痕(MCP 同语义 stop_project 是 risk=process 有审计)
+            return json(200, { ok: true });
+          }
           if (r.reason === 'not_found') return json(404, { error: 'not found' });
           return json(500, { error: r.reason ?? 'stop failed' });
         } catch (err) {
@@ -651,7 +660,10 @@ export class WebGuiServer {
       const rm = this.opts.removeSession;
       if (!rm) return json(503, { error: 'not configured' });
       const r = rm(projectPath);
-      if (r.ok) return json(200, { ok: true });
+      if (r.ok) {
+        auditWebGui('sessions', 'remove', 'process', projectPath);   // 批4-T8: 移除会话记录留痕
+        return json(200, { ok: true });
+      }
       if (r.reason === 'alive') return json(409, { error: 'session is still running' });
       return json(404, { error: 'not found' });
     } catch {

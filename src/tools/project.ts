@@ -648,12 +648,20 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       writeAtomic(cfgPath, result.content!);
-      return textResult(JSON.stringify({
-        success: true,
-        key,
-        value,
-        message: `Config "${key}" updated successfully.`,
-      }, null, 2));
+      // 批4-T3(五维评估 P1): 写前旧值经 structuredContent._audit 上报——audit middleware/
+      // _auditConfirmedExecution 提取进审计 details.before_values(suggest_rollback 的恢复
+      // 数据源,批4 前该字段零生产者是死路径),并在返回 MCP 客户端前剥离(extractAuditHint)。
+      // key 原本不存在时记 null(显式"原本无值",区别于 undefined 的"未上报")。
+      const oldValue = (ctx.parseGodotConfig(original) as Record<string, unknown>)[key];
+      return {
+        ...textResult(JSON.stringify({
+          success: true,
+          key,
+          value,
+          message: `Config "${key}" updated successfully.`,
+        }, null, 2)),
+        structuredContent: { _audit: { before_values: { [key]: oldValue ?? null } } },
+      };
     }
 
     // ── Template actions (merged from code-templates.ts, v0.18.0) ──

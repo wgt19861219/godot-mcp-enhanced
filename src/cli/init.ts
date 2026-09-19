@@ -2,6 +2,7 @@
 import { join, dirname } from 'path';
 import { mkdirSync, existsSync, writeFileSync } from 'fs';
 import { opt } from './args.js';
+import { auditCliProjectWrite } from './audit-helper.js';
 
 // export 供 test/cli-args.test.ts 集成测试(空格形式不再静默落空骨架的 F-1 主张)
 export function parseInitArgs(args: string[]): { name: string; template: string } {
@@ -83,6 +84,8 @@ export async function runInit(args: string[]): Promise<void> {
       mkdirSync(dirname(dest), { recursive: true });
       writeFileSync(dest, f.content, 'utf-8');
     }
+    // 批4-T9(五维评估 P2): CLI 写面留痕——此前 init 建 project.godot 零审计
+    auditCliProjectWrite(projectDir, 'init', ['project.godot'], { template });
     console.log(`\n✓ Game project created at ${projectDir}`);
     console.log(`  模板: ${GAME_TEMPLATES[template]!.title} — ${GAME_TEMPLATES[template]!.summary}`);
     console.log('\n试玩与验证(qa 确定性套件,seed 锁随机):');
@@ -116,6 +119,9 @@ export async function runInit(args: string[]): Promise<void> {
 
   // 写入 scenes 目录
   mkdirSync(join(projectDir, 'scenes'), { recursive: true });
+
+  // 批4-T9(五维评估 P2): CLI 写面留痕(空骨架分支)
+  auditCliProjectWrite(projectDir, 'init', ['project.godot'], { template: 'empty' });
 
   // 提示运行 setup_project_rules
   console.log(`\n✓ Project created at ${projectDir}`);

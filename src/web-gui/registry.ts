@@ -108,13 +108,16 @@ function defaultIsPidAlive(pid: number): boolean {
 
 /** S-5 同款(instance-manager.ts:94):Windows 无视 mode,用 icacls 收紧 ACL;best-effort。
  *  导出复用供 projects-store 等同域持久化文件共享(I-E 教训:导出复用而非复制;
- *  Web GUI 项目面板 spec 2026-09-15 §3.1 要求照抄本模式)。 */
+ *  Web GUI 项目面板 spec 2026-09-15 §3.1 要求照抄本模式)。
+ *  批4-T10(五维评估 P3): :F → :M 对齐 editor/bridge/api secret 收紧惯例——token.txt
+ *  同为凭证,属主无需改 ACL/取所有权(Modify 含读写删,rotate/生命周期写不受影响);
+ *  instance-manager.ts 私有副本保持 :F(非凭证,既有注释有生命周期论证,不属本面对齐范围)。 */
 export function hardenFilePermissionsWindows(filePath: string): void {
   if (process.platform !== 'win32') return;
   try {
     const username = userInfo().username;
     if (username && /^[A-Za-z0-9_-]+$/.test(username)) {
-      execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:F`], { stdio: 'ignore' });
+      execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore' });
     } else {
       // 对齐 instance-manager.ts:100-102:username 异常字符时显式 warn(而非静默跳过)
       getLogger().warn('web-gui', `Username "${username}" has unexpected chars, skipping ACL restriction for ${filePath}`);

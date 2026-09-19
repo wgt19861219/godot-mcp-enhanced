@@ -22,6 +22,8 @@ import { getErrorMessage } from '../types.js';
 import { parseAutoloadNames } from '../gdscript-executor.js';
 import { getLogger } from './logger.js';
 import { getDefaultRegistryDir, DEFAULT_PORT_START, DEFAULT_PORT_END } from './instance-manager.js';
+// 批4-T2: 与 EditorConnection 共用降级记忆 TTL(单一常量防两处 drift)
+import { LEGACY_AUTH_RETRY_TTL_MS } from './EditorConnection.js';
 
 export const BRIDGE_PORT = 9081;
 export const BRIDGE_HOST = 'localhost';
@@ -244,7 +246,10 @@ let _socketBuffer = '';
 let _connectionLock: Promise<Socket> | null = null;
 // 3A (2026-09-19 安全加固批3): 明文 auth 降级记忆——auth_begin 收到旧 bridge 的 error
 // 响应后置 true,本进程后续连接直接走 legacy(免每次探测)。见 _doConnect。
+// 批4-T2(五维评估 P2): 配套 _bridgeLegacyAuthSince 时间戳,TTL 过期后下次连接重试 CR
+// (成功即复位)——缩窄"一次诱导降级 → 进程生命周期内持续明文"的窗口(N-2 残余面收敛)。
 let _bridgeLegacyAuth = false;
+let _bridgeLegacyAuthSince = 0;
 
 // 首次连接成功回调(由 GodotServer.run() 装配 launchDashboardOnce——2026-09-17 H-3/O2 归位;core 不依赖 dashboard)
 let _onBridgeConnected: (() => void) | null = null;
@@ -425,18 +430,28 @@ export function registerBridgePushHandler(handler: ((params: Record<string, unkn
  *  [已知残余面]协议感知的假监听者可伪造 -32001 诱降级收 secret——localhost 明文模型
  *  下不可根除,GODOT_MCP_REQUIRE_CR_AUTH=true 可硬锁拒一切降级。 */
 async function _doConnect(timeout: number): Promise<Socket> {
-  if (_bridgeLegacyAuth) return _openSocket(timeout, true);
+  // 批4-T2: 降级记忆 TTL 内直接明文;过期则重试 CR(成功复位,失败按降级矩阵处置)
+  if (_bridgeLegacyAuth && Date.now() - _bridgeLegacyAuthSince < LEGACY_AUTH_RETRY_TTL_MS) {
+    return _openSocket(timeout, true);
+  }
   try {
-    return await _openSocket(timeout, false);
+    const sock = await _openSocket(timeout, false);
+    // 批4-T2: CR 重试成功(降级记忆过期后 bridge 已升级的场景)→ 复位降级记忆
+    if (_bridgeLegacyAuth) {
+      _bridgeLegacyAuth = false;
+      _bridgeLegacyAuthSince = 0;
+      getLogger().info('bridge', 'challenge-response retry succeeded — legacy auth fallback memory cleared');
+    }
+    return sock;
   } catch (err) {
     const e = err as Error & { authPhase?: string };
       if (e.authPhase === 'cr-probe' && !_requireBridgeCrAuth()) {
       _bridgeLegacyAuth = true;
+      _bridgeLegacyAuthSince = Date.now();
       getLogger().warn('bridge',
         'auth_begin rejected with JSON-RPC error (old bridge) — falling back to legacy plaintext auth ' +
         '(mcp_bridge.gd 版本过旧?). secret 将明文经 TCP 传输(localhost 模型);' +
-        'N-2(审查): _bridgeLegacyAuth 为模块级降级记忆且不复位,重新 game_bridge_install 不会复位——' +
-        '需**重启 MCP server**才恢复 proof 模式.');
+        '批4-T2: 降级记忆带 TTL(' + (LEGACY_AUTH_RETRY_TTL_MS / 60000) + 'min),过期后自动重试 proof 模式,无需重启.');
       return _openSocket(timeout, true);
     }
     throw err;

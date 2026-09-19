@@ -12,6 +12,7 @@ import type { ClientAdapter } from './clients/types.js';
 import { findGodot } from '../core/godot-finder.js';
 import { detectMcpCommand } from './setup.js';
 import { getErrorMessage } from '../types.js';
+import { auditClientConfigured } from './audit-helper.js';
 
 /** 客户端名归一化:大小写/空格/连字符/下划线全部折叠("Claude Code" ≡ "claude-code" ≡ "claudecode") */
 export function normalizeClientName(s: string): string {
@@ -115,6 +116,9 @@ export async function runConfigure(args: string[]): Promise<void> {
   try {
     await adapter.configure(projectDir, godotPath, command, mcpArgs);
     console.log(`✓ ${adapter.name} (${adapter.scope}): configured`);
+    // 批4-T9(五维评估 P2): 改 MCP 客户端配置是安全敏感写面(改它即可注入恶意
+    // server),机器级留痕——此前 configure 后零审计痕迹
+    auditClientConfigured('cli:configure', adapter.name, adapter.scope, projectDir);
     const hint = POST_CONFIG_HINTS[adapter.name];
     if (hint) console.log(`  → ${hint}`);
   } catch (err) {

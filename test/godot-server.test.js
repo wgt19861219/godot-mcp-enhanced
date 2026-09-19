@@ -577,4 +577,8 @@ describe('GodotServer', () => {
       await server.close();
     });
   });
+
+  // 批4-T7: run() 落 machine-audit startup 事件的落盘断言在 test/godot-server-startup-audit.test.ts
+  // (独立文件)——本文件 vi.mock('fs', {...actual, existsSync}) 的展开副本使所有真实
+  // fs/promises 写入静默无副作用(实测直调 node:fs/promises appendFile 也零落盘),无法断言。
 });

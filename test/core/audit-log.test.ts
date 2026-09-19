@@ -14,6 +14,7 @@ import {
   isAuditStrict,
   getExternalAuditFile,
   compareAuditSources,
+  extractAuditHint,
   AUDIT_LOG_REL,
   type AuditEntry,
 } from '../../src/core/audit-log.js';
@@ -283,5 +284,29 @@ describe('external audit copy (2A)', () => {
     expect(afterD.projectEntries).toBe(0);
     expect(afterD.externalEntries).toBe(2);
     expect(afterD.diverged).toBe(true);
+  });
+});
+
+// ─── 批4-T3(五维评估 P1): extractAuditHint 工具→审计上报通道 ─────────────────
+
+describe('extractAuditHint(批4-T3)', () => {
+  it('合法 _audit.before_values → 提取 hint + 返回剥离 _audit 的 result', () => {
+    const result = {
+      content: [{ type: 'text' as const, text: 'ok' }],
+      structuredContent: { status: 'ok', _audit: { before_values: { 'application/config/name': 'Old' } } },
+    };
+    const { hint, result: cleaned } = extractAuditHint(result);
+    expect(hint).toEqual({ before_values: { 'application/config/name': 'Old' } });
+    // 剥离:cleaned 不含 _audit,其余字段保留;原对象不被 mutate
+    expect((cleaned.structuredContent as Record<string, unknown>)?._audit).toBeUndefined();
+    expect((cleaned.structuredContent as Record<string, unknown>)?.status).toBe('ok');
+    expect((result.structuredContent as Record<string, unknown>)?._audit).toBeDefined();
+  });
+
+  it('无 structuredContent / _audit 非对象 / 无 before_values → 原样返回无 hint', () => {
+    expect(extractAuditHint({ content: [] }).hint).toBeUndefined();
+    expect(extractAuditHint({ content: [], structuredContent: { _audit: 'nope' } }).hint).toBeUndefined();
+    expect(extractAuditHint({ content: [], structuredContent: { _audit: {} } }).hint).toBeUndefined();
+    expect(extractAuditHint({ content: [], structuredContent: { other: 1 } }).hint).toBeUndefined();
   });
 });
