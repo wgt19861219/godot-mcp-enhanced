@@ -29,13 +29,11 @@ export function getToolDefinitions(): Tool[] {
     {
       name: 'engine',
       description: [
-        '实时 ClassDB 内省 + 节点方法调用（editor-only）：查询运行中引擎的实际可用类/方法/属性/信号/枚举，或调用编辑器场景树节点的实例方法。',
-        'class_info: 查单个类的完整结构（属性/方法/信号/枚举/继承），默认 no_inherit=true 只看本类 own 成员。',
-        'search: substring 匹配类名（返回 {name, parent} 列表，上限 100 条）。搜到类名后用 class_info 查具体成员。',
-        'get_inheritance: 返回类的继承链（从本类到 Object）。',
-        'call_method: 调用编辑器场景树节点的实例方法（对标竞品 node.call）。参数 args 按方法声明类型自动强转（传 [1,2,3] 给 Vector3 参数会正确转换）。deny-list 默认挡危险方法（free/queue_free/set_script/call/emit_signal 等），env GODOT_MCP_EDITOR_CALL_DENYLIST_OVERRIDE 可追加（∪ 默认表，只能加不能减；显式空串=放开）。call 不可 undo（response 显式 undoable=false）。',
-        '⚠️ 补 docs 工具的缺口：docs 是静态 4.7 快照（不含第三方 addon/自定义类/4.6/4.8 差异），engine 是运行中引擎的真实 ClassDB。',
-        '⚠️ editor-only：headless 模式返回 EDITOR_ONLY（ClassDB 在沙箱里被拦，走 editor 层直调）。',
+        '实时 ClassDB 内省+节点方法调用(editor-only):查询运行中引擎的实际可用类/方法/属性/信号/枚举,或调用编辑器场景树节点的实例方法。',
+        'class_info=类完整结构(默认 no_inherit=true 只看本类), search=substring 搜类名(上限 100,搜到后用 class_info 查详情), get_inheritance=继承链(到 Object)。',
+        'call_method=调用节点实例方法:参数按声明类型自动强转,deny-list 默认挡危险方法(free/queue_free/set_script/call 等),env GODOT_MCP_EDITOR_CALL_DENYLIST_OVERRIDE 只能追加(∪ 默认表),call 不可 undo。',
+        '⚠️ 补 docs 工具缺口:docs 是静态 4.7 快照(不含第三方 addon/自定义类),engine 是运行中引擎真实 ClassDB。',
+        '⚠️ editor-only:headless 模式返回 EDITOR_ONLY。',
       ].join(' '),
       inputSchema: {
         type: 'object' as const,
@@ -43,7 +41,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: 'Action type: class_info | search | get_inheritance | call_method',
+            description: '操作类型。class_info=类完整结构, search=substring 搜类名, get_inheritance=继承链, call_method=调用节点实例方法',
           },
           class: {
             type: 'string',

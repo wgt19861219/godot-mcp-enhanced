@@ -270,7 +270,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。install/uninstall=装拆 bridge(含 override), game_query=查询(场景树/节点/截图), game_write=写属性/调方法, game_input=模拟输入, game_wait=等待条件, playtest.*=确定性测试, monitor/watch=采样/信号记录, find_ui_elements/click_button=UI, network_conditioner=弱网, sync_state=快照对比, custom_command=自定义命令',
           },
           port: { type: 'number', description: 'game_bridge_install: 期望的起始监听端口(实际端口由游戏侧 env GODOT_MCP_BRIDGE_PORT 设起点,被占自动递增避让;此参数不影响行为,保留兼容)。实际端口见 ping 响应与实例 registry', default: 9081 },
           force: { type: 'boolean', description: 'install: 项目内 mcp_bridge.gd 与自带版本不同(旧版未同步)时 force=true 覆盖刷新,重启游戏生效。send_drag 等报 Method not found 时用本参数', default: false },

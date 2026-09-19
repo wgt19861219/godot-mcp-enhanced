@@ -34,7 +34,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: ['add_track', 'remove_track', 'add_keyframe', 'remove_keyframe', 'update_keyframe', 'set_curve'],
-            description: '操作类型',
+            description: '操作类型。add_track/remove_track=增删轨道, add_keyframe/remove_keyframe/update_keyframe=关键帧增删改, set_curve=设贝塞尔曲线',
           },
           node_path: { type: 'string', description: 'AnimationPlayer 节点路径' },
           animation_name: { type: 'string', description: '动画名称' },

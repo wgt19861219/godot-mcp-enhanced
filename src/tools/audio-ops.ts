@@ -138,7 +138,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。audio_play/audio_stop=播放/停止, audio_set_param=调参(音量/音调/bus), audio_query=查播放状态',
           },
           node_path: { type: 'string', description: '音频节点路径' },
           stream_path: { type: 'string', description: 'play: 音频资源路径（res://...），不传则播放已配置的' },

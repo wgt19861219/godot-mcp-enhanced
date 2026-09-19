@@ -25,7 +25,10 @@ export const THRESHOLDS = {
   // P4 (2026-09-11) 曾定"回弹即警"(当时瘦身后 ~90KB);P8(热加载+SSOT 描述)与 P9(新增 dap 工具
   // 3.4KB)两批正当增量推到 ~103.9KB 越此 warn 线(审查 N-5 记录,2026-09-12)——接受当前水位,
   // warn 线校准至 105KB 给 ~1KB 余量;error 线 120KB 不变。回弹语义保留:越过 105KB 仍应警。
-  totalSum:      { warn: 105 * 1024, error: 120 * 1024 },
+  // 易用性批 1 (2026-09-19) 23 工具 action 描述补全+project_path 统一+5 工具英译中(审查 A-1/2/3,
+  // 报告 docs/reviews/2026-09-19-易用性审查-用户界面三层.md)正当增量 ~4.7KB 推到 ~110.8KB——同前例
+  // 接受水位,warn 线校准至 112KB 给 ~1.2KB 余量;error 120KB 硬线不动。回弹语义保留。
+  totalSum:      { warn: 112 * 1024, error: 120 * 1024 },
 };
 
 /** @typedef {{name:string,size:{descBytes:number,schemaBytes:number,totalBytes:number}}} CapLike */

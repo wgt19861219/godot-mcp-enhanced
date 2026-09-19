@@ -69,7 +69,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。list_groups=列工具组(含 per-profile 价格), discover=发现, activate/deactivate=启停工具, sync=同步, reconnect=重连, migrate=迁移',
           },
           groups: {
             type: 'array',

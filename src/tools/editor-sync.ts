@@ -23,22 +23,22 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
 
 const EDITOR_NOT_CONNECTED = JSON.stringify({
   error: 'EDITOR_NOT_CONNECTED',
-  message: 'These tools require editor mode with plugin connection. Use headless query_scene_tree as alternative.',
+  message: '本工具需 editor 模式且编辑器插件已连接(WebSocket 9090)。替代方案:headless 模式用 scene 工具的 query_scene_tree。',
 });
 
 export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'editor',
-      description: 'Editor real-time operations: sync_start (start scene tree listening), sync_stop (stop listening), get_scene_tree (get current snapshot). Requires editor mode with plugin connection.',
+      description: '编辑器实时操作(需 editor 模式+插件连接)。sync_start=开启场景树监听, sync_stop=停止监听, get_scene_tree=取当前场景树快照。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot project directory path' },
+          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           action: {
             type: 'string',
             enum: ['sync_start', 'sync_stop', 'get_scene_tree'],
-            description: 'Operation type',
+            description: '操作类型。sync_start=开启监听, sync_stop=停止监听, get_scene_tree=取场景树快照',
           },
         },
         required: ['action'],

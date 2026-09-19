@@ -37,7 +37,7 @@ export function getToolDefinitions(): Tool[] {
           enum: ['signal_map', 'impact_check'],
           description: 'signal_map=信号连接全景；impact_check=改动影响面',
         },
-        project_path: { type: 'string', description: '项目路径' },
+        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
         // signal_map 过滤
         signal: { type: 'string', description: '信号名过滤（signal_map 精确匹配；impact_check 必填三选一）' },
         scene: { type: 'string', description: 'signal_map: 场景路径子串过滤（如 scenes/ui）' },

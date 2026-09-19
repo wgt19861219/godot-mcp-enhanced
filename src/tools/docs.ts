@@ -65,20 +65,20 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'docs',
-      description: 'Query Godot class documentation: get_class_info, search_classes, find_method, get_inheritance.',
+      description: '查询 Godot 类文档(ClassDB)。get_class_info=类详情, search_classes=搜类, find_method=找方法, get_inheritance=继承链。',
       inputSchema: {
         type: 'object' as const,
         properties: {
           action: {
             type: 'string',
             enum: ['get_class_info', 'search_classes', 'find_method', 'get_inheritance'],
-            description: 'Operation type',
+            description: '操作类型。get_class_info=类详情, search_classes=搜索类, find_method=找方法定义, get_inheritance=类继承链',
           },
-          class_name: { type: 'string', description: 'Godot class name (required for get_class_info, find_method, get_inheritance)' },
-          method_name: { type: 'string', description: 'Method name to find (required for find_method)' },
-          query: { type: 'string', description: 'Search query (required for search_classes)' },
-          limit: { type: 'number', description: 'Max results for search_classes (default: 20)' },
-          include_inherited: { type: 'boolean', description: 'Include inherited members (default: true)' },
+          class_name: { type: 'string', description: 'Godot 类名(get_class_info/find_method/get_inheritance 必填)' },
+          method_name: { type: 'string', description: 'find_method 必填:要找的方法名' },
+          query: { type: 'string', description: 'search_classes 必填:搜索关键词' },
+          limit: { type: 'number', description: 'search_classes 结果上限(默认 20)' },
+          include_inherited: { type: 'boolean', description: '是否含继承成员(默认 true)' },
         },
         required: ['action'],
       },

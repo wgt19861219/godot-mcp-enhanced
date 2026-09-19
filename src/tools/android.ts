@@ -305,8 +305,8 @@ export function getToolDefinitions(): Tool[] {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: [...ACTIONS] },
-        project_path: { type: 'string', description: 'Godot 项目目录' },
+        action: { type: 'string', enum: [...ACTIONS], description: '操作类型。list_devices=列设备/模拟器, get_preset_info=查导出预设, deploy=构建安装启动, check_template=查导出模板安装状态, logcat=读日志' },
+        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
         lines: { type: 'number', description: 'logcat: dump 行数(默认 100)' },
         filter: { type: 'string', description: 'logcat: 过滤(如 *:E / GDScript:*)' },
         preset_name: { type: 'string', description: 'get_preset_info/deploy: preset 名' },

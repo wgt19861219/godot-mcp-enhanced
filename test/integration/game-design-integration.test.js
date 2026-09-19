@@ -35,7 +35,7 @@ describe('Game Design Integration', () => {
     const wf = workflowDefs.find(d => d.name === 'workflow');
     const props = wf.inputSchema.properties;
     expect(props.save_state).toBeDefined();
-    expect(props.save_state.description).toContain('session state');
+    expect(props.save_state.description).toContain('保存会话状态');
   });
 
   it('TOOL_META has correct entry for game_design', () => {

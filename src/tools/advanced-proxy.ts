@@ -79,13 +79,13 @@ export function getToolDefinitions(): Tool[] {
   const allNames = getAllToolNames();
   const deactivated = allNames.filter(name => !isToolAllowed(name) && name !== 'godot_advanced_tool');
 
-  let desc = 'Proxy tool for calling advanced/deactivated Godot tools. ' +
-    'Call with { tool_name: "<name>", arguments: {...} }.';
+  let desc = '高级/未激活 Godot 工具的代理调用。' +
+    '调用形式 { tool_name: "<工具名>", arguments: {...} }。';
 
   if (deactivated.length > 0) {
-    desc += `\n\nCurrently proxyable tools: ${deactivated.join(', ')}`;
+    desc += `\n\n当前可代理的工具: ${deactivated.join(', ')}`;
   } else {
-    desc += '\n\nAll tools are currently directly available — no proxy needed.';
+    desc += '\n\n当前所有工具均可直接调用,无需代理。';
   }
 
   return [

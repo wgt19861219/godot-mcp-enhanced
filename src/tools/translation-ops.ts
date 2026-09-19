@@ -306,7 +306,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。translation_read/translation_write=读/写翻译文件(.csv/.po), translation_register=注册语言',
           },
           path: { type: 'string', description: 'read/write: 翻译文件路径(res:// 相对,read 支持 .csv/.po,write 仅 .csv)' },
           languages: { type: 'array', items: { type: 'string' }, description: 'write: 语言代码列表(如 [en, zh_CN],与 entries 键对应)' },
