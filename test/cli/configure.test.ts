@@ -86,6 +86,10 @@ describe('configure 命令', () => {
 
     beforeEach(() => {
       testDir = mkdtempSync(join(tmpdir(), 'mcp-test-configure-'));
+      // 批4-T9: 隔离 machine-audit 落点——configure 成功点的 fire-and-forget 审计在
+      // promise 执行时才求值 homedir(),不全局 stub 会写真实 ~/.godot-mcp 且跨用例竞态
+      vi.stubEnv('HOME', testDir);
+      vi.stubEnv('USERPROFILE', testDir);
       logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -106,6 +110,7 @@ describe('configure 命令', () => {
       warnSpy.mockRestore();
       exitSpy.mockRestore();
       vi.mocked(process.cwd).mockRestore();
+      vi.unstubAllEnvs();
       rmSync(testDir, { recursive: true, force: true });
     });
 
@@ -177,29 +182,25 @@ describe('configure 命令', () => {
     });
 
     it('批4-T9: configure 成功 → machine-audit 落 caller=cli:configure 条目(安全敏感写面留痕)', async () => {
-      // FAKE_HOME 隔离 machine-audit 落点(对齐 godot-installer.test.ts N-4 模式)
-      const { readFileSync, existsSync } = await import('node:fs');
+      const { readFileSync } = await import('node:fs');
       const { getMachineAuditFile } = await import('../../src/core/audit-log.js');
-      vi.stubEnv('HOME', testDir);
-      vi.stubEnv('USERPROFILE', testDir);
-      try {
-        await runConfigure(['claude-code']);
-        expect(exitSpy).not.toHaveBeenCalled();
-        // 审计 fire-and-forget,轮询等落盘(最多 ~1s)
-        let last = '';
-        for (let i = 0; i < 20 && !last; i++) {
-          try { last = readFileSync(getMachineAuditFile(), 'utf8').trim().split('\n').at(-1) ?? ''; } catch { /* 尚未落盘 */ }
-          if (!last) await new Promise((r) => setTimeout(r, 50));
-        }
-        expect(last, `machine-audit 应有条目: ${getMachineAuditFile()} exists=${existsSync(getMachineAuditFile())}`).not.toBe('');
-        const e = JSON.parse(last) as Record<string, unknown>;
-        expect(e.tool).toBe('cli');
-        expect(e.action).toBe('configure_client');
-        expect(e.caller).toBe('cli:configure');
-        expect((e.details as { client?: string })?.client).toBe('Claude Code');
-      } finally {
-        vi.unstubAllEnvs();
+      await runConfigure(['claude-code']);
+      expect(exitSpy).not.toHaveBeenCalled();
+      // 审计 fire-and-forget,轮询直到出现目标条目(查找式断言:前序用例延迟执行的
+      // 审计 promise 可能混入别的 client 条目,不依赖"最后一行")
+      type Entry = { tool?: string; action?: string; caller?: string; details?: { client?: string } };
+      let hit: Entry | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(getMachineAuditFile(), 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Entry)
+            .find((e) => e.action === 'configure_client' && e.details?.client === 'Claude Code');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => setTimeout(r, 50));
       }
+      expect(hit, `machine-audit 应有 Claude Code 条目: ${getMachineAuditFile()}`).toBeDefined();
+      expect(hit!.tool).toBe('cli');
+      expect(hit!.caller).toBe('cli:configure');
     });
   });
 });

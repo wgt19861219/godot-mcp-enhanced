@@ -4,7 +4,7 @@
 // init 写 project.godot、skills 写 ~/.claude/skills/,此前全部零审计(评估 P2-3)。
 // 设计:caller 归一 cli:<命令>(批4-T4 通道前缀约定);best-effort 失败 warn 不阻断 CLI。
 import { randomUUID } from 'crypto';
-import { appendAuditLine, appendMachineAuditLine, type AuditEntry } from '../core/audit-log.js';
+import { appendAuditLine, appendMachineAuditLine, isAuditEnabled, type AuditEntry } from '../core/audit-log.js';
 
 /** CLI 改 MCP 客户端配置(setup/configure)→ 机器级留痕 */
 export function auditClientConfigured(caller: 'cli:setup' | 'cli:configure', clientName: string, scope: string, projectDir: string): void {
@@ -26,6 +26,9 @@ export function auditCliProjectWrite(
   changedFiles: string[],
   details?: Record<string, unknown>,
 ): void {
+  // N-4①(批4审查): 项目级审计受 GODOT_MCP_AUDIT 开关控制(与 dispatcher/web-gui 语义一致;
+  // 机器级 appendMachineAuditLine 恒写是 T7 的有意设计,不在此列)
+  if (!isAuditEnabled()) return;
   const entry: AuditEntry = {
     timestamp: new Date().toISOString(),
     trace_id: `cli-${randomUUID().slice(0, 16)}`,

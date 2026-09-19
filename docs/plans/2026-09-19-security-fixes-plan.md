@@ -88,6 +88,7 @@
 
 - **根因**:`audit-log.ts:30-33` `GODOT_MCP_AUDIT=false` 全关且无降级痕迹——事后无法区分"没操作"与"审计被关"。
 - **改法**:server 启动路径(`src/GodotServer.ts` 构造完成处)落一条机器级审计:`{ tool:'server', action:'startup', risk:'process', ok:true, caller:'mcp-server', details:{ audit_enabled, audit_strict, read_only, multi_instance } }`。
+  > 实现偏差(批4审查 N-3 认可):details 第 4 字段实现为 `web_gui`(web-gui 开关状态)而非方案的 `multi_instance`——信息价值等价(均为审计面相关启动状态),multi_instance 默认关闭无独立启动期可读状态。
 - **关键约束**:此留痕**必须不受 `GODOT_MCP_AUDIT` 开关控制**(否则失去意义)——实现时核查 `appendMachineAuditLine` 是否受开关影响;若受控,则该条用独立直写(复用 appendFile 原子追加逻辑,绕过 isAuditEnabled 判断)。
 - **测试**:默认启动产生 startup 条目;`GODOT_MCP_AUDIT=false` 启动仍留痕且 `details.audit_enabled=false`。
 
@@ -140,6 +141,9 @@
 
 ## 3. 任务依赖与实施顺序
 
+| 批4 内部相互独立(T4 先行为 T8/T9 提供 caller 约定),单分支顺序 commit(项目惯例)。
+规模估算:批4 每任务 0.5~2 小时(合计约 2~3 个工作日含测试);批5 约 1 个工作日。
+
 ```
 批4(单分支顺序 commit):
   T4 caller 约定 ──▶ T8(web-gui 用新 caller)/T9(CLI 用新 caller)
@@ -148,7 +152,11 @@
   T11 ← 依赖批4 无;T12 与 T11 同文件(audit-log.ts)顺序做防冲突
 ```
 
-规模估算:批4 每任务 0.5~2 小时(合计约 2~3 个工作日含测试);批5 约 1 个工作日。
+### 批4 审查处置记录(SHIPPED WITH NITS,2026-09-19)
+
+- **N-1(挂账批5+)**:bridge 侧 auth_proof 空 result 行为"干等超时"应升级为与 editor 侧同款 `authenticated !== true` 立即拒——本批 editor 侧已按更强语义实现(`!== true`),方案原文"照抄 bridge 只拦显式 false"被实现取代(安全性更强且兼容论证经审查实证)。
+- **N-4②(挂账批5+)**:auditWebGui 仅成功路径留痕(ok 恒 true),HTTP 面失败操作(500/异常)零留痕——对照 MCP 侧连失败也落审计(ok:false),两通道抗抵赖覆盖不等价;失败路径接线是行为扩展,另批做。
+- N-2/N-4①/N-3 已在本批 fix commit 处置(early-return 剥离/CLI 项目级审计接开关/方案偏差说明)。
 
 ## 4. 明确不做/挂账裁决(诚实边界)
 

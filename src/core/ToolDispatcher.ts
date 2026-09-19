@@ -882,7 +882,7 @@ export class ToolDispatcher {
     // 批4-T3: 返回剥离 _audit 后的 result——confirm 路径绕过 middleware,由本函数统一
     // 完成审计提示提取(与 middleware after hook 同款 extractAuditHint)与剥离。
     try {
-      if (!isAuditEnabled()) return { strict: false, result };
+      if (!isAuditEnabled()) return { strict: false, result: extractAuditHint(result).result };  // N-2(审查): early-return 也剥离 _audit
       // C-3 (2026-08-14): 与 audit middleware 同步接 resolveDynamicTool 反查 ——
       // pending.toolName 可能是动态平铺名(engine_call_method),平铺名 getActionRisk
       // 恒 undefined → 确认执行的动态写操作零审计。反查回静态 (tool, action) 再判风险/落盘。
@@ -896,7 +896,7 @@ export class ToolDispatcher {
       //  I-1 同款 readonly 豁免:readonly 工具不可能进 confirm 路径,防御性 return。)
       let unmappedDetails: Record<string, unknown> | undefined;
       if (!risk) {
-        if (isReadOnly(auditTool)) return { strict: false, result };
+        if (isReadOnly(auditTool)) return { strict: false, result: extractAuditHint(result).result };  // N-2(审查): early-return 也剥离 _audit
         risk = 'write';
         unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
       }
