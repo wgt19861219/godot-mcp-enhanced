@@ -170,6 +170,22 @@ describe('setup', () => {
     consoleError.mockRestore();
   });
 
+  // 易用性批3 (2026-09-19):配置成功出口必须给「重启生效 + 验证方式」下一步
+  // (本 mock 下 Claude Code detect=true 且未配置 → configured ≥ 1,走成功分支)
+  it('prints restart-and-verify hint after configuring clients', async () => {
+    const { runSetup } = await import('../../src/cli/setup.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await runSetup([]);
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('client(s) configured');
+    expect(output).toContain('重启 AI 客户端会话后生效');
+    expect(output).toContain('get_godot_version');
+    expect(output).toContain('doctor');
+    logSpy.mockRestore();
+    errSpy.mockRestore();
+  });
+
   it('logs client scope (project|global) on each line', async () => {
     const { runSetup } = await import('../../src/cli/setup.js');
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

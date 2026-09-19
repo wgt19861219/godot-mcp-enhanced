@@ -212,11 +212,27 @@ const args = process.argv.slice(2);
     process.exit(1);
   }
 
+  // 易用性批3 (2026-09-19):人类在终端直跑(非 MCP 客户端 spawn)时,stdio 挂起像死机。
+  // stderr 引导一行——MCP 客户端 spawn 时 stderr 是 pipe(isTTY=false)不输出,stdout 协议通道不碰。
+  if (process.stderr.isTTY) {
+    console.error('godot-mcp-enhanced: stdio MCP 模式启动(供 AI 客户端连接,挂起等待 stdin 属正常行为)。');
+    console.error('人类用户:Ctrl+C 退出;--help 查看子命令;`setup` 一键配置 AI 客户端。');
+  }
+
   // 默认: MCP stdio 模式
   await startMcpServer(args);
 })().catch((err: unknown) => {
   // 2026-08-21 架构审查 MINOR:入口 IIFE 无 catch——子命令抛错(如 install 网络失败)
   // 成为 unhandledRejection 而非干净的错误退出码。
+  // 易用性批3 (2026-09-19):用户主动取消(install/web 的 confirm 拒绝)非错误——
+  // 干净退出码 0 + 一行说明,不打 InternalError 堆栈。
+  if (err instanceof Error && /cancelled by user/.test(err.message)) {
+    console.log('\n已取消,未做任何改动。');
+    // 用 exitCode + 自然退出而非 process.exit——installer 的进度句柄可能仍在活动,
+    // 强杀会触发 libuv Windows 断言(UV_HANDLE_CLOSING)
+    process.exitCode = 0;
+    return;
+  }
   console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
   process.exit(1);
 });
