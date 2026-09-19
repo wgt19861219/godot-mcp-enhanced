@@ -67,6 +67,10 @@ export interface DispatchContext {
   phase: 'before' | 'after';
   /** G2 (2026-08-13): per-request trace id (16 hex),注入 result._meta 供 client/可观测追踪。 */
   traceId: string;
+  /** 1C (2026-09-19): best-effort 调用者标识(_meta.agentId/agent_id)。MCP 规范未定义
+   *  caller 身份字段、主流客户端通常不注入 → 多数请求为 undefined。仅供审计 caller 归因,
+   *  不得用于鉴权决策。 */
+  caller?: string;
 }
 
 export type MiddlewareResult =

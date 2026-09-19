@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { GodotServer } from './GodotServer.js';
 import { getLogger } from './core/logger.js';
+import { isAuditEnabled } from './core/audit-log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,6 +65,12 @@ export async function startMcpServer(args: string[]): Promise<void> {
     const logger = getLogger();
     logger.info('security', 'ALLOWED_PROJECT_PATHS is not set — access restricted to the current working directory (deny-by-default). ' +
       'Set ALLOWED_PROJECT_PATHS=/path1;/path2 for explicit multi-project access.');
+  }
+
+  // 1E (2026-09-19 安全加固批1): 审计关闭显式告警——GODOT_MCP_AUDIT=false 时抗抵赖/可核查
+  // 降级为无留痕模式,关闭行为本身要留一条启动日志(不留则关闭可被静默掩盖)。
+  if (!isAuditEnabled()) {
+    getLogger().warn('security', 'GODOT_MCP_AUDIT is disabled — operation audit trail will NOT be recorded (non-repudiation degraded)');
   }
 
   // Feature flags info

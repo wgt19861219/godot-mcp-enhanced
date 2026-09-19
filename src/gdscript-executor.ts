@@ -647,13 +647,17 @@ export { MARKER_RESULT_SHARED as MARKER_RESULT, MARKER_ERROR_SHARED as MARKER_ER
  *
  *  SECURITY CONTRACT (I-05): This function MUST use a cryptographically secure random source.
  *  The current implementation uses Node.js `randomUUID()` (backed by crypto.randomUUID),
- *  which provides 122 bits of entropy — sufficient to prevent marker prediction.
+ *  and takes the full 32-hex de-hyphenated UUID — the v4 version/variant bits are fixed,
+ *  so the effective entropy is 122 bits, sufficient to prevent marker prediction.
+ *  (2026-09-19 批1修正: 此前 substring(0,16) 实际只有 64 bit,与旧注释"122 bits"不符;
+ *   parseMcpMarkers 前缀匹配长度无关,加长无兼容影响。)
  *
- *  DO NOT replace with Math.random(), timestamp-based, or any deterministic generator.
+ *  DO NOT replace with Math.random(), timestamp-based, or any deterministic generator,
+ *  and DO NOT truncate below 32 hex chars without re-evaluating the entropy budget.
  *  If this contract is violated, GDScript code could forge MCP output markers and
  *  inject false results into tool responses. */
 function generateMarker(): string {
-  return `__MCP_${randomUUID().replace(/-/g, '').substring(0, 16)}__`;
+  return `__MCP_${randomUUID().replace(/-/g, '').substring(0, 32)}__`;
 }
 
 // ─── Temp file helpers ──────────────────────────────────────────────────────

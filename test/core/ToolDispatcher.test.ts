@@ -28,6 +28,7 @@ const {
   mockValidateGodotBinary,
   mockValidateGodotBinaryDetailed,
   mockIsDynamicToolName,
+  mockGetActionRisk,
 } = vi.hoisted(() => ({
   mockGetAllToolDefinitions: vi.fn<() => Tool[]>(),
   mockGetModuleForTool: vi.fn(),
@@ -48,6 +49,9 @@ const {
   mockValidateGodotBinaryDetailed: vi.fn().mockResolvedValue({ ok: true }),
   // A1 (2026-08-11): dispatcher 动态工具门反查依赖;默认 false(非动态),用例内按需 mockReturnValue
   mockIsDynamicToolName: vi.fn().mockReturnValue(false),
+  // 1B/1C (2026-09-19 安全加固批1): audit middleware 消费 getActionRisk;
+  // 默认 undefined(risk 未知 → fail-closed 落审计),用例内按需 mockReturnValue。
+  mockGetActionRisk: vi.fn().mockReturnValue(undefined),
 }));
 
 vi.mock('../../src/core/tool-registry.js', () => ({
@@ -63,6 +67,7 @@ vi.mock('../../src/core/tool-registry.js', () => ({
   resolveProfile: vi.fn().mockReturnValue(new Set()),
   skipProjectPath: vi.fn().mockReturnValue(false),
   tryLegacyMapping: vi.fn().mockReturnValue(null),
+  getActionRisk: mockGetActionRisk,
 }));
 
 vi.mock('../../src/core/guard.js', () => ({
@@ -1453,6 +1458,11 @@ describe('ToolDispatcher: default project_path injection', () => {
     const { skipProjectPath } = await import('../../src/core/tool-registry.js');
     (skipProjectPath as ReturnType<typeof vi.fn>).mockReturnValue(true);
 
+    // 1B (2026-09-19): docs.search_classes 真实 TOOL_META 是 read;mock 默认 undefined 会触发
+    // audit fail-closed 路径 → projectPath fallback 调 resolveProjectPath,破坏本用例的
+    // "exempt 工具不调 resolveProjectPath"断言。按真实语义声明 read(audit 在 fallback 前 return)。
+    mockGetActionRisk.mockReturnValue('read');
+
     const mockResolve = _mockResolveProjectPath as ReturnType<typeof vi.fn>;
     mockResolve.mockReturnValue('/should-not-be-injected');
 
@@ -2192,5 +2202,117 @@ describe('ToolDispatcher progress 透传链', () => {
     // fallback 后走 dispatchTool → buildPerCallCtx → mockModule 收到 ctx.progress
     expect(capturedCtx).not.toBeNull();
     expect(typeof capturedCtx.progress).toBe('function');
+  });
+});
+
+// ── 1A/1B/1C (2026-09-19 安全加固批1): audit middleware 行为 ──────────────────
+//
+// 直接取 ToolDispatcher 构造的 audit after hook 手动调用(不经 executeMiddleware 全链路),
+// 真实 audit-log 落盘到临时目录断言。getActionRisk 经 mock 控制(默认 undefined = risk 未知),
+// isDynamicToolName 经 mock 控制,resolveDynamicTool 用真实实现(未知名返 undefined)。
+describe('audit middleware (1A STRICT / 1B fail-closed / 1C caller)', () => {
+  type AuditAfter = (ctx: import('../../src/types.js').DispatchContext, result: import('../../src/types.js').ToolResult) => Promise<import('../../src/types.js').ToolResult>;
+  let auditAfter: AuditAfter;
+  let tmp: string;
+
+  beforeEach(async () => {
+    mockGetAllToolDefinitions.mockReturnValue([...FIXTURE_TOOLS]);
+    mockRequiresConfirmation.mockReturnValue(false);
+    mockIsDynamicToolName.mockReturnValue(false);
+    mockGetActionRisk.mockReturnValue(undefined);
+    delete process.env.GODOT_MCP_AUDIT_STRICT;
+    delete process.env.GODOT_MCP_AUDIT;
+    const dispatcher = new ToolDispatcher(createOptions());
+    const mws = (dispatcher as unknown as { middleware: { name: string; after?: unknown }[] }).middleware;
+    const audit = mws.find((m) => m.name === 'audit');
+    if (typeof audit?.after !== 'function') throw new Error('audit middleware after hook not found');
+    auditAfter = audit.after as AuditAfter;
+    const fs = await import('fs');
+    const os = await import('os');
+    const path = await import('path');
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-mw-'));
+  });
+
+  afterEach(async () => {
+    delete process.env.GODOT_MCP_AUDIT_STRICT;
+    const fs = await import('fs');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const mkCtx = (over: Partial<import('../../src/types.js').DispatchContext> = {}) => ({
+    toolName: 'scene',
+    args: { action: 'save_scene', project_path: tmp },
+    startTime: Date.now(),
+    phase: 'after' as const,
+    traceId: 't1a2b3c4d5e6f7a8',
+    ...over,
+  });
+  const okResult = { content: [{ type: 'text' as const, text: '{"status":"ok"}' }] };
+
+  it('1B: risk 未知(静态漏声明)→ fail-closed 按 write 落审计 + risk_unknown', async () => {
+    await auditAfter(mkCtx(), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    const s = await readAuditLog(tmp);
+    expect(s.totalEntries).toBe(1);
+    expect(s.entries[0]!.risk).toBe('write');
+    expect((s.entries[0]!.details as Record<string, unknown>).risk_unknown).toBe(true);
+    expect((s.entries[0]!.details as Record<string, unknown>).dynamic_unmapped).toBeUndefined();
+  });
+
+  it('1B: 未映射动态工具 → dynamic_unmapped=true(resolveDynamicTool 真实返 undefined)', async () => {
+    mockIsDynamicToolName.mockReturnValue(true);
+    await auditAfter(mkCtx({ toolName: 'definitely_not_mapped_method' }), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    const s = await readAuditLog(tmp);
+    expect(s.totalEntries).toBe(1);
+    expect((s.entries[0]!.details as Record<string, unknown>).dynamic_unmapped).toBe(true);
+    expect((s.entries[0]!.details as Record<string, unknown>).risk_unknown).toBeUndefined();
+  });
+
+  it('risk=read → 跳过审计(旧行为不变)', async () => {
+    mockGetActionRisk.mockReturnValue('read');
+    await auditAfter(mkCtx(), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    expect((await readAuditLog(tmp)).totalEntries).toBe(0);
+  });
+
+  it('1C: ctx.caller 透传到审计行 caller 字段;缺省不写字段', async () => {
+    mockGetActionRisk.mockReturnValue('write');
+    await auditAfter(mkCtx({ caller: 'agent-42' }), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    const s = await readAuditLog(tmp);
+    expect(s.entries[0]!.caller).toBe('agent-42');
+  });
+
+  it('1A: 默认模式审计写失败 → result 原样返回 + 失败计数递增(不抛错)', async () => {
+    const fs = await import('fs');
+    const os = await import('os');
+    const path = await import('path');
+    // project_path 指向已存在文件 → mkdir(dirname(auditPath)) 抛 ENOTDIR → appendAuditLine throw
+    const blocker = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-blk-'));
+    const filePath = path.join(blocker, 'plainfile');
+    fs.writeFileSync(filePath, 'x');
+    const { getAuditFailureStats } = await import('../../src/core/audit-log.js');
+    const before = getAuditFailureStats().failures;
+    const ctx = mkCtx({ args: { action: 'save_scene', project_path: filePath } });
+    const out = await auditAfter(ctx, okResult);
+    expect(out).toBe(okResult); // 原样返回(默认 best-effort)
+    expect(getAuditFailureStats().failures).toBe(before + 1);
+    fs.rmSync(blocker, { recursive: true, force: true });
+  });
+
+  it('1A STRICT: 审计写失败 → after 返回 isError result(操作判失败)', async () => {
+    process.env.GODOT_MCP_AUDIT_STRICT = 'true';
+    const fs = await import('fs');
+    const os = await import('os');
+    const path = await import('path');
+    const blocker = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-blk2-'));
+    const filePath = path.join(blocker, 'plainfile');
+    fs.writeFileSync(filePath, 'x');
+    const ctx = mkCtx({ args: { action: 'save_scene', project_path: filePath } });
+    const out = await auditAfter(ctx, okResult);
+    expect((out as { isError?: boolean }).isError).toBe(true);
+    expect(JSON.stringify((out as { content: unknown }).content)).toContain('AUDIT_WRITE_FAILED');
+    fs.rmSync(blocker, { recursive: true, force: true });
   });
 });

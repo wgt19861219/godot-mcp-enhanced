@@ -16,6 +16,7 @@ import { appendFile, mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, relative } from 'path';
 import type { RiskLevel } from './tool-registry.js';
+import { getLogger } from './logger.js';
 
 /** audit 文件相对项目根的路径(对齐 .godot/ 惯例:mcp-instances/mcp-godot.json/mcp_editor.key)。 */
 export const AUDIT_LOG_REL = ['.godot', 'mcp_audit.jsonl'] as const;
@@ -27,6 +28,36 @@ const MAX_CHANGED_FILES = 50;
 export function isAuditEnabled(): boolean {
   const v = process.env.GODOT_MCP_AUDIT;
   return v === undefined || v === '' || v === 'true' || v === '1';
+}
+
+// ─── 1A (2026-09-19 安全加固批1): 审计写入失败可观测 + STRICT 可选阻断 ──────────
+// 背景:catch 静默导致磁盘满/权限异常时操作照常执行且零留痕零告警(G2 catch 哲学的盲区)。
+
+export interface AuditFailureStats {
+  failures: number;
+  lastError: string;
+}
+
+/** 审计写入失败计数(模块级只增、无 setter,符合 AGENTS.md 分层约束——不新增注入点)。 */
+let auditWriteFailures = 0;
+let lastAuditWriteError = '';
+
+export function getAuditFailureStats(): AuditFailureStats {
+  return { failures: auditWriteFailures, lastError: lastAuditWriteError };
+}
+
+/** 记录一次审计写入失败:计数 + 首次失败 warn(防刷屏;此后静默计数,get_log 可查)。 */
+export function recordAuditWriteFailure(err: unknown): void {
+  auditWriteFailures++;
+  lastAuditWriteError = err instanceof Error ? err.message : String(err);
+  if (auditWriteFailures === 1) {
+    getLogger().warn('audit', `audit write failed (subsequent failures counted silently, see audit.get_log write_failures): ${lastAuditWriteError}`);
+  }
+}
+
+/** STRICT 模式(高安全场景 opt-in):审计写入失败时调用方将操作判失败,而非静默 best-effort。 */
+export function isAuditStrict(): boolean {
+  return process.env.GODOT_MCP_AUDIT_STRICT === 'true';
 }
 
 /** B-1(审查修复):检测令牌请求响应(content 含 "requires_confirmation":true,操作未执行)。
@@ -53,6 +84,7 @@ export interface AuditEntry {
   project_path: string;
   changed_files: string[];  // 项目相对路径(PII 护栏)
   duration_ms: number;
+  caller?: string;          // 1C (2026-09-19): best-effort 调用者标识(_meta.agentId,MCP 未标准化,通常 undefined)
   details?: {
     before_values?: Record<string, unknown>;  // project.godot 等(阶段2 工具上报)
     batch?: boolean;          // project_replace/create_project 批量(主路径 + 标记)

@@ -19,7 +19,7 @@ import { opt } from './args.js';
 import { makeCtx } from './ctx.js';
 import * as qaTool from '../tools/qa/index.js';
 import { findPreviousReport, diffReports, type QaReport } from '../tools/qa/report.js';
-import { appendAuditLine, isAuditEnabled } from '../core/audit-log.js';
+import { appendAuditLine, isAuditEnabled, recordAuditWriteFailure, isAuditStrict } from '../core/audit-log.js';
 
 function usage(): void {
   console.log(`godot-mcp-enhanced qa — QA 测试套件（夜间跑批）
@@ -88,7 +88,12 @@ async function auditRun(data: {
       changed_files: [],
       duration_ms: data.summary.duration_ms,
     });
-  } catch { /* 审计失败不影响跑批（对齐 G2 catch 哲学） */ }
+  } catch (e) {
+    /* 1A (2026-09-19): 审计失败可观测(计数+首次 warn);默认不影响跑批(G2 catch 哲学),
+       STRICT 模式(GODOT_MCP_AUDIT_STRICT=true)下 CLI 同样尊重——审计失败中断跑批。 */
+    recordAuditWriteFailure(e);
+    if (isAuditStrict()) throw e;
+  }
 }
 
 /** run 响应 data 的形态（index.ts handleRun 契约） */
