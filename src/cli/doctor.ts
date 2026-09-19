@@ -133,6 +133,17 @@ export async function runDoctor(_args: string[]): Promise<void> {
     console.log(warn('ALLOWED_PROJECT_PATHS not set — deny-by-default(仅当前工作目录可访问)。多项目使用时在 MCP 配置 env 设置:ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"'));
   }
 
+  // 2.7b GODOT_MCP_ALLOWED_GODOT_PATHS 可见性(2026-09-19 安全加固 D2 裁决 (a) 组成)
+  // 未设为 back-compat 放行(godot-finder.ts isGodotPathAllowed:env 与 godot-paths.json
+  // 皆空=放行+签名校验兜底)——warn 不 fail;显式设置可硬隔离"AI 可控 godot_path 参数
+  // 指向任意二进制被 spawn"面(评估完整 M5)
+  const allowedGodot = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+  if (allowedGodot) {
+    console.log(status(true, `GODOT_MCP_ALLOWED_GODOT_PATHS set (${allowedGodot.split(';').length} path(s))`));
+  } else {
+    console.log(warn('GODOT_MCP_ALLOWED_GODOT_PATHS not set — back-compat 放行(签名校验兜底)。收紧 godot 二进制白名单可设置:GODOT_MCP_ALLOWED_GODOT_PATHS="C:/Program Files/Godot;D:/godot"'));
+  }
+
   // 2.5. 项目级 Godot 覆盖
   const mcpConfigPath = join(projectDir, '.godot', 'mcp-godot.json');
   const config = readJsonForCheck(mcpConfigPath) as { godot_path?: string } | null;
