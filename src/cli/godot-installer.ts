@@ -86,6 +86,7 @@ import { Readable } from 'stream';
 import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { appendMachineAuditLine } from '../core/audit-log.js';
+import { sanitizeMsg } from '../core/logger.js';
 import { readGodotPathsConfig, writeGodotPathsConfig, validateGodotBinary } from '../core/godot-finder.js';
 
 /**
@@ -244,7 +245,9 @@ export async function installGodot(opts: {
     await appendMachineAuditLine({
       trace_id: traceId, tool: 'cli', action: 'install_godot', risk: 'process',
       ok: false, project_path: '', changed_files: [], duration_ms: Date.now() - started,
-      details: { versionTag, assetName, error: err instanceof Error ? err.message : String(err) },
+      // 2D (2026-09-19 安全加固批2): 错误消息脱敏(网络错误可能带 URL 查询串;复用 logger
+      // sanitizeMsg 词表,截断 200 顺带防超长)
+      details: { versionTag, assetName, error: sanitizeMsg(err instanceof Error ? err.message : String(err)) },
     });
     throw err;
   }

@@ -6,15 +6,16 @@
 // 项目入口批(2026-09-16):同一份 HTML 再落一份「面板入口.html」到各 Godot 项目目录
 // (ensureProjectPortalEntry)——registry 深路径难找,入口放用户天天开的项目文件夹。
 // 零门槛授权(2026-09-16 用户裁决):包根入口页内嵌 token(ensurePackageRootEntry,跳转 URL
-// 自动带 ?token=,双击直达免 CLI 首授权);项目目录版不内嵌(目录可能被 git 跟踪/分享,
+// 自动带 #token=,双击直达免 CLI 首授权);项目目录版不内嵌(目录可能被 git 跟踪/分享,
 // token 进公开仓库会配合恶意网页形成攻击链),registry 版保持纯净模板。
+// 2B (2026-09-19 安全加固批2): 传递形态 query → hash——token 不进服务器访问日志/Referer。
 
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { webGuiRegistryDir, hardenFilePermissionsWindows, SHARED_TOKEN_RE } from './registry.js';
 
-/** 构建入口页 HTML。token 非空时内嵌(跳转 URL 自动带 ?token=,首次即过鉴权并种 cookie);
- *  形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。 */
+/** 构建入口页 HTML。token 非空时内嵌(跳转 URL 带 #token=,面板读 hash 握手 cookie 后清 URL,
+ *  首次即过鉴权;token 不进 query/服务器日志);形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。 */
 export function buildPortalHtml(token?: string): string {
   const safeToken = token && SHARED_TOKEN_RE.test(token) ? token : '';
   return `<!doctype html>
@@ -46,8 +47,11 @@ a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 16px;background:#2d6
 </div>
 <script>
 var TOKEN = ${JSON.stringify(safeToken)};
+// 2B (2026-09-19 安全加固批2): token 经 hash(#token=)传递而非 query——hash 不发给服务器
+// (访问日志/Referer 不含 token),面板侧读 hash 握手 cookie 后 replaceState 连 hash 清除,
+// session/history 最终为干净 URL。query 通道由 CLI 打开旧链保留,portal 不再使用。
 function withToken(url) {
-  return TOKEN ? url + '?token=' + encodeURIComponent(TOKEN) : url;
+  return TOKEN ? url + '#token=' + encodeURIComponent(TOKEN) : url;
 }
 function probe(port) {
   return new Promise(function (resolve) {

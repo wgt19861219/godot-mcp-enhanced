@@ -163,8 +163,7 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
     it('源码契约:saveText 备份写后调 hardenFilePermissionsWindows(Windows ACL 收紧)', async () => {
       const src = readFileSync(new URL('../../src/web-gui/files-api.ts', import.meta.url), 'utf-8');
       expect(src).toContain("from './registry.js'");
-      expect(src).toMatch(/hardenFilePermissionsWindows\(\s*bakPath\s*\)/);
-      // 落位在 .bak 写入之后(顺序契约:先写后加固,防"加固后覆盖回默认 ACL"反序)
+      expect(src).toMatch(/hardenFilePermissionsWindows\(\s*bakPath\s*\)/);      // 落位在 .bak 写入之后(顺序契约:先写后加固,防"加固后覆盖回默认 ACL"反序)
       const writeIdx = src.indexOf('writeFile(bakPath');
       const hardenIdx = src.indexOf('hardenFilePermissionsWindows(bakPath)');
       expect(writeIdx).toBeGreaterThan(-1);
@@ -180,6 +179,25 @@ describe('FilesApi(spec §3,2026-09-15 v2)', () => {
     });
     it('rel 逃逸 → forbidden', async () => {
       await expect(api.saveText(proj, '../evil.gd', 'x', 0)).rejects.toMatchObject({ code: 'forbidden' });
+    });
+    // ── 2C (2026-09-19 安全加固批2): Web GUI 旁路写接审计——此前 HTTP 文件写零留痕
+    //    (可核查缺口 M8)。审计 fire-and-forget,轮询等落盘(最多 ~1s)。
+    it('2C: 成功保存 → mcp_audit.jsonl 落 tool=web-gui 审计行(changed_files 项目相对路径)', async () => {
+      const cur = await api.readText(proj, 'main.gd');
+      await api.saveText(proj, 'main.gd', 'AUDITED\n', cur.mtime);
+      const auditPath = join(proj, '.godot', 'mcp_audit.jsonl');
+      let last = '';
+      for (let i = 0; i < 20 && !last; i++) {
+        try { last = readFileSync(auditPath, 'utf8').trim().split('\n').at(-1) ?? ''; } catch { /* 尚未落盘 */ }
+        if (!last) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(last).not.toBe('');
+      const e = JSON.parse(last) as Record<string, unknown>;
+      expect(e.tool).toBe('web-gui');
+      expect(e.action).toBe('write_file');
+      expect(e.risk).toBe('write');
+      expect(e.changed_files).toEqual(['main.gd']);
+      expect(e.caller).toBe('web-gui');
     });
   });
 

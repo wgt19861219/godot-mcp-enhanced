@@ -127,7 +127,12 @@ export const INDEX_HTML: string = `<!doctype html>
 (function () {
   'use strict';
   var qs = new URLSearchParams(location.search);
-  var token = qs.get('token') || sessionStorage.getItem('gui-token') || '';
+  // 2B (2026-09-19 安全加固批2): 补 hash 通道(#token=)——portal 入口页改用 hash 传递,
+  // token 不进 query(服务器访问日志/Referer 不含);面板读 hash 握手 cookie 后 replaceState
+  // 连 hash 一并清除(session/history 最终为干净 URL)。query 通道保留(CLI 打开旧链兼容)。
+  var hm = /[#&]token=([^&]+)/.exec(location.hash);
+  var hashToken = hm ? decodeURIComponent(hm[1]) : '';
+  var token = qs.get('token') || hashToken || sessionStorage.getItem('gui-token') || '';
   if (token) { sessionStorage.setItem('gui-token', token); history.replaceState(null, '', location.pathname); }
   // cookie 双通道握手:用手头 token 换 HttpOnly cookie,此后请求 cookie 自动携带——
   // 免疫 URL query 被隐私扩展剥除/截断(query 丢失导致面板全断的真机事件)。

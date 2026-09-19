@@ -84,6 +84,23 @@ describe('audit wrapper: get_log', () => {
     expect(data.totalEntries).toBe(2); // E2/E3(timestamp >= since,E1 排除)
     expect(data.entries.map((e) => e.tool)).toEqual(['project', 'scene']);
   });
+
+  // 批2 审查 Nit-1: external 参数/divergence 的 handler 层结构锁
+  it('external=true: 读外置副本并附 divergence;默认读项目内无 divergence 字段', async () => {
+    // beforeEach 的 3 条经 appendAuditLine 双写:项目内与外置副本各 3 条
+    const resExt = await handleTool('audit', { action: 'get_log', project_path: tmp, external: true }, ctx);
+    const dataExt = parse(resExt).data as {
+      totalEntries: number;
+      divergence?: { projectEntries: number; externalEntries: number; diverged: boolean };
+    };
+    expect(dataExt.totalEntries).toBe(3); // 外置副本同样 3 条
+    expect(dataExt.divergence).toMatchObject({ projectEntries: 3, externalEntries: 3, diverged: false });
+    // 默认(不带 external)读项目内且响应无 divergence 字段
+    const resDef = await handleTool('audit', { action: 'get_log', project_path: tmp }, ctx);
+    const dataDef = parse(resDef).data as { totalEntries: number; divergence?: unknown };
+    expect(dataDef.totalEntries).toBe(3);
+    expect(dataDef.divergence).toBeUndefined();
+  });
 });
 
 describe('audit wrapper: suggest_rollback', () => {
