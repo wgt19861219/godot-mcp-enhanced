@@ -87,5 +87,15 @@ export async function runSetup(_args: string[]): Promise<void> {
     }
   }
 
-  console.log(`\n${configured > 0 ? `✓ ${configured} client(s) configured.` : 'No new clients to configure.'}`);
+  // 易用性批3 (2026-09-19):两个出口都要给下一步——成功侧告知重启生效+验证方式
+  // (对照 skills.ts 同款意识);零配置侧指向 configure 的 15 客户端支持面与 --force。
+  if (configured > 0) {
+    console.log(`\n✓ ${configured} client(s) configured.`);
+    console.log('  重启 AI 客户端会话后生效(MCP 配置仅在会话启动时加载)。');
+    console.log('  验证:客户端里让 AI 调用 get_godot_version,或运行 npx godot-mcp-enhanced doctor。');
+  } else {
+    console.log('\nNo new clients to configure.');
+    console.log('  支持的全部客户端:npx godot-mcp-enhanced configure --list(15 个)');
+    console.log('  客户端装在非默认位置/已配置想重写:configure <客户端名> --force');
+  }
 }

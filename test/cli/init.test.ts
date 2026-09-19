@@ -38,9 +38,12 @@ describe('init', () => {
     process.chdir(testDir);
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runInit([]);
+    const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
     consoleSpy.mockRestore();
     process.chdir(origCwd);
     expect(existsSync(join(testDir, 'my-game', 'project.godot'))).toBe(true);
+    // 易用性批3:非 TTY 无参时打印默认名提示且继续创建(不询问、不取消)
+    expect(output).toContain('使用默认名 "my-game"');
   });
 
   it('exits with error if directory already exists', async () => {

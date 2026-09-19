@@ -15,6 +15,19 @@ const VALID_NAME = /^[a-zA-Z0-9_-]+$/;
 
 export async function runInit(args: string[]): Promise<void> {
   const { name, template } = parseInitArgs(args);
+  // 易用性批3 (2026-09-19):无参默认名 my-game——TTY 下确认一次防误跑污染 cwd;
+  // 非 TTY(脚本/CI/测试)仅打印提示继续(confirm.ts 非 TTY 恒 false,不可当取消)。
+  if (!args[0]) {
+    if (process.stdin.isTTY) {
+      const { confirmYesNo } = await import('./confirm.js');
+      if (!(await confirmYesNo(`未指定项目名,使用默认名 "${name}"?`))) {
+        console.error('已取消。用法: godot-mcp-enhanced init <name> [--template=<模板>]');
+        process.exit(1);
+      }
+    } else {
+      console.log(`(未指定项目名,使用默认名 "${name}";非交互环境不询问)`);
+    }
+  }
   if (!VALID_NAME.test(name)) {
     console.error(`Invalid project name: "${name}". Use only letters, numbers, hyphens, and underscores.`);
     process.exit(1);
