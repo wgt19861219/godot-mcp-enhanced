@@ -247,6 +247,32 @@ describe('A3: 失败端口记忆与降级', () => {
   });
 });
 
+// ── 批6-N-d(批5审查挂账): GODOT_MCP_BRIDGE_PORT_OVERRIDE 显式端口覆盖 ──────────
+// ── 动机:test/bridge-auth-proof.test.ts 改 listen(0) 动态端口后出固定窗口         ──
+// ── 9081-9090(GD 生产硬约束不为测试扩窗);override 让测试跳过解析链直连 mock。    ──
+describe('N-d: resolveBridgePort 端口覆盖(GODOT_MCP_BRIDGE_PORT_OVERRIDE)', () => {
+  const proj = join(tmpdir(), 'proj-override');
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('合法端口 → 无条件覆盖(优先于 registry 命中条目与 projectPath 判定)', () => {
+    writeEntry('111_1.json', proj, 9082);   // registry 命中条目存在——证明 override 优先
+    vi.stubEnv('GODOT_MCP_BRIDGE_PORT_OVERRIDE', '12345');
+    expect(resolveBridgePort(proj, registryDir)).toBe(12345);
+    expect(resolveBridgePort('', registryDir)).toBe(12345);   // 空 projectPath 同覆盖(无条件语义)
+  });
+
+  it('非法值(非数字/越界/空串/非整数)→ 忽略覆盖,回落正常解析链', () => {
+    writeEntry('111_1.json', proj, 9083);
+    for (const bad of ['abc', '0', '70000', '', '9084.5']) {
+      vi.stubEnv('GODOT_MCP_BRIDGE_PORT_OVERRIDE', bad);
+      expect(resolveBridgePort(proj, registryDir), `override=${JSON.stringify(bad)}`).toBe(9083);
+    }
+  });
+});
+
 // ── A4 直测 (2026-09-16 反馈批,审查 B-1 修复): liveHeartbeatPortsFor 判活集合 ──
 // ── 位置契约:与 resolveBridgePort 同源 machine registry(勿读 {project}/.godot/      ──
 // ── mcp-instances——GD 的 project-level 心跳在 user:// 不可达,B-1 首版教训)。       ──

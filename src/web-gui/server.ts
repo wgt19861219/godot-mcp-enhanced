@@ -456,6 +456,9 @@ export class WebGuiServer {
       if (url.pathname === '/api/projects/file') {
         // READ_ONLY 拦截(spec §3.3-1 第一重护栏,fix round 1):面板写路径不得绕过
         // AI 侧防线;对齐 sessions/start 的 403_readonly 形态。
+        // 批6-N-e 边界:此处拦截在 readJsonBody 之前(body 不进内存即拒),拿不到
+        // projectPath 无从落项目审计;挪后解析仅为审计会削弱早拒设计。readonly 403
+        // 留痕覆盖以 sessions/start(路径已知)为准,此分支仅 logger 留痕——诚实边界。
         if (this.opts.isReadOnly?.()) {
           getLogger().info('web-gui', 'action=file_save result=403_readonly');
           return json(403, { error: 'read-only mode' });
@@ -544,6 +547,7 @@ export class WebGuiServer {
         if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
         if (!isPathInAllowedRoots(path)) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=403`);
+          auditWebGui('projects', 'add', 'write', path, { ok: false, error: 'path outside allowed roots' });   // 批6-N-e: 越权尝试留痕(403 覆盖对齐 PathError 形态)
           return json(403, { error: 'path outside allowed roots' });
         }
         let r: { ok: boolean; reason?: string };
@@ -612,10 +616,12 @@ export class WebGuiServer {
         if (!fn) return json(503, { error: 'not configured' });
         if (this.opts.isReadOnly?.()) {   // READ_ONLY 拦截(spec v2/IMP-3):面板不得绕过 AI 侧防线
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403_readonly`);
+          auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: 'read-only mode' });   // 批6-N-e: 拒绝留痕(403 覆盖对齐)
           return json(403, { error: 'read-only mode' });
         }
         if (!isPathInAllowedRoots(projectPath)) {
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403`);
+          auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: 'path outside allowed roots' });   // 批6-N-e: 越权尝试留痕(路径不存在时由 audit-helper 落机器级)
           return json(403, { error: 'path outside allowed roots' });
         }
         if (!existsSync(join(projectPath, 'project.godot'))) {

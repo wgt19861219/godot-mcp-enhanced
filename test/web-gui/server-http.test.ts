@@ -10,8 +10,8 @@ import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, afterEach, afterAll, beforeAll } from 'vitest';
-import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions } from '../../src/web-gui/server.js';
+import { describe, it, expect, afterEach, afterAll, beforeAll, vi } from 'vitest';
+import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions, type ProjectsApi } from '../../src/web-gui/server.js';
 import { rotateSharedToken } from '../../src/web-gui/registry.js';
 import { INDEX_HTML } from '../../src/web-gui/html.js';
 import type { RunSessionDetailed } from '../../src/core/process-state.js';
@@ -200,7 +200,8 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
   });
   afterEach(async () => { if (active) { await active.stop(); active = null; } });
 
-  type CtrlHooks = Partial<Pick<WebGuiServerOptions, 'stopSession' | 'removeSession'>>;
+  type CtrlHooks = Partial<Pick<WebGuiServerOptions, 'stopSession' | 'removeSession'
+    | 'runProject' | 'editProject' | 'isReadOnly' | 'projects'>>;
 
   async function startCtrlServer(hooks: CtrlHooks): Promise<{ srv: WebGuiServer; base: string; token: string }> {
     const srv = new WebGuiServer({
@@ -481,6 +482,95 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     } finally {
       await rm(tmpProj, { recursive: true, force: true });
     }
+  });
+
+  // ── 批6-N-e(批5审查挂账): 403 拒绝留痕覆盖对齐——readonly/白名单 403 此前仅
+  //    logger 零审计(PathError 403 却有);假路径越权探测恰是最需留痕的形态,路径
+  //    不存在的失败由 audit-helper 分流落机器级 ~/.godot-mcp/machine-audit.jsonl。
+  //    双 stub HOME+USERPROFILE:Windows os.homedir() 只认 USERPROFILE(2026-09-19
+  //    实测),单 stub HOME 在 Windows 不重定向落点。
+  it('批6-N-e: sessions/start 白名单外假路径 403 → machine-audit 落 ok:false(此前零留痕)', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-ne-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    // test/setup.js 全局 GODOT_MCP_UNRESTRICTED=true 旁路白名单——用例内还原并显式
+    // 设 allowlist 根,使"probe 在白名单外"判定确定(unstubAllEnvs 恢复 setup 原值,不污染他例)
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
+    vi.stubEnv('ALLOWED_PROJECT_PATHS', join(fakeHome, 'allowed-root'));
+    try {
+      const t = await startCtrlServer({ runProject: async () => ({}) });
+      active = t.srv;
+      const probePath = join(fakeHome, 'no-such-probe', 'proj');   // 不存在 = 假路径探测形态
+      const res = await post(t.base, '/api/sessions/start', t.token, { projectPath: probePath });
+      expect(res.status).toBe(403);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'start' && e.ok === false);
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(hit, '机器级失败审计行应落盘(假路径探测留痕)').toBeDefined();
+      expect(hit!.caller).toBe('web-gui:sessions');
+      expect(hit!.project_path).toBe(probePath);
+      const det = hit!.details as { error?: string; project_path_absent?: boolean; mode?: string };
+      expect(det.error).toBe('path outside allowed roots');
+      expect(det.project_path_absent).toBe(true);   // 核查者可区分"路径不存在"事实
+      expect(det.mode).toBe('run');
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('批6-N-e: sessions/start readonly 403(路径真实存在)→ 项目审计落 ok:false error=read-only mode', async () => {
+    const tmpProj = await mkdtemp(join(tmpdir(), 'gme-ne-ro-'));
+    const t = await startCtrlServer({
+      runProject: async () => { throw new Error('should not reach: readonly 早拒'); },
+      isReadOnly: () => true,
+    });
+    active = t.srv;
+    try {
+      const res = await post(t.base, '/api/sessions/start', t.token, { projectPath: tmpProj });
+      expect(res.status).toBe(403);
+      const auditPath = join(tmpProj, '.godot', 'mcp_audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(auditPath, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'start' && e.ok === false);
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(hit, 'readonly 拒绝审计行应落盘').toBeDefined();
+      expect(hit!.caller).toBe('web-gui:sessions');
+      expect((hit!.details as { error?: string })?.error).toBe('read-only mode');
+    } finally {
+      await rm(tmpProj, { recursive: true, force: true });
+    }
+  });
+
+  it('批6-N-e: projects/add 白名单外路径 403 → HTTP 语义 + 审计接线源码契约(落点断言归 audit-helper 单测)', async () => {
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');   // 还原 setup.js 全局旁路(见上用例注释)
+    vi.stubEnv('ALLOWED_PROJECT_PATHS', join(tmpdir(), 'gme-ne-allowed-root'));
+    const projects: ProjectsApi = {
+      scan: async () => [],
+      add: async () => ({ ok: true }),   // 403 早拒,store 不触达
+      remove: async () => ({ ok: true }),
+    };
+    const t = await startCtrlServer({ projects });
+    active = t.srv;
+    const outside = join(tmpdir(), 'gme-ne-outside-root', 'proj');   // 显式 allowlist 外
+    const res = await post(t.base, '/api/projects/add', t.token, { path: outside });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'path outside allowed roots' });
+    expect(readFileSync(new URL('../../src/web-gui/server.ts', import.meta.url), 'utf8'))
+      .toContain("auditWebGui('projects', 'add', 'write', path, { ok: false, error: 'path outside allowed roots' })");
+    vi.unstubAllEnvs();
   });
 });
 
