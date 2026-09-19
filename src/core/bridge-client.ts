@@ -430,11 +430,13 @@ async function _doConnect(timeout: number): Promise<Socket> {
     return await _openSocket(timeout, false);
   } catch (err) {
     const e = err as Error & { authPhase?: string };
-    if (e.authPhase === 'cr-probe' && !_requireBridgeCrAuth()) {
+      if (e.authPhase === 'cr-probe' && !_requireBridgeCrAuth()) {
       _bridgeLegacyAuth = true;
       getLogger().warn('bridge',
         'auth_begin rejected with JSON-RPC error (old bridge) — falling back to legacy plaintext auth ' +
-        '(mcp_bridge.gd 版本过旧?). secret 将明文经 TCP 传输(localhost 模型);重新 game_bridge_install 后自动恢复 proof 模式.');
+        '(mcp_bridge.gd 版本过旧?). secret 将明文经 TCP 传输(localhost 模型);' +
+        'N-2(审查): _bridgeLegacyAuth 为模块级降级记忆且不复位,重新 game_bridge_install 不会复位——' +
+        '需**重启 MCP server**才恢复 proof 模式.');
       return _openSocket(timeout, true);
     }
     throw err;
@@ -514,6 +516,30 @@ async function _openSocket(timeout: number, legacyAuth: boolean): Promise<Socket
         if (!line) continue;
         try {
           const resp = JSON.parse(line);
+          // N-4(审查): 对端回 result 但既无 challenge 也非 authenticated(非本协议 JSON-RPC 端)
+          // → 与 EditorConnection 同语义按"有响应可降级"处理(authPhase 仍 cr-probe);
+          // 此前落到 Auth failure 分支产出 "Bridge auth failed (undefined): undefined" 不可读
+          if (!authDone && !legacyAuth && resp.result && resp.result.challenge === undefined
+              && resp.result.authenticated === undefined) {
+            clearTimeout(timer);
+            sock.destroy();
+            reject(Object.assign(
+              new BridgeNotConnectedError('Bridge auth_begin got result without challenge (old/foreign bridge)'),
+              { authPhase },
+            ));
+            return;
+          }
+          // N-5(审查): challenge 形态校验对齐 EditorConnection(≥16)——畸形 challenge 拒绝进 proof
+          if (!authDone && !legacyAuth && resp.result?.challenge !== undefined
+              && (typeof resp.result.challenge !== 'string' || String(resp.result.challenge).length < 16)) {
+            clearTimeout(timer);
+            sock.destroy();
+            reject(Object.assign(
+              new BridgeNotConnectedError('Bridge auth_begin got malformed challenge (expected hex string >=16 chars)'),
+              { authPhase },
+            ));
+            return;
+          }
           // 3A: challenge-response —— auth_begin 的响应带 challenge → 发 HMAC proof(secret 不上线)
           if (!authDone && !legacyAuth && resp.result?.challenge) {
             authPhase = 'cr-proof';

@@ -440,6 +440,7 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 		var provided: String = str(parsed.get("params", {}).get("secret", ""))
 		if _constant_time_compare(provided, _secret):
 			_authenticated_peers[pid] = true
+			_auth_challenges.erase(pid)  # N-1(审查): 对齐 bridge 侧——旧 auth 成功同样弃置待验证 challenge
 			_auth_fail_count.erase(pid)
 			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"authenticated": true}}))
 			print("[MCP] Peer %d authenticated" % pid)

@@ -519,7 +519,8 @@ export class EditorConnection {
         this._useLegacyAuth = true;
         getLogger().warn('editor',
           'auth_begin rejected/invalid peer response — falling back to legacy plaintext auth ' +
-          '(editor 插件版本过旧?). secret 将明文经 ws:// 传输(localhost 模型);升级 addons/godot_mcp_server 后自动恢复 proof 模式. ' +
+          '(editor 插件版本过旧?). secret 将明文经 ws:// 传输(localhost 模型);' +
+          'N-2(审查): _useLegacyAuth 为实例级降级记忆且不复位,升级插件后需**重启 MCP server**才恢复 proof 模式. ' +
           '[已知残余面]协议感知的假监听者可伪造响应诱降级收 secret——GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true 可硬锁.');
         return this.legacyPlaintextAuth();
       }
