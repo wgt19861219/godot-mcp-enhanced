@@ -1,4 +1,5 @@
 import { expect, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { EditorConnection } from '../src/core/EditorConnection.js';
 import { WebSocketServer } from 'ws';
 
@@ -51,6 +52,11 @@ describe('EditorConnection', () => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
         // Reply to auth but ignore other requests to simulate timeout
+        // 3A (2026-09-19 批3): auth_begin 按真旧插件语义回 -32001(未认证的非 auth 消息) → TS 降级明文
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
         if (msg.method === 'auth') {
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
         }
@@ -245,6 +251,11 @@ describe('EditorConnection', () => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
         // 仅回 auth，不回 ping —— 模拟编辑器卡死（TCP OPEN 但主线程无响应）
+        // 3A (2026-09-19 批3): auth_begin 按真旧插件语义回 -32001 → TS 降级明文
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
         if (msg.method === 'auth') {
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
         }
@@ -363,6 +374,11 @@ describe('EditorConnection', () => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
         // 只响应 auth(id=-1)，业务 request 不响应 → 保持 pending
+        // 3A (2026-09-19 批3): auth_begin 按真旧插件语义回 -32001 → TS 降级明文
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
         if (msg.id === -1) {
           ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
         }
@@ -559,4 +575,89 @@ describe('EditorConnection', () => {
     expect(() => connC.resetReconnectState()).not.toThrow();
     expect(connC.reconnectTimer).toBe(null);
   });
+
+  // ── 3A (2026-09-19 安全加固批3): challenge-response 握手协议行为锁 ──────────
+
+  it('3A: challenge-response 握手成功——secret 全程不上线路(收到的消息不含 secret 字段)', async () => {
+    const SECRET = 'cr-secret-0123456789abcdef';
+    const receivedRaw = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const raw = data.toString();
+        receivedRaw.push(raw);
+        const msg = JSON.parse(raw);
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { challenge: 'a1b2c3d4e5f60718293a4b5c6d7e8f90' } }));
+          return;
+        }
+        if (msg.method === 'auth_proof') {
+          // 服务端同款校验:HMAC-SHA256(secret, challenge)
+          const expected = createHmac('sha256', SECRET).update('a1b2c3d4e5f60718293a4b5c6d7e8f90', 'utf8').digest('hex');
+          if (msg.params?.proof === expected) {
+            ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { authenticated: true } }));
+          } else {
+            ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication failed' } }));
+          }
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: SECRET });
+    await conn.connect();  // proof 模式认证成功
+    const result = await conn.request('test_method', {});
+    expect(result).toEqual({ status: 'ok' });
+    conn.disconnect();
+    // 核心断言:整个握手过程网络上从未出现 secret(防假监听者窃取凭证)
+    expect(receivedRaw.some((r) => r.includes(SECRET))).toBe(false);
+    expect(receivedRaw.some((r) => r.includes('"proof"'))).toBe(true);
+  });
+
+  it('3A: 旧端降级——auth_begin 收 -32001 后记忆降级,第二次连接直接明文 auth(不再探测)', async () => {
+    const methodsFirst = [];
+    const methodsSecond = [];
+    let connCount = 0;
+    wss.on('connection', (ws) => {
+      connCount++;
+      const seen = connCount === 1 ? methodsFirst : methodsSecond;
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        seen.push(msg.method);
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
+    await conn.connect();
+    expect(methodsFirst).toEqual(['auth_begin', 'auth']);  // 首连:探测 + 降级明文
+    conn.disconnect();
+    // 模拟重连(降级记忆生效:直接明文,不再发 auth_begin)
+    const conn2 = new EditorConnection({ port, reconnect: false, secret: 'test-secret' });
+    conn2._useLegacyAuth = conn._useLegacyAuth;  // 复制降级记忆(测试模拟同实例重连语义)
+    await conn2.connect();
+    expect(methodsSecond).toEqual(['auth']);
+    conn2.disconnect();
+  });
+
+  it('3A: 哑占位者不降级——对端占端口但不回应,connect 失败且明文 secret 从未上线', async () => {
+    const receivedMethods = [];
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        receivedMethods.push(msg.method);
+        // 不回应任何消息(哑占位者)
+      });
+    });
+
+    const conn = new EditorConnection({ port, reconnect: false, secret: 'secret-never-leak', authTimeout: 3000 });
+    await expect(() => conn.connect()).rejects.toThrow(/不降级|challenge-response/i);
+    // 核心断言:只发过 auth_begin,明文 auth(secret)从未发出
+    expect(receivedMethods).toEqual(['auth_begin']);
+    conn.disconnect();
+  }, 10_000);
 });

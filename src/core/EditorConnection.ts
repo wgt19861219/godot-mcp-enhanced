@@ -1,5 +1,6 @@
 // src/core/EditorConnection.ts
 import WebSocket from 'ws';
+import { createHmac } from 'crypto';
 import { getLogger } from './logger.js';
 import { ConnectionError, InternalError } from './tool-errors.js';
 import { getErrorMessage } from '../types.js';
@@ -10,6 +11,9 @@ const AUTH_REQUEST_ID = -1;
 const MAX_INBOUND_MESSAGE_SIZE = 1048576; // 1MB
 const MAX_AUTH_FAILURES = 5;
 const AUTH_LOCKOUT_MS = 300_000; // 5 minutes
+// 3A (2026-09-19 安全加固批3): auth_begin 探测超时——哑占位者(占端口的假监听进程)对
+// 任何消息都不回应,短超时探测失败后不降级,防把 secret 主动送给假监听者。
+const AUTH_BEGIN_PROBE_TIMEOUT_MS = 1500;
 
 interface EditorConnectionOptions {
   port: number;
@@ -40,6 +44,9 @@ export class EditorConnection {
   private reconnectEnabled = true;
   private connectAttempt = false;
   private connectGeneration = 0;  // ipc P1-4: 防 disconnect 后进行中的 connect() 复活已断开连接
+  /** 3A (2026-09-19 安全加固批3): 明文 auth 降级记忆——auth_begin 收到旧端 error 响应后
+   *  置 true,本实例后续连接直接走 legacyPlaintextAuth(免每次探测)。 */
+  private _useLegacyAuth = false;
 
   private disconnectHandlers = new Set<() => void>();
   private reconnectHandlers = new Set<() => void>();
@@ -480,7 +487,86 @@ export class EditorConnection {
     return this.request('operation_end', {});
   }
 
-  private performAuth(): Promise<void> {
+  /** 3A (2026-09-19 安全加固批3): challenge-response 握手编排。
+   *
+   *  防假监听者(H3):本机恶意进程先绑 9090/9081 可收到旧协议主动发送的明文 secret;
+   *  proof 模式下 secret 永不上线路,对端只能收到 HMAC(对单次 challenge 有效)——拿不到
+   *  secret 本身,无法连真插件横向复用。
+   *
+   *  降级矩阵(兼容矩阵的关键风险控制):
+   *  - 实例记忆 _useLegacyAuth=true → 直接明文(旧端已确认,免每次探测)
+   *  - auth_begin 收到 JSON-RPC error 响应(err.code 为 number,对端至少是真 JSON-RPC
+   *    服务端——旧插件回 -32001 后 close)→ 记忆降级 + warn。
+   *    [已知残余面]协议感知的假监听者可伪造 -32001 诱降级收 secret——localhost 明文
+   *    模型下不可根除,设 GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true 硬锁可拒一切降级。
+   *  - 探测超时(哑占位者不回应)→ **不降级**直接 fail(secret 不上线)。
+   *  - GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true → 非成功 challenge 路径一律 fail。 */
+  private async performAuth(): Promise<void> {
+    if (this._useLegacyAuth) return this.legacyPlaintextAuth();
+    if (!this.ws || !this.editorSecret) {
+      throw new ConnectionError('Cannot authenticate: not connected or no secret');
+    }
+    try {
+      await this.challengeResponseAuth();
+      return;
+    } catch (err) {
+      const e = err as Error & { crFallback?: boolean };
+      if (this.requireCrAuth()) {
+        throw new ConnectionError(
+          `challenge-response auth required (GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true) but handshake failed: ${e.message}`);
+      }
+      if (e.crFallback === true) {
+        this._useLegacyAuth = true;
+        getLogger().warn('editor',
+          'auth_begin rejected/invalid peer response — falling back to legacy plaintext auth ' +
+          '(editor 插件版本过旧?). secret 将明文经 ws:// 传输(localhost 模型);' +
+          'N-2(审查): _useLegacyAuth 为实例级降级记忆且不复位,升级插件后需**重启 MCP server**才恢复 proof 模式. ' +
+          '[已知残余面]协议感知的假监听者可伪造响应诱降级收 secret——GODOT_MCP_EDITOR_REQUIRE_CR_AUTH=true 可硬锁.');
+        return this.legacyPlaintextAuth();
+      }
+      throw new ConnectionError(
+        `challenge-response auth failed without a usable peer response (${e.message}) — ` +
+        `不降级(防哑占位者收 secret)。检查 editor 插件版本/端口占用;升级插件或重试.`);
+    }
+  }
+
+  /** challenge-response 握手主体(auth_begin → challenge → HMAC proof)。
+   *  可降级的失败(error 响应/无 challenge 的 result 响应)抛错挂 crFallback=true;
+   *  超时/断连/proof 阶段失败不挂(不可降级)。 */
+  private async challengeResponseAuth(): Promise<void> {
+    const secret = this.editorSecret;
+    if (!secret) throw new ConnectionError('Cannot authenticate: no secret');
+    let beginRes: unknown;
+    try {
+      beginRes = await this.request('auth_begin', {}, { timeoutMs: AUTH_BEGIN_PROBE_TIMEOUT_MS });
+    } catch (beginErr) {
+      const be = beginErr as Error & { code?: unknown };
+      // string code = 本地故障(超时'REQUEST_TIMEOUT'/断连'DISCONNECTED'),非对端响应 → 不可降级
+      if (typeof be.code === 'string') throw beginErr;
+      throw Object.assign(
+        new Error(`auth_begin rejected by peer (code=${String(be.code)}): ${be.message}`),
+        { crFallback: true },
+      );
+    }
+    const challenge = (beginRes as { challenge?: unknown } | null)?.challenge;
+    if (typeof challenge !== 'string' || challenge.length < 16) {
+      // 有 result 响应但无 challenge:非本协议的 JSON-RPC 服务端(旧端/异构端)→ 可降级
+      throw Object.assign(new Error('auth_begin response missing/short challenge'), { crFallback: true });
+    }
+    // proof 阶段失败直接上抛(无 crFallback 标记 → 不降级:secret 错再发明文只会多泄露一次)
+    const proof = createHmac('sha256', secret).update(challenge, 'utf8').digest('hex');
+    await this.request('auth_proof', { proof });
+    this.authenticated = true;
+  }
+
+  /** 强制 challenge-response 模式(高安全 opt-in):拒绝一切明文降级。 */
+  private requireCrAuth(): boolean {
+    return process.env.GODOT_MCP_EDITOR_REQUIRE_CR_AUTH === 'true'
+      || process.env.GODOT_MCP_REQUIRE_CR_AUTH === 'true';
+  }
+
+  /** 旧明文 auth 握手(id=-1,单发 secret)——proof 模式探测失败后的降级路径,原 performAuth 逻辑原样保留。 */
+  private legacyPlaintextAuth(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!this.ws || !this.editorSecret) {
         reject(new ConnectionError('Cannot authenticate: not connected or no secret'));

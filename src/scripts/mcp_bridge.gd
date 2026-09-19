@@ -39,6 +39,9 @@ var _peer_buffers: Dictionary = {}
 var _authenticated_peers: Dictionary = {}
 var _auth_fail_count: Dictionary = {}
 var _auth_locked_until: Dictionary = {}
+# 3A (2026-09-19 安全加固批3): challenge-response 握手的 per-peer 待验证 challenge
+# (peer_id -> String)。auth_begin 生成,auth_proof 消费(成功/断开即清)。
+var _auth_challenges: Dictionary = {}
 var _secret: String = ""
 var _secret_file: String = ""
 var _crypto: Crypto = null
@@ -322,6 +325,7 @@ func _process(delta: float) -> void:
 		# 断开即清零是 per-peer 的预期行为(peer id 每连接不同), LOCKOUT 仅减速带, 非主防线。
 		_auth_fail_count.erase(pid)
 		_auth_locked_until.erase(pid)
+		_auth_challenges.erase(pid)  # 3A: 断开即弃 challenge(单连接单次有效)
 		_peers.remove_at(i)
 
 	# ─── P2-4 playtest.step pending:每帧递减 frames_remaining,到 0 时 push 响应 ──
@@ -728,6 +732,17 @@ func _constant_time_compare(a: String, b: String) -> bool:
 		result = result | (ord(a[i]) ^ ord(b[i]))
 	return result == 0
 
+# 3A (2026-09-19 批3 真机实测修复): challenge-response proof 专用恒时比较——HMAC hex
+# 恒 64 字符,_constant_time_compare 的 SECRET_LEN=32 硬编码(bridge secret 专用)会把
+# 合法 proof 长度不等直接判 false(editor 侧真机首测兑现,TS mock 同构测不出)。
+func _constant_time_compare_varlen(a: String, b: String) -> bool:
+	if a.length() != b.length():
+		return false
+	var result := 0
+	for i in range(a.length()):
+		result = result | (ord(a[i]) ^ ord(b[i]))
+	return result == 0
+
 # DUPLICATE: Keep in sync with addons/godot_mcp_server/websocket_server.gd:_generate_secret
 # Cannot share because editor plugin and game autoload have separate script contexts.
 func _generate_secret() -> String:
@@ -993,8 +1008,43 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 			var incoming_secret: String = ""
 			if parsed is Dictionary and parsed.get("params") is Dictionary:
 				incoming_secret = str(parsed["params"].get("secret", ""))
+			# 3A (2026-09-19 安全加固批3): challenge-response 握手——secret 不上线路。
+			# auth_begin: 发随机 challenge(per-peer 单次,不断连);auth_proof: HMAC-SHA256
+			# (secret, challenge) 恒时比较。旧 method=auth 明文通道保留(下分支,旧 TS 兼容)。
+			# 假监听者先占端口只能收到 HMAC(对单次 challenge 有效),拿不到 secret 本身。
+			if parsed is Dictionary and parsed.get("method") == "auth_begin":
+				var cr_challenge: String = _crypto.generate_random_bytes(16).hex_encode()
+				_auth_challenges[pid] = cr_challenge
+				peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": {"challenge": cr_challenge}}) + "\n").to_utf8_buffer())
+				continue
+			if parsed is Dictionary and parsed.get("method") == "auth_proof":
+				if not _auth_challenges.has(pid):
+					peer.put_data((JSON.stringify({"id": null, "error": {"code": -32001, "message": "No pending challenge; send auth_begin first"}}) + "\n").to_utf8_buffer())
+					peer.disconnect_from_host()
+					_peer_buffers[key] = raw
+					return true
+				# HMAC-SHA256(secret, challenge) hex —— key/msg 均 UTF-8 bytes,输出小写 hex(与 TS 侧 createHmac 对齐)
+				var cr_expected: String = _crypto.hmac_digest(HashingContext.HASH_SHA256, _secret.to_utf8_buffer(), String(_auth_challenges[pid]).to_utf8_buffer()).hex_encode()
+				var cr_provided: String = str(parsed.get("params", {}).get("proof", ""))
+				if _constant_time_compare_varlen(cr_provided, cr_expected):
+					_authenticated_peers[pid] = true
+					_auth_challenges.erase(pid)
+					_auth_fail_count.erase(pid)
+					peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n").to_utf8_buffer())
+					continue
+				else:
+					var cr_fails: int = int(_auth_fail_count.get(pid, 0)) + 1
+					_auth_fail_count[pid] = cr_fails
+					if cr_fails >= MAX_AUTH_FAILS:
+						var cr_lockout: float = minf(LOCKOUT_BASE_SECONDS * pow(2.0, (float(cr_fails) / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
+						_auth_locked_until[pid] = Time.get_ticks_msec() / 1000.0 + cr_lockout
+					peer.put_data((JSON.stringify({"id": null, "error": {"code": -32001, "message": "Authentication failed"}}) + "\n").to_utf8_buffer())
+					peer.disconnect_from_host()
+					_peer_buffers[key] = raw
+					return true
 			if parsed is Dictionary and parsed.get("method") == "auth" and _constant_time_compare(incoming_secret, _secret):
 				_authenticated_peers[pid] = true
+				_auth_challenges.erase(pid)
 				_auth_fail_count.erase(pid)
 				peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n").to_utf8_buffer())
 				continue
