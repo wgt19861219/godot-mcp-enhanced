@@ -551,6 +551,7 @@ export class WebGuiServer {
           r = await p.add(path);
         } catch (err) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=500`);
+          auditWebGui('projects', 'add', 'write', path, { ok: false, error: err instanceof Error ? err.message : String(err) });   // 批5-N4②: 失败留痕
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
         if (r.ok) {
@@ -584,6 +585,7 @@ export class WebGuiServer {
           r = await p.remove(path);
         } catch (err) {
           getLogger().info('web-gui', `action=projects_remove path=${path} result=500`);
+          auditWebGui('projects', 'remove', 'write', path, { ok: false, error: err instanceof Error ? err.message : String(err) });   // 批5-N4②: 失败留痕
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
         if (r.ok) {
@@ -625,9 +627,11 @@ export class WebGuiServer {
         } catch (err) {
           if (err instanceof PathError) {   // executeRunProject 第二层白名单(Task 5 接线后真实触发)
             getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403_path`);
+            auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: `path rejected: ${err.message}` });   // 批5-N4②: 越权尝试留痕
             return json(403, { error: err.message });
           }
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=500`);
+          auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: err instanceof Error ? err.message : String(err) });   // 批5-N4②: 失败留痕
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
         getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=200`);
@@ -651,8 +655,10 @@ export class WebGuiServer {
             return json(200, { ok: true });
           }
           if (r.reason === 'not_found') return json(404, { error: 'not found' });
+          auditWebGui('sessions', 'stop', 'process', projectPath, { ok: false, error: r.reason ?? 'stop failed' });   // 批5-N4②: 失败留痕
           return json(500, { error: r.reason ?? 'stop failed' });
         } catch (err) {
+          auditWebGui('sessions', 'stop', 'process', projectPath, { ok: false, error: err instanceof Error ? err.message : String(err) });   // 批5-N4②: 失败留痕
           return json(500, { error: err instanceof Error ? err.message : String(err) });
         }
       }

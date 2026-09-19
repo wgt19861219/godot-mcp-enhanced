@@ -82,7 +82,7 @@ export async function handleTool(
           }, [
             `audit 文件: ${external ? '外置副本(防篡改参照)' : join(projectPath, ...AUDIT_LOG_REL)}`,
             'changed_files 为项目相对路径(PII 护栏);riskHighlights 标 destructive/delete/failed',
-            ...(divergence ? ['divergence.diverged=true = 项目内副本行数少于外置副本,可能被整行删改(排查篡改)'] : []),
+            ...(divergence ? ['divergence.diverged=true = 双副本不一致:divergenceKind=content(同位行被改字段,不删行)/length(行数差,可能整行删改或外置被删);firstDivergentLine=首个不一致行(批5-T11 内容级比对)'] : []),
             '回滚用 suggest_rollback + entry_index',
           ]),
         ),

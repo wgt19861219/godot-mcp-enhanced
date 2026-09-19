@@ -158,6 +158,13 @@
 - **N-4②(挂账批5+)**:auditWebGui 仅成功路径留痕(ok 恒 true),HTTP 面失败操作(500/异常)零留痕——对照 MCP 侧连失败也落审计(ok:false),两通道抗抵赖覆盖不等价;失败路径接线是行为扩展,另批做。
 - N-2/N-4①/N-3 已在本批 fix commit 处置(early-return 剥离/CLI 项目级审计接开关/方案偏差说明)。
 
+### 批5 审查处置记录(SHIPPED WITH NITS,2026-09-19)
+
+- N-a/N-b/N-c 已在批5 fix commit 处置:audit.ts get_log hints 文案随 T11 双向语义更新(原批2 单向文案对 content 场景误导核查者)/parseErrors 补流式断言(此前全仓零断言)/轮转端到端集成用例(append→rotate→read 全链路)。
+- **N-d(挂账)**:bridge-auth-proof 测试固定端口 9090 与 E2E_EDITOR=1 全量跑的 e2e editor 测试共享端口——门控是唯一隔离层,结构性解是 listen(0) 动态端口+secret 文件名跟随,但 scanSecretWindow 窗口固定 9081-9090,动态端口可能出窗,需先扩窗口设计。
+- **N-e(挂账,威胁模型记一笔)**:auditWebGui 的 existsSync 守卫使"假路径越权探测"(sessions/start PathError 403 且路径不存在)零留痕——假路径探测恰是越权侦察常见形态;修法需失败留痕绕过守卫的语义分裂设计,另批议。同批 start 的 readonly/白名单 403 不留痕而 PathError 403 留痕,403 覆盖不齐。
+- **N-f(备查)**:readAuditLog empty 路径 rotatedFiles=0 在"轮转后 append 前"毫秒窗口漏报;rotateIfNeeded 内层 rename catch 吞非 ENOENT 错误。均 best-effort 声明边界内。
+
 ## 4. 明确不做/挂账裁决(诚实边界)
 
 | 项 | 裁决 | 理由 |

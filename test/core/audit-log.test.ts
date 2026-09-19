@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -284,6 +284,105 @@ describe('external audit copy (2A)', () => {
     expect(afterD.projectEntries).toBe(0);
     expect(afterD.externalEntries).toBe(2);
     expect(afterD.diverged).toBe(true);
+    // 批5-T11: 行数差形态 → divergenceKind='length',首异行=较短方长度+1
+    expect(afterD.divergenceKind).toBe('length');
+    expect(afterD.firstDivergentLine).toBe(1);
+  });
+
+  it('批5-T11: 篡改项目内副本单行字段(不删行)→ divergenceKind=content 检出(批4 前不可检测形态)', async () => {
+    await appendAuditLine(tmpDir, makeEntry());
+    await appendAuditLine(tmpDir, makeEntry());
+    await appendAuditLine(tmpDir, makeEntry());
+    // 篡改第 2 行:改 trace_id 字段(冒充别的操作)/不删行——旧"单向行数比对"恒漏报
+    // (注意 makeEntry 各条内容相同,篡改值必须与原值必然不同)
+    const auditPath = join(tmpDir, ...AUDIT_LOG_REL);
+    const lines = readFileSync(auditPath, 'utf8').split(/\r?\n/).filter(Boolean);
+    const tampered = JSON.parse(lines[1]!) as { trace_id: string };
+    tampered.trace_id = 'tampered-trace-id-0000';
+    lines[1] = JSON.stringify(tampered);
+    writeFileSync(auditPath, lines.join('\n') + '\n', 'utf8');
+    const d = await compareAuditSources(tmpDir);
+    expect(d.diverged).toBe(true);
+    expect(d.divergenceKind).toBe('content');
+    expect(d.firstDivergentLine).toBe(2);
+    expect(d.projectEntries).toBe(3);
+    expect(d.externalEntries).toBe(3);  // 行数一致——旧行数比对对此形态恒 false
+  });
+});
+
+// ─── 批5-T12: 大小轮转 + 流式读(rotatedFiles 计数) ───────────────────────────
+
+describe('批5-T12: 轮转与流式读', () => {
+  it('rotateIfNeeded: 超阈值文件链式轮转(.jsonl→.1,再超→.2),小文件 no-op', async () => {
+    const { rotateIfNeeded, AUDIT_ROTATE_SIZE, AUDIT_ROTATE_KEEP } = await import('../../src/core/audit-log.js');
+    const rotDir = mkdtempSync(join(tmpdir(), 'gme-rot-'));
+    try {
+      const main = join(rotDir, 'audit.jsonl');
+      // 小文件 no-op
+      writeFileSync(main, 'small', 'utf8');
+      await rotateIfNeeded(main);
+      expect(existsSync(main)).toBe(true);
+      expect(existsSync(`${main}.1`)).toBe(false);
+      // 超阈值 → .jsonl → .jsonl.1
+      const big = 'x'.repeat(AUDIT_ROTATE_SIZE + 1);
+      writeFileSync(main, big, 'utf8');
+      await rotateIfNeeded(main);
+      expect(existsSync(`${main}.1`)).toBe(true);
+      expect(existsSync(main)).toBe(false);  // 主文件已被 rename 走
+      // 再写超阈值主文件 → .1→.2 链式
+      writeFileSync(main, big, 'utf8');
+      await rotateIfNeeded(main);
+      expect(existsSync(`${main}.1`)).toBe(true);
+      expect(existsSync(`${main}.2`)).toBe(true);
+      expect(AUDIT_ROTATE_KEEP).toBe(3);
+    } finally {
+      rmSync(rotDir, { recursive: true, force: true });
+    }
+  });
+
+  it('readAuditLog: rotatedFiles 计数主文件旁轮转代(流式读回归由既有统计用例覆盖)', async () => {
+    await appendAuditLine(tmpDir, makeEntry());
+    // 手工造一个轮转代文件(模拟历史轮转产物)
+    mkdirSync(join(tmpDir, ...AUDIT_LOG_REL.slice(0, -1)), { recursive: true });
+    writeFileSync(join(tmpDir, ...AUDIT_LOG_REL) + '.1', '', 'utf8');
+    const summary = await readAuditLog(tmpDir);
+    expect(summary.rotatedFiles).toBe(1);
+    expect(summary.totalEntries).toBe(1);  // 主文件条目仍可读(流式)
+  });
+
+  it('批5-N-b: parseErrors 统计在流式读下正确(非法 JSON 行计入,空行不计)', async () => {
+    const auditPath = join(tmpDir, ...AUDIT_LOG_REL);
+    mkdirSync(join(tmpDir, ...AUDIT_LOG_REL.slice(0, -1)), { recursive: true });
+    writeFileSync(auditPath, [
+      'not-json-at-all',
+      '',                                        // 空行不计 parseErrors(与旧 filter(Boolean) 一致)
+      JSON.stringify(makeEntry()),
+      '{"broken": ',                             // 半截 JSON 计入
+    ].join('\n') + '\n', 'utf8');
+    const summary = await readAuditLog(tmpDir);
+    expect(summary.parseErrors).toBe(2);         // 批5 审查 N-b:此前全仓零断言,仅读码确认
+    expect(summary.totalEntries).toBe(1);        // 合法行仍可读
+  });
+
+  it('批5-N-c: 端到端——超阈值审计文件 + appendAuditLine 触发轮转,新主文件可读且 .1 保留旧内容', async () => {
+    const { AUDIT_ROTATE_SIZE } = await import('../../src/core/audit-log.js');
+    const auditPath = join(tmpDir, ...AUDIT_LOG_REL);
+    mkdirSync(join(tmpDir, ...AUDIT_LOG_REL.slice(0, -1)), { recursive: true });
+    // 造超阈值主文件(旧内容,一行大 JSON 撑过 10MB)
+    const oldBig = JSON.stringify({ ...makeEntry({ trace_id: 'old-era-entry' }), pad: 'x'.repeat(AUDIT_ROTATE_SIZE) });
+    writeFileSync(auditPath, oldBig + '\n', 'utf8');
+    // append 触发轮转:旧内容 → .1,新行落进重建的主文件
+    await appendAuditLine(tmpDir, makeEntry({ trace_id: 'post-rotate-entry' }));
+    expect(existsSync(`${auditPath}.1`)).toBe(true);
+    const main = readFileSync(auditPath, 'utf8').trim();
+    expect(main).toContain('post-rotate-entry');
+    expect(main).not.toContain('old-era-entry');
+    expect(readFileSync(`${auditPath}.1`, 'utf8')).toContain('old-era-entry');
+    // 轮转后 readAuditLog 读新主文件(集成:append→rotate→read 全链路)
+    const summary = await readAuditLog(tmpDir);
+    expect(summary.totalEntries).toBe(1);
+    expect(summary.entries[0]!.trace_id).toBe('post-rotate-entry');
+    expect(summary.rotatedFiles).toBeGreaterThanOrEqual(1);
   });
 });
 
