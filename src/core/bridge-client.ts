@@ -126,6 +126,13 @@ function entryLastSeenMs(entry: { lastSeen?: unknown; lastSeenMs?: unknown }): n
 /** 解析 projectPath 对应 bridge 实例的实际监听端口(见区块注释);失败回落 BRIDGE_PORT。
  *  registryDir 参数仅供单测注入,生产走 machineRegistryInstancesDir()。 */
 export function resolveBridgePort(projectPath: string, registryDir: string = machineRegistryInstancesDir()): number {
+  // N-d(批5审查挂账): 显式端口覆盖(测试注入,先例对齐 GODOT_MCP_BRIDGE_REGISTRY_DIR;
+  // 发现类信息——只改连接目标端口,auth 语义防线不变,不涉安全边界)。测试 mock server 用
+  // listen(0) 动态端口,出 scanSecretWindow 固定窗口 9081-9090(GD 侧 mcp_bridge.gd 环形
+  // 绑定同窗口,是生产硬约束,不为测试扩窗)——无此覆盖时固定绑 9090 与 e2e editor 测试
+  // (E2E_EDITOR=1 同端口)仅靠测试门控隔离。生产无人设此 env,零行为变化。
+  const forced = Number(process.env.GODOT_MCP_BRIDGE_PORT_OVERRIDE);
+  if (Number.isInteger(forced) && forced >= 1 && forced <= 65535) return forced;
   if (!projectPath) return BRIDGE_PORT;
   try {
     const dir = registryDir;

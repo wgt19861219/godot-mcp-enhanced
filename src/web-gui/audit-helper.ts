@@ -6,9 +6,14 @@
 // duration/ok 如实。best-effort:失败计数不阻断 HTTP 响应(对齐 saveText 2C 哲学)。
 // 批5-N4②(批4审查挂账): 补失败留痕——ok:false + details.error(此前仅成功路径,
 // HTTP 面失败操作零留痕,对照 MCP 侧 dispatcher 连失败也落 ok:false)。
+// 批6-N-e(批5审查挂账): 失败调用 + projectPath 不存在改落机器级审计——原 existsSync
+// 守卫(防 appendAuditLine mkdir 在盘根产垃圾 .godot)连假路径越权探测的证据也一并挡掉,
+// 而假路径探测恰是越权侦察常见形态。机器级(~/.godot-mcp/machine-audit.jsonl)无项目可
+// 归属的安全事件语义归机器,不建目录零垃圾;成功调用路径必存在,维持跳过(竞态下无项目
+// 可归属)。details.project_path_absent 标注路径不存在事实,核查者可区分两类失败。
 import { randomUUID } from 'crypto';
 import { existsSync } from 'fs';
-import { appendAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
+import { appendAuditLine, appendMachineAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 
 export function auditWebGui(
@@ -27,17 +32,29 @@ export function auditWebGui(
   },
 ): void {
   if (!isAuditEnabled()) return;
-  // 项目根不存在则跳过(appendAuditLine 会 mkdir 建目录——假路径/已删目录不应在盘根
-  // 产生垃圾 .godot;真实会话路径必存在,该守卫不影响正常留痕。失败留痕同守卫——
-  // projectPath 本就不存在的失败无项目可归属,不留痕合理)
-  if (!existsSync(projectPath)) return;
   const details = { ...(opts?.details ?? {}) };
   if (opts?.error !== undefined) details.error = opts.error;
+  const ok = opts?.ok ?? true;
+  if (!existsSync(projectPath)) {
+    // 成功调用项目路径必存在,此分支实为失败调用(或极边缘竞态):无项目审计可归属。
+    // 批6-N-e: 失败留痕落机器级——不在盘根 mkdir 垃圾目录,假路径探测证据不丢。
+    if (ok) return;
+    details.project_path_absent = true;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action, risk,
+      ok: false, project_path: projectPath, changed_files: opts?.changedFiles ?? [],
+      duration_ms: opts?.durationMs ?? 0,  // 无实测时长记 0(诚实:非测量值)
+      caller: `web-gui:${subsystem}`,
+      details,
+    }).catch((e) => { recordAuditWriteFailure(e); });
+    return;
+  }
   void appendAuditLine(projectPath, {
     timestamp: new Date().toISOString(),
     trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
     tool: 'web-gui', action, risk,
-    ok: opts?.ok ?? true, project_path: projectPath, changed_files: opts?.changedFiles ?? [],
+    ok, project_path: projectPath, changed_files: opts?.changedFiles ?? [],
     duration_ms: opts?.durationMs ?? 0,  // 无实测时长记 0(诚实:非测量值)
     caller: `web-gui:${subsystem}`,
     ...(Object.keys(details).length ? { details } : {}),

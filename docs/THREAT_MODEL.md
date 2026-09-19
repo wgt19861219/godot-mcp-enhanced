@@ -131,6 +131,7 @@ MCP client ──stdio──▶ enhanced server ──127.0.0.1:WS──▶ edit
 | T6 | editor 模式 err.message PII 外泄 | G2 PII 护栏(§2.10) | **EditorToolExecutor catch→return 盲区**(I-1,deferred) |
 | T7 | symlink 换链 TOCTOU | S-3 每轮复检 + 写前预检(§2.6) | 非原子窗口 |
 | T8 | 多实例 nonce 重放 | HMAC + nonce 查重(§2.8) | secret 泄漏后冒充 |
+| T9 | web-gui HTTP 面越权侦察(假路径/白名单外 403 探测)零留痕,事后不可核查 | 批6(2026-09-19):sessions/start 与 projects/add 的 readonly/白名单 403 拒绝接审计(`server.ts:619,624,550`);路径不存在的失败留痕由 `web-gui/audit-helper.ts:38-42` 分流落机器级 `~/.godot-mcp/machine-audit.jsonl`(不建目录零垃圾,`details.project_path_absent` 标注事实) | file_save 的 readonly 403 在 body 解析前拦截、无 projectPath 可归属,仅 logger 留痕(`server.ts:457-466` 边界注释);认证层 401/403(Origin/token)同样无路径信息仅 logger |
 
 ---
 
@@ -145,6 +146,7 @@ MCP client ──stdio──▶ enhanced server ──127.0.0.1:WS──▶ edit
 5. **所有网络服务 localhost-only 无 TLS**:plaintext 在 localhost 可接受;`GODOT_MCP_EDITOR_PERSISTENT_SECRET`/`ALLOW_UNSAFE_CONFIRM` 等 opt-in 降级仅可信环境用。
 6. **G2 PII 护栏盲区**(`EditorToolExecutor.ts:152,172,277,305,319`):多个 catch→return 透传 err.message,绕过主 catch classifyError。editor 模式错误含路径时 PII 外泄(deferred,见 G2 审查 I-1)。
 7. **措辞统一**:本文档统一称「防误操作层 / accident guard」(对齐 `gdscript-executor.ts:10-15` 文件头自述)。`path-utils.ts:280` 旧注释称「本地单用户信任场景的安全边界」措辞偏强,应以本文档为准。
+8. **web-gui 拒绝留痕覆盖边界**(批6,2026-09-19):业务路径 403(sessions/start、projects/add)已接审计,T9;但 file_save readonly 403(拦截在 body 解析前,无 projectPath)与认证层 401/403(Origin/token,无路径信息)仅 logger 留痕——无项目归属的安全事件机器级落条目价值低,裁决不做,留痕覆盖以业务路径为准。
 
 ---
 
@@ -173,3 +175,4 @@ MCP client ──stdio──▶ enhanced server ──127.0.0.1:WS──▶ edit
 | 日期 | 变更 |
 |---|---|
 | 2026-08-13 | 初版(G8 速赢批),10 层防护实测声明 + 诚实限制。纠正附录 C「game bridge 无鉴权」误判(实测有完整鉴权)。 |
+| 2026-09-19 | 批6(批5审查挂账 N-d/N-e 处置):新增 T9(web-gui 越权侦察留痕)与诚实边界第 8 条;bridge 端口解析新增显式覆盖入口 `GODOT_MCP_BRIDGE_PORT_OVERRIDE`(`bridge-client.ts:134`,测试注入先例对齐 REGISTRY_DIR,发现类信息不涉安全边界)。 |

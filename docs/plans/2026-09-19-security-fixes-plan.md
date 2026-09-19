@@ -161,9 +161,15 @@
 ### 批5 审查处置记录(SHIPPED WITH NITS,2026-09-19)
 
 - N-a/N-b/N-c 已在批5 fix commit 处置:audit.ts get_log hints 文案随 T11 双向语义更新(原批2 单向文案对 content 场景误导核查者)/parseErrors 补流式断言(此前全仓零断言)/轮转端到端集成用例(append→rotate→read 全链路)。
-- **N-d(挂账)**:bridge-auth-proof 测试固定端口 9090 与 E2E_EDITOR=1 全量跑的 e2e editor 测试共享端口——门控是唯一隔离层,结构性解是 listen(0) 动态端口+secret 文件名跟随,但 scanSecretWindow 窗口固定 9081-9090,动态端口可能出窗,需先扩窗口设计。
-- **N-e(挂账,威胁模型记一笔)**:auditWebGui 的 existsSync 守卫使"假路径越权探测"(sessions/start PathError 403 且路径不存在)零留痕——假路径探测恰是越权侦察常见形态;修法需失败留痕绕过守卫的语义分裂设计,另批议。同批 start 的 readonly/白名单 403 不留痕而 PathError 403 留痕,403 覆盖不齐。
+- **N-d(批6 已处置,2026-09-19)**:bridge-auth-proof 测试固定端口 9090 与 E2E_EDITOR=1 全量跑的 e2e editor 测试共享端口——门控是唯一隔离层。批6 实施裁决:**不扩窗口**(原挂账预想的"扩 scanSecretWindow 窗口设计"被否)——GD 侧 `mcp_bridge.gd` 环形绑定 9081-9090 是生产硬约束,TS 侧扫描窗口=GD 绑定窗口,为测试扩窗污染生产语义;改走**显式覆盖正门**:`resolveBridgePort` 新增 `GODOT_MCP_BRIDGE_PORT_OVERRIDE`(测试注入先例对齐 `GODOT_MCP_BRIDGE_REGISTRY_DIR`,发现类信息不涉安全边界),测试 `listen(0)` 动态端口+secret 文件名/env 覆盖跟随,结构性消除端口共享。
+- **N-e(批6 已处置,2026-09-19)**:auditWebGui 的 existsSync 守卫使"假路径越权探测"(sessions/start PathError 403 且路径不存在)零留痕——假路径探测恰是越权侦察常见形态。批6 落地:(a)失败调用+路径不存在改落**机器级** machine-audit(`details.project_path_absent` 标注,不建目录零垃圾——守卫防 mkdir 垃圾的原始理由保留,语义分裂以"项目级建目录 vs 机器级不建"化解);(b)sessions/start 的 readonly/白名单 403 与 projects/add 白名单 403 补接审计,403 覆盖对齐;(c)THREAT_MODEL 记账:威胁表 T9 + 诚实边界第 8 条(file_save readonly 403 拦截在 body 解析前无 projectPath、认证层 401/403 无路径,仅 logger——裁决不接)。
 - **N-f(备查)**:readAuditLog empty 路径 rotatedFiles=0 在"轮转后 append 前"毫秒窗口漏报;rotateIfNeeded 内层 rename catch 吞非 ENOENT 错误。均 best-effort 声明边界内。
+
+### 批6 审查处置记录(SHIPPED WITH NITS,2026-09-19,`docs/reviews/2026-09-19-安全加固批6.md`)
+
+- N-1 已在批6 fix commit 处置:CHANGELOG "audit-helper 专项单测新文件"计数 6→5(实测 5 个 it;快照护栏"计数未实测"违规,单字符修正)。
+- **N-2(挂账)**:server-http projects/add 用例的 `vi.unstubAllEnvs()` 在 it 末尾而非 finally——断言失败时 4 个 stub 泄漏;同批另一用例用了 finally,风格不一致。实际风险低(同文件后续用例不依赖这些 env),下次触碰该文件时补 try/finally。
+- **N-3(备查)**:`GODOT_MCP_BRIDGE_PORT_OVERRIDE`(TS 连接目标)与 GD 侧 `GODOT_MCP_BRIDGE_PORT`(监听起点)前缀重叠,误设后者期待改连接目标会静默无效。精确名匹配无误读,与 REGISTRY_DIR 同级风险;可选改进:README env 表补一行区分两域。
 
 ## 4. 明确不做/挂账裁决(诚实边界)
 
