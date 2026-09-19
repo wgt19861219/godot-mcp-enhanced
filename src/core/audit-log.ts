@@ -12,11 +12,12 @@
  * - 默认开(本地 .godot/ 落盘,无外传风险),GODOT_MCP_AUDIT=false 可关
  */
 
-import { appendFile, mkdir, readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { appendFile, mkdir, readFile, stat, rename, rm } from 'fs/promises';
+import { existsSync, createReadStream } from 'fs';
 import { join, dirname, relative } from 'path';
 import { homedir } from 'os';
 import { createHash } from 'crypto';
+import { createInterface } from 'node:readline';
 import type { RiskLevel } from './tool-registry.js';
 import { getLogger } from './logger.js';
 
@@ -142,6 +143,9 @@ export async function appendAuditLine(projectPath: string, entry: AuditEntry): P
     };
   }
   const line = JSON.stringify(line_entry) + '\n';
+  // 批5-T12: 大小轮转(项目内与外置副本各自独立判定,追加前检查)——高频写项目上
+  // jsonl 无限增长会使 get_log 全量读越来越慢;10MB 链式轮转保留 3 代(.1/.2/.3)。
+  await rotateIfNeeded(auditPath);
   await appendFile(auditPath, line, 'utf8');
   // 2A (2026-09-19 安全加固批2): 外置副本双写——防篡改主副本。
   // 项目内副本保留(audit 工具默认读它,现行为零变更);外置失败独立处理:默认计数不
@@ -152,10 +156,43 @@ export async function appendAuditLine(projectPath: string, entry: AuditEntry): P
   const extPath = getExternalAuditFile(projectPath);
   try {
     await mkdir(dirname(extPath), { recursive: true });
+    await rotateIfNeeded(extPath);
     await appendFile(extPath, line, 'utf8');
   } catch (e) {
     recordAuditWriteFailure(e);
     if (isAuditStrict()) throw e;
+  }
+}
+
+// ─── 批5-T12: 大小轮转 ────────────────────────────────────────────────────────
+
+/** 轮转阈值与保留代数(可测试性:模块常量,测试以小文件触发需另造大文件或直接测
+ *  rotateIfNeeded 的行为契约——阈值本身不 mock,10MB 造文件成本可控)。 */
+export const AUDIT_ROTATE_SIZE = 10 * 1024 * 1024;
+export const AUDIT_ROTATE_KEEP = 3;
+
+/** 超 AUDIT_ROTATE_SIZE 时链式轮转:.3 删(最老)→.2→.3→.1→.2→主文件→.1。
+ *  文件不存在/小于阈值 no-op;轮转失败不阻断追加(best-effort——追加是主路径,
+ *  轮转失败仅意味着继续增长,下次再试)。 */
+export async function rotateIfNeeded(filePath: string): Promise<void> {
+  let size: number;
+  try {
+    size = (await stat(filePath)).size;
+  } catch {
+    return; // 文件不存在(首条)——无轮转对象
+  }
+  if (size < AUDIT_ROTATE_SIZE) return;
+  try {
+    await rm(`${filePath}.${AUDIT_ROTATE_KEEP}`, { force: true });
+    for (let i = AUDIT_ROTATE_KEEP - 1; i >= 1; i--) {
+      try {
+        await rename(`${filePath}.${i}`, `${filePath}.${i + 1}`);
+      } catch { /* 该代不存在(未攒满)——跳过继续 */ }
+    }
+    await rename(filePath, `${filePath}.1`);
+  } catch (e) {
+    recordAuditWriteFailure(e);
+    getLogger().warn('audit', `rotate failed for ${relative(homedir(), filePath) || filePath}: ${e instanceof Error ? e.message : e}`);
   }
 }
 
@@ -186,23 +223,41 @@ export function getExternalAuditFile(projectPath: string): string {
 export interface AuditDivergence {
   projectEntries: number;
   externalEntries: number;
-  /** 项目内行数 < 外置行数 = 项目内副本可能被整行删改(外置为参照)。 */
+  /** 两副本任何不一致(行数差或同位行内容不同)均为 true(批5-T11 从"单向行数比对"升级)。 */
   diverged: boolean;
+  /** 批5-T11: 首个不一致行号(两副本 1-based 共同前缀之后;行数差且前缀全等时=较短方长度+1)。 */
+  firstDivergentLine?: number;
+  /** 批5-T11: 'length'(行数不一致)|'content'(行数一致但某行内容不同——改字段不删行的
+   *  篡改形态,批4 前不可检测)。 */
+  divergenceKind?: 'length' | 'content';
 }
 
-/** 项目内副本 vs 外置副本轻量比对(行数)。整行删除无法由 parseErrors 发现,行数差是
- *  唯一信号——audit get_log external=true 时附在响应里供篡改排查。 */
+/** 项目内副本 vs 外置副本逐行内容比对(批5-T11 升级:原仅 `projectEntries < externalEntries`
+ *  单向行数比对,"改字段不删行"的篡改不可检测;两副本由 appendAuditLine 双写同一 line
+ *  字符串,行内容应完全一致,任何同位行差异即篡改信号)。
+ *  检测力边界(诚实):双删两份副本(行数等且内容等)仍不可检测——需 hash 链/签名,见
+ *  方案 §4 不做裁决(跨进程并发写断链误报);外置副本自身被同权限进程删改不检(参照系
+ *  假设,与 THREAT_MODEL 诚实边界一致)。 */
 export async function compareAuditSources(projectPath: string): Promise<AuditDivergence> {
-  const countLines = async (p: string): Promise<number> => {
+  const readLines = async (p: string): Promise<string[]> => {
     try {
-      return (await readFile(p, 'utf8')).split(/\r?\n/).filter(Boolean).length;
+      return (await readFile(p, 'utf8')).split(/\r?\n/).filter(Boolean);
     } catch {
-      return 0;
+      return [];
     }
   };
-  const projectEntries = await countLines(join(projectPath, ...AUDIT_LOG_REL));
-  const externalEntries = await countLines(getExternalAuditFile(projectPath));
-  return { projectEntries, externalEntries, diverged: projectEntries < externalEntries };
+  const proj = await readLines(join(projectPath, ...AUDIT_LOG_REL));
+  const ext = await readLines(getExternalAuditFile(projectPath));
+  const common = Math.min(proj.length, ext.length);
+  for (let i = 0; i < common; i++) {
+    if (proj[i] !== ext[i]) {
+      return { projectEntries: proj.length, externalEntries: ext.length, diverged: true, firstDivergentLine: i + 1, divergenceKind: 'content' };
+    }
+  }
+  if (proj.length !== ext.length) {
+    return { projectEntries: proj.length, externalEntries: ext.length, diverged: true, firstDivergentLine: common + 1, divergenceKind: 'length' };
+  }
+  return { projectEntries: proj.length, externalEntries: ext.length, diverged: false };
 }
 
 /** audit 回放只读统计(不真重放执行,对齐 devtool buildAuditReplay)。 */
@@ -214,6 +269,8 @@ export interface AuditReplaySummary {
   riskHighlights: { index: number; entry: AuditEntry; reason: string }[];
   parseErrors: number;
   entries: (AuditEntry & { index: number })[];  // 最近 N 条(每条带全局 index,供 suggest_rollback 精确定位)
+  /** 批5-T12: 主文件旁的轮转代(.1~.N)计数——回放只覆盖主文件,轮转代需手动查。 */
+  rotatedFiles: number;
 }
 
 /** 风险高亮启发式(destructive/delete/failed 标记,对齐 devtool riskReason)。 */
@@ -233,19 +290,34 @@ export async function readAuditLog(
   const auditPath = opts?.external ? getExternalAuditFile(projectPath) : join(projectPath, ...AUDIT_LOG_REL);
   const empty: AuditReplaySummary = {
     totalEntries: 0, timeRange: {}, operationCounts: {}, changedFileCounts: {},
-    riskHighlights: [], parseErrors: 0, entries: [],
+    riskHighlights: [], parseErrors: 0, entries: [], rotatedFiles: 0,
   };
   if (!existsSync(auditPath)) return empty;
-  const content = await readFile(auditPath, 'utf8');
-  const lines = content.split(/\r?\n/).filter(Boolean);
+  // 批5-T12: 流式逐行读(readline)替代 readFile 全量进内存——峰值从"原始 content +
+  // lines 数组 + entries 对象"三份降为"行缓冲 + entries 对象"两份。诚实边界:扫描量
+  // 不变(取末尾 N 条仍需全扫,尾部 seek 优化挂账);空行跳过不计 parseErrors(与旧
+  // filter(Boolean) 语义一致)。
   const entries: AuditEntry[] = [];
   let parseErrors = 0;
-  for (const line of lines) {
-    try {
-      entries.push(JSON.parse(line) as AuditEntry);
-    } catch {
-      parseErrors++;
+  const rl = createInterface({ input: createReadStream(auditPath, 'utf8'), crlfDelay: Infinity });
+  try {
+    for await (const raw of rl) {
+      const line = raw.trim();
+      if (!line) continue;
+      try {
+        entries.push(JSON.parse(line) as AuditEntry);
+      } catch {
+        parseErrors++;
+      }
     }
+  } finally {
+    rl.close();
+  }
+  // 批5-T12: 主文件旁的轮转代计数(.1~.N 存在几个)——回放只覆盖主文件,轮转代需
+  // 手动查,响应显式提示防误判"轮转后的历史消失了"。
+  let rotatedFiles = 0;
+  for (let i = 1; i <= AUDIT_ROTATE_KEEP; i++) {
+    if (existsSync(`${auditPath}.${i}`)) rotatedFiles++;
   }
   const filtered = opts?.since ? entries.filter((e) => e.timestamp >= (opts.since as string)) : entries;
   const limit = opts?.limit ?? filtered.length;
@@ -271,6 +343,7 @@ export async function readAuditLog(
     riskHighlights,
     parseErrors,
     entries: recent.map((e, i) => ({ ...e, index: startIdx + i })),
+    rotatedFiles,
   };
 }
 

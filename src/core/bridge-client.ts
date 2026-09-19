@@ -531,10 +531,29 @@ async function _openSocket(timeout: number, legacyAuth: boolean): Promise<Socket
         if (!line) continue;
         try {
           const resp = JSON.parse(line);
+          // N-1(批4审查挂账,批5处置): cr-proof 阶段对端回 result 但 authenticated 非
+          // truthy(空 result/显式 false/再发 challenge 等异形)——与 EditorConnection
+          // 批4-T1 同语义 `!== true` 立即拒,收敛为单点判定(此前分散在 N-4/:567 两分支,
+          // 且 :537 的 auth_begin 措辞在 proof 阶段误导)。proof 阶段失败不降级
+          // (authPhase='cr-proof',_doConnect 仅对 'cr-probe' 降级——语义不变)。
+          if (!authDone && !legacyAuth && authPhase === 'cr-proof'
+              && resp.result !== undefined && resp.result.authenticated !== true) {
+            clearTimeout(timer);
+            sock.destroy();
+            reject(Object.assign(
+              new BridgeNotConnectedError(
+                `Bridge auth_proof rejected (authenticated is not true${resp.result.authenticated === false ? ': secret mismatch' : ''}). `
+                + 'Re-run the game or check the bridge secret file.'),
+              { authPhase },
+            ));
+            return;
+          }
           // N-4(审查): 对端回 result 但既无 challenge 也非 authenticated(非本协议 JSON-RPC 端)
-          // → 与 EditorConnection 同语义按"有响应可降级"处理(authPhase 仍 cr-probe);
+          // → 与 EditorConnection 同语义按"有响应可降级"处理(限 auth_begin 探测阶段——
+          // proof 阶段的同形态已被上方 N-1 分支拦截);
           // 此前落到 Auth failure 分支产出 "Bridge auth failed (undefined): undefined" 不可读
-          if (!authDone && !legacyAuth && resp.result && resp.result.challenge === undefined
+          if (!authDone && !legacyAuth && authPhase === 'cr-probe'
+              && resp.result && resp.result.challenge === undefined
               && resp.result.authenticated === undefined) {
             clearTimeout(timer);
             sock.destroy();

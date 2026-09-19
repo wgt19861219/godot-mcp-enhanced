@@ -457,6 +457,31 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
       await rm(tmpProj, { recursive: true, force: true });
     }
   });
+
+  it('批5-N4②: sessions/stop 失败(r.ok=false 500)→ 审计落 ok:false + details.error(此前失败零留痕)', async () => {
+    const tmpProj = await mkdtemp(join(tmpdir(), 'gme-n4proj-'));
+    const t = await startCtrlServer({ stopSession: async () => ({ ok: false, reason: 'process crash mid-kill' }) });
+    active = t.srv;
+    try {
+      const res = await post(t.base, '/api/sessions/stop', t.token, { projectPath: tmpProj });
+      expect(res.status).toBe(500);
+      const auditPath = join(tmpProj, '.godot', 'mcp_audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(auditPath, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'stop' && e.ok === false);
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(hit, '失败审计行应落盘(查找式:ok:false)').toBeDefined();
+      expect(hit!.caller).toBe('web-gui:sessions');
+      expect((hit!.details as { error?: string })?.error).toBe('process crash mid-kill');
+    } finally {
+      await rm(tmpProj, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── rotateSharedToken 与 server 联动(M-2,2026-09-17 审查批)──────────────────
