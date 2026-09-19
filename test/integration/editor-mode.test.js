@@ -49,7 +49,7 @@ describe('Editor mode integration', () => {
     wss.on('connection', (ws) => {
       ws.on('message', (data) => {
         const msg = JSON.parse(data.toString());
-        received.push(msg.id);
+        received.push({ id: msg.id, method: msg.method });
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { ok: true } }));
       });
     });
@@ -62,8 +62,9 @@ describe('Editor mode integration', () => {
       executor.execute('add_node', {}),
     ]);
     expect(results.length).toBe(2);
-    // Auth message (id=-1) + 2 tool calls = 3 total messages; filter auth out
-    const toolIds = received.filter(id => id !== -1);
+    // 3A (2026-09-19 批3): echo mock 无 challenge → 握手序列为 auth_begin(探测)+auth(id=-1 明文降级);
+    // 认证消息(明文 auth + auth_begin 探测)过滤后剩工具调用,二者 id 唯一
+    const toolIds = received.filter(m => m.method !== 'auth' && m.method !== 'auth_begin').map(m => m.id);
     expect(new Set(toolIds).size).toBe(2);
     conn.disconnect();
   });

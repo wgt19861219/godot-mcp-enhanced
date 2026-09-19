@@ -13,6 +13,7 @@
  *   gdscript-executor→tools/shared 的既有环是历史债,非本下沉引入)
  */
 import { createConnection, Socket } from 'net';
+import { createHmac } from 'crypto';
 import { readFileSync, existsSync, lstatSync, chmodSync, statSync, readdirSync } from 'fs';
 import { join, resolve } from 'path';
 import { userInfo } from 'os';
@@ -241,6 +242,9 @@ let _socket: Socket | null = null;
 let _socketAuthenticated = false;
 let _socketBuffer = '';
 let _connectionLock: Promise<Socket> | null = null;
+// 3A (2026-09-19 安全加固批3): 明文 auth 降级记忆——auth_begin 收到旧 bridge 的 error
+// 响应后置 true,本进程后续连接直接走 legacy(免每次探测)。见 _doConnect。
+let _bridgeLegacyAuth = false;
 
 // 首次连接成功回调(由 GodotServer.run() 装配 launchDashboardOnce——2026-09-17 H-3/O2 归位;core 不依赖 dashboard)
 let _onBridgeConnected: (() => void) | null = null;
@@ -414,8 +418,36 @@ export function registerBridgePushHandler(handler: ((params: Record<string, unkn
   _pushMessageHandler = handler;
 }
 
-/** Perform the actual TCP connection and auth handshake. */
+/** Perform the actual TCP connection and auth handshake.
+ *  3A (2026-09-19 安全加固批3): challenge-response 握手编排——auth_begin 探测(默认)→
+ *  收到 JSON-RPC error 响应(旧 bridge 版本)→ 记忆降级重连一次明文 auth;探测超时
+ *  (哑占位者不回应)**不降级**(防把 secret 主动送给占端口的假监听进程)。
+ *  [已知残余面]协议感知的假监听者可伪造 -32001 诱降级收 secret——localhost 明文模型
+ *  下不可根除,GODOT_MCP_REQUIRE_CR_AUTH=true 可硬锁拒一切降级。 */
 async function _doConnect(timeout: number): Promise<Socket> {
+  if (_bridgeLegacyAuth) return _openSocket(timeout, true);
+  try {
+    return await _openSocket(timeout, false);
+  } catch (err) {
+    const e = err as Error & { authPhase?: string };
+    if (e.authPhase === 'cr-probe' && !_requireBridgeCrAuth()) {
+      _bridgeLegacyAuth = true;
+      getLogger().warn('bridge',
+        'auth_begin rejected with JSON-RPC error (old bridge) — falling back to legacy plaintext auth ' +
+        '(mcp_bridge.gd 版本过旧?). secret 将明文经 TCP 传输(localhost 模型);重新 game_bridge_install 后自动恢复 proof 模式.');
+      return _openSocket(timeout, true);
+    }
+    throw err;
+  }
+}
+
+/** 强制 challenge-response 模式(高安全 opt-in,与 EditorConnection 共用 env):拒绝明文降级。 */
+function _requireBridgeCrAuth(): boolean {
+  return process.env.GODOT_MCP_REQUIRE_CR_AUTH === 'true'
+      || process.env.GODOT_MCP_BRIDGE_REQUIRE_CR_AUTH === 'true';
+}
+
+async function _openSocket(timeout: number, legacyAuth: boolean): Promise<Socket> {
   _invalidateSocket();
 
   // CMP-5 (2026-08-08): autoload 健康预检——读磁盘 project.godot 的 [autoload] 段,
@@ -456,9 +488,17 @@ async function _doConnect(timeout: number): Promise<Socket> {
   return new Promise((resolve, reject) => {
     // A1: 实际端口来自上方单次解析(多实例避让后可能非 9081;Task 4.4 与 secret 同源)
     const sock = createConnection({ port, host: BRIDGE_HOST }, () => {
-      sock.write(JSON.stringify({ id: 0, method: 'auth', params: { secret } }) + '\n');
+      // 3A: 默认发 auth_begin(challenge-response 探测);legacy 模式发旧明文 auth
+      if (legacyAuth) {
+        sock.write(JSON.stringify({ id: 0, method: 'auth', params: { secret } }) + '\n');
+      } else {
+        sock.write(JSON.stringify({ id: 0, method: 'auth_begin' }) + '\n');
+      }
     });
 
+    // 3A: 认证阶段跟踪——cr-probe(探测)/cr-proof(proof 验证)/legacy(明文)。
+    // cr-probe 收 error → 旧端(可降级重连);其余阶段 error = 真失败(secret 错/锁定)。
+    let authPhase: 'cr-probe' | 'cr-proof' | 'legacy' = legacyAuth ? 'legacy' : 'cr-probe';
     let authDone = false;
     const timer = setTimeout(() => {
       sock.destroy();
@@ -474,6 +514,13 @@ async function _doConnect(timeout: number): Promise<Socket> {
         if (!line) continue;
         try {
           const resp = JSON.parse(line);
+          // 3A: challenge-response —— auth_begin 的响应带 challenge → 发 HMAC proof(secret 不上线)
+          if (!authDone && !legacyAuth && resp.result?.challenge) {
+            authPhase = 'cr-proof';
+            const proof = createHmac('sha256', secret).update(String(resp.result.challenge), 'utf8').digest('hex');
+            sock.write(JSON.stringify({ id: 1, method: 'auth_proof', params: { proof } }) + '\n');
+            return;
+          }
           // P3(2026-08-21 七维度审核): auth 被拒(secret 不匹配,authenticated=false)
           // 立即失败——此前干等 auth timeout,secret 错误与 bridge 无响应不可区分。
           if (!authDone && resp.result?.authenticated === false) {
@@ -534,7 +581,12 @@ async function _doConnect(timeout: number): Promise<Socket> {
           if (resp.error?.code === -32001 || resp.error?.code === -32002) {
             _cachedSecret = null;
           }
-          reject(new BridgeNotConnectedError(`Bridge auth failed (${resp.error?.code}): ${resp.error?.message}`));
+          // 3A: 挂 authPhase——cr-probe 阶段的 error(旧 bridge 对 auth_begin 回 -32001 后断连)
+          // 由 _doConnect 判定降级重连;cr-proof/legacy 阶段的 error = 真失败不降级
+          reject(Object.assign(
+            new BridgeNotConnectedError(`Bridge auth failed (${resp.error?.code}): ${resp.error?.message}`),
+            { authPhase },
+          ));
           return;
         } catch {
           clearTimeout(timer);

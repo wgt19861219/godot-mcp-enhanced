@@ -21,6 +21,9 @@ var _secret_file: String = ""
 var _authenticated_peers: Dictionary = {}  # peer_id (int) -> true
 var _auth_fail_count: Dictionary = {}
 var _auth_locked_until: Dictionary = {}
+# 3A (2026-09-19 安全加固批3): challenge-response 握手的 per-peer 待验证 challenge
+# (peer_id -> String)。auth_begin 生成,auth_proof 消费(成功/断开即清)。
+var _auth_challenges: Dictionary = {}
 var _crypto: Crypto
 # A2 (2026-08-11 审查 P1:debug 异步请求竞争共享 _states):debug 请求 in-flight 互斥。
 # _handle_message 由 _process 轮询同步调,debug coroutine await 挂起后循环继续处理下个
@@ -354,6 +357,7 @@ func _process(delta: float) -> void:
 		# I-9: 清除断开 peer 的 per-peer 锁定/失败记录,避免字典无限增长
 		_auth_fail_count.erase(rid)
 		_auth_locked_until.erase(rid)
+		_auth_challenges.erase(rid)  # 3A: 断开即弃 challenge(单连接单次有效)
 		_peers.remove_at(to_remove[i])
 		print("[MCP] Client disconnected")
 
@@ -377,24 +381,62 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 	if _rpc_params == null or not (_rpc_params is Dictionary):
 		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32602, "message": "Invalid params: must be an object"}}))
 		return
-	# Auth endpoint — always allowed
-	if parsed.get("method") == "auth":
-		if _secret == "":
-			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Server auth not configured; connection rejected"}}))
-			peer.close()
-			return
-		# I-9: per-peer lockout —— 用 pid(peer_id)隔离失败计数与锁定,而非全局 "localhost"。
-		# 原全局键导致单个失败源(错误客户端/攻击者)5 次失败后锁死所有合法客户端 300s(可用性问题)。
-		# per-peer 下失败连接自己被锁,不影响其他客户端;secret 为 256-bit 随机,暴力不可行,锁定仅减速。
+	# 3A (2026-09-19 安全加固批3): challenge-response 握手——secret 不上线路。
+	# auth_begin: 发随机 challenge(per-peer 单次);auth_proof: HMAC-SHA256(secret, challenge)
+	# 恒时比较。旧 method=auth 明文通道保留(下分支,旧 TS 兼容)——假监听者先占端口只能
+	# 收到 HMAC(对单次 challenge 有效),拿不到 secret 本身,无法连真插件横向复用。
+	# 锁定检查对三个认证方法共用(与 auth 同款 per-peer 指数锁定,I-9)。
+	var _auth_method: Variant = parsed.get("method")
+	if _auth_method == "auth_begin" or _auth_method == "auth_proof" or _auth_method == "auth":
 		if _auth_locked_until.has(pid):
-			var locked_until: float = _auth_locked_until[pid]
-			if Time.get_ticks_msec() / 1000.0 < locked_until:
+			var _al_locked_until: float = _auth_locked_until[pid]
+			if Time.get_ticks_msec() / 1000.0 < _al_locked_until:
 				peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}))
 				peer.close()
 				return
 			else:
 				_auth_locked_until.erase(pid)
 				_auth_fail_count[pid] = 0
+	if _auth_method == "auth_begin":
+		if _secret == "":
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Server auth not configured; connection rejected"}}))
+			peer.close()
+			return
+		var cr_challenge: String = _crypto.generate_random_bytes(16).hex_encode()
+		_auth_challenges[pid] = cr_challenge
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"challenge": cr_challenge}}))
+		return
+	if _auth_method == "auth_proof":
+		if not _auth_challenges.has(pid):
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "No pending challenge; send auth_begin first"}}))
+			peer.close()
+			return
+		# HMAC-SHA256(secret, challenge) hex —— key/msg 均 UTF-8 bytes,输出小写 hex(与 TS 侧 createHmac 对齐)
+		var cr_expected: String = _crypto.hmac_digest(HashingContext.HASH_SHA256, _secret.to_utf8_buffer(), String(_auth_challenges[pid]).to_utf8_buffer()).hex_encode()
+		var cr_provided: String = str(parsed.get("params", {}).get("proof", ""))
+		if _constant_time_compare(cr_provided, cr_expected):
+			_authenticated_peers[pid] = true
+			_auth_challenges.erase(pid)
+			_auth_fail_count.erase(pid)
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"authenticated": true}}))
+			print("[MCP] Peer %d authenticated (challenge-response)" % pid)
+			_send_session_sync(peer)
+		else:
+			var cr_fails: int = int(_auth_fail_count.get(pid, 0)) + 1
+			_auth_fail_count[pid] = cr_fails
+			if cr_fails >= MAX_AUTH_FAILS:
+				var cr_lockout: float = minf(LOCKOUT_BASE_SECONDS * pow(2.0, (float(cr_fails) / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
+				_auth_locked_until[pid] = Time.get_ticks_msec() / 1000.0 + cr_lockout
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "Authentication failed"}}))
+			peer.close()
+		return
+	# Auth endpoint — always allowed
+	if _auth_method == "auth":
+		if _secret == "":
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Server auth not configured; connection rejected"}}))
+			peer.close()
+			return
+		# 锁定检查已前置(与 auth_begin/auth_proof 共用,3A);此处仅明文 secret 比较(旧 TS 兼容)
 		var provided: String = str(parsed.get("params", {}).get("secret", ""))
 		if _constant_time_compare(provided, _secret):
 			_authenticated_peers[pid] = true
