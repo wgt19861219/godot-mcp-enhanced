@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 
 vi.mock('../../src/core/godot-finder.js', () => ({
   findGodot: vi.fn().mockResolvedValue('/usr/bin/godot'),
+  // 易用性批4:默认返回受支持版本,个别用例用 mockResolvedValueOnce 覆盖
+  detectGodotVersion: vi.fn().mockResolvedValue('4.7.2.stable'),
 }));
 
 vi.mock('../../src/cli/clients/claude-code.js', () => ({
@@ -103,6 +105,87 @@ describe('doctor', () => {
     expect(logSpy.mock.calls.some(c => /\(project\)/.test(String(c[0] ?? '')))).toBe(true);
     expect(logSpy.mock.calls.some(c => /\(global\)/.test(String(c[0] ?? '')))).toBe(true);
     logSpy.mockRestore();
+  });
+
+  // ─── 易用性批4 (2026-09-19):版本检查 / 白名单提示 / 不适用标记 ───
+
+  it('reports supported version 4.5–4.7 as ✓', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { detectGodotVersion } = await import('../../src/core/godot-finder.js');
+    vi.mocked(detectGodotVersion).mockResolvedValueOnce('4.6.1.stable');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await runDoctor([]).catch(() => {});  // mock 环境下 Node/Godot 全 ✓ 不 exit,catch 兜底
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('Godot version 4.6.1.stable (supported 4.5–4.7)');
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
+  it('reports unsupported Godot 3.x as ✗ and exits 1', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { detectGodotVersion } = await import('../../src/core/godot-finder.js');
+    vi.mocked(detectGodotVersion).mockResolvedValueOnce('3.5.stable.official');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await expect(runDoctor([])).rejects.toThrow('exit');
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('✗ Godot version 3.5.stable.official unsupported (requires 4.5–4.7)');
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
+  it('reports Godot > 4.7 as warn (unverified, not error)', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { detectGodotVersion } = await import('../../src/core/godot-finder.js');
+    vi.mocked(detectGodotVersion).mockResolvedValueOnce('4.8.1.stable');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await runDoctor([]).catch(() => {});
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('! Godot version 4.8.1.stable > 4.7');
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
+  it('skips version check gracefully when detectGodotVersion throws', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { detectGodotVersion } = await import('../../src/core/godot-finder.js');
+    vi.mocked(detectGodotVersion).mockRejectedValueOnce(new Error('godot path not in whitelist'));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await runDoctor([]).catch(() => {});
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('Godot version check skipped');
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
+  it('warns with config example when ALLOWED_PROJECT_PATHS unset', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const orig = process.env.ALLOWED_PROJECT_PATHS;
+    delete process.env.ALLOWED_PROJECT_PATHS;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await runDoctor([]).catch(() => {});
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('ALLOWED_PROJECT_PATHS not set');
+    expect(output).toContain('ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"');
+    if (orig !== undefined) process.env.ALLOWED_PROJECT_PATHS = orig;
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
+  it('marks not-installed clients and non-project dir with neutral ⊘ instead of ✗', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    // 在非 Godot 目录跑(临时目录),Cursor mock detect=false → ⊘ not installed
+    const tempDir = join(tmpdir(), 'doctor-na-' + Math.random().toString(36).slice(2));
+    mkdirSync(tempDir, { recursive: true });
+    const originalCwd = process.cwd();
+    process.chdir(tempDir);
+    try { await runDoctor([]).catch(() => {}); } finally { process.chdir(originalCwd); rmSync(tempDir, { recursive: true, force: true }); }
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('⊘ Cursor (project): not installed');
+    expect(output).toContain('⊘ project.godot not found');
+    expect(output).not.toContain('✗ Cursor');
+    logSpy.mockRestore(); exitSpy.mockRestore();
   });
 
   it('handles BOM in mcp-godot.json without throwing', async () => {

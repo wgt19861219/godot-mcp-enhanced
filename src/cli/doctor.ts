@@ -2,7 +2,7 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
-import { findGodot } from '../core/godot-finder.js';
+import { findGodot, detectGodotVersion } from '../core/godot-finder.js';
 import { ALL_ADAPTERS } from './clients/index.js';
 import { readJsonForCheck } from './clients/json-config.js';
 
@@ -13,6 +13,12 @@ function status(ok: boolean, msg: string): string {
 // warn 标记(审查 Nit #2):OUT OF SYNC 是 non-blocking 提示,用 ! 而非 ✗(✗ 暗示 error 但 exit 0)
 function warn(msg: string): string {
   return `  ! ${msg}`;
+}
+
+// 易用性批4 (2026-09-19):「不适用」中性标记(⊘ 对齐 setup.ts 用词)——未安装的客户端/
+// 非 Godot 目录里的项目结构检查,此前用 ✗ 误导用户以为环境出错(且 exit 0 加深困惑)
+function na(msg: string): string {
+  return `  ⊘ ${msg}`;
 }
 
 // ─── Addons 同步检查纯函数(可单测,对齐 check-gdscript.ts listGd 模式) ───
@@ -89,14 +95,42 @@ export async function runDoctor(_args: string[]): Promise<void> {
   console.log(status(nodeMajor >= 18, `Node.js ${nodeVersion}${nodeMajor >= 18 ? '' : ' (requires >= 18)'}`));
   if (nodeMajor < 18) hasError = true;
 
-  // 2. Godot 发现
+  // 2. Godot 发现 + 版本兼容
+  // 易用性批4 (2026-09-19):版本不查时,装 Godot 3.x 的用户 doctor 全绿但工具全挂
+  // (本项目支持 4.5–4.7)。detectGodotVersion 会 throw(白名单拒/--version 失败),须 try-catch。
   const projectDir = process.cwd();
   try {
     const godotPath = await findGodot();
     console.log(status(true, `Godot found: ${godotPath}`));
+    try {
+      const ver = await detectGodotVersion(godotPath);  // 如 "4.7.2.stable"
+      const m = /^(\d+)\.(\d+)/.exec(ver);
+      const major = m ? parseInt(m[1]!, 10) : 0;
+      const minor = m ? parseInt(m[2]!, 10) : 0;
+      if (major === 4 && minor >= 5 && minor <= 7) {
+        console.log(status(true, `Godot version ${ver} (supported 4.5–4.7)`));
+      } else if (major === 4 && minor > 7) {
+        console.log(warn(`Godot version ${ver} > 4.7 — 未验证兼容,遇异常可回退 4.7.x`));
+      } else {
+        console.log(status(false, `Godot version ${ver} unsupported (requires 4.5–4.7)`));
+        hasError = true;
+      }
+    } catch {
+      console.log(warn('Godot version check skipped (--version 调用失败或路径被白名单拒)'));
+    }
   } catch {
-    console.log(status(false, 'Godot not found (set GODOT_PATH)'));
+    console.log(status(false, 'Godot not found (set GODOT_PATH 或运行 `install` 自动安装)'));
     hasError = true;
+  }
+
+  // 2.7 ALLOWED_PROJECT_PATHS 可见性(易用性批4)
+  // 未设是合法默认(deny-by-default 限 cwd)——warn 不 fail;多项目用户易踩
+  // "路径越界 forbidden",提前给出配置方式
+  const allowedRoots = process.env.ALLOWED_PROJECT_PATHS;
+  if (allowedRoots) {
+    console.log(status(true, `ALLOWED_PROJECT_PATHS set (${allowedRoots.split(';').length} root(s))`));
+  } else {
+    console.log(warn('ALLOWED_PROJECT_PATHS not set — deny-by-default(仅当前工作目录可访问)。多项目使用时在 MCP 配置 env 设置:ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"'));
   }
 
   // 2.5. 项目级 Godot 覆盖
@@ -111,21 +145,27 @@ export async function runDoctor(_args: string[]): Promise<void> {
   for (const adapter of ALL_ADAPTERS) {
     const installed = await adapter.detect();
     if (!installed) {
-      console.log(status(false, `${adapter.name} (${adapter.scope}): not installed`));
+      console.log(na(`${adapter.name} (${adapter.scope}): not installed`));
       continue;
     }
-    // A-09: 区分配置状态
+    // A-09: 区分配置状态;易用性批4:not configured 补修复指引
     const { ok, detail } = await checkClientConfig(adapter, projectDir);
-    console.log(status(ok, `${adapter.name} (${adapter.scope}): ${detail}`));
+    console.log(ok
+      ? status(true, `${adapter.name} (${adapter.scope}): ${detail}`)
+      : status(false, `${adapter.name} (${adapter.scope}): ${detail} — 修复: npx godot-mcp-enhanced setup 或 configure ${adapter.name.toLowerCase().replace(/\s+/g, '-')}`));
   }
 
-  // 4. 项目结构
+  // 4. 项目结构(易用性批4:非 Godot 目录里这两项用 ⊘ 中性标记而非 ✗)
   console.log('\nProject:');
   const hasProject = existsSync(join(projectDir, 'project.godot'));
-  console.log(status(hasProject, `project.godot ${hasProject ? 'found' : 'not found'}`));
+  console.log(hasProject
+    ? status(true, 'project.godot found')
+    : na('project.godot not found — 非 Godot 项目目录(在项目根运行 doctor 检查项目结构)'));
 
   const hasClaudeMd = existsSync(join(projectDir, 'CLAUDE.md'));
-  console.log(status(hasClaudeMd, `CLAUDE.md ${hasClaudeMd ? 'found' : 'not found'}`));
+  console.log(hasClaudeMd
+    ? status(true, 'CLAUDE.md found')
+    : na('CLAUDE.md not found — AI 客户端连接项目后运行 setup_project_rules 可生成'));
 
   // 5. Addons 同步(上游包 vs 目标项目)— 项目待办 :150
   // warn 不 fail:同步漂移是"可能的问题提示"非环境错误,用户改 addon 后理应手动 cp,不阻断 doctor
@@ -146,6 +186,9 @@ export async function runDoctor(_args: string[]): Promise<void> {
       for (const f of result.differing) console.log(`      ~ ${f} (content differs from upstream)`);
     }
   }
+
+  // 易用性批4:结尾一行下一步(两出口共享,弥补此前"满屏 ✗ 却不知道怎么办")
+  console.log('\nNext steps: 配置客户端 `npx godot-mcp-enhanced setup` / 定向 `configure <客户端>`;验证链路:AI 客户端内调用 get_godot_version。');
 
   if (hasError) process.exit(1);
 }
