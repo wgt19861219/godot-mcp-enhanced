@@ -62,6 +62,8 @@ headless `--export-release` 官方路径导出 + `127.0.0.1` 防穿越静态服�
 npx godot-mcp-enhanced skills install    # 装入 game-wizard(及另外 6 个技能)后对 AI 说「帮我做一个能玩的游戏」
 ```
 
+**下一步:接入 AI 客户端** — 上面所有能力都经 MCP 提供给 AI 使用。先到 **[快速开始](#快速开始)** 用一分钟完成配置(Claude Code / Cursor / ZCode / CodeBuddy 等 15 个客户端),再回来走这条小白路径。
+
 > **路线图**:一条龙六批(分发声量/install/模板/GIF/Web/向导)已全部落地;后续方向见 [ROADMAP](ROADMAP.md)。
 
 ## 与同类方案对比
@@ -111,7 +113,11 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 截至 2026-06-27 调研,Godot MCP 赛道内少见提供系统化安全特性的方案。本项目内置多层防护,
 适合对可信边界有要求的开发场景:
 
-- **路径访问控制** — `ALLOWED_PROJECT_PATHS` 白名单(deny-by-default),防 junction / 符号链接绕过
+- **路径访问控制** — `ALLOWED_PROJECT_PATHS` 白名单(deny-by-default),防 junction / 符号链接绕过。未设置时仅允许当前工作目录;多项目使用时在 MCP 配置的 `env` 中显式列出:
+
+```json
+{ "env": { "ALLOWED_PROJECT_PATHS": "D:/proj/game-a;D:/proj/game-b" } }
+```
 - **Godot 二进制白名单** — `GODOT_MCP_ALLOWED_GODOT_PATHS`（分号分隔,realpath 归一）在 `godot --version` 签名校验之上加硬隔离,防 AI 可控的 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。空 env = back-compat 放行(本地信任场景,签名校验仍兜底);多用户/不可信环境显式列可信路径
 - **GDScript 注入防御** — 危险 API 模式扫描 + 字符串拼接绕过检测
 - **危险操作确认令牌** — 删节点等操作需显式确认
@@ -214,6 +220,12 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 > 共 46 个 MCP 工具(merged tool definition,共 271 个 action),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](docs/capability-matrix.md)。
 >
+> **怎么按名找到工具**:下表「工具」列绝大多数是 **action 名**(如 `read_scene`),实际调用时作为对应**顶层工具**的 `action` 参数传入——`read_scene`/`quick_scene` 走 `scene` 工具,`read_script`/`write_script` 走 `script` 工具,以此类推(顶层工具名 = 域名词:`scene`/`script`/`runtime`/`validation`/`game` 等 46 个)。action 命名存在三种历史语序(`read_scene`/`tilemap_read`/裸 `read`),不确定时让 AI 先查 `help` 工具(46 工具全覆盖 + 拼写纠错)。
+>
+> **默认 profile 可见性**:默认 `basic` profile 激活 **30/46** 个工具(实测);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
+>
+> **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
+>
 > **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:271**(matrix 的 risk 聚合 read 133+write 112+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
 
 ### 执行工具
@@ -286,7 +298,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `create_test_scene` | 创建 GUT 测试运行器场景 |
 | `project_replace` | 全项目批量搜索替换（CRLF 安全） |
 
-### 运行时操作工具
+### 运行时操作工具（顶层 `signal`/`audio`/`physics`/`node_create_3d` 等）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。如需持久化场景修改，请使用 `add_node` + `save_scene`。
 
@@ -301,7 +313,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `node_create_3d` | 运行时创建 3D 节点（支持 16 种白名单类型）。headless 创建不持久化。 |
 | `nav_query_path` | 查询 3D 导航路径，支持指定 NavigationRegion3D 或自动回退。 |
 
-### 音频播放控制工具（运行时）
+### 音频播放控制工具（顶层 `audio`,运行时）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。
 
@@ -332,7 +344,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 所有运行时工具支持可选 `load_autoloads` 参数（默认 `true`），可在完整 Autoload 上下文中执行。
 
-### API 文档工具
+### API 文档工具（顶层 `docs`——Godot 类文档查询）
 
 | 工具 | 说明 |
 |------|------|
@@ -341,7 +353,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `find_method` | 查找方法详情（含继承链） |
 | `get_inheritance` | 获取完整继承链 |
 
-### 材质与着色器工具（运行时）
+### 材质与着色器工具（顶层 `material`,运行时）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。
 
@@ -353,15 +365,17 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 ### Game Bridge 工具
 
+> 需游戏运行中(bridge autoload 已随项目启动)。除下表 5 个基础 action 外,`game` 工具还有: `game_write`(写属性/调方法)、`playtest.*`(确定性测试:seed/锁步长/单步/快照)、`monitor_*`(属性采样)、`watch_*`(信号记录)、`find_ui_elements`/`click_button`(UI 发现/点击)、`network_conditioner`(弱网注入)、`sync_state`(状态快照对比)、`install_override`(调试脚本注入)、`custom_command`(项目自定义命令)。完整清单见 [docs/tools/game.md](docs/tools/game.md)。
+
 | 工具 | 说明 |
 |------|------|
 | `game_bridge_install` | 安装 MCP Bridge autoload 到项目（TCP 服务端,NDJSON 协议,仅 127.0.0.1） |
 | `game_bridge_uninstall` | 卸载 MCP Bridge autoload |
-| `game_query` | 查询运行中游戏状态（场景树/节点属性/性能/视口） |
-| `game_input` | 向运行中游戏发送输入事件（键盘/鼠标/文本） |
+| `game_query` | 查询运行中游戏状态（场景树/节点属性/性能/视口/截图） |
+| `game_input` | 向运行中游戏发送输入事件（键盘/鼠标/文本/拖拽/输入序列） |
 | `game_wait` | 在 timeout 窗口内轮询等待游戏状态条件（节点出现/属性值变化），支持 `interval_ms` 探测间隔。条件成立立即返回，超时返回 `timed_out` |
 
-### 工作流工具
+### 工作流工具（顶层 `workflow`——dev_loop 执行+验证一体）
 
 | 工具 | 说明 |
 |------|------|
@@ -397,7 +411,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `export_get_preset` | 获取导出预设详情 |
 | `export_build` | 执行导出构建 |
 
-### 粒子系统工具（运行时）
+### 粒子系统工具（顶层 `particles`,运行时）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。
 
@@ -421,7 +435,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `nav_set_params` | 设置导航代理参数（10 个可配置字段：radius、height、max_speed 等） |
 | `nav_create_link` | 创建 NavigationLink3D 连接点（支持双向） |
 
-### AnimationTree 工具（运行时）
+### AnimationTree 工具（顶层 `animtree`,运行时）
 
 > **注意：** 运行时操作仅在 headless 执行上下文中生效，不持久化到 .tscn 文件。
 
@@ -433,7 +447,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 | `animtree_set_blend` | 设置混合参数（float 用于 BlendTree，Vector2 用于 BlendSpace） |
 | `animtree_play` | 切换到目标状态（通过 playback.travel） |
 
-### IK 框架工具（运行时）
+### IK 框架工具（顶层 `animation` 的 ik_* action + `animation_track`）
 
 | 工具 | 说明 |
 |------|------|
@@ -508,6 +522,37 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 > ⚠️ 运行时工具(物理 / 动画 / UI / 粒子 / TileMap / 材质等)仅在 headless 执行上下文生效,
 > **不持久化到 .tscn**;需持久化用 `add_node` + `save_scene`。
+
+### 调试与诊断工具
+
+| 工具 | 说明 |
+|------|------|
+| `debug` | 断点管理(⚠️ editor-only:需 GODOT_MCP_MODE=editor + 插件 + 运行中游戏) |
+| `dap` | TS 直连官方调试协议(DAP TCP 6006):断点/单步/栈帧/REPL,稳定性优先于 debug 工具 |
+| `engine` | 运行中引擎实时 ClassDB 内省 + 节点方法调用(editor-only,补 docs 静态快照缺口) |
+| `runtime_assert` | 运行时断言:节点状态/场景结构/屏幕文本/性能基线/截图对比 |
+| `analysis` | 静态分析:signal_map 全项目信号连接全景 + impact_check 改动前影响面评估(零 Godot 依赖) |
+| `audit` | 操作审计日志查询(get_log 统计回放 + suggest_rollback 回滚建议) |
+| `profiler` | 函数级热点采样(capture_functions)/帧级数据/内存趋势(editor spawn 会话) |
+| `godot_list_instances` / `godot_select_instance` | 多游戏实例发现与切换(多项目并行/E2E 场景) |
+| `godot_get_context` | 会话全景:模式/项目/连接/场景快照/工具组/推荐 workflow 一次拿全 |
+| `help` | 查任意工具完整文档(46 工具全覆盖 + 拼写纠错)——AI 的工具说明书 |
+| `godot_advanced_tool` / `godot_list_dynamic_routes` | 未激活工具的代理调用 / 三级 lazy discovery 工具路由查询 |
+
+### 资产与互操作工具
+
+| 工具 | 说明 |
+|------|------|
+| `qa` | QA 测试套件编排:结构化 spec → 自动装 bridge → 起游戏 → 逐步执行/断言 → 聚合报告 + 回归 diff |
+| `testing` | 测试结果管理(results_get,editor 模式) |
+| `asset` | 3D 资产铺设:create/path(多点串联)/batch/undo/save(运行时,不持久化) |
+| `blender` | `execute_bpy` Blender Python 建模 → 导出 glb → 导入 Godot(危险 API 扫描,网络默认禁) |
+| `csv_to_resources` | CSV 批量实例化 Resource 并导出 .tres(调参表工作流) |
+| `cpp` | `scaffold_gdextension` 生成可编译的 godot-cpp GDExtension 工程骨架 |
+| `android` | 设备发现/构建安装启动/logcat(Android 开发闭环) |
+| `manage_tools` | 工具组管理:list_groups(含 per-profile 价格)/activate/deactivate/动态发现 |
+| `self_update` | 自更新(符号链接校验 + 版本预检) |
+| `load_skill` | 从本地知识库检索 Godot 开发 SKILL |
 
 ## MCP 资源（Resources）
 
@@ -593,13 +638,23 @@ npx godot-mcp-enhanced setup
 # 自动检测：Godot 路径 + AI 客户端 + 写入配置
 
 npx godot-mcp-enhanced configure warp
-# 定向配置单个客户端（--list 列出全部 14 个，--force 越过未检测闸）
+# 定向配置单个客户端（--list 列出全部 15 个，--force 越过未检测闸）
 
 npx godot-mcp-enhanced skills install
-# 打包的 6 个 Claude Code skills（路由器/安全编辑/验证闭环/bridge E2E/截图留证/Tween 审计）
+# 打包的 7 个 Claude Code skills（game-wizard 向导 + 路由器/安全编辑/验证闭环/bridge E2E/截图留证/Tween 审计）
 # 一条命令装入 ~/.claude/skills/（--target <目录> 装项目级，--force 覆盖），
 # 指导 AI 更好地调用 godot-mcp 工具——安装摩擦低于手工 MCP 配置，配合 configure 使用
 ```
+
+### 验证配置成功
+
+配置完成后**重启 AI 客户端会话**(MCP 配置只在会话启动时加载),然后二选一验证:
+
+```bash
+npx godot-mcp-enhanced doctor    # 终端诊断:Godot 检测/客户端配置/插件同步逐项 ✓/✗
+```
+
+或在 AI 客户端里让 AI 调用 `get_godot_version` — 返回版本号即链路全通。更多工作流(五个典型闭环/故障排查/环境变量参考)见 **[使用指南](docs/使用指南.md)**。
 
 ### 首次使用
 
@@ -620,14 +675,13 @@ setup_project_rules(project_path="你的项目路径")
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `GODOT_PATH` | Godot 可执行文件路径 | 自动搜索（PATH/注册表/Scoop/Downloads） |
+| `ALLOWED_PROJECT_PATHS` | **项目路径白名单**(分号分隔,deny-by-default——未设置时仅允许当前工作目录)。files API/资源读写等均以此校验,路径越界即 forbidden。配置示例:`ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"` | 未设(限 cwd) |
 | `GODOT_PROJECT_PATH` | 默认项目路径 | 自动检测 cwd（向上搜索 project.godot） |
 | `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 搜索目录（分号分隔） | 无 |
 | `GODOT_MCP_ALLOWED_GODOT_PATHS` | Godot 二进制路径白名单(分号分隔,realpath 归一)。空=回落 `~/.godot-mcp/godot-paths.json`(CLI `install` 登记的路径视为可信);两者皆无=back-compat 放行(签名校验仍兜底)。设了 env 则 env 优先(显式用户意图,config 被忽略);多用户/不可信环境显式列出可信 Godot 路径,防 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行) | 空(回落 config) |
 | `GODOT_MCP_BRIDGE_PORT` | game bridge 起始监听端口（被占自动递增避让至 +9;多实例并存安全,实际端口写入实例 registry,ping 响应带 pid/project 指纹） | `9081` |
 | `GODOT_MCP_ALLOW_UNSAFE_CONFIRM` | `true`=confirm 类写操作跳过 out-of-band 确认（⚠️ 削弱安全防线;生产环境设此值 server 拒绝启动,详见使用指南 12.12） | `false` |
 | `DEBUG` | 启用详细日志 | `false` |
-| `GODOT_MCP_BRIDGE_PORT` | game bridge 起始监听端口（被占自动递增避让至 +9;多实例并存安全,实际端口写入实例 registry,ping 响应带 pid/project 指纹） | `9081` |
-| `GODOT_MCP_ALLOW_UNSAFE_CONFIRM` | `true`=confirm 类写操作跳过 out-of-band 确认（⚠️ 削弱安全防线;生产环境设此值 server 拒绝启动,详见使用指南 12.12） | `false` |
 | `GODOT_MCP_TELEMETRY` | 匿名遥测 opt-in(默认关闭,详见 [docs/telemetry.md](docs/telemetry.md)) | `false` |
 | `GODOT_MCP_INSTALL_TAG` | CLI `install` 固定版本 tag(如 `4.7.2-stable`,跳过 latest 查询;测试/复现用) | 未设(latest) |
 | `GODOT_MCP_PROFILE` | 工具 profile(basic/lite/minimal/full/bridge_dev/3d_dev 或逗号组名)。**默认 basic**(BREAKING from full;lite 9 组省 ~60% context,RCE action 经 action-gate 默认 gated)。回退全量:`GODOT_MCP_PROFILE=full` 或 `--profile=full` | `basic` |
@@ -701,7 +755,7 @@ npm install && npm run build
 ## 系统要求
 
 - Godot Engine 4.x（已测试 4.7；4.6/4.5 向后兼容）
-- Node.js >= 18
+- Node.js >= 20（与 package.json engines 一致）
 - GUT 插件（用于 `run_tests` 工具）
 
 <details>
