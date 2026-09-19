@@ -119,6 +119,8 @@ export async function appendAuditLine(projectPath: string, entry: AuditEntry): P
   // 项目内副本保留(audit 工具默认读它,现行为零变更);外置失败独立处理:默认计数不
   // throw(best-effort);STRICT 重抛(经调用方 catch 会再 record 一次,同一失败双计数,
   // 方向无害)。论证见 getExternalAuditDir。
+  // Nit-2(审查): STRICT 下外置失败重抛时,项目内审计行已落(ok=true)而操作被判失败
+  // ——审计与结果存在一次性分歧窗口;opt-in 边缘场景,回放时以 result 报错为准核对。
   const extPath = getExternalAuditFile(projectPath);
   try {
     await mkdir(dirname(extPath), { recursive: true });
@@ -142,9 +144,14 @@ export function getExternalAuditDir(): string {
 }
 
 /** 外置副本路径:按项目绝对路径 sha256 前 16 hex 命名(一项目一文件;文件名不含项目
- *  名/用户名 PII。分隔符归一防 D:\a\b 与 D:/a/b 分裂成两文件)。 */
+ *  名/用户名 PII。分隔符归一防 D:\a\b 与 D:/a/b 分裂;I-1(审查)Windows 大小写归一防
+ *  D:\GitHub\Demo 与 d:\github\demo 分裂——分裂不仅丢条目,还会让 compareAuditSources 的
+ *  divergence(projectEntries < externalEntries)恒 false,真实删行篡改漏报。
+ *  仅 win32 小写:Linux 文件系统大小写敏感,无条件小写会让不同项目碰撞同一外置文件)。 */
 export function getExternalAuditFile(projectPath: string): string {
-  const h = createHash('sha256').update(projectPath.replace(/\\/g, '/')).digest('hex').slice(0, 16);
+  const normalized = projectPath.replace(/\\/g, '/');
+  const key = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const h = createHash('sha256').update(key).digest('hex').slice(0, 16);
   return join(getExternalAuditDir(), `${h}.jsonl`);
 }
 

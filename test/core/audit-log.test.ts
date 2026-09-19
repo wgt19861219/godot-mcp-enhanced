@@ -256,6 +256,19 @@ describe('external audit copy (2A)', () => {
     expect(a).toBe(b);
   });
 
+  it('I-1(审查): win32 大小写漂移归一到同一外置文件(防 divergence 漏报)', async () => {
+    // Windows 文件系统大小写不敏感:同一项目的 D:\GitHub\Demo 与 d:\github\demo 拼写
+    // 应 hash 到同一外置文件——否则外置分裂且 compareAuditSources 恒 false(篡改漏报)
+    const a = getExternalAuditFile('D:\\GitHub\\DemoProj');
+    const b = getExternalAuditFile('d:\\github\\demoproj');
+    if (process.platform === 'win32') {
+      expect(a).toBe(b);
+    } else {
+      // Linux 大小写敏感:不同拼写是不同 key(无条件小写会碰撞不同项目)
+      expect(a).not.toBe(b);
+    }
+  });
+
   it('compareAuditSources: 项目内副本被整行删(文件删除)→ diverged=true 篡改信号', async () => {
     await appendAuditLine(tmpDir, makeEntry());
     await appendAuditLine(tmpDir, makeEntry());
