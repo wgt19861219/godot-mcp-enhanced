@@ -96,7 +96,8 @@ export interface AuditEntry {
 
 /**
  * 原子追加一条 audit(appendFile O_APPEND,修复 devtool writeFile 竞态)。
- * 审计失败应由调用方 catch(不影响工具结果,对齐 G2 catch 哲学)。
+ * 审计失败应由调用方 catch(默认 best-effort 不影响工具结果,对齐 G2 catch 哲学;
+ * ⚠️ 1A STRICT 例外:GODOT_MCP_AUDIT_STRICT=true 时调用方将操作判失败——见 isAuditStrict)。
  */
 export async function appendAuditLine(projectPath: string, entry: AuditEntry): Promise<void> {
   const auditPath = join(projectPath, ...AUDIT_LOG_REL);

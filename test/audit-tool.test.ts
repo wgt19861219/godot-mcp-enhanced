@@ -62,12 +62,15 @@ describe('audit wrapper: get_log', () => {
     const data = body.data as {
       totalEntries: number;
       entries: { index: number; tool: string }[];
+      // 1A (2026-09-19): 响应附进程内审计写入失败计数(结构存在性锁)
+      write_failures: { failures: number; lastError: string };
     };
     expect(data.totalEntries).toBe(3); // limit 只影响 entries 窗口,统计仍计全量
     expect(data.entries.length).toBe(2);
     expect(data.entries.map((e) => e.tool)).toEqual(['project', 'scene']); // 末尾 2 条
     expect(data.entries[0]!.index).toBe(1); // 全局 index 从全量位置起算
     expect(data.entries[1]!.index).toBe(2);
+    expect(typeof data.write_failures.failures).toBe('number'); // Nit-2 工具层覆盖
   });
 
   it('since 过滤:只看此后条目', async () => {

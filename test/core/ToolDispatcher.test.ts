@@ -29,6 +29,7 @@ const {
   mockValidateGodotBinaryDetailed,
   mockIsDynamicToolName,
   mockGetActionRisk,
+  mockIsReadOnly,
 } = vi.hoisted(() => ({
   mockGetAllToolDefinitions: vi.fn<() => Tool[]>(),
   mockGetModuleForTool: vi.fn(),
@@ -52,6 +53,8 @@ const {
   // 1B/1C (2026-09-19 安全加固批1): audit middleware 消费 getActionRisk;
   // 默认 undefined(risk 未知 → fail-closed 落审计),用例内按需 mockReturnValue。
   mockGetActionRisk: vi.fn().mockReturnValue(undefined),
+  // I-1(审查修复): audit fail-closed 的 readonly 豁免消费 isReadOnly;默认 false(不豁免)。
+  mockIsReadOnly: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('../../src/core/tool-registry.js', () => ({
@@ -68,6 +71,7 @@ vi.mock('../../src/core/tool-registry.js', () => ({
   skipProjectPath: vi.fn().mockReturnValue(false),
   tryLegacyMapping: vi.fn().mockReturnValue(null),
   getActionRisk: mockGetActionRisk,
+  isReadOnly: mockIsReadOnly,
 }));
 
 vi.mock('../../src/core/guard.js', () => ({
@@ -2220,6 +2224,7 @@ describe('audit middleware (1A STRICT / 1B fail-closed / 1C caller)', () => {
     mockRequiresConfirmation.mockReturnValue(false);
     mockIsDynamicToolName.mockReturnValue(false);
     mockGetActionRisk.mockReturnValue(undefined);
+    mockIsReadOnly.mockReturnValue(false);
     delete process.env.GODOT_MCP_AUDIT_STRICT;
     delete process.env.GODOT_MCP_AUDIT;
     const dispatcher = new ToolDispatcher(createOptions());
@@ -2269,6 +2274,24 @@ describe('audit middleware (1A STRICT / 1B fail-closed / 1C caller)', () => {
     expect((s.entries[0]!.details as Record<string, unknown>).risk_unknown).toBeUndefined();
   });
 
+  it('I-1: readonly 平铺工具(help 的 `_: "read"` 形态,action 查不中)→ 豁免不落审计', async () => {
+    // help 真实 TOOL_META: actionRisks={_:'read'} → 派生 readonly=true;调用无 action →
+    // getActionRisk('help','') undefined,但工具级已声明只读 → 豁免(防 read 记 write 污染)
+    mockIsReadOnly.mockReturnValue(true);
+    await auditAfter(mkCtx({ toolName: 'help', args: { project_path: tmp } }), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    expect((await readAuditLog(tmp)).totalEntries).toBe(0);
+  });
+
+  it('I-1: confirm_and_execute(inline 注册 readonly=true)→ 豁免,防确认路径审计双写', async () => {
+    // 真实执行审计由 _auditConfirmedExecution 补记(带真实 tool/action+confirmed 标记),
+    // middleware 层对 confirm_and_execute(action='')不落 risk_unknown 条目
+    mockIsReadOnly.mockReturnValue(true);
+    await auditAfter(mkCtx({ toolName: 'confirm_and_execute', args: { token: 't', project_path: tmp } }), okResult);
+    const { readAuditLog } = await import('../../src/core/audit-log.js');
+    expect((await readAuditLog(tmp)).totalEntries).toBe(0);
+  });
+
   it('risk=read → 跳过审计(旧行为不变)', async () => {
     mockGetActionRisk.mockReturnValue('read');
     await auditAfter(mkCtx(), okResult);
@@ -2278,10 +2301,15 @@ describe('audit middleware (1A STRICT / 1B fail-closed / 1C caller)', () => {
 
   it('1C: ctx.caller 透传到审计行 caller 字段;缺省不写字段', async () => {
     mockGetActionRisk.mockReturnValue('write');
+    // 缺省态:不传 caller → 审计行 JSON 序列化后无 caller 键
+    await auditAfter(mkCtx(), okResult);
+    // 透传态:caller='agent-42' → 审计行 caller 字段
     await auditAfter(mkCtx({ caller: 'agent-42' }), okResult);
     const { readAuditLog } = await import('../../src/core/audit-log.js');
     const s = await readAuditLog(tmp);
-    expect(s.entries[0]!.caller).toBe('agent-42');
+    expect(s.totalEntries).toBe(2);
+    expect(s.entries[0]!.caller).toBeUndefined();
+    expect(s.entries[1]!.caller).toBe('agent-42');
   });
 
   it('1A: 默认模式审计写失败 → result 原样返回 + 失败计数递增(不抛错)', async () => {

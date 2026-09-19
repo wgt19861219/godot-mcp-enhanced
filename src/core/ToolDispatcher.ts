@@ -26,6 +26,7 @@ import {
   getActionRisk,
   getModuleForTool,
   getToolDefinition,
+  isReadOnly,
   isToolAllowed,
   LITE_TOOLS,
   MINIMAL_TOOLS,
@@ -553,6 +554,8 @@ export class ToolDispatcher {
     // 只审计 write/destructive/process(getActionRisk 复用 guard 数据源);read 跳过。
     // 1B (2026-09-19): risk 未知(未映射动态工具/漏声明)按 write 保守落审计(fail-closed,对齐确认门)。
     // audit 是 side effect,默认不改 result;1A:审计失败计数+首次 warn,STRICT env 下操作判失败。
+    // ⚠️ 顺序约定(审查 Nit-5): audit 须保持为 buildMiddleware 中**最后一个带 after 的 hook**——
+    // 1A STRICT 靠改写 result 生效,若在其后注册带 after 的 middleware,改判结果会被覆盖。
     mw.push({
       name: 'audit',
       before: async () => ({ passed: true }),
@@ -572,6 +575,13 @@ export class ToolDispatcher {
         // (write)落审计而非静默跳过,与确认门"未映射动态工具强制确认"(:434-441)语义对齐。
         let unmappedDetails: Record<string, unknown> | undefined;
         if (!risk) {
+          // I-1(2026-09-19 审查修复): 豁免两类"天然 undefined 且工具级已声明只读"的调用形态,
+          // 防审计语义污染——a) readonly 平铺工具(help/godot_get_context 的 `_: 'read'` 占位键,
+          // action='' 查不中 `_` 键恒 undefined,派生 readonly=true);b) confirm_and_execute
+          // (registerInlineTool 显式 readonly=true,真实执行的审计由 _auditConfirmedExecution
+          // 补记,带真实 tool/action + confirmed 标记,middleware 层落 risk_unknown 只会双写)。
+          // 未映射动态工具名不在 registry → isReadOnly=false → 仍走 fail-closed(1B 核心目标)。
+          if (isReadOnly(auditTool)) return result;
           risk = 'write';
           unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
         }
@@ -863,9 +873,11 @@ export class ToolDispatcher {
       const auditAction = auditDynMap?.action ?? String(pending.args.action ?? '');
       let risk = getActionRisk(auditTool, auditAction);
       // 1B (2026-09-19): 与 audit middleware 的 fail-closed 对齐——risk 未知按保守档落审计。
-      // (确认门未映射动态工具 fail-closed 强制确认在先,此处正常不可达,防御性对齐。)
+      // (确认门未映射动态工具 fail-closed 强制确认在先,此处正常不可达,防御性对齐;
+      //  I-1 同款 readonly 豁免:readonly 工具不可能进 confirm 路径,防御性 return false。)
       let unmappedDetails: Record<string, unknown> | undefined;
       if (!risk) {
+        if (isReadOnly(auditTool)) return false;
         risk = 'write';
         unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
       }
