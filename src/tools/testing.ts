@@ -65,7 +65,7 @@ export function getToolDefinitions(): Tool[] {
           },
           project_path: {
             type: 'string',
-            description: 'Path to Godot project directory（editor 模式可省略，用当前打开的项目）',
+            description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录；editor 模式可省略，用当前打开的项目）',
           },
         },
         required: ['action'],

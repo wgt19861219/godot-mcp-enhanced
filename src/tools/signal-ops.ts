@@ -127,7 +127,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。signal_connect/signal_disconnect=连接/断开信号, signal_emit=发射信号, signal_list=列节点可用信号',
           },
           source_path: { type: 'string', description: 'connect/disconnect/emit: 源节点路径（如 root/Player）' },
           signal_name: { type: 'string', description: 'connect/disconnect/emit: 信号名称' },

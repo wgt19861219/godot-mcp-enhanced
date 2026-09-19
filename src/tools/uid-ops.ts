@@ -337,7 +337,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。uid_scan=扫描项目 UID, uid_get=批量查 UID, uid_set=设 UID, uid_check_refs=检查 UID 引用',
           },
           paths: { type: 'array', items: { type: 'string' }, description: 'get: 文件路径列表(res:// 相对,支持批量)' },
           path: { type: 'string', description: 'set: 单文件路径(res:// 相对)' },

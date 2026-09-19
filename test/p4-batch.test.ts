@@ -32,7 +32,8 @@ describe('P4-1: game 描述瘦身', () => {
     // 锚校准 7800 留余量(含审查清偿 B-1/N-4 描述补文),回弹超线即红(预算校准先例同款,非瘦身回退)
     // 反馈批A (2026-09-16) install 增 force/clean_stale_secrets 两参数(drift 刷新 + 陈旧 secret 清理,
     // send_drag 五踩根治入口)后实测 8080——锚校准 8200(描述已精简一轮,先例同款正当功能增量)
-    expect(schemaBytes).toBeLessThan(8200);
+    // 易用性批 1 (2026-09-19) game action 描述补全(审查 A-3)后实测 8498——锚校准 8600(同款正当增量)
+    expect(schemaBytes).toBeLessThan(8600);
     expect(def!.description).toContain('见规则文档');
     const methodDesc = (def!.inputSchema as { properties: { method: { description: string } } }).properties.method.description;
     const paramsDesc = (def!.inputSchema as { properties: { params: { description: string } } }).properties.params.description;
@@ -47,10 +48,11 @@ describe('P4-1: game 描述瘦身', () => {
     expect(BRIDGE_RULES).toContain('button_mask 1=left/2=right/4=middle');
   });
 
-  it('SLIM-c: 守卫收紧——totalSum warn 线(P9 校准 105KB)+ SLIM_CONFIG 死配置标注', () => {
+  it('SLIM-c: 守卫收紧——totalSum warn 线(易用性批1 校准 112KB)+ SLIM_CONFIG 死配置标注', () => {
     // P4 定 95KB(瘦身后 ~90KB);P8(热加载/SSOT 描述)+P9(dap 工具 3.4KB)正当增量推至
-    // ~103.9KB 越线——P9 (2026-09-12) 校准 105KB(审查 N-5 记录),回弹语义保留
-    expect(BUDGET_MJS).toContain('warn: 105 * 1024');
+    // ~103.9KB 越线——P9 (2026-09-12) 校准 105KB(审查 N-5 记录);易用性批 1 (2026-09-19)
+    // action 描述补全等正当增量推至 ~110.8KB——校准 112KB,回弹语义保留
+    expect(BUDGET_MJS).toContain('warn: 112 * 1024');
     // B-1 勘误锚:slim 对 ui 实际生效(阈值判断在变换前),防"产物值当触发输入"口径错误回潮
     expect(MODULE_LOADER).toContain('slim 对 ui **实际生效**');
   });

@@ -275,7 +275,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。tilemap_read=读, tilemap_set_cell/erase_cell=改/删单格, tilemap_fill_rect/clear=填充/清空, tilemap_copy/paste=复制/粘贴, tilemap_set_transform=变换',
           },
           node_path: { type: 'string', description: 'TileMap/TileMapLayer 节点路径（如 root/Level/TileMap）；配合 scene_path 时相对该场景解析，可省略 root/ 前缀和场景根节点名' },
           scene_path: { type: 'string', description: '目标场景路径（相对项目路径，可选）。不传则加载 application/run/main_scene——主场景是菜单时其中不含 TileMap，会返回 TILEMAP_NOT_FOUND' },

@@ -33,11 +33,11 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径' },
+          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。ui_build_layout=CSS 布局翻译构建(推荐), ui_import_prototype=原型导入, ui_pixel_verify=像素验证, ui_create_control/container_add/anchor_preset=控件, ui_set/get/measure_layout=布局, ui_draw_recipe=绘制, theme_*=主题',
           },
           scene_path: { type: 'string', description: '场景路径（相对项目路径）。ui_set_theme/theme_set_property 可选;ui_pixel_verify: 必填,已构建场景(ui_import_prototype persist 产物)' },
           node_path: { type: 'string', description: '节点路径（ui_set_layout/ui_get_layout/ui_anchor_preset/ui_set_theme/ui_container_add/ui_draw_recipe）' },
@@ -139,7 +139,7 @@ export function getToolDefinitions(): Tool[] {
             items: {
               type: 'object',
               properties: {
-                kind: { type: 'string', enum: [...DRAW_OP_KINDS], description: '操作类型' },
+                kind: { type: 'string', enum: [...DRAW_OP_KINDS], description: '绘制操作类型(rect/circle/line 等)' },
                 position: { type: 'array', items: { type: 'number' }, description: '[x, y]' },
                 size: { type: 'array', items: { type: 'number' }, description: '[w, h]' },
                 center: { type: 'array', items: { type: 'number' }, description: '[x, y] 圆心' },

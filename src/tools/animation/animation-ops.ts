@@ -42,7 +42,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。list_players=列 AnimationPlayer, get_info/get_details/get_keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add_track/remove_track/add_keyframe/remove_keyframe/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼',
           },
           root_path: { type: 'string', description: '搜索起始节点路径（list_players）' },
           node_path: { type: 'string', description: 'AnimationPlayer 节点路径（除 list_players 外必填）' },

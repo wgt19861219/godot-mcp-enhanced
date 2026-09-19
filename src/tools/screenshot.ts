@@ -35,27 +35,27 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'screenshot',
-      description: 'Screenshot capture and image analysis handoff. capture: capture a Godot scene screenshot in headless mode (experimental). analyze: return the image as MCP image content (base64) for the client vision capability to examine — returns image data, NOT a text description.',
+      description: '截图与分析中转。capture: headless 截取场景截图(实验性)。analyze: 把图片以 MCP image 内容(base64)返回给客户端视觉能力查验——返回图像数据,非文字描述。diff: 像素级双图对比。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           action: {
             type: 'string',
             enum: ['capture', 'analyze', 'diff'],
-            description: 'Action type: capture (take a screenshot), analyze (AI visual analysis of an image), or diff (pixel-level comparison of two PNG images)',
+            description: '操作类型。capture=截图, analyze=AI 视觉分析, diff=像素级双图对比',
           },
           // capture params
-          scene: { type: 'string', description: 'capture: Scene file path relative to project (res://scenes/main.tscn). If omitted, captures the default scene or an empty viewport.' },
-          output_path: { type: 'string', description: 'capture: Output PNG path (absolute). Defaults to <project_path>/screenshot.png' },
-          frame_delay: { type: 'number', description: 'capture: Frames to wait before capture (default: 15)', default: 15 },
-          viewport_width: { type: 'number', description: 'capture: Viewport width in pixels (default: 1280)', default: 1280 },
-          viewport_height: { type: 'number', description: 'capture: Viewport height in pixels (default: 720)', default: 720 },
+          scene: { type: 'string', description: 'capture: 场景文件路径(相对项目,如 res://scenes/main.tscn)。省略时截取默认场景或空视口。' },
+          output_path: { type: 'string', description: 'capture: 输出 PNG 绝对路径,默认 <project_path>/screenshot.png' },
+          frame_delay: { type: 'number', description: 'capture: 截图前等待帧数(默认 15)', default: 15 },
+          viewport_width: { type: 'number', description: 'capture: 视口宽度像素(默认 1280)', default: 1280 },
+          viewport_height: { type: 'number', description: 'capture: 视口高度像素(默认 720)', default: 720 },
           wait_node: { type: 'string', description: 'capture: 等待该节点(名或 /root/... 路径)出现在场景树再截图。对分帧构建/异步初始化场景,优先于 frame_delay 生效;超时(固定 300 帧≈5s@60fps,独立于 max_frames)后放弃等待直接截图' },
           wait_text: { type: 'string', description: 'capture: 等待任一 Label/RichTextLabel 的 text 包含该子串再截图;超时同 wait_node(固定 300 帧≈5s@60fps,独立于 max_frames)' },
           // analyze params
-          image_path: { type: 'string', description: 'analyze: Absolute path to the image file (PNG or JPG)' },
-          question: { type: 'string', description: 'analyze: Question for the AI to answer about the image. Default: "Describe what you see in this game screenshot."', default: 'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.' },
+          image_path: { type: 'string', description: 'analyze: 图片文件绝对路径(PNG/JPG)' },
+          question: { type: 'string', description: 'analyze: 要求视觉模型回答的问题。default 为英文提问(聚焦 UI 元素/角色位置/视觉问题),可自定义中文。', default: 'Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs.' },
           // Phase 2: Vision Routing(纯文本模型用,调视觉模型把图片翻译成文字描述)
           vision_route: {
             type: 'boolean',

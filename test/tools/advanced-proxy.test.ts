@@ -64,7 +64,7 @@ describe('advanced-proxy', () => {
     it('godot_advanced_tool description mentions proxy functionality', () => {
       const defs = getToolDefinitions();
       const proxy = defs.find(d => d.name === 'godot_advanced_tool')!;
-      expect(proxy.description).toContain('proxy');
+      expect(proxy.description).toContain('代理');
     });
   });
 

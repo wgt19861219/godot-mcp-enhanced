@@ -301,7 +301,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。create_region/create_agent/create_link=建导航元素, bake_mesh=烘焙导航网格, set_params=调参数, query_path=查路径',
           },
           name: { type: 'string', description: 'create_region/create_agent/create_link: 节点名称' },
           parent: { type: 'string', description: 'create_region/create_agent/create_link: 父节点路径（默认 root）' },

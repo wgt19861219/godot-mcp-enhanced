@@ -18,7 +18,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "项目路径"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "signal": {
             "type": "string",
@@ -90,8 +90,8 @@
       },
       "size": {
         "descBytes": 453,
-        "schemaBytes": 762,
-        "totalBytes": 1215
+        "schemaBytes": 848,
+        "totalBytes": 1301
       },
       "annotations": {
         "readOnlyHint": true,
@@ -114,11 +114,12 @@
               "deploy",
               "check_template",
               "logcat"
-            ]
+            ],
+            "description": "操作类型。list_devices=列设备/模拟器, get_preset_info=查导出预设, deploy=构建安装启动, check_template=查导出模板安装状态, logcat=读日志"
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "lines": {
             "type": "number",
@@ -204,8 +205,8 @@
       },
       "size": {
         "descBytes": 166,
-        "schemaBytes": 856,
-        "totalBytes": 1022
+        "schemaBytes": 1122,
+        "totalBytes": 1288
       },
       "annotations": {
         "readOnlyHint": false,
@@ -248,7 +249,7 @@
               "ik_modifier_set",
               "ik_list_bones"
             ],
-            "description": "操作类型"
+            "description": "操作类型。list_players=列 AnimationPlayer, get_info/get_details/get_keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add_track/remove_track/add_keyframe/remove_keyframe/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼"
           },
           "root_path": {
             "type": "string",
@@ -477,8 +478,8 @@
       },
       "size": {
         "descBytes": 334,
-        "schemaBytes": 3157,
-        "totalBytes": 3491
+        "schemaBytes": 3430,
+        "totalBytes": 3764
       },
       "annotations": {
         "readOnlyHint": false,
@@ -507,7 +508,7 @@
               "update_keyframe",
               "set_curve"
             ],
-            "description": "操作类型"
+            "description": "操作类型。add_track/remove_track=增删轨道, add_keyframe/remove_keyframe/update_keyframe=关键帧增删改, set_curve=设贝塞尔曲线"
           },
           "node_path": {
             "type": "string",
@@ -644,8 +645,8 @@
       },
       "size": {
         "descBytes": 241,
-        "schemaBytes": 1709,
-        "totalBytes": 1950
+        "schemaBytes": 1842,
+        "totalBytes": 2083
       },
       "annotations": {
         "readOnlyHint": false,
@@ -849,7 +850,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -862,7 +863,7 @@
               "list_shapes",
               "list_materials"
             ],
-            "description": "操作类型"
+            "description": "操作类型。create=建资源节点, path=沿多点路径铺设(串联), batch=批量操作, undo=撤销, save=落盘, list_shapes/list_materials=形状/材质清单"
           },
           "shape": {
             "type": "string",
@@ -1035,8 +1036,8 @@
       },
       "size": {
         "descBytes": 210,
-        "schemaBytes": 2014,
-        "totalBytes": 2224
+        "schemaBytes": 2249,
+        "totalBytes": 2459
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1063,7 +1064,7 @@
               "audio_set_param",
               "audio_query"
             ],
-            "description": "操作类型"
+            "description": "操作类型。audio_play/audio_stop=播放/停止, audio_set_param=调参(音量/音调/bus), audio_query=查播放状态"
           },
           "node_path": {
             "type": "string",
@@ -1158,8 +1159,8 @@
       },
       "size": {
         "descBytes": 260,
-        "schemaBytes": 1147,
-        "totalBytes": 1407
+        "schemaBytes": 1257,
+        "totalBytes": 1517
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1263,14 +1264,14 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
             "enum": [
               "execute_bpy"
             ],
-            "description": "操作类型"
+            "description": "操作类型（当前仅 execute_bpy=执行 Blender Python 建模并导出 glb）"
           },
           "export_path": {
             "type": "string",
@@ -1334,8 +1335,8 @@
       },
       "size": {
         "descBytes": 450,
-        "schemaBytes": 567,
-        "totalBytes": 1017
+        "schemaBytes": 710,
+        "totalBytes": 1160
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1355,7 +1356,7 @@
             "enum": [
               "scaffold_gdextension"
             ],
-            "description": "操作类型"
+            "description": "操作类型（当前仅 scaffold_gdextension=生成可编译的 godot-cpp GDExtension 工程骨架）"
           },
           "project_path": {
             "type": "string",
@@ -1436,8 +1437,8 @@
       },
       "size": {
         "descBytes": 283,
-        "schemaBytes": 971,
-        "totalBytes": 1254
+        "schemaBytes": 1061,
+        "totalBytes": 1344
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1457,11 +1458,11 @@
             "enum": [
               "csv_to_resources"
             ],
-            "description": "操作类型"
+            "description": "操作类型（当前仅 csv_to_resources=CSV 批量实例化 Resource 并导出）"
           },
           "project_path": {
             "type": "string",
-            "description": "Path to Godot project directory"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "class_path": {
             "type": "string",
@@ -1543,8 +1544,8 @@
       },
       "size": {
         "descBytes": 337,
-        "schemaBytes": 922,
-        "totalBytes": 1259
+        "schemaBytes": 1060,
+        "totalBytes": 1397
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1859,7 +1860,7 @@
     {
       "name": "docs",
       "group": "code",
-      "description": "Query Godot class documentation: get_class_info, search_classes, find_method, get_inheritance.",
+      "description": "查询 Godot 类文档(ClassDB)。get_class_info=类详情, search_classes=搜类, find_method=找方法, get_inheritance=继承链。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1871,27 +1872,27 @@
               "find_method",
               "get_inheritance"
             ],
-            "description": "Operation type"
+            "description": "操作类型。get_class_info=类详情, search_classes=搜索类, find_method=找方法定义, get_inheritance=类继承链"
           },
           "class_name": {
             "type": "string",
-            "description": "Godot class name (required for get_class_info, find_method, get_inheritance)"
+            "description": "Godot 类名(get_class_info/find_method/get_inheritance 必填)"
           },
           "method_name": {
             "type": "string",
-            "description": "Method name to find (required for find_method)"
+            "description": "find_method 必填:要找的方法名"
           },
           "query": {
             "type": "string",
-            "description": "Search query (required for search_classes)"
+            "description": "search_classes 必填:搜索关键词"
           },
           "limit": {
             "type": "number",
-            "description": "Max results for search_classes (default: 20)"
+            "description": "search_classes 结果上限(默认 20)"
           },
           "include_inherited": {
             "type": "boolean",
-            "description": "Include inherited members (default: true)"
+            "description": "是否含继承成员(默认 true)"
           }
         },
         "required": [
@@ -1940,9 +1941,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 94,
-        "schemaBytes": 675,
-        "totalBytes": 769
+        "descBytes": 134,
+        "schemaBytes": 745,
+        "totalBytes": 879
       },
       "annotations": {
         "readOnlyHint": true,
@@ -1953,13 +1954,13 @@
     {
       "name": "editor",
       "group": "editor",
-      "description": "Editor real-time operations: sync_start (start scene tree listening), sync_stop (stop listening), get_scene_tree (get current snapshot). Requires editor mode with plugin connection.",
+      "description": "编辑器实时操作(需 editor 模式+插件连接)。sync_start=开启场景树监听, sync_stop=停止监听, get_scene_tree=取当前场景树快照。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot project directory path"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -1968,7 +1969,7 @@
               "sync_stop",
               "get_scene_tree"
             ],
-            "description": "Operation type"
+            "description": "操作类型。sync_start=开启监听, sync_stop=停止监听, get_scene_tree=取场景树快照"
           }
         },
         "required": [
@@ -2015,9 +2016,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 181,
-        "schemaBytes": 241,
-        "totalBytes": 422
+        "descBytes": 156,
+        "schemaBytes": 394,
+        "totalBytes": 550
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2028,7 +2029,7 @@
     {
       "name": "engine",
       "group": "engine",
-      "description": "实时 ClassDB 内省 + 节点方法调用（editor-only）：查询运行中引擎的实际可用类/方法/属性/信号/枚举，或调用编辑器场景树节点的实例方法。 class_info: 查单个类的完整结构（属性/方法/信号/枚举/继承），默认 no_inherit=true 只看本类 own 成员。 search: substring 匹配类名（返回 {name, parent} 列表，上限 100 条）。搜到类名后用 class_info 查具体成员。 get_inheritance: 返回类的继承链（从本类到 Object）。 call_method: 调用编辑器场景树节点的实例方法（对标竞品 node.call）。参数 args 按方法声明类型自动强转（传 [1,2,3] 给 Vector3 参数会正确转换）。deny-list 默认挡危险方法（free/queue_free/set_script/call/emit_signal 等），env GODOT_MCP_EDITOR_CALL_DENYLIST_OVERRIDE 可追加（∪ 默认表，只能加不能减；显式空串=放开）。call 不可 undo（response 显式 undoable=false）。 ⚠️ 补 docs 工具的缺口：docs 是静态 4.7 快照（不含第三方 addon/自定义类/4.6/4.8 差异），engine 是运行中引擎的真实 ClassDB。 ⚠️ editor-only：headless 模式返回 EDITOR_ONLY（ClassDB 在沙箱里被拦，走 editor 层直调）。",
+      "description": "实时 ClassDB 内省+节点方法调用(editor-only):查询运行中引擎的实际可用类/方法/属性/信号/枚举,或调用编辑器场景树节点的实例方法。 class_info=类完整结构(默认 no_inherit=true 只看本类), search=substring 搜类名(上限 100,搜到后用 class_info 查详情), get_inheritance=继承链(到 Object)。 call_method=调用节点实例方法:参数按声明类型自动强转,deny-list 默认挡危险方法(free/queue_free/set_script/call 等),env GODOT_MCP_EDITOR_CALL_DENYLIST_OVERRIDE 只能追加(∪ 默认表),call 不可 undo。 ⚠️ 补 docs 工具缺口:docs 是静态 4.7 快照(不含第三方 addon/自定义类),engine 是运行中引擎真实 ClassDB。 ⚠️ editor-only:headless 模式返回 EDITOR_ONLY。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2040,7 +2041,7 @@
               "get_inheritance",
               "call_method"
             ],
-            "description": "Action type: class_info | search | get_inheritance | call_method"
+            "description": "操作类型。class_info=类完整结构, search=substring 搜类名, get_inheritance=继承链, call_method=调用节点实例方法"
           },
           "class": {
             "type": "string",
@@ -2117,9 +2118,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 1240,
-        "schemaBytes": 1163,
-        "totalBytes": 2403
+        "descBytes": 775,
+        "schemaBytes": 1233,
+        "totalBytes": 2008
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2162,7 +2163,7 @@
               "custom_command",
               "sync_state"
             ],
-            "description": "操作类型"
+            "description": "操作类型。install/uninstall=装拆 bridge(含 override), game_query=查询(场景树/节点/截图), game_write=写属性/调方法, game_input=模拟输入, game_wait=等待条件, playtest.*=确定性测试, monitor/watch=采样/信号记录, find_ui_elements/click_button=UI, network_conditioner=弱网, sync_state=快照对比, custom_command=自定义命令"
           },
           "port": {
             "type": "number",
@@ -2398,8 +2399,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 8143,
-        "totalBytes": 8536
+        "schemaBytes": 8498,
+        "totalBytes": 8891
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2410,7 +2411,7 @@
     {
       "name": "godot_advanced_tool",
       "group": "dynamic",
-      "description": "Proxy tool for calling advanced/deactivated Godot tools. Call with { tool_name: \"<name>\", arguments: {...} }.\n\nAll tools are currently directly available — no proxy needed.",
+      "description": "高级/未激活 Godot 工具的代理调用。调用形式 { tool_name: \"<工具名>\", arguments: {...} }。\n\n当前所有工具均可直接调用,无需代理。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2459,9 +2460,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 174,
+        "descBytes": 163,
         "schemaBytes": 205,
-        "totalBytes": 379
+        "totalBytes": 368
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2714,7 +2715,7 @@
     {
       "name": "help",
       "group": "core",
-      "description": "获取任意工具的完整文档。可用工具名：analysis, android, animation, animation_track, animtree, asset, audio, audit, blender, cpp, csv_to_resources, dap, debug, docs, editor, engine, game, godot_advanced_tool, godot_get_context, godot_list_dynamic_routes, godot_list_instances, godot_select_instance, help, load_skill, manage_tools, material, nav, particles, physics, profiler, project, qa, runtime, runtime_assert, scene, screenshot, script, self_update, signal, testing, tilemap, translation, ui, uid, validation, workflow。传 tool_name 获取该工具的详细用法、参数、action 列表。拼写纠错自动提示最接近的工具名。",
+      "description": "查任意工具完整文档(用法/参数/action)。可用工具名:analysis, android, animation, animation_track, animtree, asset, audio, audit, blender, cpp, csv_to_resources, dap, debug, docs, editor, engine, game, godot_advanced_tool, godot_get_context, godot_list_dynamic_routes, godot_list_instances, godot_select_instance, help, load_skill, manage_tools, material, nav, particles, physics, profiler, project, qa, runtime, runtime_assert, scene, screenshot, script, self_update, signal, testing, tilemap, translation, ui, uid, validation, workflow。传 tool_name 取详情;拼写纠错自动提示最接近名。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2811,9 +2812,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 662,
+        "descBytes": 619,
         "schemaBytes": 667,
-        "totalBytes": 1329
+        "totalBytes": 1286
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2909,7 +2910,7 @@
               "reconnect",
               "migrate"
             ],
-            "description": "操作类型"
+            "description": "操作类型。list_groups=列工具组(含 per-profile 价格), discover=发现, activate/deactivate=启停工具, sync=同步, reconnect=重连, migrate=迁移"
           },
           "groups": {
             "type": "array",
@@ -2972,8 +2973,8 @@
       },
       "size": {
         "descBytes": 421,
-        "schemaBytes": 595,
-        "totalBytes": 1016
+        "schemaBytes": 744,
+        "totalBytes": 1165
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2990,7 +2991,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot project directory path"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -3103,8 +3104,8 @@
       },
       "size": {
         "descBytes": 294,
-        "schemaBytes": 1168,
-        "totalBytes": 1462
+        "schemaBytes": 1238,
+        "totalBytes": 1532
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3133,7 +3134,7 @@
               "create_link",
               "query_path"
             ],
-            "description": "操作类型"
+            "description": "操作类型。create_region/create_agent/create_link=建导航元素, bake_mesh=烘焙导航网格, set_params=调参数, query_path=查路径"
           },
           "name": {
             "type": "string",
@@ -3397,8 +3398,8 @@
       },
       "size": {
         "descBytes": 370,
-        "schemaBytes": 3094,
-        "totalBytes": 3464
+        "schemaBytes": 3225,
+        "totalBytes": 3595
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3422,7 +3423,7 @@
               "particles_load_preset",
               "particles_set_material"
             ],
-            "description": "操作类型"
+            "description": "操作类型。particles_create=建粒子节点, particles_set_emission/set_process=设发射/处理参数, particles_load_preset=加载预设(fire/smoke/rain/snow/sparkle/explosion), particles_set_material=设材质"
           },
           "project_path": {
             "type": "string",
@@ -3649,8 +3650,8 @@
       },
       "size": {
         "descBytes": 292,
-        "schemaBytes": 2453,
-        "totalBytes": 2745
+        "schemaBytes": 2657,
+        "totalBytes": 2949
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3985,7 +3986,7 @@
               "list_templates",
               "apply_template"
             ],
-            "description": "操作类型"
+            "description": "操作类型。list_projects/get_project_info/list_files=项目查询, read_project_config/write_config=读写配置, create_project=建项目, setup_project_rules=分发项目规则, list_templates/apply_template=脚手架模板"
           },
           "project_path": {
             "type": "string",
@@ -4168,8 +4169,8 @@
       },
       "size": {
         "descBytes": 109,
-        "schemaBytes": 2854,
-        "totalBytes": 2963
+        "schemaBytes": 3071,
+        "totalBytes": 3180
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4296,7 +4297,7 @@
     {
       "name": "runtime",
       "group": "core",
-      "description": "启动编辑器、运行/停止项目、获取调试输出、运行测试、获取 Godot 版本。",
+      "description": "启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project 关键参数: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=预览模式窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详细用法: help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4315,7 +4316,7 @@
               "record_load",
               "record_play"
             ],
-            "description": "操作类型"
+            "description": "操作类型。launch_editor=开编辑器, run_project/stop_project=运行/停止游戏, get_debug_output=取调试输出, run_tests=跑测试, get_godot_version=查版本, record_*=录制回放(start/stop/save/load/play)"
           },
           "project_path": {
             "type": "string",
@@ -4435,9 +4436,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 98,
-        "schemaBytes": 2897,
-        "totalBytes": 2995
+        "descBytes": 362,
+        "schemaBytes": 3106,
+        "totalBytes": 3468
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4461,7 +4462,7 @@
               "perf",
               "screenshot_diff"
             ],
-            "description": "断言类型"
+            "description": "断言类型。node_state=节点属性, scene_structure=场景结构, screen_text=屏幕文本存在性, perf=性能基线, screenshot_diff=截图像素对比"
           },
           "project_path": {
             "type": "string",
@@ -4577,8 +4578,8 @@
       },
       "size": {
         "descBytes": 246,
-        "schemaBytes": 1847,
-        "totalBytes": 2093
+        "schemaBytes": 1993,
+        "totalBytes": 2239
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4589,13 +4590,13 @@
     {
       "name": "scene",
       "group": "core",
-      "description": "场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源: save_scene, load_sprite。查询: query_scene_tree, inspect_node。实例: instance_scene, set_instance_property, detach_instance。",
+      "description": "场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源: save_scene, load_sprite。查询: query_scene_tree, inspect_node。实例: instance_scene, set_instance_property, detach_instance。详细用法: help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -4620,7 +4621,7 @@
               "create_3d_node",
               "commit"
             ],
-            "description": "操作类型"
+            "description": "操作类型。read_scene/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit_node/remove_node=编辑删除, save_scene/open_scene=保存打开, instance_scene/set_instance_property/detach_instance=实例化, load_sprite=贴图加载, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交"
           },
           "scene_path": {
             "type": "string",
@@ -4946,9 +4947,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 277,
-        "schemaBytes": 5980,
-        "totalBytes": 6257
+        "descBytes": 305,
+        "schemaBytes": 6410,
+        "totalBytes": 6715
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4959,13 +4960,13 @@
     {
       "name": "screenshot",
       "group": "visual",
-      "description": "Screenshot capture and image analysis handoff. capture: capture a Godot scene screenshot in headless mode (experimental). analyze: return the image as MCP image content (base64) for the client vision capability to examine — returns image data, NOT a text description.",
+      "description": "截图与分析中转。capture: headless 截取场景截图(实验性)。analyze: 把图片以 MCP image 内容(base64)返回给客户端视觉能力查验——返回图像数据,非文字描述。diff: 像素级双图对比。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Path to Godot project directory"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -4974,29 +4975,29 @@
               "analyze",
               "diff"
             ],
-            "description": "Action type: capture (take a screenshot), analyze (AI visual analysis of an image), or diff (pixel-level comparison of two PNG images)"
+            "description": "操作类型。capture=截图, analyze=AI 视觉分析, diff=像素级双图对比"
           },
           "scene": {
             "type": "string",
-            "description": "capture: Scene file path relative to project (res://scenes/main.tscn). If omitted, captures the default scene or an empty viewport."
+            "description": "capture: 场景文件路径(相对项目,如 res://scenes/main.tscn)。省略时截取默认场景或空视口。"
           },
           "output_path": {
             "type": "string",
-            "description": "capture: Output PNG path (absolute). Defaults to <project_path>/screenshot.png"
+            "description": "capture: 输出 PNG 绝对路径,默认 <project_path>/screenshot.png"
           },
           "frame_delay": {
             "type": "number",
-            "description": "capture: Frames to wait before capture (default: 15)",
+            "description": "capture: 截图前等待帧数(默认 15)",
             "default": 15
           },
           "viewport_width": {
             "type": "number",
-            "description": "capture: Viewport width in pixels (default: 1280)",
+            "description": "capture: 视口宽度像素(默认 1280)",
             "default": 1280
           },
           "viewport_height": {
             "type": "number",
-            "description": "capture: Viewport height in pixels (default: 720)",
+            "description": "capture: 视口高度像素(默认 720)",
             "default": 720
           },
           "wait_node": {
@@ -5009,11 +5010,11 @@
           },
           "image_path": {
             "type": "string",
-            "description": "analyze: Absolute path to the image file (PNG or JPG)"
+            "description": "analyze: 图片文件绝对路径(PNG/JPG)"
           },
           "question": {
             "type": "string",
-            "description": "analyze: Question for the AI to answer about the image. Default: \"Describe what you see in this game screenshot.\"",
+            "description": "analyze: 要求视觉模型回答的问题。default 为英文提问(聚焦 UI 元素/角色位置/视觉问题),可自定义中文。",
             "default": "Describe what you see in this game screenshot. Focus on: UI elements, character positions, any visual issues or bugs."
           },
           "vision_route": {
@@ -5134,9 +5135,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 269,
-        "schemaBytes": 3737,
-        "totalBytes": 4006
+        "descBytes": 229,
+        "schemaBytes": 3703,
+        "totalBytes": 3932
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5147,7 +5148,7 @@
     {
       "name": "script",
       "group": "core",
-      "description": "脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入。高安全场景请用 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写入 .gd 前也走沙箱扫描（防 @tool 脚本加载即执行等已知危险 API 模式（清单不列举，防沙箱边界被侦察）;与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 execute_gdscript 最佳实践:分步执行、每步验证（把复杂逻辑拆成小块逐一跑,每步用 read_script/edit_script 迭代,避免一次性大脚本出错难定位）。",
+      "description": "脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入；高安全场景 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写 .gd 前也走沙箱扫描（与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 最佳实践:分步执行、每步验证,复杂逻辑拆小块用 read/edit_script 迭代。详细用法: help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5166,7 +5167,7 @@
               "execute_gdscript",
               "project_replace"
             ],
-            "description": "操作类型"
+            "description": "操作类型。read_script=读, write_script=写, edit_script=编辑(行号/search_and_replace), execute_gdscript=执行, project_replace=全仓批量替换, generate_test/create_test_scene=测试生成"
           },
           "script_path": {
             "type": "string",
@@ -5346,9 +5347,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 739,
-        "schemaBytes": 2805,
-        "totalBytes": 3544
+        "descBytes": 561,
+        "schemaBytes": 2995,
+        "totalBytes": 3556
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5447,7 +5448,7 @@
               "signal_emit",
               "signal_list"
             ],
-            "description": "操作类型"
+            "description": "操作类型。signal_connect/signal_disconnect=连接/断开信号, signal_emit=发射信号, signal_list=列节点可用信号"
           },
           "source_path": {
             "type": "string",
@@ -5534,8 +5535,8 @@
       },
       "size": {
         "descBytes": 232,
-        "schemaBytes": 1058,
-        "totalBytes": 1290
+        "schemaBytes": 1174,
+        "totalBytes": 1406
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5583,7 +5584,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Path to Godot project directory（editor 模式可省略，用当前打开的项目）"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录；editor 模式可省略，用当前打开的项目）"
           }
         },
         "required": [
@@ -5634,8 +5635,8 @@
       },
       "size": {
         "descBytes": 655,
-        "schemaBytes": 832,
-        "totalBytes": 1487
+        "schemaBytes": 896,
+        "totalBytes": 1551
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5666,7 +5667,7 @@
               "tilemap_paste",
               "tilemap_set_transform"
             ],
-            "description": "操作类型"
+            "description": "操作类型。tilemap_read=读, tilemap_set_cell/erase_cell=改/删单格, tilemap_fill_rect/clear=填充/清空, tilemap_copy/paste=复制/粘贴, tilemap_set_transform=变换"
           },
           "node_path": {
             "type": "string",
@@ -5910,8 +5911,8 @@
       },
       "size": {
         "descBytes": 352,
-        "schemaBytes": 3540,
-        "totalBytes": 3892
+        "schemaBytes": 3705,
+        "totalBytes": 4057
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5937,7 +5938,7 @@
               "translation_write",
               "translation_register"
             ],
-            "description": "操作类型"
+            "description": "操作类型。translation_read/translation_write=读/写翻译文件(.csv/.po), translation_register=注册语言"
           },
           "path": {
             "type": "string",
@@ -6019,8 +6020,8 @@
       },
       "size": {
         "descBytes": 294,
-        "schemaBytes": 1023,
-        "totalBytes": 1317
+        "schemaBytes": 1125,
+        "totalBytes": 1419
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6037,7 +6038,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -6056,7 +6057,7 @@
               "theme_create",
               "theme_set_property"
             ],
-            "description": "操作类型"
+            "description": "操作类型。ui_build_layout=CSS 布局翻译构建(推荐), ui_import_prototype=原型导入, ui_pixel_verify=像素验证, ui_create_control/container_add/anchor_preset=控件, ui_set/get/measure_layout=布局, ui_draw_recipe=绘制, theme_*=主题"
           },
           "scene_path": {
             "type": "string",
@@ -6332,7 +6333,7 @@
                     "polyline",
                     "string"
                   ],
-                  "description": "操作类型"
+                  "description": "绘制操作类型(rect/circle/line 等)"
                 },
                 "position": {
                   "type": "array",
@@ -6752,8 +6753,8 @@
       },
       "size": {
         "descBytes": 709,
-        "schemaBytes": 11011,
-        "totalBytes": 11720
+        "schemaBytes": 11353,
+        "totalBytes": 12062
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6780,7 +6781,7 @@
               "uid_set",
               "uid_check_refs"
             ],
-            "description": "操作类型"
+            "description": "操作类型。uid_scan=扫描项目 UID, uid_get=批量查 UID, uid_set=设 UID, uid_check_refs=检查 UID 引用"
           },
           "paths": {
             "type": "array",
@@ -6862,8 +6863,8 @@
       },
       "size": {
         "descBytes": 462,
-        "schemaBytes": 968,
-        "totalBytes": 1430
+        "schemaBytes": 1070,
+        "totalBytes": 1532
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6874,7 +6875,7 @@
     {
       "name": "validation",
       "group": "core",
-      "description": "运行验证、分析错误、验证项目/脚本、导入资源。一键 headless 运行 + 错误分析，或按需单项检查。",
+      "description": "运行验证、分析错误、验证项目/脚本、导入资源、导出、交付门禁(verify_delivery)。headless 域需 GODOT_PATH 环境变量(或项目级 .godot/mcp-godot.json)。一键 headless 运行 + 错误分析，或按需单项检查。详细用法: help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6895,7 +6896,7 @@
               "chain_verify",
               "verify_delivery"
             ],
-            "description": "操作类型"
+            "description": "操作类型。validate_project/validate_scripts/import_resources=验证导入, run_and_verify=运行+错误分析, analyze_error=分析错误输出, assert/stress=断言/压测, export_*=导出三连, validate_gdd=验证 GDD, chain_verify=链式验证, verify_delivery=交付门禁"
           },
           "project_path": {
             "type": "string",
@@ -7066,9 +7067,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 131,
-        "schemaBytes": 2436,
-        "totalBytes": 2567
+        "descBytes": 278,
+        "schemaBytes": 2706,
+        "totalBytes": 2984
       },
       "annotations": {
         "readOnlyHint": false,
@@ -7079,13 +7080,13 @@
     {
       "name": "workflow",
       "group": "profiler",
-      "description": "Development workflow tools. dev_loop: execute GDScript with optional validation, bridge queries, and state saving. scene_snapshot: capture structured scene tree snapshot. batch_validate: validate multiple GDScript files at once.",
+      "description": "开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量验证多个脚本。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Path to Godot project directory"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
           },
           "action": {
             "type": "string",
@@ -7097,59 +7098,59 @@
               "run_verify",
               "diff_scenes"
             ],
-            "description": "Action type"
+            "description": "操作类型。dev_loop=执行+验证一体, scene_snapshot=场景树快照, batch_validate=批量脚本验证"
           },
           "code": {
             "type": "string",
-            "description": "dev_loop: GDScript code to execute (snippet or full extends SceneTree)"
+            "description": "dev_loop: 要执行的 GDScript 代码(片段或完整 extends SceneTree)"
           },
           "verify": {
             "type": "boolean",
-            "description": "dev_loop: Also run project validation after execution (default: false)",
+            "description": "dev_loop: 执行后是否跑项目验证(默认 false)",
             "default": false
           },
           "timeout": {
             "type": "number",
-            "description": "dev_loop: Timeout per step in seconds (default: 30)",
+            "description": "dev_loop: 每步超时秒数(默认 30)",
             "default": 30
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "dev_loop: Load Autoload context (default: true)",
+            "description": "dev_loop: 是否加载 Autoload 上下文(默认 true)",
             "default": true
           },
           "bridge": {
             "type": "object",
-            "description": "dev_loop: Optional Game Bridge for screenshot/query validation",
+            "description": "dev_loop: 可选 Game Bridge,代码执行后截图/查询验证",
             "properties": {
               "screenshot": {
                 "type": "object",
-                "description": "Take a screenshot from the running game",
+                "description": "从运行中的游戏截图",
                 "properties": {
                   "path": {
                     "type": "string",
-                    "description": "Screenshot save path in game (default: user://mcp_dev_screenshot.png)"
+                    "description": "游戏内截图保存路径(默认 user://mcp_dev_screenshot.png)"
                   }
                 }
               },
               "queries": {
                 "type": "array",
                 "maxItems": 10,
-                "description": "Bridge queries to run after code execution (max 10)",
+                "description": "代码执行后要跑的 bridge 查询(最多 10 条)",
                 "items": {
                   "type": "object",
                   "properties": {
                     "method": {
                       "type": "string",
-                      "description": "Bridge query method"
+                      "description": "bridge 查询方法名"
                     },
                     "params": {
                       "type": "object",
-                      "description": "Query parameters"
+                      "description": "查询参数"
                     },
                     "expect": {
                       "type": "string",
-                      "description": "Expected result substring (optional)"
+                      "description": "期望结果子串(可选)"
                     }
                   },
                   "required": [
@@ -7161,29 +7162,29 @@
           },
           "acceptance": {
             "type": "object",
-            "description": "dev_loop: Optional acceptance criteria",
+            "description": "dev_loop: 可选验收标准",
             "properties": {
               "assertions": {
                 "type": "array",
-                "description": "Array of assertions to run after code execution",
+                "description": "代码执行后运行的断言数组",
                 "items": {
                   "type": "object",
                   "properties": {
                     "description": {
                       "type": "string",
-                      "description": "Human-readable assertion description"
+                      "description": "断言的可读描述"
                     },
                     "gdscript": {
                       "type": "string",
-                      "description": "GDScript code using _mcp_output to output results"
+                      "description": "用 _mcp_output 输出结果的 GDScript 代码"
                     },
                     "expect": {
                       "type": "string",
-                      "description": "Expected output value (string comparison)"
+                      "description": "期望输出值(字符串比较)"
                     },
                     "type": {
                       "type": "string",
-                      "description": "Assertion type: gdscript (default), screenshot_diff, or frame_degradation",
+                      "description": "断言类型: gdscript(默认)/screenshot_diff/frame_degradation",
                       "enum": [
                         "gdscript",
                         "screenshot_diff",
@@ -7195,19 +7196,19 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "screenshot_diff: node names expected to be visible in scene tree"
+                      "description": "screenshot_diff: 场景树中应可见的节点名"
                     },
                     "reference_path": {
                       "type": "string",
-                      "description": "screenshot_diff: optional reference image path for cosine-similarity pre-filter"
+                      "description": "screenshot_diff: 余弦相似度预筛的参考图路径(可选)"
                     },
                     "sim_threshold": {
                       "type": "number",
-                      "description": "screenshot_diff: cosine similarity threshold (default 0.85)"
+                      "description": "screenshot_diff: 余弦相似度阈值(默认 0.85)"
                     },
                     "frames_dir": {
                       "type": "string",
-                      "description": "frame_degradation: directory of captured frames (omit if acceptance.frame_sequence captures them)"
+                      "description": "frame_degradation: 帧截图目录(acceptance.frame_sequence 捕获时可省略)"
                     }
                   },
                   "required": [
@@ -7217,15 +7218,15 @@
               },
               "frame_sequence": {
                 "type": "object",
-                "description": "Capture N frames into a proof dir before assertions run; frames feed frame_degradation assertions",
+                "description": "断言运行前捕获 N 帧到证据目录;帧供 frame_degradation 断言",
                 "properties": {
                   "count": {
                     "type": "number",
-                    "description": "Number of frames to capture (2-60, default 12)"
+                    "description": "捕获帧数(2-60,默认 12)"
                   },
                   "interval_frames": {
                     "type": "number",
-                    "description": "Frames between captures at ~60fps (1-300, default 10)"
+                    "description": "~60fps 下每次捕获间隔帧数(1-300,默认 10)"
                   }
                 }
               }
@@ -7233,41 +7234,41 @@
           },
           "save_state": {
             "type": "object",
-            "description": "dev_loop: Save session state to file",
+            "description": "dev_loop: 保存会话状态到文件",
             "properties": {
               "path": {
                 "type": "string",
-                "description": "State file path relative to project (default: production/session-state/active.md)"
+                "description": "状态文件路径(相对项目,默认 production/session-state/active.md)"
               },
               "task": {
                 "type": "string",
-                "description": "Current task description"
+                "description": "当前任务描述"
               },
               "epic": {
                 "type": "string",
-                "description": "Epic name (optional)"
+                "description": "Epic 名(可选)"
               },
               "feature": {
                 "type": "string",
-                "description": "Feature name (optional)"
+                "description": "Feature 名(可选)"
               },
               "files_modified": {
                 "type": "array",
-                "description": "List of files modified in this session",
+                "description": "本次会话修改的文件清单",
                 "items": {
                   "type": "string"
                 }
               },
               "decisions": {
                 "type": "array",
-                "description": "Key decisions made",
+                "description": "关键决策记录",
                 "items": {
                   "type": "string"
                 }
               },
               "open_questions": {
                 "type": "array",
-                "description": "Unresolved questions",
+                "description": "未解决问题",
                 "items": {
                   "type": "string"
                 }
@@ -7276,16 +7277,16 @@
           },
           "scene_path": {
             "type": "string",
-            "description": "scene_snapshot: Scene file path relative to project"
+            "description": "scene_snapshot: 场景文件路径(相对项目)"
           },
           "max_depth": {
             "type": "number",
-            "description": "scene_snapshot: Max tree depth (default: 5)",
+            "description": "scene_snapshot: 最大遍历深度(默认 5)",
             "default": 5
           },
           "scripts": {
             "type": "array",
-            "description": "batch_validate: Array of script paths relative to project",
+            "description": "batch_validate: 脚本路径数组(相对项目)",
             "items": {
               "type": "string"
             }
@@ -7348,9 +7349,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 228,
-        "schemaBytes": 4224,
-        "totalBytes": 4452
+        "descBytes": 203,
+        "schemaBytes": 4154,
+        "totalBytes": 4357
       },
       "annotations": {
         "readOnlyHint": false,

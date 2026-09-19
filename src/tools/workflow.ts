@@ -90,42 +90,42 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'workflow',
-      description: 'Development workflow tools. dev_loop: execute GDScript with optional validation, bridge queries, and state saving. scene_snapshot: capture structured scene tree snapshot. batch_validate: validate multiple GDScript files at once.',
+      description: '开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量验证多个脚本。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: 'Action type',
+            description: '操作类型。dev_loop=执行+验证一体, scene_snapshot=场景树快照, batch_validate=批量脚本验证',
           },
           // dev_loop params
-          code: { type: 'string', description: 'dev_loop: GDScript code to execute (snippet or full extends SceneTree)' },
-          verify: { type: 'boolean', description: 'dev_loop: Also run project validation after execution (default: false)', default: false },
-          timeout: { type: 'number', description: 'dev_loop: Timeout per step in seconds (default: 30)', default: 30 },
-          load_autoloads: { type: 'boolean', description: 'dev_loop: Load Autoload context (default: true)', default: true },
+          code: { type: 'string', description: 'dev_loop: 要执行的 GDScript 代码(片段或完整 extends SceneTree)' },
+          verify: { type: 'boolean', description: 'dev_loop: 执行后是否跑项目验证(默认 false)', default: false },
+          timeout: { type: 'number', description: 'dev_loop: 每步超时秒数(默认 30)', default: 30 },
+          load_autoloads: { type: 'boolean', description: 'dev_loop: 是否加载 Autoload 上下文(默认 true)', default: true },
           bridge: {
             type: 'object',
-            description: 'dev_loop: Optional Game Bridge for screenshot/query validation',
+            description: 'dev_loop: 可选 Game Bridge,代码执行后截图/查询验证',
             properties: {
               screenshot: {
                 type: 'object',
-                description: 'Take a screenshot from the running game',
+                description: '从运行中的游戏截图',
                 properties: {
-                  path: { type: 'string', description: 'Screenshot save path in game (default: user://mcp_dev_screenshot.png)' },
+                  path: { type: 'string', description: '游戏内截图保存路径(默认 user://mcp_dev_screenshot.png)' },
                 },
               },
               queries: {
                 type: 'array',
                 maxItems: 10,
-                description: 'Bridge queries to run after code execution (max 10)',
+                description: '代码执行后要跑的 bridge 查询(最多 10 条)',
                 items: {
                   type: 'object',
                   properties: {
-                    method: { type: 'string', description: 'Bridge query method' },
-                    params: { type: 'object', description: 'Query parameters' },
-                    expect: { type: 'string', description: 'Expected result substring (optional)' },
+                    method: { type: 'string', description: 'bridge 查询方法名' },
+                    params: { type: 'object', description: '查询参数' },
+                    expect: { type: 'string', description: '期望结果子串(可选)' },
                   },
                   required: ['method'],
                 },
@@ -134,68 +134,68 @@ export function getToolDefinitions(): Tool[] {
           },
           acceptance: {
             type: 'object',
-            description: 'dev_loop: Optional acceptance criteria',
+            description: 'dev_loop: 可选验收标准',
             properties: {
               assertions: {
                 type: 'array',
-                description: 'Array of assertions to run after code execution',
+                description: '代码执行后运行的断言数组',
                 items: {
                   type: 'object',
                   properties: {
-                    description: { type: 'string', description: 'Human-readable assertion description' },
-                    gdscript: { type: 'string', description: 'GDScript code using _mcp_output to output results' },
-                    expect: { type: 'string', description: 'Expected output value (string comparison)' },
-                    type: { type: 'string', description: 'Assertion type: gdscript (default), screenshot_diff, or frame_degradation', enum: ['gdscript', 'screenshot_diff', 'frame_degradation'] },
-                    expect_present: { type: 'array', items: { type: 'string' }, description: 'screenshot_diff: node names expected to be visible in scene tree' },
-                    reference_path: { type: 'string', description: 'screenshot_diff: optional reference image path for cosine-similarity pre-filter' },
-                    sim_threshold: { type: 'number', description: 'screenshot_diff: cosine similarity threshold (default 0.85)' },
-                    frames_dir: { type: 'string', description: 'frame_degradation: directory of captured frames (omit if acceptance.frame_sequence captures them)' },
+                    description: { type: 'string', description: '断言的可读描述' },
+                    gdscript: { type: 'string', description: '用 _mcp_output 输出结果的 GDScript 代码' },
+                    expect: { type: 'string', description: '期望输出值(字符串比较)' },
+                    type: { type: 'string', description: '断言类型: gdscript(默认)/screenshot_diff/frame_degradation', enum: ['gdscript', 'screenshot_diff', 'frame_degradation'] },
+                    expect_present: { type: 'array', items: { type: 'string' }, description: 'screenshot_diff: 场景树中应可见的节点名' },
+                    reference_path: { type: 'string', description: 'screenshot_diff: 余弦相似度预筛的参考图路径(可选)' },
+                    sim_threshold: { type: 'number', description: 'screenshot_diff: 余弦相似度阈值(默认 0.85)' },
+                    frames_dir: { type: 'string', description: 'frame_degradation: 帧截图目录(acceptance.frame_sequence 捕获时可省略)' },
                   },
                   required: ['description'],
                 },
               },
               frame_sequence: {
                 type: 'object',
-                description: 'Capture N frames into a proof dir before assertions run; frames feed frame_degradation assertions',
+                description: '断言运行前捕获 N 帧到证据目录;帧供 frame_degradation 断言',
                 properties: {
-                  count: { type: 'number', description: 'Number of frames to capture (2-60, default 12)' },
-                  interval_frames: { type: 'number', description: 'Frames between captures at ~60fps (1-300, default 10)' },
+                  count: { type: 'number', description: '捕获帧数(2-60,默认 12)' },
+                  interval_frames: { type: 'number', description: '~60fps 下每次捕获间隔帧数(1-300,默认 10)' },
                 },
               },
             },
           },
           save_state: {
             type: 'object',
-            description: 'dev_loop: Save session state to file',
+            description: 'dev_loop: 保存会话状态到文件',
             properties: {
-              path: { type: 'string', description: 'State file path relative to project (default: production/session-state/active.md)' },
-              task: { type: 'string', description: 'Current task description' },
-              epic: { type: 'string', description: 'Epic name (optional)' },
-              feature: { type: 'string', description: 'Feature name (optional)' },
+              path: { type: 'string', description: '状态文件路径(相对项目,默认 production/session-state/active.md)' },
+              task: { type: 'string', description: '当前任务描述' },
+              epic: { type: 'string', description: 'Epic 名(可选)' },
+              feature: { type: 'string', description: 'Feature 名(可选)' },
               files_modified: {
                 type: 'array',
-                description: 'List of files modified in this session',
+                description: '本次会话修改的文件清单',
                 items: { type: 'string' },
               },
               decisions: {
                 type: 'array',
-                description: 'Key decisions made',
+                description: '关键决策记录',
                 items: { type: 'string' },
               },
               open_questions: {
                 type: 'array',
-                description: 'Unresolved questions',
+                description: '未解决问题',
                 items: { type: 'string' },
               },
             },
           },
           // scene_snapshot params
-          scene_path: { type: 'string', description: 'scene_snapshot: Scene file path relative to project' },
-          max_depth: { type: 'number', description: 'scene_snapshot: Max tree depth (default: 5)', default: 5 },
+          scene_path: { type: 'string', description: 'scene_snapshot: 场景文件路径(相对项目)' },
+          max_depth: { type: 'number', description: 'scene_snapshot: 最大遍历深度(默认 5)', default: 5 },
           // batch_validate params
           scripts: {
             type: 'array',
-            description: 'batch_validate: Array of script paths relative to project',
+            description: 'batch_validate: 脚本路径数组(相对项目)',
             items: { type: 'string' },
           },
           godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },

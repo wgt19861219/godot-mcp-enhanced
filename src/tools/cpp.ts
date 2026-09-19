@@ -27,7 +27,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: ['scaffold_gdextension'],
-            description: '操作类型',
+            description: '操作类型（当前仅 scaffold_gdextension=生成可编译的 godot-cpp GDExtension 工程骨架）',
           },
           project_path: { type: 'string', description: 'GDExtension 工程生成根目录（须在 ALLOWED_PROJECT_PATHS 内）' },
           class_name: { type: 'string', description: '主类名（PascalCase，默认 Example）', default: 'Example' },

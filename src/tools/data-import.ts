@@ -274,9 +274,9 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型（当前仅 csv_to_resources=CSV 批量实例化 Resource 并导出）',
           },
-          project_path: { type: 'string', description: 'Path to Godot project directory' },
+          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           class_path: { type: 'string', description: 'GDScript Resource 类路径(如 res://item.gd),CSV 每行实例化此类' },
           output_dir: { type: 'string', description: '输出目录(项目内,res:// 或相对路径,经沙箱校验)' },
           filename_column: { type: 'string', description: 'CSV 中作为输出文件名的列名' },

@@ -49,11 +49,11 @@ export function getToolDefinitions(): Tool[] {
     inputSchema: {
       type: 'object' as const,
       properties: {
-        project_path: { type: 'string', description: 'Godot 项目目录' },
+        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
         action: {
           type: 'string',
           enum: [...ACTIONS],
-          description: '操作类型',
+          description: '操作类型。create=建资源节点, path=沿多点路径铺设(串联), batch=批量操作, undo=撤销, save=落盘, list_shapes/list_materials=形状/材质清单',
         },
         shape: {
           type: 'string',

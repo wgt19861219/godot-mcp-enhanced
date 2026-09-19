@@ -475,7 +475,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'validation',
-      description: '运行验证、分析错误、验证项目/脚本、导入资源。一键 headless 运行 + 错误分析，或按需单项检查。',
+      description: '运行验证、分析错误、验证项目/脚本、导入资源、导出、交付门禁(verify_delivery)。headless 域需 GODOT_PATH 环境变量(或项目级 .godot/mcp-godot.json)。一键 headless 运行 + 错误分析，或按需单项检查。详细用法: help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -485,7 +485,7 @@ export function getToolDefinitions(): Tool[] {
               // ── merged actions (v0.18.0) ──
               'assert', 'stress', 'export_list_presets', 'export_get_preset', 'export_build',
               'validate_gdd', 'chain_verify', 'verify_delivery'],
-            description: '操作类型',
+            description: '操作类型。validate_project/validate_scripts/import_resources=验证导入, run_and_verify=运行+错误分析, analyze_error=分析错误输出, assert/stress=断言/压测, export_*=导出三连, validate_gdd=验证 GDD, chain_verify=链式验证, verify_delivery=交付门禁',
           },
           project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
           scope: {

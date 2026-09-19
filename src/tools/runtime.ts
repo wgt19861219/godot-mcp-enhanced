@@ -106,14 +106,14 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'runtime',
-      description: '启动编辑器、运行/停止项目、获取调试输出、运行测试、获取 Godot 版本。',
+      description: '启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project 关键参数: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=预览模式窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详细用法: help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
           action: {
             type: 'string',
             enum: ['launch_editor', 'run_project', 'stop_project', 'get_debug_output', 'run_tests', 'get_godot_version', 'record_start', 'record_stop', 'record_save', 'record_load', 'record_play'],
-            description: '操作类型',
+            description: '操作类型。launch_editor=开编辑器, run_project/stop_project=运行/停止游戏, get_debug_output=取调试输出, run_tests=跑测试, get_godot_version=查版本, record_*=录制回放(start/stop/save/load/play)',
           },
           project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶' },
           timeout: { type: 'number', description: '自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）', default: 30 },

@@ -346,7 +346,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'script',
-      description: '脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入。高安全场景请用 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写入 .gd 前也走沙箱扫描（防 @tool 脚本加载即执行等已知危险 API 模式（清单不列举，防沙箱边界被侦察）;与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 execute_gdscript 最佳实践:分步执行、每步验证（把复杂逻辑拆成小块逐一跑,每步用 read_script/edit_script 迭代,避免一次性大脚本出错难定位）。',
+      description: '脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入；高安全场景 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写 .gd 前也走沙箱扫描（与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 最佳实践:分步执行、每步验证,复杂逻辑拆小块用 read/edit_script 迭代。详细用法: help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -354,7 +354,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型',
+            description: '操作类型。read_script=读, write_script=写, edit_script=编辑(行号/search_and_replace), execute_gdscript=执行, project_replace=全仓批量替换, generate_test/create_test_scene=测试生成',
           },
           script_path: { type: 'string', description: 'read_script 用绝对路径；write_script/edit_script/generate_test 用绝对或相对项目路径' },
           content: { type: 'string', description: 'write_script: GDScript 内容' },

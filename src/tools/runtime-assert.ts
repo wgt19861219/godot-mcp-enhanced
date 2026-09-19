@@ -36,7 +36,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: ['node_state', 'scene_structure', 'screen_text', 'perf', 'screenshot_diff'],
-            description: '断言类型',
+            description: '断言类型。node_state=节点属性, scene_structure=场景结构, screen_text=屏幕文本存在性, perf=性能基线, screenshot_diff=截图像素对比',
           },
           project_path: { type: 'string', description: '项目路径（screenshot_diff 必填：解析 user:// 截图落盘位置）' },
           // node_state
