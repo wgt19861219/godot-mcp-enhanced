@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-19 安全加固批1（输入:五维安全评估 + 方案 `docs/superpowers/specs/2026-09-19-security-hardening-plan.md`;纯 TS 小改批,零 GDScript、零 Breaking、不 bump 版本;批2 审计外置双写/Web GUI 收敛与批3 challenge-response 握手待 D1-D4 决策后排期）。
+- **安全加固批1 审计与标记加固**（`security/audit-hardening-batch1`）:1A 审计写入失败可观测——空 catch 改为模块级失败计数+首次 warn（`audit-log.ts` `recordAuditWriteFailure`/`getAuditFailureStats`,三处调用点接入）+ `GODOT_MCP_AUDIT_STRICT=true` 可选阻断（审计落盘失败操作判失败,middleware 走改写 result——after hook 抛错被框架静默吞,`_auditConfirmedExecution` 走返回值信号）,`audit.get_log` 响应附 `write_failures`;1B 动态工具审计 fail-closed——risk 未知（未映射动态工具/静态漏声明）按保守档 `write` 落审计（`dynamic_unmapped`/`risk_unknown` 标记）,与确认门"未知=按危险处理"语义对齐;1C `AuditEntry` 加可选 `caller` 字段（`_meta.agentId` best-effort 归因,MCP 未标准化通常 undefined,仅审计不作鉴权）;1D 输出 marker 熵 64→122 bit（`generateMarker` substring(0,16)→(0,32),修正 SECURITY CONTRACT 注释与实现不符;`parseMcpMarkers` 前缀匹配长度无关,加长零兼容影响）;1E `GODOT_MCP_AUDIT=false` 关闭时启动打 `[SECURITY]` warn（关闭行为留痕）。测试:audit-log 层 2 用例 + middleware 层 6 用例（fail-closed 两分支/read 跳过/caller 透传/默认 best-effort/STRICT 改判失败）。
+
 > 2026-09-19 易用性修复五批次 + 终审修复波次（输入:审查报告 `docs/reviews/2026-09-19-易用性审查-用户界面三层.md`,方案 `docs/plans/2026-09-19-usability-fixes-plan.md`,终审 `docs/reviews/2026-09-19-易用性修复终审.md`(SHIPPED WITH NITS);零 GDScript 改动、零 Breaking、不 bump 版本;审查 MAJOR 实为 **16 项**(初版头部误计 12,终审 grep 纠正):完全闭环 13 + 替代方案 1 + 部分闭环 1 + defer 1;action 命名统一改名经侦察评估后**拒绝**——34 个域前缀 action 触及 45+ 文件 470 行引用且 action 名是 TS↔GDScript 协议标识符双侧耦合 + b5dda87c 硬切事故先例,以 README 命名说明 + help 工具兜底替代）。
 - **易用性终审修复波次**（`fix/usability-review-close`）：终审 7 项 Nit 处置——material/testing 两处 >8 字符英文 action 描述补中文化(A-3 口径外残留);doctor Node 检查线 18→20 对齐 engines(C-1 连带);README basic profile 数字复核为 29/46(setActiveGroups 语义,手写展开曾误计 30——confirm_and_execute 不在 46 清单);budget 注释数字精确化 111019B;B-7③(GODOT_PATH 被白名单拒静默 fallback)登记项目待办;审查报告头部 MAJOR 计数更正 12→16。
 

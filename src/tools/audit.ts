@@ -9,7 +9,7 @@ import type { Tool } from '@modelcontextprotocol/server';
 import type { ToolResult, ToolContext } from '../types.js';
 import { textResult } from '../types.js';
 import { opsSuccess, opsErrorResult } from './shared.js';
-import { readAuditLog, suggestRollback, AUDIT_LOG_REL } from '../core/audit-log.js';
+import { readAuditLog, suggestRollback, AUDIT_LOG_REL, getAuditFailureStats } from '../core/audit-log.js';
 import { resolveProjectPath } from '../core/path-utils.js';
 import { join } from 'path';
 
@@ -66,7 +66,8 @@ export async function handleTool(
       });
       return textResult(
         JSON.stringify(
-          opsSuccess(summary, [
+          // 1A (2026-09-19): 附进程内审计写入失败计数(本 server 生命周期),磁盘满/权限异常可查
+          opsSuccess({ ...summary, write_failures: getAuditFailureStats() }, [
             `audit 文件: ${join(projectPath, ...AUDIT_LOG_REL)}`,
             'changed_files 为项目相对路径(PII 护栏);riskHighlights 标 destructive/delete/failed',
             '回滚用 suggest_rollback + entry_index',

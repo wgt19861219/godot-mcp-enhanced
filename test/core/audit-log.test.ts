@@ -9,6 +9,9 @@ import {
   suggestRollback,
   isAuditEnabled,
   isTokenRequestResult,
+  getAuditFailureStats,
+  recordAuditWriteFailure,
+  isAuditStrict,
   AUDIT_LOG_REL,
   type AuditEntry,
 } from '../../src/core/audit-log.js';
@@ -204,5 +207,28 @@ describe('isAuditEnabled', () => {
     process.env.GODOT_MCP_AUDIT = '0';
     expect(isAuditEnabled()).toBe(false);
     delete process.env.GODOT_MCP_AUDIT;
+  });
+});
+
+// ─── 1A (2026-09-19 安全加固批1): 审计写入失败可观测 + STRICT 可选阻断 ──────────
+describe('audit failure observability (1A)', () => {
+  it('recordAuditWriteFailure 递增计数 + 记录最近错误消息', () => {
+    const before = getAuditFailureStats();
+    recordAuditWriteFailure(new Error('disk full'));
+    const after = getAuditFailureStats();
+    expect(after.failures).toBe(before.failures + 1);
+    expect(after.lastError).toBe('disk full');
+    // 非 Error 对象也兼容(String 化)
+    recordAuditWriteFailure('boom');
+    expect(getAuditFailureStats().failures).toBe(after.failures + 1);
+    expect(getAuditFailureStats().lastError).toBe('boom');
+  });
+
+  it('isAuditStrict: 默认 false,GODOT_MCP_AUDIT_STRICT=true → true', () => {
+    delete process.env.GODOT_MCP_AUDIT_STRICT;
+    expect(isAuditStrict()).toBe(false);
+    process.env.GODOT_MCP_AUDIT_STRICT = 'true';
+    expect(isAuditStrict()).toBe(true);
+    delete process.env.GODOT_MCP_AUDIT_STRICT;
   });
 });
