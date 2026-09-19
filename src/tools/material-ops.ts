@@ -569,7 +569,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: 'Operation type',
+            description: '操作类型。read=读材质, set_params=调参, create/save/load=建/存/载, shader_*=着色器读写(文件版带 _file), apply_template=套模板',
           },
           node_path: { type: 'string', description: 'Scene tree node path' },
           material_index: { type: 'number', description: 'Material index (optional, default 0)' },

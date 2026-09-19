@@ -222,7 +222,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 >
 > **怎么按名找到工具**:下表「工具」列绝大多数是 **action 名**(如 `read_scene`),实际调用时作为对应**顶层工具**的 `action` 参数传入——`read_scene`/`quick_scene` 走 `scene` 工具,`read_script`/`write_script` 走 `script` 工具,以此类推(顶层工具名 = 域名词:`scene`/`script`/`runtime`/`validation`/`game` 等 46 个)。action 命名存在三种历史语序(`read_scene`/`tilemap_read`/裸 `read`),不确定时让 AI 先查 `help` 工具(46 工具全覆盖 + 拼写纠错)。
 >
-> **默认 profile 可见性**:默认 `basic` profile 激活 **30/46** 个工具(实测);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
+> **默认 profile 可见性**:默认 `basic` profile 激活 **29/46** 个工具(实测,setActiveGroups 语义);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
 >
 > **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
 >

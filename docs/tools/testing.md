@@ -20,7 +20,7 @@
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `action` | enum (2 项) | ✓ | Action type: run | manage |
+| `action` | enum (2 项) | ✓ | 操作类型。run=执行测试套件, manage=管理(一期仅 results_get 查结果) |
 | `suite` | string |  | run: 套件名过滤（精确匹配 suite_name()，空=全部） |
 | `test_name` | string |  | run: 测试方法名过滤（子串匹配，空=全部） |
 | `exclude_test_name` | string |  | run: 排除测试方法（逗号分隔子串列表） |

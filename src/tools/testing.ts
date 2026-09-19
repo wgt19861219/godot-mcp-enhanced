@@ -38,7 +38,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: 'Action type: run | manage',
+            description: '操作类型。run=执行测试套件, manage=管理(一期仅 results_get 查结果)',
           },
           // run params
           suite: {
