@@ -414,7 +414,7 @@ func _handle_message(text: String, peer: WebSocketPeer) -> void:
 		# HMAC-SHA256(secret, challenge) hex —— key/msg 均 UTF-8 bytes,输出小写 hex(与 TS 侧 createHmac 对齐)
 		var cr_expected: String = _crypto.hmac_digest(HashingContext.HASH_SHA256, _secret.to_utf8_buffer(), String(_auth_challenges[pid]).to_utf8_buffer()).hex_encode()
 		var cr_provided: String = str(parsed.get("params", {}).get("proof", ""))
-		if _constant_time_compare(cr_provided, cr_expected):
+		if _constant_time_compare_varlen(cr_provided, cr_expected):
 			_authenticated_peers[pid] = true
 			_auth_challenges.erase(pid)
 			_auth_fail_count.erase(pid)
@@ -658,6 +658,18 @@ func _constant_time_compare(a: String, b: String) -> bool:
 		return false
 	var result := 0
 	for i in range(SECRET_LEN):
+		result = result | (ord(a[i]) ^ ord(b[i]))
+	return result == 0
+
+# 3A (2026-09-19 批3 真机实测修复): challenge-response proof 专用恒时比较——HMAC hex
+# 恒 64 字符,_constant_time_compare 的 SECRET_LEN=32 硬编码(editor secret 专用)会把
+# 合法 proof 长度不等直接判 false(真机首测兑现,TS mock 同构测不出)。长度先等值校验
+# 再恒时异或;HMAC hex 场景长度恒定,无长度泄露面。
+func _constant_time_compare_varlen(a: String, b: String) -> bool:
+	if a.length() != b.length():
+		return false
+	var result := 0
+	for i in range(a.length()):
 		result = result | (ord(a[i]) ^ ord(b[i]))
 	return result == 0
 
