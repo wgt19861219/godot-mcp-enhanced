@@ -349,6 +349,41 @@ describe('批5-T12: 轮转与流式读', () => {
     expect(summary.rotatedFiles).toBe(1);
     expect(summary.totalEntries).toBe(1);  // 主文件条目仍可读(流式)
   });
+
+  it('批5-N-b: parseErrors 统计在流式读下正确(非法 JSON 行计入,空行不计)', async () => {
+    const auditPath = join(tmpDir, ...AUDIT_LOG_REL);
+    mkdirSync(join(tmpDir, ...AUDIT_LOG_REL.slice(0, -1)), { recursive: true });
+    writeFileSync(auditPath, [
+      'not-json-at-all',
+      '',                                        // 空行不计 parseErrors(与旧 filter(Boolean) 一致)
+      JSON.stringify(makeEntry()),
+      '{"broken": ',                             // 半截 JSON 计入
+    ].join('\n') + '\n', 'utf8');
+    const summary = await readAuditLog(tmpDir);
+    expect(summary.parseErrors).toBe(2);         // 批5 审查 N-b:此前全仓零断言,仅读码确认
+    expect(summary.totalEntries).toBe(1);        // 合法行仍可读
+  });
+
+  it('批5-N-c: 端到端——超阈值审计文件 + appendAuditLine 触发轮转,新主文件可读且 .1 保留旧内容', async () => {
+    const { AUDIT_ROTATE_SIZE } = await import('../../src/core/audit-log.js');
+    const auditPath = join(tmpDir, ...AUDIT_LOG_REL);
+    mkdirSync(join(tmpDir, ...AUDIT_LOG_REL.slice(0, -1)), { recursive: true });
+    // 造超阈值主文件(旧内容,一行大 JSON 撑过 10MB)
+    const oldBig = JSON.stringify({ ...makeEntry({ trace_id: 'old-era-entry' }), pad: 'x'.repeat(AUDIT_ROTATE_SIZE) });
+    writeFileSync(auditPath, oldBig + '\n', 'utf8');
+    // append 触发轮转:旧内容 → .1,新行落进重建的主文件
+    await appendAuditLine(tmpDir, makeEntry({ trace_id: 'post-rotate-entry' }));
+    expect(existsSync(`${auditPath}.1`)).toBe(true);
+    const main = readFileSync(auditPath, 'utf8').trim();
+    expect(main).toContain('post-rotate-entry');
+    expect(main).not.toContain('old-era-entry');
+    expect(readFileSync(`${auditPath}.1`, 'utf8')).toContain('old-era-entry');
+    // 轮转后 readAuditLog 读新主文件(集成:append→rotate→read 全链路)
+    const summary = await readAuditLog(tmpDir);
+    expect(summary.totalEntries).toBe(1);
+    expect(summary.entries[0]!.trace_id).toBe('post-rotate-entry');
+    expect(summary.rotatedFiles).toBeGreaterThanOrEqual(1);
+  });
 });
 
 // ─── 批4-T3(五维评估 P1): extractAuditHint 工具→审计上报通道 ─────────────────
