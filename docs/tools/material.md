@@ -29,7 +29,7 @@
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `action` | enum (11 项) | ✓ | Operation type |
+| `action` | enum (11 项) | ✓ | 操作类型。read=读材质, set_params=调参, create/save/load=建/存/载, shader_*=着色器读写(文件版带 _file), apply_template=套模板 |
 | `project_path` | string |  | Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录） |
 | `node_path` | string |  | Scene tree node path |
 | `material_index` | number |  | Material index (optional, default 0) |

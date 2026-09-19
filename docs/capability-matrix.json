@@ -3008,7 +3008,7 @@
               "shader_list_templates",
               "shader_apply_template"
             ],
-            "description": "Operation type"
+            "description": "操作类型。read=读材质, set_params=调参, create/save/load=建/存/载, shader_*=着色器读写(文件版带 _file), apply_template=套模板"
           },
           "node_path": {
             "type": "string",
@@ -3104,8 +3104,8 @@
       },
       "size": {
         "descBytes": 294,
-        "schemaBytes": 1238,
-        "totalBytes": 1532
+        "schemaBytes": 1374,
+        "totalBytes": 1668
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5557,7 +5557,7 @@
               "run",
               "manage"
             ],
-            "description": "Action type: run | manage"
+            "description": "操作类型。run=执行测试套件, manage=管理(一期仅 results_get 查结果)"
           },
           "suite": {
             "type": "string",
@@ -5635,8 +5635,8 @@
       },
       "size": {
         "descBytes": 655,
-        "schemaBytes": 896,
-        "totalBytes": 1551
+        "schemaBytes": 956,
+        "totalBytes": 1611
       },
       "annotations": {
         "readOnlyHint": true,

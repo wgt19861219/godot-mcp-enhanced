@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-> 2026-09-19 易用性修复五批次（输入:审查报告 `docs/reviews/2026-09-19-易用性审查-用户界面三层.md`,方案 `docs/plans/2026-09-19-usability-fixes-plan.md`;零 GDScript 改动、零 Breaking、不 bump 版本;action 命名统一改名经侦察评估后**拒绝**——34 个域前缀 action 触及 45+ 文件 470 行引用且 action 名是 TS↔GDScript 协议标识符双侧耦合 + b5dda87c 硬切事故先例,以 README 命名说明 + help 工具兜底替代）。
+> 2026-09-19 易用性修复五批次 + 终审修复波次（输入:审查报告 `docs/reviews/2026-09-19-易用性审查-用户界面三层.md`,方案 `docs/plans/2026-09-19-usability-fixes-plan.md`,终审 `docs/reviews/2026-09-19-易用性修复终审.md`(SHIPPED WITH NITS);零 GDScript 改动、零 Breaking、不 bump 版本;审查 MAJOR 实为 **16 项**(初版头部误计 12,终审 grep 纠正):完全闭环 13 + 替代方案 1 + 部分闭环 1 + defer 1;action 命名统一改名经侦察评估后**拒绝**——34 个域前缀 action 触及 45+ 文件 470 行引用且 action 名是 TS↔GDScript 协议标识符双侧耦合 + b5dda87c 硬切事故先例,以 README 命名说明 + help 工具兜底替代）。
+- **易用性终审修复波次**（`fix/usability-review-close`）：终审 7 项 Nit 处置——material/testing 两处 >8 字符英文 action 描述补中文化(A-3 口径外残留);doctor Node 检查线 18→20 对齐 engines(C-1 连带);README basic profile 数字复核为 29/46(setActiveGroups 语义,手写展开曾误计 30——confirm_and_execute 不在 46 清单);budget 注释数字精确化 111019B;B-7③(GODOT_PATH 被白名单拒静默 fallback)登记项目待办;审查报告头部 MAJOR 计数更正 12→16。
 
 ### Changed
 - **易用性批1 工具接口文案对齐**（`fix/usability-tool-desc`）：5 工具纯英文描述中文化（screenshot/workflow/editor/godot_advanced_tool/docs,含参数级）;`project_path` 37 工具 16 变体→9（标准版+8 特化保留）;23 工具 action 描述≤8 字符→0（逐值/一句话解释,android 补缺失 description）;runtime/validation 补 GODOT_PATH 前提与关键参数要点,runtime/validation/scene/script 尾加 help 工具引流;engine 描述 1240B→~640B 等预算平衡,totalSum 106.4KB→110.8KB,warn 线按先例校准 105→112KB（error 120KB 不动）,5 处锚测试同步。

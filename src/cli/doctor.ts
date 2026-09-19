@@ -92,8 +92,8 @@ export async function runDoctor(_args: string[]): Promise<void> {
   // 1. Node.js 版本
   const nodeVersion = process.version;
   const nodeMajor = parseInt(nodeVersion.slice(1).split('.')[0]!, 10);
-  console.log(status(nodeMajor >= 18, `Node.js ${nodeVersion}${nodeMajor >= 18 ? '' : ' (requires >= 18)'}`));
-  if (nodeMajor < 18) hasError = true;
+  console.log(status(nodeMajor >= 20, `Node.js ${nodeVersion}${nodeMajor >= 20 ? '' : ' (requires >= 20, 对齐 package.json engines)'}`));
+  if (nodeMajor < 20) hasError = true;
 
   // 2. Godot 发现 + 版本兼容
   // 易用性批4 (2026-09-19):版本不查时,装 Godot 3.x 的用户 doctor 全绿但工具全挂
