@@ -12,6 +12,8 @@ import {
   getAuditFailureStats,
   recordAuditWriteFailure,
   isAuditStrict,
+  getExternalAuditFile,
+  compareAuditSources,
   AUDIT_LOG_REL,
   type AuditEntry,
 } from '../../src/core/audit-log.js';
@@ -230,5 +232,43 @@ describe('audit failure observability (1A)', () => {
     process.env.GODOT_MCP_AUDIT_STRICT = 'true';
     expect(isAuditStrict()).toBe(true);
     delete process.env.GODOT_MCP_AUDIT_STRICT;
+  });
+});
+
+// ─── 2A (2026-09-19 安全加固批2): 外置副本双写(防篡改) ────────────────────────
+// env GODOT_MCP_AUDIT_EXTERNAL_DIR 由 test/setup.js 全局重定向到临时目录(测试隔离)。
+describe('external audit copy (2A)', () => {
+  it('appendAuditLine 双写:项目内与外置副本内容一致', async () => {
+    await appendAuditLine(tmpDir, makeEntry());
+    const ext = getExternalAuditFile(tmpDir);
+    expect(existsSync(ext)).toBe(true);
+    const projectSide = await readAuditLog(tmpDir);
+    const externalSide = await readAuditLog(tmpDir, { external: true });
+    expect(externalSide.totalEntries).toBe(projectSide.totalEntries);
+    expect(externalSide.entries[0]?.tool).toBe('scene');
+    expect(externalSide.entries[0]?.risk).toBe('write');
+  });
+
+  it('同项目路径分隔符归一:反斜杠与正斜杠 hash 到同一外置文件', async () => {
+    await appendAuditLine(tmpDir, makeEntry());
+    const a = getExternalAuditFile(tmpDir);
+    const b = getExternalAuditFile(tmpDir.replaceAll('\\', '/'));
+    expect(a).toBe(b);
+  });
+
+  it('compareAuditSources: 项目内副本被整行删(文件删除)→ diverged=true 篡改信号', async () => {
+    await appendAuditLine(tmpDir, makeEntry());
+    await appendAuditLine(tmpDir, makeEntry());
+    // 一致时
+    const before = await compareAuditSources(tmpDir);
+    expect(before.diverged).toBe(false);
+    expect(before.projectEntries).toBe(2);
+    expect(before.externalEntries).toBe(2);
+    // 模拟项目内被删改(受沙箱约束的执行流删得到项目内副本,删不到外置)
+    rmSync(join(tmpDir, ...AUDIT_LOG_REL));
+    const afterD = await compareAuditSources(tmpDir);
+    expect(afterD.projectEntries).toBe(0);
+    expect(afterD.externalEntries).toBe(2);
+    expect(afterD.diverged).toBe(true);
   });
 });

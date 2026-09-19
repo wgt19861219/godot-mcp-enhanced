@@ -9,7 +9,7 @@ import type { Tool } from '@modelcontextprotocol/server';
 import type { ToolResult, ToolContext } from '../types.js';
 import { textResult } from '../types.js';
 import { opsSuccess, opsErrorResult } from './shared.js';
-import { readAuditLog, suggestRollback, AUDIT_LOG_REL, getAuditFailureStats } from '../core/audit-log.js';
+import { readAuditLog, suggestRollback, AUDIT_LOG_REL, getAuditFailureStats, compareAuditSources } from '../core/audit-log.js';
 import { resolveProjectPath } from '../core/path-utils.js';
 import { join } from 'path';
 
@@ -22,9 +22,10 @@ export function getToolDefinitions(): Tool[] {
   return [{
     name: 'audit',
     description: '操作审计日志查询(G3)。action=get_log 读 {project}/.godot/mcp_audit.jsonl 统计回放'
-      + '(操作计数/风险高亮/最近条目/时间范围);action=suggest_rollback 对指定条目给诚实回滚建议'
-      + '(create 类可删/project.godot before_values/其余靠 Git)。write/destructive 操作经 audit '
-      + 'after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏)。',
+      + '(操作计数/风险高亮/最近条目/时间范围),external=true 改读外置副本(~/.godot-mcp/audit/,'
+      + '防篡改参照——项目内副本可被项目脚本触及,外置受 GDScript 沙箱覆盖)并附 divergence 比对;'
+      + 'action=suggest_rollback 对指定条目给诚实回滚建议(create 类可删/project.godot before_values/其余靠 Git)。'
+      + 'write/destructive 操作经 audit after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏)。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -36,6 +37,7 @@ export function getToolDefinitions(): Tool[] {
         project_path: { type: 'string', description: '项目路径(默认 resolveProjectPath 自动解析)' },
         limit: { type: 'number', description: 'get_log:取末尾 N 条(默认全部)' },
         since: { type: 'string', description: 'get_log:ISO 时间过滤(只看此后)' },
+        external: { type: 'boolean', description: 'get_log:读外置副本(防篡改参照)并附 divergence 行数比对' },
         entry_index: { type: 'number', description: 'suggest_rollback:条目序号(从 get_log entries[].index)' },
       },
       required: ['action'],
@@ -60,16 +62,25 @@ export async function handleTool(
   }
   try {
     if (action === 'get_log') {
+      // 2A (2026-09-19 安全加固批2): external=true 读外置副本(防篡改参照) + divergence 比对
+      const external = args.external === true;
       const summary = await readAuditLog(projectPath, {
         limit: typeof args.limit === 'number' ? args.limit : undefined,
         since: typeof args.since === 'string' ? args.since : undefined,
+        external,
       });
+      const divergence = external ? await compareAuditSources(projectPath) : undefined;
       return textResult(
         JSON.stringify(
           // 1A (2026-09-19): 附进程内审计写入失败计数(本 server 生命周期),磁盘满/权限异常可查
-          opsSuccess({ ...summary, write_failures: getAuditFailureStats() }, [
-            `audit 文件: ${join(projectPath, ...AUDIT_LOG_REL)}`,
+          opsSuccess({
+            ...summary,
+            write_failures: getAuditFailureStats(),
+            ...(divergence ? { divergence } : {}),
+          }, [
+            `audit 文件: ${external ? '外置副本(防篡改参照)' : join(projectPath, ...AUDIT_LOG_REL)}`,
             'changed_files 为项目相对路径(PII 护栏);riskHighlights 标 destructive/delete/failed',
+            ...(divergence ? ['divergence.diverged=true = 项目内副本行数少于外置副本,可能被整行删改(排查篡改)'] : []),
             '回滚用 suggest_rollback + entry_index',
           ]),
         ),

@@ -1171,7 +1171,7 @@
     {
       "name": "audit",
       "group": "core",
-      "description": "操作审计日志查询(G3)。action=get_log 读 {project}/.godot/mcp_audit.jsonl 统计回放(操作计数/风险高亮/最近条目/时间范围);action=suggest_rollback 对指定条目给诚实回滚建议(create 类可删/project.godot before_values/其余靠 Git)。write/destructive 操作经 audit after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏)。",
+      "description": "操作审计日志查询(G3)。action=get_log 读 {project}/.godot/mcp_audit.jsonl 统计回放(操作计数/风险高亮/最近条目/时间范围),external=true 改读外置副本(~/.godot-mcp/audit/,防篡改参照——项目内副本可被项目脚本触及,外置受 GDScript 沙箱覆盖)并附 divergence 比对;action=suggest_rollback 对指定条目给诚实回滚建议(create 类可删/project.godot before_values/其余靠 Git)。write/destructive 操作经 audit after middleware 自动落盘(changed_files 为项目相对路径,PII 护栏)。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1195,6 +1195,10 @@
             "type": "string",
             "description": "get_log:ISO 时间过滤(只看此后)"
           },
+          "external": {
+            "type": "boolean",
+            "description": "get_log:读外置副本(防篡改参照)并附 divergence 行数比对"
+          },
           "entry_index": {
             "type": "number",
             "description": "suggest_rollback:条目序号(从 get_log entries[].index)"
@@ -1211,6 +1215,7 @@
         "project_path",
         "limit",
         "since",
+        "external",
         "entry_index"
       ],
       "readonly": true,
@@ -1245,9 +1250,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 386,
-        "schemaBytes": 577,
-        "totalBytes": 963
+        "descBytes": 557,
+        "schemaBytes": 694,
+        "totalBytes": 1251
       },
       "annotations": {
         "readOnlyHint": true,

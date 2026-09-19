@@ -16,6 +16,7 @@ import { InternalError } from '../core/tool-errors.js';
 import { buildReleaseUrls, downloadWithProgress, verifyDownloadedAsset, parseSha512Sums } from './godot-installer.js';
 import { extractZip } from './zip-extract.js';
 import { appendMachineAuditLine } from '../core/audit-log.js';
+import { sanitizeMsg } from '../core/logger.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -106,10 +107,11 @@ export async function installExportTemplates(opts: {
     opts.onProgress?.(`✓ templates ${version} 安装完成`);
   } catch (err) {
     // 保留 .tmp 现场供诊断(下次成功安装时覆盖);失败审计照记
+    // 2D (2026-09-19 安全加固批2): 错误消息脱敏(复用 logger sanitizeMsg,同 godot-installer)
     await appendMachineAuditLine({
       trace_id: `install-templates-${version}-${started}`, tool: 'cli', action: 'install_export_templates', risk: 'process',
       ok: false, project_path: '', changed_files: [], duration_ms: Date.now() - started,
-      details: { version, error: err instanceof Error ? err.message : String(err) },
+      details: { version, error: sanitizeMsg(err instanceof Error ? err.message : String(err)) },
     });
     throw err;
   }

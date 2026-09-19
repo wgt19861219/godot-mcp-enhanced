@@ -15,6 +15,8 @@
 import { appendFile, mkdir, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname, relative } from 'path';
+import { homedir } from 'os';
+import { createHash } from 'crypto';
 import type { RiskLevel } from './tool-registry.js';
 import { getLogger } from './logger.js';
 
@@ -113,6 +115,59 @@ export async function appendAuditLine(projectPath: string, entry: AuditEntry): P
   }
   const line = JSON.stringify(line_entry) + '\n';
   await appendFile(auditPath, line, 'utf8');
+  // 2A (2026-09-19 安全加固批2): 外置副本双写——防篡改主副本。
+  // 项目内副本保留(audit 工具默认读它,现行为零变更);外置失败独立处理:默认计数不
+  // throw(best-effort);STRICT 重抛(经调用方 catch 会再 record 一次,同一失败双计数,
+  // 方向无害)。论证见 getExternalAuditDir。
+  const extPath = getExternalAuditFile(projectPath);
+  try {
+    await mkdir(dirname(extPath), { recursive: true });
+    await appendFile(extPath, line, 'utf8');
+  } catch (e) {
+    recordAuditWriteFailure(e);
+    if (isAuditStrict()) throw e;
+  }
+}
+
+// ─── 2A (2026-09-19 安全加固批2): 外置审计副本(防篡改第一层) ──────────────────
+// 防篡改论证:项目内 .godot/ 与被审计对象同权限同生命周期,经 execute_gdscript 的
+// process 能力可删改自己的审计痕迹(抗抵赖最短板);外置到 home 下,GDScript 沙箱默认
+// 拦 FileAccess 读写非 res://user:// 路径,受沙箱约束的执行流删不到外置副本(要删须
+// 先过 UNRESTRICTED+DISABLE_SAFETY 双 opt-in——那已是管理员授权的无限制模式)。
+// env GODOT_MCP_AUDIT_EXTERNAL_DIR 可重定向(测试注入/用户自定位置;env 本身是用户
+// 控制域,与 bridge registry dir 重定向同类,非安全边界)。
+
+export function getExternalAuditDir(): string {
+  return process.env.GODOT_MCP_AUDIT_EXTERNAL_DIR ?? join(homedir(), '.godot-mcp', 'audit');
+}
+
+/** 外置副本路径:按项目绝对路径 sha256 前 16 hex 命名(一项目一文件;文件名不含项目
+ *  名/用户名 PII。分隔符归一防 D:\a\b 与 D:/a/b 分裂成两文件)。 */
+export function getExternalAuditFile(projectPath: string): string {
+  const h = createHash('sha256').update(projectPath.replace(/\\/g, '/')).digest('hex').slice(0, 16);
+  return join(getExternalAuditDir(), `${h}.jsonl`);
+}
+
+export interface AuditDivergence {
+  projectEntries: number;
+  externalEntries: number;
+  /** 项目内行数 < 外置行数 = 项目内副本可能被整行删改(外置为参照)。 */
+  diverged: boolean;
+}
+
+/** 项目内副本 vs 外置副本轻量比对(行数)。整行删除无法由 parseErrors 发现,行数差是
+ *  唯一信号——audit get_log external=true 时附在响应里供篡改排查。 */
+export async function compareAuditSources(projectPath: string): Promise<AuditDivergence> {
+  const countLines = async (p: string): Promise<number> => {
+    try {
+      return (await readFile(p, 'utf8')).split(/\r?\n/).filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+  const projectEntries = await countLines(join(projectPath, ...AUDIT_LOG_REL));
+  const externalEntries = await countLines(getExternalAuditFile(projectPath));
+  return { projectEntries, externalEntries, diverged: projectEntries < externalEntries };
 }
 
 /** audit 回放只读统计(不真重放执行,对齐 devtool buildAuditReplay)。 */
@@ -134,12 +189,13 @@ function riskReason(e: AuditEntry): string {
   return '';
 }
 
-/** 读 audit.jsonl + 只读统计。limit 取末尾 N 条;since 过滤时间。 */
+/** 读 audit.jsonl + 只读统计。limit 取末尾 N 条;since 过滤时间。
+ *  2A: external=true 读外置副本(防篡改参照,见 getExternalAuditFile)。 */
 export async function readAuditLog(
   projectPath: string,
-  opts?: { limit?: number; since?: string },
+  opts?: { limit?: number; since?: string; external?: boolean },
 ): Promise<AuditReplaySummary> {
-  const auditPath = join(projectPath, ...AUDIT_LOG_REL);
+  const auditPath = opts?.external ? getExternalAuditFile(projectPath) : join(projectPath, ...AUDIT_LOG_REL);
   const empty: AuditReplaySummary = {
     totalEntries: 0, timeRange: {}, operationCounts: {}, changedFileCounts: {},
     riskHighlights: [], parseErrors: 0, entries: [],
@@ -276,8 +332,7 @@ export function suggestRollback(entry: AuditEntry): RollbackSuggestion {
 // ─── 批 2:机器级审计(install 等非项目操作)──────────────────────────────────
 // CLI install 装的是机器级资产(~/.godot-mcp/godot/),不落项目审计;复用 AuditEntry
 // 结构与 appendFile 原子追加模式,便于同一套回放/统计工具消费。
-
-import { homedir } from 'os';
+// (homedir 已在文件顶部 import)
 
 /** 机器级审计文件:~/.godot-mcp/machine-audit.jsonl(机器级目录惯例)。 */
 export function getMachineAuditFile(): string {

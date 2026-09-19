@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
 import { isPathInAllowedRoots, resolveWithinRoot } from '../core/path-utils.js';
+import { appendAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import { hardenFilePermissionsWindows } from './registry.js';
 
 export interface DirEntry { name: string; isDir: boolean; size: number; mtime: number; }
@@ -147,6 +148,18 @@ export class FilesApi {
     await writeFile(tmp, content, 'utf-8');
     await rename(tmp, abs);
     const after = await stat(abs);
+    // 2C (2026-09-19 安全加固批2): Web GUI 旁路写接审计——files-api 不经 ToolDispatcher,
+    // 此前 HTTP 文件写零留痕(可核查缺口)。best-effort:失败计数不阻断保存(对齐 G2 catch 哲学);
+    // 同时经 appendAuditLine 双写外置副本(2A)。changed_files 记项目相对路径(PII 护栏)。
+    if (isAuditEnabled()) {
+      void appendAuditLine(projectPath, {
+        timestamp: new Date().toISOString(),
+        trace_id: 'web-gui-files',
+        tool: 'web-gui', action: 'write_file', risk: 'write',
+        ok: true, project_path: projectPath, changed_files: [rel], duration_ms: 0,
+        caller: 'web-gui',
+      }).catch((e) => { recordAuditWriteFailure(e); });
+    }
     return { mtime: after.mtimeMs };
   }
 }
