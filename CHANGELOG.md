@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-19 易用性修复五批次（输入:审查报告 `docs/reviews/2026-09-19-易用性审查-用户界面三层.md`,方案 `docs/plans/2026-09-19-usability-fixes-plan.md`;零 GDScript 改动、零 Breaking、不 bump 版本;action 命名统一改名经侦察评估后**拒绝**——34 个域前缀 action 触及 45+ 文件 470 行引用且 action 名是 TS↔GDScript 协议标识符双侧耦合 + b5dda87c 硬切事故先例,以 README 命名说明 + help 工具兜底替代）。
+
+### Changed
+- **易用性批1 工具接口文案对齐**（`fix/usability-tool-desc`）：5 工具纯英文描述中文化（screenshot/workflow/editor/godot_advanced_tool/docs,含参数级）;`project_path` 37 工具 16 变体→9（标准版+8 特化保留）;23 工具 action 描述≤8 字符→0（逐值/一句话解释,android 补缺失 description）;runtime/validation 补 GODOT_PATH 前提与关键参数要点,runtime/validation/scene/script 尾加 help 工具引流;engine 描述 1240B→~640B 等预算平衡,totalSum 106.4KB→110.8KB,warn 线按先例校准 105→112KB（error 120KB 不动）,5 处锚测试同步。
+- **易用性批2 README 修复+工具一览重构**（`fix/usability-readme`）：Node 版本要求 18→20（对齐 engines ≥20）;环境变量表删 2 重复行+补 `ALLOWED_PROJECT_PATHS` 行与安全节配置示例;客户端计数 14→15、skills 数量统一为 7;小白节尾补「接入 AI 客户端→快速开始」衔接;快速开始补「验证配置成功」小节（doctor + get_godot_version）;工具一览 blockquote 补 action 名 vs 工具名说明/三种命名语序/basic profile 30/46 可见性/docs/tools 与使用指南链接;一览补「调试与诊断」「资产与互操作」两个缺域小节（dap/debug/engine/qa/analysis/blender/asset 等 19 工具条目）;Game Bridge 表补 14 个缺失 action 说明。
+
 > 2026-09-17 架构审查批 6(工程卫生:gitignore/README 安全陈述,纯 chore 不 bump)。Task 6.2 删 21 个已合并分支待用户确认后执行(plan 前提),app-window 分支处置留用户 review(决策点 1)。
 >
 > 2026-09-18 代码重复收敛重构（五批次交付 + 终审修复波次，行为锁定测试先行；TS 重复率 4.0%→2.9%（205 块 2615 行→159 块 1847 行）、GDScript 4.1%→3.8%（43 块 695 行→40 块 631 行，剩余大头全为三域 Keep-in-sync 有意冗余）；方案 `docs/plans/2026-09-18-dedup-refactor-plan.md`，第三方审查 `docs/reviews/2026-09-18-dedup-refactor.md`；分析确认的有意冗余（三域副本/沙箱双实现/command 样板）全部零触碰）。
