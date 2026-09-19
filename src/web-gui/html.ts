@@ -104,11 +104,13 @@ export const INDEX_HTML: string = `<!doctype html>
 <div id="warn"></div>
 <main>
   <div id="left">
-    <section id="projPane"><h2>项目</h2>
+    <!-- 易用性批5 (2026-09-19):面板虽名「监控」,但项目/会话/文件区含写操作
+         (停止/清理/增删项目/保存文件),给操作后果一行预期,防误触 -->
+    <section id="projPane"><h2>项目 <span class="dim" style="font-weight:normal">增删/扫描影响 server 登记状态</span></h2>
       <div class="log-tools"><input id="projSearch" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
       <div class="log-tools" id="addRow"><input id="addPath" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
       <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
-    <section><h2>运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+    <section><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
   </div>
   <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
     <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button></div>
@@ -1027,12 +1029,14 @@ export const INDEX_HTML: string = `<!doctype html>
     // 凭据失效(401/403)躺平提示(对齐 M-2 语义,真机实测教训):此场景实例活着但浏览器
     // 无有效凭据——迁移到别的实例同样 401,只会乒乓死循环;恢复指引用户重新打开。
     // (共享持久 token 下 401 基本只剩 cookie 被清/换浏览器场景)
+    // 易用性批5 (2026-09-19):措辞从「凭证已失效」改为「需经 CLI 授权」——直访 URL
+    // (无 token)的首个 401 不是"失效"是"尚未授权",原措辞误导首次直访用户。
     authFetch('/api/stats').then(function (r) {
       if (r.status === 401 || r.status === 403) {
         stopped = true; es.close();
-        $('statusBar').textContent = '面板凭证已失效,请重新打开';
+        $('statusBar').textContent = '本面板需经 CLI 授权后访问';
         var w = $('warn'); w.style.display = 'block';
-        w.textContent = '会话凭证已失效——请重新运行 npx godot-mcp-enhanced dashboard --web 打开面板';
+        w.textContent = '面板需经 CLI 打开完成授权(直访地址不带 token)——请在终端运行 npx godot-mcp-enhanced dashboard --web 打开面板';
       }
     }).catch(function () { /* 网络瞬断,EventSource 自动重连 */ });
   };

@@ -70,13 +70,15 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     expect(WEB_GUI_CSP).toContain("frame-ancestors 'none'");
     expect(WEB_GUI_CSP).toContain("style-src 'unsafe-inline'");   // 样式属性面保留(非脚本执行面)
     // 硬编码锚:playwright 打开真实面板实例,浏览器 console 报的期望 hash(2026-09-17 实证)
-    expect(WEB_GUI_CSP).toContain("'sha256-txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8='");
+    // 易用性批5 (2026-09-19) 重锚:内联脚本 401 文案改动(「凭证已失效」→「需经 CLI 授权」)
+    // 使 hash 变更;新 hash 由独立重算路径(下)与 server 实算 CSP 双向互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-7TT1RybPO73fXbG7Fk9Sq0XkuWq4KWIjlYdtSfxb6Wg='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('txMCHDj5lQ5NnvI4BU4AUh2IzWAWqh6VRqhB0RMkWI8=');   // 独立重算与浏览器锚互证
+    expect(hash).toBe('7TT1RybPO73fXbG7Fk9Sq0XkuWq4KWIjlYdtSfxb6Wg=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
