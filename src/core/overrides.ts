@@ -14,7 +14,7 @@ import { join, basename, extname } from 'path';
 import { isPathInAllowedRoots, describeAllowedRoots } from './path-utils.js';
 import { getLogger } from './logger.js';
 import { PathError } from './tool-errors.js';
-import { scanGdscriptSandbox } from '../gdscript-executor.js';
+import { scanGdscriptSandbox } from './sandbox-scanner.js';  // 批5审查 Nit-1:直连新家
 
 /** overrides 注入的 autoload key 前缀(卸载时按前缀批量清理)。
  *  G-5 (2026-08-14 批D实测发现): autoload 段键名即 Godot 节点名,旧版(≤0.23.x)误带

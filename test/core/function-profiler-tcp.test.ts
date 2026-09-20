@@ -1,5 +1,7 @@
 // test/core/function-profiler-tcp.test.ts — W10 遗留批6:DebuggerProfiler TCP 编排测试
-// 真协议 localhost 拨入(net.connect + encodeVariant 编码 + 4 字节 LE 长度前缀),
+// 真协议 localhost 拨入(net.connect + encodeVariant 编码 + 4 字节 LE 长度前缀)。
+// 取舍(批5审查 Nit-3):Outbound 解码器与被测方共用同一份 godot-variant codec(自环),协议保真
+// 由独立 godot-variant 单测兜底;断言有效性靠行为差分(如 calls=5 vs 首帧折叠的 8)保证,不靠 codec 正确性。
 // 覆盖状态机主链:accept/set_pid 握手→start(出站启用消息)→签名注册→帧折叠(首帧丢弃
 // 语义)→profile_total 哨兵 finalize→stop 排名输出;以及防线(零长度包/超尺寸包经
 // fail→挂起 wait 拒绝、bad_args/profile_not_started/profile_busy)。
@@ -84,6 +86,7 @@ describe('DebuggerProfiler TCP 状态机(真协议 localhost)', () => {
     // 出站第一条应为启用消息: ['profiler:servers', threadId, [true, [limit, false]]]
     const enable = await outbound.next();
     expect(enable[0]).toBe('profiler:servers');
+    expect(enable[1]).toBe(7);  // 批5审查 Nit-3:set_pid 的 threadId 透传回显
     expect(enable[2]).toEqual([true, [16, false]]);
 
     // 签名注册 + 两帧(首帧被丢弃——VM 内启用的首样本时间戳为零,见 handle 注释)
