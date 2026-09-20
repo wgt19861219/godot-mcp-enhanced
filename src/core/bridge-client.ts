@@ -19,7 +19,7 @@ import { join, resolve } from 'path';
 import { userInfo } from 'os';
 import { execFileSync, type ChildProcess } from 'child_process';
 import { getErrorMessage } from '../types.js';
-import { parseAutoloadNames } from '../gdscript-executor.js';
+import { parseAutoloadNames } from './sandbox-scanner.js';  // 批5审查 Nit-1:直连新家
 import { getLogger } from './logger.js';
 import { getDefaultRegistryDir, DEFAULT_PORT_START, DEFAULT_PORT_END } from './instance-manager.js';
 // 批4-T2: 与 EditorConnection 共用降级记忆 TTL(单一常量防两处 drift)

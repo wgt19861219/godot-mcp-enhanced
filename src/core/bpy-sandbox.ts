@@ -2,7 +2,7 @@
 // execute_bpy 的 best-effort 危险 API 静态扫描,对齐 execute_gdscript scanGdscriptSandbox 纵深防御。
 // 同 GDScript 沙箱:防误用层非防对抗(字符串拼接/反射可绕过),真正隔离须容器/VM。
 import { getLogger } from './logger.js';
-import { escapeRegExp } from '../gdscript-executor.js';
+import { escapeRegExp } from './sandbox-scanner.js';  // 批5审查 Nit-1:core 内直连新家,不走 src 根 re-export 绕行
 
 // Python 危险 API 模式(对齐 DANGEROUS_PATTERNS 精神)。在剥字符串/注释后的 skeleton 上匹配。
 const DANGEROUS_BPY_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
