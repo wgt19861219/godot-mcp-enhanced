@@ -174,7 +174,7 @@ describe('edit_script — C# 验证降级', () => {
 
   // 2026-08-07 审查 NIT-3：补 PRIVILEGED_GROUPS gate 分支测试。
   // 现有 2 测试都走"无 .csproj"路径（csharpValidateAndRevert 在 csproj 检测就 return null，
-  // 到不了 gate 校验 script.ts:140-148）。本测试建空 .csproj 触发 gate 分支，
+  // 到不了 gate 校验 script/edit.ts csharpValidateAndRevert）。本测试建空 .csproj 触发 gate 分支，
   // 不设 PRIVILEGED_GROUPS 期望 skip（不触发 dotnet build）。
   it('有 .csproj 但未设 PRIVILEGED_GROUPS → skip dotnet build（gate 拦截，不触发 dotnet）', async () => {
     // 建 .csproj 触发 csprojExists=true，进入 gate 校验分支
@@ -208,7 +208,7 @@ describe('edit_script — C# 验证降级', () => {
 });
 
 // 2026-08-07 审查 P1: C# dotnet build 失败 → 原子回滚分支测试
-// 守护 script.ts:155-160 的 tmp+rename 原子回滚（原零覆盖，"写了守卫但不知是否真工作"）
+// 守护 script/edit.ts csharpValidateAndRevert 的 tmp+rename 原子回滚（原零覆盖，"写了守卫但不知是否真工作"）
 describe('edit_script — C# dotnet build 失败原子回滚', () => {
   it('build 失败时文件回滚到原始内容（rawFile），编辑不落盘', async () => {
     // 建 .csproj + .cs，设 PRIVILEGED_GROUPS 让 gate 放行

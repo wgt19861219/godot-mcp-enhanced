@@ -24,7 +24,7 @@ import { requireString, requireProjectPath } from '../core/args-validation.js';
 import { scanFiles } from '../core/file-scanner.js';
 import type { GodotConfig } from '../core/config-parser.js';
 import { getScaffoldFiles, PROJECT_TEMPLATES, handleTemplateAction } from './code-templates.js';
-import { scanScriptSandboxOrThrow } from './script.js';
+import { scanScriptSandboxOrThrow } from './script/shared.js';
 import { getLogger } from '../core/logger.js';
 import { projectWriteConfig, isAllowedConfigKey, validateConfigValue } from './project-config.js';
 

@@ -87,7 +87,7 @@ describe('project_replace atomic write', () => {
 
   it('全仓审查 B-1: replace 注入危险 API 到 .gd 被沙箱拒绝(整批原子,文件不动)', async () => {
     // 攻击路径与 SEC-P1-1 同构:project_replace 曾绕过 scanScriptSandboxOrThrow
-    // (script.ts:79 声明"全仓所有写 .gd 落盘前必须过此扫描")——replace 注入
+    // (script/shared.ts 声明"全仓所有写 .gd 落盘前必须过此扫描")——replace 注入
     // OS.execute 后 run_project/编辑器打开即执行。修复:批量落盘前对 .gd 内容过扫描。
     const result = await script.handleTool('script', {
       project_path: dirRef.path,

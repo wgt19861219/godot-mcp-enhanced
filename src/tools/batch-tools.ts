@@ -11,7 +11,7 @@ import { batchValidateScripts } from './validation.js';
 import { lintGDScript, formatLintResults } from './gdscript-lint.js';
 import { parseTscn } from '../tscn/tscn-parser.js';
 import { spawnGodot } from './spawn-helper.js';
-import { scanScriptSandboxOrThrow } from './script.js';
+import { scanScriptSandboxOrThrow } from './script/shared.js';
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
 

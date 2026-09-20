@@ -112,12 +112,13 @@ describe('P6-2: Phase 3 非字面量 load 拦截(scanGdscriptSandbox)', () => {
     expect(w2.length).toBeGreaterThan(0);
   });
 
-  it('P3-h: script.ts(execute_gdscript 工具本体)保持普通通道(AI 自由代码不豁免)', async () => {
+  it('P3-h: script execute 工具本体保持普通通道(AI 自由代码不豁免)', async () => {
     const { readFileSync } = await import('fs');
     const { resolve, dirname } = await import('path');
     const { fileURLToPath } = await import('url');
-    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'tools', 'script.ts'), 'utf8');
-    expect(src).toContain("executeGdscript } from '../gdscript-executor.js'");
+    // 批7(2026-09-20) script.ts 拆分后 execute_gdscript 落位 script/execute.ts
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'tools', 'script', 'execute.ts'), 'utf8');
+    expect(src).toContain("executeGdscript } from '../../gdscript-executor.js'");
     expect(src).not.toContain('executeGdscriptRuntime');
   });
 

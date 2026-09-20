@@ -50,9 +50,14 @@ describe('P1-2: isPluginSelfPath 判定矩阵', () => {
 
 describe('P1-2: 写入口接线契约', () => {
   it('FG-d: write_script/edit_script/project_replace/scene commit/quick_scene 共 5 守卫', () => {
-    const script = readFileSync('src/tools/script.ts', 'utf8');
-    expect((script.match(/pluginSelfPathGuard\(/g) ?? []).length, 'script.ts 3 处(write/edit/project_replace)').toBe(3);
-    expect(script.includes('整批原子检查'), 'project_replace 需整批守卫注释').toBe(true);
+    // 批7(2026-09-20) script.ts action 拆分后,守卫随 case 迁至 script/{write,edit,project-replace}.ts
+    const write = readFileSync('src/tools/script/write.ts', 'utf8');
+    expect((write.match(/pluginSelfPathGuard\(/g) ?? []).length, 'write.ts 1 处(write_script)').toBe(1);
+    const edit = readFileSync('src/tools/script/edit.ts', 'utf8');
+    expect((edit.match(/pluginSelfPathGuard\(/g) ?? []).length, 'edit.ts 1 处(edit_script)').toBe(1);
+    const pr = readFileSync('src/tools/script/project-replace.ts', 'utf8');
+    expect((pr.match(/pluginSelfPathGuard\(/g) ?? []).length, 'project-replace.ts 1 处(project_replace)').toBe(1);
+    expect(pr.includes('整批原子检查'), 'project_replace 需整批守卫注释').toBe(true);
     const scene = readFileSync('src/tools/scene/index.ts', 'utf8');
     expect((scene.match(/pluginSelfPathGuard\(/g) ?? []).length, 'scene/index.ts 3 处(commit 1 + quick_scene 场景/脚本 2)').toBe(3);
   });

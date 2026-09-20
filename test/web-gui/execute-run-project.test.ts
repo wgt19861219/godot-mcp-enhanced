@@ -7,7 +7,8 @@
 //   test/process-state.test.js:75;简报骨架的 killAllRunSessions 不存在,弃用)。
 // - env 覆盖: 显式保存 + afterEach 恢复(test/web-gui/env-gate.test.ts:105-108)。
 //
-// 实测校准(src/helpers.ts:112-124):requireProjectPath 对白名单外路径抛 PathError
+// 实测校准(src/core/args-validation.ts 的 requireProjectPath,批2 自 helpers.ts 迁入):
+// requireProjectPath 对白名单外路径抛 PathError
 // (审查 I-D 收口,2026-09-03),不回落默认路径——用例 4 断言 rejects;用例 3 需先
 // UNRESTRICTED=true 放行路径检查,才能走到 case 体首行的 project.godot 存在性检查。
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';

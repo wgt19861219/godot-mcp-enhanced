@@ -208,9 +208,11 @@ export const FIXED_DEFECTS: DefectEntry[] = [
   { key: 'path-sandbox-touctou-bypass', status: 'fixed', severity: 'IMPORTANT', dimension: 'Security',
     detect: () => {
       // fixed：resolveWithinRoot 改 realpathSync。命中「用 resolve 而非 realpathSync」即复发
-      const helpers = readSrc('src/helpers.ts');
-      const usesResolve = /function\s+(resolveWithinRoot|isSafePath)[\s\S]*?resolve\(/m.test(helpers);
-      const usesRealpath = /realpathSync/.test(helpers);
+      // 批2(2026-09-20, 26cf1e6b) helpers.ts 退役后 resolveWithinRoot 安家 core/path-utils.ts，
+      // 此谓词当时漏演进致 readSrc('') 恒假绿；批7 审查(B-1)发现补指新家。
+      const utils = readSrc('src/core/path-utils.ts');
+      const usesResolve = /function\s+(resolveWithinRoot|isSafePath)[\s\S]*?resolve\(/m.test(utils);
+      const usesRealpath = /realpathSync/.test(utils);
       return (usesResolve && !usesRealpath) ? 1 : 0;
     } },
   { key: 'swallowed-empty-catch', status: 'fixed', severity: 'IMPORTANT', dimension: 'Completeness',
@@ -476,12 +478,15 @@ export const FIXED_DEFECTS: DefectEntry[] = [
     // P1-2(2026-07-06 综合审查): guard_text_resource_write/guard_offline_scene_save 只在 GDScript
     // command_handler 实现, TS script.ts/scene writeFileSync 绕过(grep 全 src 零调用) → 编辑器打开
     // 脚本/场景时磁盘/内存版本撕裂。fix: ToolContext 加回调, dispatcher 注入(经 WS 调 guard),
-    // script writeScript/editScript + scene add_node 写前调。复发: script.ts guard 调用 < 3 或 scene 缺失。
+    // script writeScript/editScript + scene add_node 写前调。复发: script guard 接线缺失 或 scene 缺失。
+    // 批7(2026-09-20) script.ts 拆分:守卫定义落 script/shared.ts,调用在 script/{write,edit}.ts。
     detect: () => {
-      const scriptGuards = countMatchesInFile('src/tools/script.ts', /checkTextResourceGuard/g);
+      const guardDefined = fileContains('src/tools/script/shared.ts', /function checkTextResourceGuard/);
+      const writeWired = fileContains('src/tools/script/write.ts', /checkTextResourceGuard\(ctx/);
+      const editWired = fileContains('src/tools/script/edit.ts', /checkTextResourceGuard\(ctx/);
       const sceneWired = fileContains('src/tools/scene/index.ts', /ctx\.checkEditorSceneSave/);
       const tsCtx = fileContains('src/types.ts', /checkEditorTextResourceWrite/);
-      return scriptGuards >= 3 && sceneWired && tsCtx ? 0 : 1;
+      return guardDefined && writeWired && editWired && sceneWired && tsCtx ? 0 : 1;
     } },
   { key: 'heartbeat-pause-timeout-disconnect', status: 'fixed', severity: 'IMPORTANT', dimension: 'Reliability',
     // P1-3(2026-07-06 综合审查): heartbeat.gd paused 分支 op_timer > op_timeout 时 emit timeout_detected
@@ -1561,12 +1566,14 @@ export const FIXED_DEFECTS: DefectEntry[] = [
   { key: 'write-edit-script-no-sandbox-scan', status: 'fixed', severity: 'CRITICAL', dimension: 'Security',
     // SEC-P1-1: write_script/edit_script writeFileSync 写任意 content 不经 scanGdscriptSandbox,
     // 客户端可写 @tool/OS.execute 脚本。fix: scanScriptSandboxOrThrow 在 4 写入点阻断式扫描。
-    // detect: script.ts 含 scanScriptSandboxOrThrow 定义 + write_script/edit_script 调用(至少 3 处)。
+    // 批7(2026-09-20) script.ts 拆分:helper 定义落 script/shared.ts,调用在 script/{write,edit,project-replace}.ts。
     detect: () => {
-      const f = readSrc('src/tools/script.ts');
-      const hasHelper = /function scanScriptSandboxOrThrow/.test(f);
-      const callCount = (f.match(/scanScriptSandboxOrThrow\(/g) ?? []).length;
-      return hasHelper && callCount >= 4 ? 0 : 1;  // 1 定义 + ≥3 调用(实际 4 写入点 + 1 定义 = 5)
+      const hasHelper = fileContains('src/tools/script/shared.ts', /function scanScriptSandboxOrThrow/);
+      const callCount =
+        countMatchesInFile('src/tools/script/write.ts', /scanScriptSandboxOrThrow\(/g)
+        + countMatchesInFile('src/tools/script/edit.ts', /scanScriptSandboxOrThrow\(/g)
+        + countMatchesInFile('src/tools/script/project-replace.ts', /scanScriptSandboxOrThrow\(/g);
+      return hasHelper && callCount >= 4 ? 0 : 1;  // 4 写入点: write 1 + edit 3 + project_replace 批扫 1 = 5
     } },
   // SEC-P2-1 (2026-08-09): test-framework.ts 裸 validatePath 仅 resolve 零安全校验,
   // 依赖全局门 ToolDispatcher.validatePathArgs 兜底。纵深加固:改 requireProjectPath

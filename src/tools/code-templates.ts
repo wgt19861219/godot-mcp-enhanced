@@ -6,7 +6,7 @@ import { textResult as okResult, errorResult } from '../types.js';
 import { validateProjectRoot, resolveWithinRoot } from '../core/path-utils.js';
 import { ensureDir } from '../core/fs-atomic.js';
 import { getLogger } from '../core/logger.js';
-import { scanScriptSandboxOrThrow } from './script.js';
+import { scanScriptSandboxOrThrow } from './script/shared.js';
 
 // ─── Code Template Types ────────────────────────────────────────────────────
 

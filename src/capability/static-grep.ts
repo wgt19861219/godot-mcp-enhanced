@@ -7,7 +7,7 @@ import { join } from 'path';
  * （M1 漂移检测会捕获 group 变更）。
  */
 export const GROUP_SOURCE_FILES: Record<string, string[]> = {
-  core: ['project.ts', 'scene.ts', 'script.ts', 'runtime.ts', 'validation.ts', 'manage-tools.ts'],
+  core: ['project.ts', 'scene.ts', 'script.ts', 'script/execute.ts', 'runtime.ts', 'validation.ts', 'manage-tools.ts'],  // 批7: script/ 拆分后 execute_gdscript 实现落 script/execute.ts,补入扫描面(入口字面量命中是脆弱巧合)
   editor: ['editor-sync.ts'],
   bridge: ['game-bridge.ts', 'qa/index.ts'],  // v0.30: qa 归 bridge 组
   animation: ['animation/animation-ops.ts', 'animation/animation-track.ts', 'animtree.ts'],

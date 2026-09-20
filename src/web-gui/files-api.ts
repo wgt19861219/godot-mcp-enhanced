@@ -9,7 +9,7 @@ import { isPathInAllowedRoots, resolveWithinRoot } from '../core/path-utils.js';
 import { hardenFilePermissionsWindows } from './registry.js';
 import { auditWebGui } from './audit-helper.js';
 // 批4-T6(五维评估 P2): saveText 写 .gd 接全仓沙箱扫描——此前是"全仓写 .gd 必扫描"
-// (script.ts scanScriptSandboxOrThrow 声明)之外的第 4 个入口(web-gui 默认开启)。
+// (script/shared.ts scanScriptSandboxOrThrow 声明)之外的第 4 个入口(web-gui 默认开启)。
 import { scanGdscriptSandbox } from '../gdscript-executor.js';
 
 export interface DirEntry { name: string; isDir: boolean; size: number; mtime: number; }
