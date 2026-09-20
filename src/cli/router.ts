@@ -9,7 +9,7 @@ const __cliDir = dirname(fileURLToPath(import.meta.url));
 const __rootDir = join(__cliDir, '..', '..');
 
 /** CLI 子命令清单(export 供 test/cli/router.test.ts 单一真相源引用,防硬编码漂移) */
-export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'gif', 'web'] as const;
+export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'uninstall', 'gif', 'web'] as const;
 export type Subcommand = typeof SUBCOMMANDS[number];
 
 export function parseSubcommand(args: string[]): { subcommand: Subcommand; rest: string[] } | null {
@@ -95,6 +95,11 @@ export async function routeCommand(args: string[]): Promise<void> {
       await runInstall(parsed.rest);
       break;
     }
+    case 'uninstall': {
+      const { runUninstall } = await import('./uninstall.js');
+      await runUninstall(parsed.rest);
+      break;
+    }
   }
 }
 
@@ -138,6 +143,7 @@ godot-mcp-enhanced — Godot AI 开发环境
   godot-mcp-enhanced dashboard [--web]  启动监控面板（--web 打开浏览器版；--rotate-token 轮换共享 token；--show-token 配合 --web 显示完整 URL;默认 TUI）
   godot-mcp-enhanced qa run <spec>    执行 QA 测试套件（夜间跑批）
   godot-mcp-enhanced install [tag]   从官方 releases 安装 Godot(默认 latest stable;零预装上手)
+  godot-mcp-enhanced uninstall      卸载清理:客户端注册+项目 addon;--purge 连 ~/.godot-mcp/ 一并删;--dry-run 预览
   godot-mcp-enhanced gif <project>  录制 demo GIF(bridge 定频截图;--fps/--seconds/--keys/--out)
   godot-mcp-enhanced web <project>  Web 试玩闭环(导出+127.0.0.1 服务器;--port/--serve-only)
 

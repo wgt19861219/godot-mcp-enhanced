@@ -22,4 +22,9 @@ export interface ClientAdapter {
   isConfigured(projectDir: string): Promise<boolean>;
   /** 将 godot MCP 配置写入该客户端 */
   configure(projectDir: string, godotPath: string, mcpCommand: string, mcpArgs: string[]): Promise<void>;
+  /** 移除 godot MCP 注册（uninstall 命令的反向操作，configure 的逆）。
+   *  返回 false=本就未配置（无操作）；true=已移除并写回；throw=配置存在但移除失败
+   *  （如 JSON 损坏无法解析——此时不动用户文件，交命令层报错）。
+   *  可选方法：保持对外实现（测试 mock/第三方）兼容，命令层按存在性分派。 */
+  unconfigure?(projectDir: string): Promise<boolean>;
 }

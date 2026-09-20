@@ -19,7 +19,6 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { ClientAdapter } from './types.js';
 import { readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
-
 export interface JsonAdapterSpec {
   name: string;
   scope: 'project' | 'global';
@@ -99,5 +98,26 @@ export class JsonAdapterBase implements ClientAdapter {
       ...(this.spec.entryExtras?.(projectDir) ?? {}),
     };
     writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+  }
+
+  /** uninstall 反向操作:沿 rootKeys 找到容器,仅删 godot 键后原子写回。
+   *  容器结构(如 mcpServers 根键)保留——其他 MCP server 共用同一容器,不能连坐。
+   *  损坏 JSON 抛错而非备份覆盖(configure 语义):unconfigure 无新内容要写,
+   *  备份+重写反而扩大破坏面,正确行为是不动用户文件并让命令层报 ✗。 */
+  async unconfigure(projectDir: string): Promise<boolean> {
+    const configPath = this.spec.configPath(projectDir);
+    if (!existsSync(configPath)) return false;
+    const config = readJsonForCheck(configPath);
+    if (!config) throw new Error(`config parse error: ${configPath}`);
+    const keys = this.spec.rootKeys ?? ['mcpServers'];
+    let node: Record<string, unknown> | undefined = config;
+    for (const k of keys) {
+      node = node?.[k] as Record<string, unknown> | undefined;
+      if (!node) return false;
+    }
+    if (!node.godot) return false;
+    delete node.godot;
+    writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+    return true;
   }
 }

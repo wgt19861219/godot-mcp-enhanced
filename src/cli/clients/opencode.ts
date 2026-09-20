@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import type { ClientAdapter } from './types.js';
 import { readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
@@ -53,5 +54,18 @@ export class OpenCodeAdapter implements ClientAdapter {
     };
     // F3: 原子写入 + 保持原文件 mode（adapter-no-mode-preserve）
     writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+  }
+
+  /** uninstall 反向操作:删 opencode.json 的 mcp.godot(容器保留,损坏 JSON 抛错不动文件)。 */
+  async unconfigure(projectDir: string): Promise<boolean> {
+    const configPath = join(projectDir, 'opencode.json');
+    if (!existsSync(configPath)) return false;
+    const config = readJsonForCheck(configPath);
+    if (!config) throw new Error(`config parse error: ${configPath}`);
+    const mcp = config.mcp as Record<string, unknown> | undefined;
+    if (!mcp?.godot) return false;
+    delete mcp.godot;
+    writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+    return true;
   }
 }

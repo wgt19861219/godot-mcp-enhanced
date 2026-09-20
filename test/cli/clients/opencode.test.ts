@@ -151,4 +151,28 @@ describe('OpenCodeAdapter', () => {
     expect(env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET).toBe('true');
     expect(env.HACKER_INJECTED).toBeUndefined();
   });
+
+  // ── unconfigure(uninstall 反向操作;非 JsonAdapterBase 的独立实现)──
+
+  it('unconfigure removes mcp.godot, keeps other entries and container', async () => {
+    writeFileSync(join(TEST_DIR, 'opencode.json'), JSON.stringify({
+      theme: 'dark',
+      mcp: {
+        other: { type: 'local', command: ['foo'] },
+        godot: { type: 'local', command: ['npx', 'godot-mcp-enhanced'] },
+      },
+    }));
+    const { OpenCodeAdapter } = await import('../../../src/cli/clients/opencode.js');
+    expect(await new OpenCodeAdapter().unconfigure!(TEST_DIR)).toBe(true);
+    const config = JSON.parse(readFileSync(join(TEST_DIR, 'opencode.json'), 'utf-8'));
+    expect(config.mcp.godot).toBeUndefined();
+    expect(config.mcp.other).toBeDefined();
+    expect(config.theme).toBe('dark');
+  });
+
+  it('unconfigure returns false when no godot entry(no-op)', async () => {
+    writeFileSync(join(TEST_DIR, 'opencode.json'), JSON.stringify({ mcp: { other: {} } }));
+    const { OpenCodeAdapter } = await import('../../../src/cli/clients/opencode.js');
+    expect(await new OpenCodeAdapter().unconfigure!(TEST_DIR)).toBe(false);
+  });
 });

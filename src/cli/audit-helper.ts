@@ -19,12 +19,30 @@ export function auditClientConfigured(caller: 'cli:setup' | 'cli:configure', cli
   });
 }
 
-/** CLI init 写 project.godot → 项目级留痕(changed_files 项目相对路径,PII 护栏) */
+/** CLI 移除 MCP 客户端注册(uninstall)→ 机器级留痕。
+ *  与 configure 对称:删注册同样是安全敏感写面(抗抵赖要覆盖反向操作),
+ *  删光注册后恶意注入就无迹可寻。 */
+export function auditClientRemoved(clientName: string, scope: string, projectDir: string): void {
+  void appendMachineAuditLine({
+    trace_id: `cli-${randomUUID().slice(0, 16)}`,
+    tool: 'cli', action: 'remove_client', risk: 'write',
+    ok: true, project_path: projectDir, changed_files: [], duration_ms: 0,
+    caller: 'cli:uninstall',
+    details: { client: clientName, scope },
+  }).catch((e) => {
+    console.warn(`[godot-mcp] machine-audit write failed (best-effort): ${e instanceof Error ? e.message : e}`);
+  });
+}
+
+/** CLI init 写 project.godot → 项目级留痕(changed_files 项目相对路径,PII 护栏)。
+ *  caller 必须由复用方显式归因(审查 Important-2:硬编码会让第二个调用方——uninstall——
+ *  的写面被归到 init,抗抵赖归因错标);默认值仅为 init 存量调用保兼容。 */
 export function auditCliProjectWrite(
   projectDir: string,
   action: string,
   changedFiles: string[],
   details?: Record<string, unknown>,
+  caller: string = 'cli:init',
 ): void {
   // N-4①(批4审查): 项目级审计受 GODOT_MCP_AUDIT 开关控制(与 dispatcher/web-gui 语义一致;
   // 机器级 appendMachineAuditLine 恒写是 T7 的有意设计,不在此列)
@@ -34,7 +52,7 @@ export function auditCliProjectWrite(
     trace_id: `cli-${randomUUID().slice(0, 16)}`,
     tool: 'cli', action, risk: 'write',
     ok: true, project_path: projectDir, changed_files: changedFiles, duration_ms: 0,
-    caller: 'cli:init',
+    caller,
   };
   if (details) entry.details = details;
   void appendAuditLine(projectDir, entry).catch((e) => {

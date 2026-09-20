@@ -159,4 +159,49 @@ describe('ClaudeCodeAdapter', () => {
     expect(env.PATH).toBeUndefined();
     expect(env.HACKER_INJECTED).toBeUndefined();
   });
+
+  // ── unconfigure(uninstall 反向操作;JsonAdapterBase 泛化实现,12 个 JSON 适配器共用本用例语义)──
+
+  it('unconfigure removes godot entry, keeps other servers and container', async () => {
+    const claudeDir = join(testDir, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = join(claudeDir, 'settings.json');
+    writeFileSync(settingsPath, JSON.stringify({
+      otherTopLevel: { keep: true },
+      mcpServers: {
+        other: { command: 'foo' },
+        godot: { command: 'npx', args: ['godot-mcp-enhanced'] },
+      },
+    }, null, 2));
+    expect(await adapter.unconfigure!(testDir)).toBe(true);
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(settings.mcpServers.godot).toBeUndefined();       // godot 已删
+    expect(settings.mcpServers.other).toBeDefined();          // 其他 server 不连坐
+    expect(settings.mcpServers).toBeDefined();                // 容器保留
+    expect(settings.otherTopLevel.keep).toBe(true);           // 配置其余部分不动
+  });
+
+  it('unconfigure returns false when not configured(no-op 不写文件)', async () => {
+    const claudeDir = join(testDir, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = join(claudeDir, 'settings.json');
+    const before = JSON.stringify({ mcpServers: { other: { command: 'foo' } } });
+    writeFileSync(settingsPath, before);
+    expect(await adapter.unconfigure!(testDir)).toBe(false);
+    expect(readFileSync(settingsPath, 'utf-8')).toBe(before); // 未触发写回
+  });
+
+  it('unconfigure returns false when config file missing', async () => {
+    expect(await adapter.unconfigure!(testDir)).toBe(false);
+  });
+
+  it('unconfigure throws on corrupt JSON without touching the file', async () => {
+    const claudeDir = join(testDir, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    const settingsPath = join(claudeDir, 'settings.json');
+    const corrupt = '{ broken json';
+    writeFileSync(settingsPath, corrupt);
+    await expect(adapter.unconfigure!(testDir)).rejects.toThrow('parse error');
+    expect(readFileSync(settingsPath, 'utf-8')).toBe(corrupt); // 损坏文件原样保留(区别于 configure 的备份覆盖)
+  });
 });

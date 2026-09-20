@@ -22,10 +22,15 @@ describe('router', () => {
     });
 
     it('parses all valid subcommands', () => {
-      for (const cmd of ['setup', 'configure', 'doctor', 'init', 'dashboard'] as const) {
+      for (const cmd of ['setup', 'configure', 'doctor', 'init', 'dashboard', 'install', 'uninstall'] as const) {
         expect(parseSubcommand([cmd])).toEqual({ subcommand: cmd, rest: [] });
       }
     });
+  });
+
+  it('SUBCOMMANDS 覆盖 install/uninstall 对(可移植性:卸载链与安装链对称)', () => {
+    expect(SUBCOMMANDS).toContain('install');
+    expect(SUBCOMMANDS).toContain('uninstall');
   });
 
   describe('isCliInvocation', () => {

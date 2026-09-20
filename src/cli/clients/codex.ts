@@ -87,4 +87,12 @@ export class CodexAdapter implements ClientAdapter {
       ...envFlags,
     ], { timeout: 10000 });
   }
+
+  /** uninstall 反向操作:先 isConfigured 精确匹配(避免 remove 不存在的键报错),
+   *  再调官方子命令移除。remove 失败(超时/CLI 异常)抛错交命令层报 ✗。 */
+  async unconfigure(_projectDir: string): Promise<boolean> {
+    if (!(await this.isConfigured(_projectDir))) return false;
+    await execFileAsync('codex', ['mcp', 'remove', 'godot'], { timeout: 10000 });
+    return true;
+  }
 }

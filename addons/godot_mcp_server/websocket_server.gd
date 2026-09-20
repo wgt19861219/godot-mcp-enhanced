@@ -1,12 +1,18 @@
 extends Node
 
-const BASE_PORT := 9090
-const MAX_PORT := 9094
 const MAX_AUTH_FAILS := 5
 const LOCKOUT_BASE_SECONDS := 30.0
 const LOCKOUT_MAX_SECONDS := 300.0
 const MAX_PEERS := 5
 const MAX_MESSAGE_SIZE := 1048576  # 1MB
+
+# 2026-09-20 可移植性 P4:端口范围可配置——ProjectSettings godot_mcp/editor_port_base /
+# godot_mcp/editor_port_max(默认 9090/9094 不变)。多 editor 并行超 5 实例/端口段与
+# 其他工具冲突时,项目可在 project.godot [godot_mcp] 段改范围。TS 侧连接端口仍走
+# GODOT_EDITOR_PORT env(GodotServer.ts:718),两端都改即对齐;不设置=原行为。
+# 校验失败(越界/max<base)回落默认并告警,不拒启——错配不应让插件整体不可用。
+var _base_port := 9090
+var _max_port := 9094
 
 var _server: TCPServer
 var _peers: Array[WebSocketPeer] = []
@@ -263,8 +269,9 @@ func _start_server() -> void:
 	if _secret == "":
 		push_error("[MCP] No valid auth secret — WebSocket server not started")
 		return
+	_resolve_port_range()
 	_server = TCPServer.new()
-	for port in range(BASE_PORT, MAX_PORT + 1):
+	for port in range(_base_port, _max_port + 1):
 		# P2-13(2026-08-21 七维度审核): listen 错误码测不出 Windows 双 bind 假成功
 		# (listen 返 OK 但流量全到先占实例)——listen 前先 connect 预探测,
 		# 对齐 mcp_bridge.gd _bind_available_port 的 A1 缓解。
@@ -276,7 +283,19 @@ func _start_server() -> void:
 			print("[MCP] Listening on port %d" % port)
 			_update_panel("MCP: Listening on port %d" % port)
 			return
-	push_error("[MCP] All ports (%d-%d) occupied" % [BASE_PORT, MAX_PORT])
+	push_error("[MCP] All ports (%d-%d) occupied" % [_base_port, _max_port])
+
+## 读 ProjectSettings 端口范围配置(可移植性 P4,见 _base_port 声明处注释);非法值回落默认。
+func _resolve_port_range() -> void:
+	var base := int(ProjectSettings.get_setting("godot_mcp/editor_port_base", 9090))
+	var max_p := int(ProjectSettings.get_setting("godot_mcp/editor_port_max", 9094))
+	if base < 1 or base > 65535 or max_p < base or max_p > 65535:
+		push_warning("[MCP] Invalid godot_mcp/editor_port_base/max %d-%d (need 1-65535, max>=base) — falling back to 9090-9094" % [base, max_p])
+		_base_port = 9090
+		_max_port = 9094
+		return
+	_base_port = base
+	_max_port = max_p
 
 ## connect 探测端口是否已有服务在听(与 mcp_bridge.gd _port_in_use 同款)。
 ## localhost 连非监听端口立即 REFUSED(ms 级);poll 必须显式调——缺 poll 时
