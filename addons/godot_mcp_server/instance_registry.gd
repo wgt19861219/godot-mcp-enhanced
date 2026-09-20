@@ -6,7 +6,8 @@ extends Node
 ## 心跳定期更新 lastSeen(每 30s),_exit_tree 删自己的 JSON。
 ##
 ## 对齐 headless 多实例的 registry 范式(InstanceManager 读 ~/.godot-mcp/instances/*.json)。
-## 文件名用 port(非 pid),因 editor 端口固定(GODOT_EDITOR_PORT 默认 9090),pid 每次启动变。
+## 文件名用 port(非 pid),因 editor 端口默认段固定(9090 起,可移植性 P4 后经
+## godot_mcp/editor_port_base 可配),pid 每次启动变。
 
 const UPDATE_INTERVAL := 30.0  # lastSeen 更新间隔(秒),< InstanceManager staleTimeoutMs(70s)
 
@@ -38,7 +39,16 @@ func _exit_tree() -> void:
 
 ## 写 instance JSON 到 registry(首次 + 启动时调用)
 func _write_instance_json() -> void:
-	var port: int = int(ProjectSettings.get_setting("godot_mcp/editor_port", 9090))
+	# 可移植性 P4:显式 godot_mcp/editor_port 优先;未设时默认随 editor_port_base
+	# (websocket_server.gd _resolve_port_range 同源),用户改了端口段注册表文件名跟着对齐。
+	var port: int = int(ProjectSettings.get_setting(
+		"godot_mcp/editor_port",
+		ProjectSettings.get_setting("godot_mcp/editor_port_base", 9090)))
+	# 审查 Nit-1:非法值回落对齐 websocket_server._resolve_port_range(WS 侧回落 9090
+	# 监听,registry 用非法值会致 TS discovery 拿错端口/文件名)。
+	if port < 1 or port > 65535:
+		push_warning("[MCP] instance_registry: invalid editor port %d — falling back to 9090" % port)
+		port = 9090
 	_instance_id = "editor-%d" % port
 	_registry_dir = _get_registry_dir()
 	_instance_file = "%s/%s.json" % [_registry_dir, _instance_id]

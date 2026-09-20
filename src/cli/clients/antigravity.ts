@@ -57,4 +57,21 @@ export class AntigravityAdapter implements ClientAdapter {
     // F3: 原子写入 + 保持原文件 mode（adapter-no-mode-preserve）
     writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
   }
+
+  /** uninstall 反向操作:新/旧双路径都查,任一路径含 godot entry 即删并写回该文件
+   *  (configure 只写新路径,但旧 IDE 装机可能两处都有残留)。损坏 JSON 抛错不动文件。 */
+  async unconfigure(_projectDir: string): Promise<boolean> {
+    let removed = false;
+    for (const path of [this.newPath(), this.legacyPath()]) {
+      if (!existsSync(path)) continue;
+      const config = readJsonForCheck(path);
+      if (!config) throw new Error(`config parse error: ${path}`);
+      const mcp = config.mcpServers as Record<string, unknown> | undefined;
+      if (!mcp?.godot) continue;
+      delete mcp.godot;
+      writeFileAtomicWithMode(path, JSON.stringify(config, null, 2) + '\n');
+      removed = true;
+    }
+    return removed;
+  }
 }

@@ -28,6 +28,16 @@ npx godot-mcp-enhanced install        # 默认 latest stable;可加版本 tag �
 
 装到 `~/.godot-mcp/godot/<version>/` 并自动登记进搜索链与路径白名单;`setup` 在检测不到 Godot 时也会交互式引导安装。
 
+**不想要了?** 卸载与安装对称(可移植性:易替换性):
+
+```bash
+npx godot-mcp-enhanced uninstall --dry-run   # 预览将清理的内容(零写入)
+npx godot-mcp-enhanced uninstall --yes       # 移除 15 客户端 godot 注册 + 当前项目 addon/project.godot 引用/bridge 残留
+npx godot-mcp-enhanced uninstall --yes --purge  # 连 ~/.godot-mcp/ 共享状态一并删(含下载的 Godot 二进制)
+```
+
+用户自管的 `mcp_bridge.gd`(内容与包内不一致)保留不删;删除共享状态前扫描实例注册表,在跑实例会点名警示。
+
 **直接生成一个能玩的游戏?** 内置可玩模板(四件套:可玩 demo + GDD + qa 确定性套件 + CSV 调参表):
 
 ```bash

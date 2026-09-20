@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        node-version: [24]  # Node 22 在 Linux 未验证,保守单版本;engines>=18 声明不变
+        node-version: [24]  # Node 22 在 Linux 未验证,保守单版本;engines>=20(package.json)声明不变(2026-09-20 可移植性 P2:原注释 >=18 与实际声明漂移,更正)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -249,3 +249,28 @@ jobs:
           name: e2e-report-${{ matrix.name }}
           path: coverage/e2e-report-${{ matrix.name }}.json
           if-no-files-found: warn
+
+  # macOS 最小验证(2026-09-20 可移植性 P3):三平台验证面补 macOS——lint + 类型检查
+  # + 构建 + 非 Godot 单测子集(test/cli/ 全部为 mock/临时目录实现,不依赖 Godot 二进制)。
+  # 不含 Godot 依赖测试(GD 下载链与 xvfb 方案不适用于本 job 的最小定位;L2/真机/覆盖率
+  # 面留缺口声明,由 ubuntu check/godot-matrix 覆盖)。Windows 维持退本地(issue #15
+  # libuv fs-event 底层 bug,见 check job 尾注)——平台敏感回归有 Linux+macOS 双护栏。
+  macos-smoke:
+    name: macOS smoke
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - name: Typecheck test helpers
+        run: npm run typecheck:helpers
+      - run: npm run build
+      - name: 非 Godot 单测子集(CLI/客户端适配器/卸载链)
+        run: npx vitest run test/cli/
+

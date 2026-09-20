@@ -8,6 +8,7 @@ vi.mock('child_process', () => ({
     if (_cmd === 'codex' && _args[0] === '--version') cb(null, { stdout: '1.0.0' });
     else if (_cmd === 'codex' && _args[0] === 'mcp' && _args[1] === 'list') cb(null, { stdout: 'godot' });
     else if (_cmd === 'codex' && _args[0] === 'mcp' && _args[1] === 'add') cb(null, { stdout: 'Added' });
+    else if (_cmd === 'codex' && _args[0] === 'mcp' && _args[1] === 'remove') cb(null, { stdout: 'Removed' });
     else cb(new Error('not found'));
   }),
 }));
@@ -106,5 +107,34 @@ describe('CodexAdapter', () => {
     const args = addCall![1] as string[];
     const envFlags = args.filter((_, i) => args[i - 1] === '--env');
     expect(envFlags).toEqual(['GODOT_PATH=/godot']);
+  });
+
+  // ── unconfigure(uninstall 反向操作;CLI 调用型:codex mcp remove)──
+
+  it('unconfigure calls codex mcp remove when configured', async () => {
+    const cp = await import('child_process');
+    const { CodexAdapter } = await import('../../../src/cli/clients/codex.js');
+    expect(await new CodexAdapter().unconfigure!('/ignored')).toBe(true);
+    const removeCall = vi.mocked(cp.execFile).mock.calls.find((c: unknown[]) => {
+      const a = c[1] as string[];
+      return (c[0] as string) === 'codex' && a[0] === 'mcp' && a[1] === 'remove' && a[2] === 'godot';
+    });
+    expect(removeCall).toBeDefined();
+  });
+
+  it('unconfigure is a no-op when not configured(mcp list 无 godot → 不调 remove)', async () => {
+    const cp = await import('child_process');
+    vi.mocked(cp.execFile).mockImplementation(((_cmd: string, args: string[], _opts: any, cb: any) => {
+      if (args[0] === '--version') cb(null, { stdout: '1.0.0' });
+      else if (args[0] === 'mcp' && args[1] === 'list') cb(null, { stdout: 'other-server' });  // 精确匹配不中
+      else cb(new Error('unexpected: ' + JSON.stringify(args)));
+    }) as never);
+    const { CodexAdapter } = await import('../../../src/cli/clients/codex.js');
+    expect(await new CodexAdapter().unconfigure!('/ignored')).toBe(false);
+    const removeCalls = vi.mocked(cp.execFile).mock.calls.filter((c: unknown[]) => {
+      const a = c[1] as string[];
+      return (c[0] as string) === 'codex' && a[0] === 'mcp' && a[1] === 'remove';
+    });
+    expect(removeCalls.length).toBe(0);
   });
 });

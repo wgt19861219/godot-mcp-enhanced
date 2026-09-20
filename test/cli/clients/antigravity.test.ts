@@ -105,4 +105,33 @@ describe('AntigravityAdapter', () => {
     expect(config.mcpServers.godot.disabled).toBe(true);
     rmSync(fakeHome, { recursive: true, force: true });
   });
+
+  // ── unconfigure(uninstall 反向操作;新/旧双路径都清)──
+
+  it('unconfigure removes godot from both new and legacy paths', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'mcp-ag-'));
+    vi.doMock('os', () => ({ homedir: () => fakeHome }));
+    const newPath = join(fakeHome, '.gemini', 'config', 'mcp_config.json');
+    const legacyPath = join(fakeHome, '.gemini', 'antigravity', 'mcp_config.json');
+    mkdirSync(join(newPath, '..'), { recursive: true });
+    mkdirSync(join(legacyPath, '..'), { recursive: true });
+    writeFileSync(newPath, JSON.stringify({ mcpServers: { godot: { command: 'npx' }, other: { command: 'x' } } }));
+    writeFileSync(legacyPath, JSON.stringify({ mcpServers: { godot: { command: 'npx' } } }));
+    const { AntigravityAdapter } = await import('../../../src/cli/clients/antigravity.js');
+    expect(await new AntigravityAdapter().unconfigure!('/ignored')).toBe(true);
+    const afterNew = JSON.parse(readFileSync(newPath, 'utf-8'));
+    const afterLegacy = JSON.parse(readFileSync(legacyPath, 'utf-8'));
+    expect(afterNew.mcpServers.godot).toBeUndefined();
+    expect(afterNew.mcpServers.other).toBeDefined();        // 同文件其他 server 不连坐
+    expect(afterLegacy.mcpServers.godot).toBeUndefined();    // 旧路径残留也清
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('unconfigure returns false when nothing configured', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'mcp-ag-'));
+    vi.doMock('os', () => ({ homedir: () => fakeHome }));
+    const { AntigravityAdapter } = await import('../../../src/cli/clients/antigravity.js');
+    expect(await new AntigravityAdapter().unconfigure!('/ignored')).toBe(false);
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
 });
