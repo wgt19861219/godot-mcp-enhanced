@@ -189,7 +189,6 @@ export function badFrame(what: string): ProfilerError {
   );
 }
 
-/** @internal 测试用(W10 批4 组A) */
 export function asNumber(value: Variant | undefined): number {
   if (typeof value !== 'number') throw badFrame('expected a number');
   return value;
@@ -200,8 +199,7 @@ export function asNumber(value: Variant | undefined): number {
  * `asNumber` would accept a float — and a layout shift that lands a timing
  * value where a count belongs makes `for (i < 0.016)` run once instead of
  * throwing, walking `offset` off silently. Fail loudly on version drift.
- */
-/** @internal 测试用(W10 批4 组A) */
+ * @internal 测试用(W10 批4 组A) */
 export function asCount(value: Variant | undefined, limit: number): number {
   const count = asNumber(value);
   if (!Number.isSafeInteger(count) || count < 0 || count > limit) {
@@ -210,8 +208,8 @@ export function asCount(value: Variant | undefined, limit: number): number {
   return count;
 }
 
-/** Trim float noise from the summary — these are milliseconds, not physics. */
-/** @internal 测试用(W10 批4 组A) */
+/** Trim float noise from the summary — these are milliseconds, not physics.
+ * @internal 测试用(W10 批4 组A) */
 export function roundNumbers<T>(value: T): T {
   if (typeof value === 'number') return (Math.round(value * MS_ROUNDING) / MS_ROUNDING) as T;
   if (Array.isArray(value)) return value.map(roundNumbers) as T;
@@ -251,8 +249,7 @@ interface FrameSample {
  * blocks, then the flattened function rows preceded by their own length.
  * Verified against `ServersProfilerFrame::serialize()`; `internal_time` at
  * `i + 4` is deliberately skipped (the editor's "internal functions" toggle).
- */
-/** @internal 测试用(W10 批4 组A):帧解析纯函数,布局漂移防线核心 */
+ * @internal 测试用(W10 批4 组A):帧解析纯函数,布局漂移防线核心 */
 export function parseFrame(data: Variant[], signatures: Map<number, string>): FrameSample {
   const timings: FrameTimings = {
     frameMs: asNumber(data[1]) * 1000,

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { visibleLen, truncW, padRight } from '../../src/dashboard/ui.js';
 import { fg, bold, dim, reset, colorize } from '../../src/dashboard/themes.js';
 
 // ─── 测试 themes 辅助函数 ─────────────────────────────────────────────────────
@@ -34,50 +35,8 @@ describe('themes ANSI helpers', () => {
   });
 });
 
-// ─── 测试 visibleLen / truncW / padRight 逻辑 ────────────────────────────────
-// 这些函数未从 ui.ts 导出，此处复制其实现用于直接测试
-
-const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
-
-function visibleLen(s: string): number {
-  const clean = s.replace(ANSI_RE, '');
-  let cols = 0;
-  for (let i = 0; i < clean.length; ) {
-    const cp = clean.codePointAt(i)!;
-    cols += cp >= 0x1100 ? 2 : 1;
-    i += cp > 0xFFFF ? 2 : 1;
-  }
-  return cols;
-}
-
-function truncW(s: string, maxCols: number): string {
-  let cols = 0;
-  let visibleEnd = 0;
-  let i = 0;
-  while (i < s.length) {
-    if (s.charCodeAt(i) === 0x1b && i + 1 < s.length && s[i + 1] === '[') {
-      i += 2;
-      while (i < s.length && !/[a-zA-Z]/.test(s[i])) i++;
-      if (i < s.length) i++;
-      continue;
-    }
-    const cp = s.codePointAt(i)!;
-    const w = cp >= 0x1100 ? 2 : 1;
-    if (cols + w > maxCols) {
-      return s.slice(0, visibleEnd) + '~';
-    }
-    cols += w;
-    visibleEnd = i + (cp > 0xFFFF ? 2 : 1);
-    i = visibleEnd;
-  }
-  return s;
-}
-
-function padRight(s: string, maxCols: number): string {
-  const vl = visibleLen(s);
-  if (vl >= maxCols) return s;
-  return s + ' '.repeat(maxCols - vl);
-}
+// ─── 测试 visibleLen / truncW / padRight ────────────────────────────────────────
+// 批4审查 Nit-3:改为测 ui.ts 导出的真身(原复制体测试锁不住源实现,源改测试不红)
 
 describe('visibleLen', () => {
   it('纯 ASCII', () => {

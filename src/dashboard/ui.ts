@@ -54,8 +54,9 @@ interface UIState {
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
-/** 计算字符串去掉 ANSI 转义后的显示宽度（正确处理 surrogate pair + CJK） */
-function visibleLen(s: string): number {
+/** 计算字符串去掉 ANSI 转义后的显示宽度（正确处理 surrogate pair + CJK）。
+ * @internal 测试用(批4审查 Nit-3):导出供 ui.test.ts 测真身,替代原复制体测试 */
+export function visibleLen(s: string): number {
   // 去掉 ANSI 转义
   const clean = s.replace(ANSI_RE, '');
   let cols = 0;
@@ -71,8 +72,9 @@ function visibleLen(s: string): number {
 /**
  * 按显示宽度截断（C-01 修复：直接扫描原始字符串，维护原始偏移映射）。
  * 使用 ASCII '~' 作为截断标记（1 列宽），避免 U+2026 等模糊宽度字符的跨终端不一致。
+ * @internal 测试用(批4审查 Nit-3)。
  */
-function truncW(s: string, maxCols: number): string {
+export function truncW(s: string, maxCols: number): string {
   let cols = 0;
   let visibleEnd = 0;
   let i = 0;
@@ -106,8 +108,8 @@ function truncate(s: string, maxLen: number): string {
   return s.slice(0, maxLen - 1) + '…';
 }
 
-/** 右填充到指定显示宽度（只在末尾加空格） */
-function padRight(s: string, maxCols: number): string {
+/** 右填充到指定显示宽度（只在末尾加空格）。@internal 测试用(批4审查 Nit-3) */
+export function padRight(s: string, maxCols: number): string {
   const vl = visibleLen(s);
   if (vl >= maxCols) return s;
   return s + ' '.repeat(maxCols - vl);

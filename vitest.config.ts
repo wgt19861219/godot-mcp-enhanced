@@ -13,7 +13,9 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.d.ts', 'src/scripts/*.gd', 'src/tools/game-bridge.ts'], // game-bridge.ts:Linux CI 跑不了其测试(vitest mock 平台 bug,见 issue #15),覆盖率退本地(Windows game-bridge.test.ts 23/23 覆盖)
+      exclude: ['src/**/*.d.ts', 'src/scripts/*.gd', 'src/tools/game-bridge.ts'], // game-bridge.ts:Linux CI 跑不了其测试(vitest mock 平台 bug,见 issue #15),覆盖率退本地(Windows game-bridge.test.ts 23/23 覆盖),
+      // W10 批4 豁免留痕:src/dashboard/ui.ts 的 renderDashboard 段(TTY/alternate screen/resize 依赖)不单测——
+      // 其纯函数段(visibleLen/truncW/padRight)已 @internal 导出由 test/dashboard/ui.test.ts 测真身(批4审查 Nit-3)。
       // C-06: Thresholds set with ~4% margin below actual coverage to prevent flaky CI.
       // Review: when coverage consistently exceeds thresholds by >4%, raise them.
       // P2-15(2026-08-21 七维度审核): 实测 lines 80.5%/functions 83.4%(2026-08-21 全量

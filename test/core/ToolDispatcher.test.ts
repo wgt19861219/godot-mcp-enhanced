@@ -2384,8 +2384,11 @@ describe('ToolDispatcher.buildMiddleware 顺序锁(Nit-5)', () => {
     expect(withAfter[withAfter.length - 1]!.name).toBe('audit');
     // rate-limit 与 elicitation 均为 before-only(若未来加 after 会破坏 STRICT 语义,此断言即报警)
     const rateLimit = mw.find(m => m.name === 'rate-limit');
-    const elicitation = mw.find(m => m.name === 'elicitation-required');
-    expect(rateLimit && typeof rateLimit.after === 'function').toBeFalsy();
-    expect(elicitation && typeof elicitation.after === 'function').toBeFalsy();
+    const elicitation = mw.find(m => m.name === 'elicitation');
+    // 批4审查 Nit-2:先锁探测目标存在,防重命名后 find 返 undefined 使第二道防线静默通过
+    expect(rateLimit).toBeDefined();
+    expect(elicitation).toBeDefined();
+    expect(typeof rateLimit!.after === 'function').toBeFalsy();
+    expect(typeof elicitation!.after === 'function').toBeFalsy();
   });
 });
