@@ -124,6 +124,7 @@ export function isGodotPathAllowed(candidatePath: string): boolean {
     return realCandidate === realA || realCandidate.startsWith(realA + sep) || realCandidate.startsWith(realA + '/');
   });
   if (!isAllowed) {
+    // 批3审查 Nit-3:白名单拒绝属安全事件,有意用 'security' 域与其余 'godot-finder' 区分
     getLogger().warn('security', `godot path "${candidatePath}" rejected by GODOT_MCP_ALLOWED_GODOT_PATHS whitelist`);
   }
   return isAllowed;

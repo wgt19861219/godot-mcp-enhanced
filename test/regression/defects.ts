@@ -79,7 +79,7 @@ export const FIXED_DEFECTS: DefectEntry[] = [
       const f = readSrc('src/core/ToolDispatcher.ts');
       const m = f.match(/private async executeToolCall[\s\S]{0,1000}?const currentMode/);
       const wired = m && /this\._enforceGates\(name,\s*args\)/.test(m[0]) && /if \(gateErr\) return gateErr;/.test(m[0]);
-      const gatesBody = f.match(/private _enforceGates[\s\S]{0,2000}?\n  \}/);
+      const gatesBody = f.match(/private _enforceGates[\s\S]{0,4000}?\n  \}/);  // 批3审查 Nit-2:上限放宽防注释增补误报
       const enforced = gatesBody && /isToolAllowed\s*\(\s*name\s*\)/.test(gatesBody[0]);
       return wired && enforced ? 0 : 1;
     } },
