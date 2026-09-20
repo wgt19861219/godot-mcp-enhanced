@@ -32,4 +32,22 @@ describe('createRateLimitMiddleware (IMPORTANT-5)', () => {
     const r3 = await mw.before(ctx);
     expect('passed' in r3 && r3.passed).toBe(true);
   });
+
+  // 2026-09-20 可靠性批任务③: 拒绝响应必须是 opsErrorResult 结构化 JSON(与全局错误口径
+  // 一致),不能再是 'RATE_LIMITED: ...' 裸文本——客户端靠 error_code/retryable 程序化消费。
+  it('rejection is structured opsErrorResult JSON (error_code/retryable/error_category)', async () => {
+    const mw = createRateLimitMiddleware(1, 1000);
+    await mw.before(ctx);
+    const r2 = await mw.before(ctx);
+    expect('rejected' in r2 && r2.rejected).toBe(true);
+    if (!('rejected' in r2) || !r2.rejected) throw new Error('unreachable');
+    const text = r2.error.content[0]?.type === 'text' ? r2.error.content[0].text : '';
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    expect(parsed['success']).toBe(false);
+    expect(parsed['error_code']).toBe('RATE_LIMIT');
+    expect(parsed['retryable']).toBe(true);
+    expect(parsed['error_category']).toBe('guard');
+    expect(typeof parsed['suggestion']).toBe('string');
+    expect(parsed['suggestion']).toContain('Wait');
+  });
 });

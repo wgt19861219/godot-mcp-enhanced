@@ -8,6 +8,7 @@
  * 失败安全：progress 是观测层，绝不影响主流程（guard + fire-and-forget）。
  */
 import type { Server } from "@modelcontextprotocol/server";
+import { ToolDeadlineError } from './tool-errors.js';
 
 export type ProgressToken = string | number;
 export type ProgressEmitter = (progress: number, total: number, message?: string) => void;
@@ -82,5 +83,63 @@ export async function withToolHeartbeat<T>(
     return await fn();
   } finally {
     clearInterval(timer);
+  }
+}
+
+/**
+ * 工具调用全局 deadline 兜底(2026-09-20 可靠性批任务①,可靠性评估缺口:
+ * dispatcher 无整体 deadline,handler 忘写内部超时则调用可无限挂起)。
+ *
+ * 与 withToolHeartbeat 的分工:心跳防"客户端 idle 杀"(取消经济学,只保活不中止);
+ * deadline 是最后一道网——超过 deadlineMs 仍未 settle 的调用以 ToolDeadlineError
+ * reject,由调用方(ToolDispatcher.handleCall)转结构化错误返回客户端(retryable)。
+ *
+ * 取消经济学边界(诚实声明):deadline 触发后底层 fn 仍在跑(JS 无法中止 Promise),
+ * 其 late settle 结果被丢弃——与客户端 idle 杀同样是"白花钱的取消",差别是客户端
+ * 拿到明确的 TOOL_DEADLINE_EXCEEDED 错误而非无限等待。
+ *
+ * deadlineMs <= 0 表示禁用(退化为纯心跳)。默认值对齐 qa run_timeout_s 上限(3600s,
+ * src/tools/qa/spec.ts:185)——所有已知合法长操作不被误伤;更长/更短部署经
+ * GODOT_MCP_TOOL_DEADLINE_MS 调整。deadline 触发时心跳 timer 一并清理(finally),
+ * 不向已终结的请求继续发 progress。
+ */
+export async function withToolDeadline<T>(
+  emitter: ((progress: number, total: number, message?: string) => void) | undefined,
+  toolName: string,
+  fn: () => Promise<T>,
+  deadlineMs: number,
+): Promise<T> {
+  if (!(deadlineMs > 0)) return withToolHeartbeat(emitter, toolName, fn);
+  const startedAt = Date.now();
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  if (emitter) {
+    heartbeatTimer = setInterval(() => {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      emitter(elapsedSec, 0, `${toolName}: still working (${elapsedSec}s) — heartbeat, not progress`);
+    }, 20_000);
+    if (typeof (heartbeatTimer as unknown as { unref?: () => void }).unref === 'function') {
+      (heartbeatTimer as unknown as { unref: () => void }).unref();
+    }
+  }
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const deadlineTimer = setTimeout(() => {
+        reject(new ToolDeadlineError(
+          `${toolName}: exceeded global deadline of ${Math.round(deadlineMs / 1000)}s (GODOT_MCP_TOOL_DEADLINE_MS). ` +
+          'The underlying operation may still be running server-side; its result will be discarded.',
+        ));
+      }, deadlineMs);
+      if (typeof (deadlineTimer as unknown as { unref?: () => void }).unref === 'function') {
+        (deadlineTimer as unknown as { unref: () => void }).unref();
+      }
+      // fn 的 late settle(deadline 已 reject 后到达)对已 settle 的 Promise 无副作用;
+      // 在 executor 内挂 then 同时防 unhandled rejection。
+      fn().then(
+        (v) => { clearTimeout(deadlineTimer); resolve(v); },
+        (e) => { clearTimeout(deadlineTimer); reject(e); },
+      );
+    });
+  } finally {
+    if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
   }
 }
