@@ -9,7 +9,7 @@ const { mockExec, mockExists, readFileSyncMock, mockDetectVersion } = vi.hoisted
 
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>();
-  return { ...actual, execFileSync: mockExec };  // 保留 execFile/spawn 等(helpers.ts:57 用 execFile),只覆盖 execFileSync(adb)
+  return { ...actual, execFileSync: mockExec };  // 保留 execFile/spawn 等(godot-finder 的 checkVersionMismatch 用 execFile,W5 批2 迁移),只覆盖 execFileSync(adb)
 });
 vi.mock('fs', () => ({
   existsSync: mockExists,

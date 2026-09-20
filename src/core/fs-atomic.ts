@@ -1,4 +1,4 @@
-/** 共享原子写(tmp + rename)—— A-ATOMIC (2026-09-01)
+/** 共享 fs 工具集(原子写 + ensureDir)—— A-ATOMIC (2026-09-01);ensureDir 系 W5 批2 收编
  *
  * 三份重复实现(src/tools/scene/helpers.ts、src/tools/project.ts、
  * src/cli/clients/json-config.ts)的合并上移(对齐 P0-arch「shared 原语上移 core」

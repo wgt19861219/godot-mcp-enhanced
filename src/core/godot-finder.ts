@@ -564,7 +564,7 @@ export async function checkVersionMismatch(projectPath: string, godotBin: string
     }
     return null;
   } catch (err) {
-    getLogger().warn('helpers', `checkVersionMismatch failed: ${getErrorMessage(err)}`);
+    getLogger().warn('godot-finder', `checkVersionMismatch failed: ${getErrorMessage(err)}`);
     return null;
   }
 }

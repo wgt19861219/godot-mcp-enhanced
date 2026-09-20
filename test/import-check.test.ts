@@ -35,7 +35,7 @@ vi.mock('../src/core/process-state.js', async (importOriginal) => {
   return { ...actual, forceKillTree: vi.fn() };
 });
 
-// Mock helpers (buildSafeEnv used in spawn options)
+// Mock godot-finder (buildSafeEnv used in spawn options;W5 批2 迁移自 helpers)
 vi.mock('../src/core/godot-finder.js', () => ({
   buildSafeEnv: () => ({ PATH: '/usr/bin' }),
 }));
