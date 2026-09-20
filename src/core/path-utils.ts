@@ -321,3 +321,23 @@ export function describeAllowedRoots(): string {
 
 /** Reset log state (test-only). */
 export function _resetPathAllowWarned(): void { _pathAllowLogged.clear(); }
+
+
+/**
+ * Check whether the user has explicitly allowed paths outside the project root.
+ *
+ * Returns true when:
+ * - GODOT_MCP_UNRESTRICTED=true (dev mode), OR
+ * - ALLOWED_PROJECT_PATHS is configured (explicit opt-in)
+ *
+ * When false, callers should use resolveWithinRoot() to restrict paths.
+ * When true, callers should still validate with isPathInAllowedRoots().
+ *
+ * @deprecated since v0.18.0 — prefer isPathInAllowedRoots() directly.
+ * W5(2026-09-20 批2): 原住 src/helpers.ts;仍有真实调用方(screenshot.ts 5 处),
+ * 搬至本文件与 getAllowedProjectPaths 同居,deprecated 语义保留待调用方迁移。
+ */
+export function allowOutsideProjectPaths(): boolean {
+  if (process.env.GODOT_MCP_UNRESTRICTED === 'true') return true;
+  return getAllowedProjectPaths().length > 0;
+}

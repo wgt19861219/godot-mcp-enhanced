@@ -3,7 +3,9 @@ import type { Tool } from "@modelcontextprotocol/server";
 // src/tools/delivery.ts
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
-import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath, scanFiles } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
+import { scanFiles } from '../core/file-scanner.js';
 import { getLogger } from '../core/logger.js';
 import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';

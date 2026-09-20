@@ -47,7 +47,7 @@ vi.mock('../../src/tools/shared.js', () => ({
     isError: true,
   }),
 }));
-vi.mock('../../src/helpers.js', () => ({
+vi.mock('../../src/core/path-utils.js', () => ({
   isPathInAllowedRoots: vi.fn().mockReturnValue(true),
 }));
 // I-4 统一策略(设计 §7):importOriginal 部分覆盖——仅 stub 防副作用的 getter/setter,

@@ -19,7 +19,10 @@ import {
   buildAdoptManifest, planReconcile, hashContent, countDeviations,
   type RulesManifest, type RulesMode,
 } from './rules-manifest.js';
-import { validatePath, requireString, requireProjectPath, resolveWithinRoot, scanFiles, type GodotConfig } from '../helpers.js';
+import { validatePath, resolveWithinRoot } from '../core/path-utils.js';
+import { requireString, requireProjectPath } from '../core/args-validation.js';
+import { scanFiles } from '../core/file-scanner.js';
+import type { GodotConfig } from '../core/config-parser.js';
 import { getScaffoldFiles, PROJECT_TEMPLATES, handleTemplateAction } from './code-templates.js';
 import { scanScriptSandboxOrThrow } from './script.js';
 import { getLogger } from '../core/logger.js';

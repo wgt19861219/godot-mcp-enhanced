@@ -7,7 +7,7 @@ import { textResult } from '../types.js';
 import { opsErrorResult } from './shared.js';
 import { spawnGodot } from './spawn-helper.js';
 import { detectGodotVersion } from '../core/godot-finder.js';
-import { buildSafeEnv } from '../helpers.js';
+import { buildSafeEnv } from '../core/godot-finder.js';
 import { resolveWithinRoot } from '../core/path-utils.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 

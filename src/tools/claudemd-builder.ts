@@ -1,7 +1,7 @@
 // src/tools/claudemd-builder.ts
 import { existsSync } from 'fs';
 import { join } from 'path';
-import type { GodotConfig } from '../helpers.js';
+import type { GodotConfig } from '../core/config-parser.js';
 import { getLogger } from '../core/logger.js';
 import { mergeSections as mergeSectionsGeneric } from './shared/section-merge.js';
 

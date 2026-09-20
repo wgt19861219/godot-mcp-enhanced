@@ -13,7 +13,7 @@
  * 必须走本函数(存量七处已于 2026-09-02 全部收口清零);新建文件(可整体重跑)与
  * 缓存/构建产物不强制。
  */
-import { writeFileSync, renameSync, statSync, unlinkSync } from 'fs';
+import { writeFileSync, renameSync, statSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { randomUUID } from 'crypto';
 import { getLogger } from './logger.js';
@@ -39,3 +39,12 @@ export function writeFileAtomicWithMode(filePath: string, data: string): void {
 
 /** 短名别名:tools 侧覆盖用户资产(.gd/.tscn)的写入点使用。 */
 export const writeFileAtomic = writeFileAtomicWithMode;
+
+
+/** W5(2026-09-20 批2): ensureDir 原住 src/helpers.ts 废弃桶,收编至共享 fs 工具集。
+ * 语义:确保 p 的父目录存在(不存在则递归创建)。函数体零变化,纯搬家。 */
+export function ensureDir(p: string): void {
+  if (!existsSync(dirname(p))) {
+    mkdirSync(dirname(p), { recursive: true });
+  }
+}

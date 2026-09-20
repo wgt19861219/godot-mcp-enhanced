@@ -11,7 +11,7 @@ import type { Tool } from '@modelcontextprotocol/server';
 import type { ToolResult, ToolContext } from '../../types.js';
 import { textResult } from '../../types.js';
 import { opsSuccess, opsErrorResult } from '../shared.js';
-import { requireProjectPath } from '../../helpers.js';
+import { requireProjectPath } from '../../core/args-validation.js';
 import { scanProject, sceneScriptBindings, toResPath, type ProjectScan } from './scanner.js';
 import { scanGdScriptSignals, type GdSignalRef } from './gdscan.js';
 import type { Connection } from '../../tscn/tscn-parser.js';

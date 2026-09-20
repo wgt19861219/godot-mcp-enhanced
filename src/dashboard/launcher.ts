@@ -4,7 +4,7 @@
 import { spawn, spawnSync, type SpawnOptions } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
-import { buildSafeEnv } from '../helpers.js';
+import { buildSafeEnv } from '../core/godot-finder.js';
 import { isWebGuiActive } from '../web-gui/server.js';
 
 const __filename = fileURLToPath(import.meta.url);

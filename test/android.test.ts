@@ -20,7 +20,12 @@ vi.mock('fs', () => ({
   realpathSync: vi.fn((p: string) => p),
 }));
 vi.mock('../src/tools/spawn-helper.js', () => ({ spawnGodot: vi.fn() }));
-vi.mock('../src/core/godot-finder.js', () => ({ detectGodotVersion: mockDetectVersion }));
+// W5 批2 迁移后 buildSafeEnv 与 detectGodotVersion 同住 godot-finder——
+// importOriginal 部分覆盖(仅 stub detectGodotVersion),防其余导出(buildSafeEnv 等)变 undefined。
+vi.mock('../src/core/godot-finder.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/core/godot-finder.js')>();
+  return { ...actual, detectGodotVersion: mockDetectVersion };
+});
 vi.mock('../src/dashboard/launcher.js', () => ({ launchDashboardOnce: vi.fn() }));
 
 import { handleTool } from '../src/tools/android.js';

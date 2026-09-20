@@ -2,7 +2,7 @@ import { expect } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolveWithinRoot } from '../src/helpers.js';
+import { resolveWithinRoot } from '../src/core/path-utils.js';
 import { isPathInAllowedRoots } from '../src/core/path-utils.js';
 import { isolatePathEnv } from './helpers/path-isolation.js';
 import { sanitizeResPath, gdEscape } from '../src/tools/shared.js';

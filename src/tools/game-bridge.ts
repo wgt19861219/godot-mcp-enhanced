@@ -13,7 +13,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult, errorResult, getErrorMessage } from '../types.js';
 import { opsErrorResult } from './shared.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { PathError } from '../core/tool-errors.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getLogger } from '../core/logger.js';

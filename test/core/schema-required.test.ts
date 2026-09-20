@@ -18,11 +18,17 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/helpers.js', () => ({
+vi.mock('../../src/core/path-utils.js', () => ({
   isPathInAllowedRoots: vi.fn().mockReturnValue(true),
-  parseGodotConfig: vi.fn().mockReturnValue({}),
-  requireProjectPath: vi.fn().mockReturnValue('/test'),
   validatePath: vi.fn((p) => p),
+}));
+vi.mock('../../src/core/config-parser.js', () => ({
+  parseGodotConfig: vi.fn().mockReturnValue({}),
+}));
+vi.mock('../../src/core/args-validation.js', () => ({
+  requireProjectPath: vi.fn().mockReturnValue('/test'),
+}));
+vi.mock('../../src/core/godot-finder.js', () => ({
   buildSafeEnv: vi.fn().mockReturnValue({}),
   checkVersionMismatch: vi.fn(),
 }));

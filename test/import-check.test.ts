@@ -36,7 +36,7 @@ vi.mock('../src/core/process-state.js', async (importOriginal) => {
 });
 
 // Mock helpers (buildSafeEnv used in spawn options)
-vi.mock('../src/helpers.js', () => ({
+vi.mock('../src/core/godot-finder.js', () => ({
   buildSafeEnv: () => ({ PATH: '/usr/bin' }),
 }));
 

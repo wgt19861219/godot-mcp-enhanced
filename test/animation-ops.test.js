@@ -9,12 +9,12 @@ vi.mock('../src/gdscript-executor.js', () => {
   };
 });
 
-vi.mock('../src/helpers.js', () => ({
+vi.mock('../src/core/args-validation.js', () => ({
   requireProjectPath: vi.fn((args) => args.project_path || '/fake/project'),
 }));
 
 import { executeGdscript } from '../src/gdscript-executor.js';
-import { requireProjectPath } from '../src/helpers.js';
+import { requireProjectPath } from '../src/core/args-validation.js';
 import { TOOL_NAMES, getToolDefinitions, handleTool, TOOL_META } from '../src/tools/animation/animation-ops.js';
 
 function createMockCtx() {

@@ -36,7 +36,8 @@ import {
   tryLegacyMapping,
 } from './tool-registry.js';
 import { validateArgs } from './args-validator.js';
-import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
+import { isPathInAllowedRoots } from './path-utils.js';
+import { parseGodotConfig } from './config-parser.js';
 import { opsErrorResult, COMMON_ERROR_CODES } from './shared/errors.js';
 import { classifyError, newTraceId, InternalError, ToolDeadlineError } from './tool-errors.js';
 import { isAuditEnabled, appendAuditLine, inferChangedFiles, isTokenRequestResult, recordAuditWriteFailure, isAuditStrict, extractAuditHint } from './audit-log.js';

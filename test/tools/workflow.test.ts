@@ -13,8 +13,10 @@ vi.mock('../../src/gdscript-executor.js', () => ({
 vi.mock('../../src/types.js', () => ({
   textResult: vi.fn((s: string) => ({ content: [{ type: 'text' as const, text: s }] })),
 }));
-vi.mock('../../src/helpers.js', () => ({
+vi.mock('../../src/core/args-validation.js', () => ({
   requireProjectPath: vi.fn(() => '/fake/project'),
+}));
+vi.mock('../../src/core/path-utils.js', () => ({
   resolveWithinRoot: vi.fn((_root: string, p: string) => `/fake/project/${p}`),
   normalizeUserProjectPath: vi.fn((p: string) => p),
 }));

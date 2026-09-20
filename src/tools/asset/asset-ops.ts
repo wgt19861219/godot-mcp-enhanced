@@ -26,7 +26,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../../types.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
 import { opsErrorResult } from '../shared.js';
-import { requireProjectPath, requireString } from '../../helpers.js';
+import { requireProjectPath, requireString } from '../../core/args-validation.js';
 import {
   isPathInAllowedRoots,
   normalizeUserProjectPath,

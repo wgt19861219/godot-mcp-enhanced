@@ -73,12 +73,12 @@ vi.mock('../../src/core/guard.js', () => ({
   TOKEN_TTL_MS: 60_000,
 }));
 
-vi.mock('../../src/helpers.js', () => ({
-  isPathInAllowedRoots: mockIsPathInAllowedRoots,
+vi.mock('../../src/core/config-parser.js', () => ({
   parseGodotConfig: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../../src/core/path-utils.js', () => ({
+  isPathInAllowedRoots: mockIsPathInAllowedRoots,
   resolveProjectPath: vi.fn().mockReturnValue('/default/project'),
   _resetProjectPathCache: vi.fn(),
 }));

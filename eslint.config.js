@@ -35,6 +35,21 @@ export default tseslint.config(
       }],
     },
   },
+  // 2026-09-20 可维护性批1(审查 Observation 采纳):tscn→tools 倒置门禁——W1 修复
+  // (BLOCKED_PROPS 下沉 core/shared)前,tscn-editor-add.ts 从上层 tools 目录取安全常量。
+  // core 有门禁而 tscn 没有,W1 类倒置无机械防线防复发,补齐(底层解析子系统同不得
+  // 反向依赖应用层;依赖 core/types 不受限)。
+  {
+    files: ['src/tscn/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '(\\.\\./)+tools/',
+          message: 'tscn 层禁止依赖 tools(底层解析子系统反向依赖应用层,W1 于 2026-09-20 清零)。共享常量放 core/shared 或 src 根。',
+        }],
+      }],
+    },
+  },
   {
     ignores: ['build/', 'coverage/', 'node_modules/', 'src/scripts/'],
   },

@@ -19,7 +19,7 @@ import { fileURLToPath } from 'url';
 import { registerAllModules } from '../src/module-loader.js';
 import { getModuleForTool } from '../src/core/tool-registry.js';
 import type { ToolContext, ToolResult } from '../src/types.js';
-import { parseGodotConfig } from '../src/helpers.js';
+import { parseGodotConfig } from '../src/core/config-parser.js';
 import * as ps from '../src/core/process-state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

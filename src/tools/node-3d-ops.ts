@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, gdEscape, escapeForGdLiteral, normalizeNodePath, validateVector3, TYPE_WHITELIST, validateIdentifier, runOpsScript } from './shared.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────

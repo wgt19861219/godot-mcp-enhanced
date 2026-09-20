@@ -7,7 +7,9 @@ import { existsSync } from 'fs';
 import { readFile, stat } from 'fs/promises';
 import { resolve, join, extname, sep, basename } from 'path';
 import { parseTscnSummary } from './tscn/tscn-parser.js';
-import { parseConfigValue, safeRealPath, scanFiles, iterativeDecode, isPathInAllowedRoots, resolveWithinRoot } from './helpers.js';
+import { parseConfigValue } from './core/config-parser.js';
+import { safeRealPath, iterativeDecode, isPathInAllowedRoots, resolveWithinRoot } from './core/path-utils.js';
+import { scanFiles } from './core/file-scanner.js';
 import { getGateStatus } from './core/action-gate.js';
 import { getActiveGroups, TOOL_GROUPS } from './core/tool-registry.js';
 

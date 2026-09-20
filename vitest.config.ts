@@ -22,7 +22,8 @@ export default defineConfig({
       // W11(2026-09-20 可维护性批1): 补调兑现——实测 statements 80.07%/branches 71.81%/
       // functions 84.82%/lines 81.88%(2026-09-20 全量 exit-0 跑,6850 passed)。
       // 按"阈值 ≤ 实测-4%"规则:branches 51→67(原滞后 20.81%),functions 79→80;
-      // statements 80.07-4=76.07→76、lines 81.88-4=77.88→77,四舍五入后维持不变。
+      // statements 80.07-4=76.07→76、lines 81.88-4=77.88→77,向下取整(floor)后维持不变
+      // (批1审查 Nit-1:77.88 四舍五入为 78,实操口径是 floor——措辞与实现必须一致)。
       thresholds: {
         statements: 76,
         branches: 67,

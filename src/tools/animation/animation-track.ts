@@ -1,7 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../../types.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
-import { requireProjectPath } from '../../helpers.js';
+import { requireProjectPath } from '../../core/args-validation.js';
 import { executeGdscriptRuntime as executeGdscript } from '../../gdscript-executor.js';
 import { normalizeNodePath, escapeForGdLiteral } from '../shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from '../shared.js';
