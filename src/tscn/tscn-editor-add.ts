@@ -14,7 +14,7 @@ import {
 } from './tscn-editor-shared.js';
 import { parseTscn } from './tscn-parser.js';
 // F-3: 复用 edit_node/scene-instance 的危险属性黑名单(单一来源,避免防护不一致)
-import { BLOCKED_PROPS } from '../tools/scene/helpers.js';
+import { BLOCKED_PROPS } from '../core/shared/blocked-props.js';
 
 // ── Resource add helpers ─────────────────────────────────────────────────────
 

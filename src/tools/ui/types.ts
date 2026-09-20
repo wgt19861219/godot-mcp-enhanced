@@ -1,7 +1,7 @@
 // UI tool constants, types, and shared helpers.
 
 import { gdEscape, valueToGd } from '../shared.js';
-import { BLOCKED_PROPS } from '../scene/helpers.js';
+import { BLOCKED_PROPS } from '../../core/shared/blocked-props.js';
 import type { Rect } from './anchor-solver.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────
