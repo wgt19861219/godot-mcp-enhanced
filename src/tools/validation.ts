@@ -920,7 +920,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         if (csprojFiles.length === 0) {
           csResults.push({ file: `${csFiles.length} .cs files`, status: 'skipped', engine: 'dotnet', warning: 'No .csproj found, C# validation skipped' });
         } else {
-          // 2026-08-07 审查 NIT-1：对齐 script.ts:140-148 的 action-gate opt-in 校验。
+          // 2026-08-07 审查 NIT-1：对齐 script/edit.ts csharpValidateAndRevert 的 action-gate opt-in 校验。
           // dotnet build 执行任意 MSBuild <Target> = 任意代码执行面（与 execute_gdscript 同级），
           // 默认拒（无 GODOT_MCP_PRIVILEGED_GROUPS=code-execution 时 skip）。
           const privilegedGroups = process.env.GODOT_MCP_PRIVILEGED_GROUPS;

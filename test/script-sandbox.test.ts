@@ -312,7 +312,7 @@ describe('SEC-P1-1 B-1: 三旁路入口沙箱扫描', () => {
 // create_files/apply_template 三旁路同威胁模型);project_name 经 getScaffoldFiles
 // 拼进脚手架 .gd 注释(`# ${className} — ${projectName}`),含换行即变活代码。
 // 修复:godot_version 严格 X.Y / X.Y.Z 白名单 + main.gd 与脚手架 .gd 落盘前统一过
-// scanScriptSandboxOrThrow(script.ts B-1 注释声明的全仓 .gd 写入不变式)。
+// scanScriptSandboxOrThrow(script/shared.ts B-1 注释声明的全仓 .gd 写入不变式)。
 describe('SEC-P1-1 B-1: create_project 第4写入面(godot_version / project_name)', () => {
   let tmpDir: string;
 

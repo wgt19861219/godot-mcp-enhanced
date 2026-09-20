@@ -21,7 +21,7 @@ import { handleInstanceScene, handleSetInstanceProperty, handleDetachInstance } 
 import { mergeTscn, checkSceneHealth } from './scene-merge.js';
 import { handleCreate3dNode } from '../node-3d-ops.js';
 import { handleCommitAction } from './scene-commit-tool.js';
-import { scanScriptSandboxOrThrow } from '../script.js';
+import { scanScriptSandboxOrThrow } from '../script/shared.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
 
 export { mergeTscn, checkSceneHealth };

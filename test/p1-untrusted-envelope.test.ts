@@ -61,7 +61,8 @@ describe('P1-1: untrusted-wrap 单元(真行为)', () => {
 
 describe('P1-1: 四读通道接线契约(源码落位)', () => {
   it('ENV-e: read_script 两分支 + read_scene 两处 + get_debug_output + dev_loop 共 6 接点', () => {
-    const script = readFileSync('src/tools/script.ts', 'utf8');
+    // 批7(2026-09-20) script.ts action 拆分后,read_script 落位 script/read.ts
+    const script = readFileSync('src/tools/script/read.ts', 'utf8');
     expect((script.match(/maybeWrapUntrusted\('script\.read'/g) ?? []).length, 'read_script .cs+.gd 两分支').toBe(2);
     const scene = readFileSync('src/tools/scene/index.ts', 'utf8');
     expect((scene.match(/maybeWrapUntrusted\('scene\.read'/g) ?? []).length, 'read_scene summary+full 两处').toBe(2);
