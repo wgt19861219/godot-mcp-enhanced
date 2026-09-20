@@ -19,10 +19,14 @@ export default defineConfig({
       // P2-15(2026-08-21 七维度审核): 实测 lines 80.5%/functions 83.4%(2026-08-21 全量
       // exit-0 跑),原阈值滞后 ~20% 违反上方自定"超 4% 应上调"——上调并留 margin;
       // branches 实测值未取,保守不动(下轮 coverage 数据齐后补调)。
+      // W11(2026-09-20 可维护性批1): 补调兑现——实测 statements 80.07%/branches 71.81%/
+      // functions 84.82%/lines 81.88%(2026-09-20 全量 exit-0 跑,6850 passed)。
+      // 按"阈值 ≤ 实测-4%"规则:branches 51→67(原滞后 20.81%),functions 79→80;
+      // statements 80.07-4=76.07→76、lines 81.88-4=77.88→77,四舍五入后维持不变。
       thresholds: {
         statements: 76,
-        branches: 51,
-        functions: 79,
+        branches: 67,
+        functions: 80,
         lines: 77,
       },
     },
