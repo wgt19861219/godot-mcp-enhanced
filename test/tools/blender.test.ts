@@ -6,7 +6,7 @@ import { join } from 'path';
 
 vi.mock('../../src/core/blender-finder.js', () => ({ findBlender: vi.fn() }));
 vi.mock('../../src/core/blender-spawn.js', () => ({ runBlenderHeadless: vi.fn() }));
-vi.mock('../../src/helpers.js', async (orig) => {
+vi.mock('../../src/core/args-validation.js', async (orig) => {
   const actual = await orig() as any;
   return {
     ...actual,

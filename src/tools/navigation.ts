@@ -2,7 +2,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, normalizeNodePath, gdEscape, escapeForGdLiteral, validateVector3, runOpsScript } from './shared.js';
 import { validateTimeout } from './shared/validation.js';
 import { ff } from './shared/value-serializer.js';

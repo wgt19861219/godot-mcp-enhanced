@@ -10,7 +10,7 @@ import { gdEscape, escapeForGdLiteral, valueToGd, SCENE_TREE_HEADER } from '../s
 import { CONTROL_TYPES, ANCHOR_PRESETS, STYLEBOX_SLOTS, colorToGd } from './types.js';
 import { solveAnchors, CONTAINER_CONTROL_TYPES } from './anchor-solver.js';
 import type { Rect } from './anchor-solver.js';
-import { BLOCKED_PROPS } from '../scene/helpers.js';
+import { BLOCKED_PROPS } from '../../core/shared/blocked-props.js';
 import type { FlexLayout, FlexChild, UiNodeSpec } from './types.js';
 
 // ─── ui_set_layout ────────────────────────────────────────────────────────

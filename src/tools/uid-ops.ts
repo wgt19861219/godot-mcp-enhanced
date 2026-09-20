@@ -19,7 +19,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 // uid 脚本全部由本工具生成(参数经 TS 侧 uid 正则/sanitizeResPath/extensions 白名单校验,
 // 非用户任意代码),uid_set 需 FileAccess.WRITE 写 .uid —— 走 trusted 通道(经 runOpsScript
 // trusted: true),对齐 data-import/material-ops 模式(SEC-P1-1 防线针对的是用户输入代码,

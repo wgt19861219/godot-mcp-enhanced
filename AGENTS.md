@@ -225,7 +225,7 @@ npm test
 # 测试 watch 模式
 npm run test:watch
 
-# 测试覆盖率(阈值:statements 60% / branches 51% / functions 69% / lines 61%)
+# 测试覆盖率(阈值:statements 76% / branches 67% / functions 80% / lines 77%;2026-09-20 批1 同步,真相源 vitest.config.ts)
 npm run test:coverage
 
 # 回归测试
@@ -412,10 +412,10 @@ CI 双脚本把关: `check-rules-version-bump.mjs` 在模板变更时强制要�
 - **框架**:Vitest(globals 模式)+ `@vitest/coverage-v8` + `fast-check`(属性测试)
 - **测试位置**:`test/**/*.test.{js,ts}`,与源文件同名(如 `src/tools/script.ts` ↔ `test/script.test.ts` 或就近目录)
 - **覆盖率阈值**(CI 强制,`vitest.config.ts`):
-  - statements: 60%
-  - branches: 51%
-  - functions: 69%
-  - lines: 61%
+  - statements: 76%
+  - branches: 67%
+  - functions: 80%
+  - lines: 77%(2026-09-20 批1 同步;阈值真相源为 vitest.config.ts,本处仅为镜像)
   - 阈值设有 ~4% margin 防止 flaky CI;当覆盖率持续超阈值 >4% 时应上调。
 - **覆盖率排除**:`src/**/*.d.ts`、`src/scripts/*.gd`、`src/tools/game-bridge.ts`(Linux CI 跑不了其测试,退本地 Windows 覆盖)
 - **测试分类**:

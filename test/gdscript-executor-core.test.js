@@ -12,7 +12,7 @@ import {
   loadExtraDangerousPatterns,
   _resetExtraDangerousPatternsCache,
 } from '../src/gdscript-executor.js';
-import { buildSafeEnv } from '../src/helpers.js';
+import { buildSafeEnv } from '../src/core/godot-finder.js';
 
 // ─── wrapSnippet ──────────────────────────────────────────────────────────────
 

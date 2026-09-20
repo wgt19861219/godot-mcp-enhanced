@@ -1,7 +1,8 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
 import { normalizeNodePath, escapeForGdLiteral } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, runOpsScript } from './shared.js';
 import type { RiskLevel } from '../core/tool-registry.js';

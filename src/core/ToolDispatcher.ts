@@ -36,7 +36,8 @@ import {
   tryLegacyMapping,
 } from './tool-registry.js';
 import { validateArgs } from './args-validator.js';
-import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
+import { isPathInAllowedRoots } from './path-utils.js';
+import { parseGodotConfig } from './config-parser.js';
 import { opsErrorResult, COMMON_ERROR_CODES } from './shared/errors.js';
 import { classifyError, newTraceId, InternalError, ToolDeadlineError } from './tool-errors.js';
 import { isAuditEnabled, appendAuditLine, inferChangedFiles, isTokenRequestResult, recordAuditWriteFailure, isAuditStrict, extractAuditHint } from './audit-log.js';
@@ -314,31 +315,9 @@ export class ToolDispatcher {
   }
 
   private async executeToolCall(name: string, args: Record<string, unknown>, startTime: number, traceId: string, progressEmitter?: ProgressEmitter, srvCtx?: ServerContext, clientTasksCapable?: boolean, callerAgentId?: string): Promise<HandlerResult> {
-    // ── Task 3 (A-RCE #3): profile 硬隔离入口强制 ──
-    // isToolAllowed 原只在 getFilteredTools 广告层(:183),被转发 MCP 客户端(拿完整
-    // tools/list 或硬编码工具名)仍可调用 TOOL_GROUPS/slim 过滤的工具。此处对称补强:
-    // 主路径也强制。非 RCE(ReadOnlyGuard 兜底),是隔离弱。默认 activeGroups 全激活,
-    // 对所有已知顶层工具名返 true,零误拒;manage_tools deactivate 收窄后才生效。
-    if (!isToolAllowed(name)) {
-      log('executeToolCall: tool %s not in active groups (profile enforcement)', name);
-      return opsErrorResult('TOOL_NOT_ALLOWED', `Tool "${name}" is not available in the active tool groups (TOOL_GROUPS/slim profile).`);
-    }
-
-    // P0-3 action-gate：action 级权限拦截（默认 gate RCE action）
-    // 与 profile（工具级编译时）+ manage_tools（工具级运行时）互补：
-    // action-gate 是最细粒度——tools/list 仍暴露工具，仅 gated action 调用被拒。
-    // A1 (2026-08-11 审查 P1): 动态注册的平铺工具(如 debug_evaluate)不在静态 metaRegistry,
-    // isActionGated('debug_evaluate','') 永不命中 → gated action 经动态通道绕过。经
-    // METHOD_TO_TOOL 反查回静态 (tool, action) 再判定;执行仍用原平铺名(editor 转发需要)。
-    const _action = typeof args.action === 'string' ? args.action : '';
-    const _dyn = isDynamicToolName(name) ? resolveDynamicTool(name) : undefined;
-    const _gateTool = _dyn?.tool ?? name;
-    const _gateAction = _dyn?.action ?? _action;
-    if (isActionGated(_gateTool, _gateAction) && !isActionAllowed(_gateTool, _gateAction, resolveEnabledGroups())) {
-      log('executeToolCall: action %s.%s gated by capability gate', _gateTool, _gateAction);
-      return opsErrorResult('ACTION_GATED',
-        `action '${_gateAction}' is gated (security: code-execution). Set GODOT_MCP_PRIVILEGED_GROUPS=code-execution to enable.`);
-    }
+    // W6 批3: 前置双门拦截抽 _enforceGates(纯搬移)
+    const gateErr = this._enforceGates(name, args);
+    if (gateErr) return gateErr;
     // Snapshot current mode + executor for consistent routing throughout this call
     const currentMode = this.connectionMode;
     const currentExecutor = this.editorExecutor;
@@ -397,83 +376,9 @@ export class ToolDispatcher {
       const pathErr = this.validatePathArgs(args);
       if (pathErr) return pathErr;
 
-      // ── 2. confirm_and_execute 分支（P0-2 MRTR 改造）──
+      // W6 批3: confirm_and_execute 分支抽 _handleConfirmAndExecute(纯搬移)
       if (name === 'confirm_and_execute') {
-        const token = args.token as string;
-        if (!token || typeof token !== 'string') {
-          return opsErrorResult('MISSING_TOKEN', 'confirmation_token is required');
-        }
-
-        // P0-2 MRTR：读第二轮的用户响应（SDK LegacyInputRequiredShim 在 2025-era 自动收集）。
-        // confirmed === undefined 表示第一轮（无 inputResponses）；非 undefined 表示第二轮。
-        const confirmed = srvCtx?.mcpReq?.inputResponses
-          ? acceptedContent<{ confirm: boolean }>(srvCtx.mcpReq.inputResponses, 'confirm')
-          : undefined;
-
-        // opt-in 降级 — GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 时跳过 elicitation（保留现有语义）。
-        // 降级路径在第一轮就消费 token + 执行，不走 MRTR。
-        if (process.env.GODOT_MCP_ALLOW_UNSAFE_CONFIRM === 'true' && confirmed === undefined) {
-          const pending = consumeToken(token);
-          if (!pending) return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
-          if (pending.wasTruncated) return opsErrorResult('ARGS_TRUNCATED',
-            `Confirmation token args were truncated (exceeded 10KB limit). ` +
-            `Please call the original tool again — the server will re-generate a fresh token with the full args.`);
-          console.warn(`[SECURITY] GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true — confirm_and_execute 跳过 elicitation (token:${String(token).slice(0, 8)} tool:${pending.toolName})。仅可信本地/CI,生产保持默认未设。`);
-          // 跳到执行段（下面 confirmedPending 赋值后共用）
-          const __confirmedResult = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
-          const __audit = await this._auditConfirmedExecution(pending, startTime, __confirmedResult, traceId, callerAgentId);
-          if (__audit.strict) {
-            // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
-            return opsErrorResult('AUDIT_WRITE_FAILED',
-              `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
-              `Side effects may already have occurred — verify manually.`);
-          }
-          return __audit.result;  // 批4-T3: 剥离 _audit 后的结果
-        }
-
-        if (confirmed === undefined) {
-          // ── 第一轮：peek token + 返回 InputRequiredResult ──
-          const pending = peekToken(token);
-          if (!pending) return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
-          if (pending.wasTruncated) return opsErrorResult('ARGS_TRUNCATED',
-            `Confirmation token args were truncated (exceeded 10KB limit). ` +
-            `Please call the original tool again — the server will re-generate a fresh token with the full args.`);
-
-          // CRITICAL(2026-07-13 安全 P0): out-of-band 用户确认 — 堵 AI 自读自确认 token。
-          // P0-2 MRTR: 返回 InputRequiredResult，SDK 自动处理双时代：
-          //   2025-era：LegacyInputRequiredShim 自动转 elicitation/create push（server→client→user UI）
-          //   2026-era：直接放 InputRequiredResult 到 wire，client 弹 UI 后重发请求
-          const argsJson = JSON.stringify(pending.args);
-          const argsPreview = argsJson.length > 500 ? argsJson.slice(0, 500) + '...(截断)' : argsJson;
-          return inputRequired({
-            inputRequests: {
-              confirm: inputRequired.elicit({
-                message: `确认执行 "${pending.toolName}" (action: ${String(pending.args.action ?? 'n/a')})?\n参数摘要: ${argsPreview}\n此操作经 confirm_and_execute,需用户 out-of-band 确认(防 AI 自确认)。拒绝请点 cancel/decline。`,
-                requestedSchema: { type: 'object' as const, properties: { confirm: { type: 'boolean' } }, required: ['confirm'] },
-              }),
-            },
-            requestState: token,
-          });
-        }
-
-        // ── 第二轮：用户已响应 ──
-        if (!confirmed || confirmed.confirm !== true) {
-          consumeToken(token);  // 消费掉防止重放
-          return opsErrorResult('ELICITATION_DENIED',
-            `执行需用户经 elicitation out-of-band 确认。Elicitation 被 decline/cancel/不支持或返回非确认,中止(堵 AI 自确认)。可信环境可设 GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 降级。`);
-        }
-
-        const pending = consumeToken(token);
-        if (!pending) return opsErrorResult('TOKEN_EXPIRED', 'Confirmation token expired during MRTR round-trip');
-        const __confirmedResult2 = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
-        const __audit2 = await this._auditConfirmedExecution(pending, startTime, __confirmedResult2, traceId, callerAgentId);
-        if (__audit2.strict) {
-          // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
-          return opsErrorResult('AUDIT_WRITE_FAILED',
-            `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
-            `Side effects may already have occurred — verify manually.`);
-        }
-        return __audit2.result;  // 批4-T3: 剥离 _audit 后的结果
+        return await this._handleConfirmAndExecute(name, args, startTime, traceId, progressEmitter, srvCtx, clientTasksCapable, callerAgentId, currentMode, currentExecutor);
       }
 
       // ── 3. 确认令牌检查（IMP-6: 前置 legacy 映射，防 legacy name 如 remove_node 绕过 guard）──
@@ -515,6 +420,124 @@ export class ToolDispatcher {
       // response 侧已升级结构化 category;telemetry 升级待 defect 检测器认可结构化模式。
       return opsErrorResult(code, safeMessage, { retryable, errorCategory: category, traceId });
     }
+  }
+
+  /** W6(2026-09-20 批3): 前置双门拦截——profile 硬隔离(Task 3 A-RCE #3) + action-gate(P0-3)。
+   * 从 executeToolCall 原样搬移(纯重构零行为变化);返回 opsErrorResult 或 null(通过)。 */
+  private _enforceGates(name: string, args: Record<string, unknown>): HandlerResult | null {
+    // ── Task 3 (A-RCE #3): profile 硬隔离入口强制 ──
+    // isToolAllowed 原只在 getFilteredTools 广告层(:183),被转发 MCP 客户端(拿完整
+    // tools/list 或硬编码工具名)仍可调用 TOOL_GROUPS/slim 过滤的工具。此处对称补强:
+    // 主路径也强制。非 RCE(ReadOnlyGuard 兜底),是隔离弱。默认 activeGroups 全激活,
+    // 对所有已知顶层工具名返 true,零误拒;manage_tools deactivate 收窄后才生效。
+    if (!isToolAllowed(name)) {
+      log('executeToolCall: tool %s not in active groups (profile enforcement)', name);
+      return opsErrorResult('TOOL_NOT_ALLOWED', `Tool "${name}" is not available in the active tool groups (TOOL_GROUPS/slim profile).`);
+    }
+
+    // P0-3 action-gate：action 级权限拦截（默认 gate RCE action）
+    // 与 profile（工具级编译时）+ manage_tools（工具级运行时）互补：
+    // action-gate 是最细粒度——tools/list 仍暴露工具，仅 gated action 调用被拒。
+    // A1 (2026-08-11 审查 P1): 动态注册的平铺工具(如 debug_evaluate)不在静态 metaRegistry,
+    // isActionGated('debug_evaluate','') 永不命中 → gated action 经动态通道绕过。经
+    // METHOD_TO_TOOL 反查回静态 (tool, action) 再判定;执行仍用原平铺名(editor 转发需要)。
+    const _action = typeof args.action === 'string' ? args.action : '';
+    const _dyn = isDynamicToolName(name) ? resolveDynamicTool(name) : undefined;
+    const _gateTool = _dyn?.tool ?? name;
+    const _gateAction = _dyn?.action ?? _action;
+    if (isActionGated(_gateTool, _gateAction) && !isActionAllowed(_gateTool, _gateAction, resolveEnabledGroups())) {
+      log('executeToolCall: action %s.%s gated by capability gate', _gateTool, _gateAction);
+      return opsErrorResult('ACTION_GATED',
+        `action '${_gateAction}' is gated (security: code-execution). Set GODOT_MCP_PRIVILEGED_GROUPS=code-execution to enable.`);
+    }
+    return null;
+  }
+
+  /** W6(2026-09-20 批3): confirm_and_execute 分支——P0-2 MRTR 两轮 + UNSAFE 降级路径。
+   * 从 executeToolCall 原样搬移(仅整体缩进 -1 层);方法内 if (name === 'confirm_and_execute')
+   * 保留原结构(调用方已判 name 才进入,恒真但零改写成本)。
+   * currentMode/currentExecutor 显式传参:并发请求下禁止实例字段(C-CONC-01)。 */
+  private async _handleConfirmAndExecute(name: string, args: Record<string, unknown>, startTime: number, traceId: string, progressEmitter: ProgressEmitter | undefined, srvCtx: ServerContext | undefined, clientTasksCapable: boolean | undefined, callerAgentId: string | undefined, currentMode: 'headless' | 'editor', currentExecutor: EditorToolExecutor | null): Promise<HandlerResult> {
+    // ── 2. confirm_and_execute 分支（P0-2 MRTR 改造）──
+    if (name === 'confirm_and_execute') {
+      const token = args.token as string;
+      if (!token || typeof token !== 'string') {
+        return opsErrorResult('MISSING_TOKEN', 'confirmation_token is required');
+      }
+
+      // P0-2 MRTR：读第二轮的用户响应（SDK LegacyInputRequiredShim 在 2025-era 自动收集）。
+      // confirmed === undefined 表示第一轮（无 inputResponses）；非 undefined 表示第二轮。
+      const confirmed = srvCtx?.mcpReq?.inputResponses
+        ? acceptedContent<{ confirm: boolean }>(srvCtx.mcpReq.inputResponses, 'confirm')
+        : undefined;
+
+      // opt-in 降级 — GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 时跳过 elicitation（保留现有语义）。
+      // 降级路径在第一轮就消费 token + 执行，不走 MRTR。
+      if (process.env.GODOT_MCP_ALLOW_UNSAFE_CONFIRM === 'true' && confirmed === undefined) {
+        const pending = consumeToken(token);
+        if (!pending) return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
+        if (pending.wasTruncated) return opsErrorResult('ARGS_TRUNCATED',
+          `Confirmation token args were truncated (exceeded 10KB limit). ` +
+          `Please call the original tool again — the server will re-generate a fresh token with the full args.`);
+        console.warn(`[SECURITY] GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true — confirm_and_execute 跳过 elicitation (token:${String(token).slice(0, 8)} tool:${pending.toolName})。仅可信本地/CI,生产保持默认未设。`);
+        // 跳到执行段（下面 confirmedPending 赋值后共用）
+        const __confirmedResult = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
+        const __audit = await this._auditConfirmedExecution(pending, startTime, __confirmedResult, traceId, callerAgentId);
+        if (__audit.strict) {
+          // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
+          return opsErrorResult('AUDIT_WRITE_FAILED',
+            `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
+            `Side effects may already have occurred — verify manually.`);
+        }
+        return __audit.result;  // 批4-T3: 剥离 _audit 后的结果
+      }
+
+      if (confirmed === undefined) {
+        // ── 第一轮：peek token + 返回 InputRequiredResult ──
+        const pending = peekToken(token);
+        if (!pending) return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
+        if (pending.wasTruncated) return opsErrorResult('ARGS_TRUNCATED',
+          `Confirmation token args were truncated (exceeded 10KB limit). ` +
+          `Please call the original tool again — the server will re-generate a fresh token with the full args.`);
+
+        // CRITICAL(2026-07-13 安全 P0): out-of-band 用户确认 — 堵 AI 自读自确认 token。
+        // P0-2 MRTR: 返回 InputRequiredResult，SDK 自动处理双时代：
+        //   2025-era：LegacyInputRequiredShim 自动转 elicitation/create push（server→client→user UI）
+        //   2026-era：直接放 InputRequiredResult 到 wire，client 弹 UI 后重发请求
+        const argsJson = JSON.stringify(pending.args);
+        const argsPreview = argsJson.length > 500 ? argsJson.slice(0, 500) + '...(截断)' : argsJson;
+        return inputRequired({
+          inputRequests: {
+            confirm: inputRequired.elicit({
+              message: `确认执行 "${pending.toolName}" (action: ${String(pending.args.action ?? 'n/a')})?\n参数摘要: ${argsPreview}\n此操作经 confirm_and_execute,需用户 out-of-band 确认(防 AI 自确认)。拒绝请点 cancel/decline。`,
+              requestedSchema: { type: 'object' as const, properties: { confirm: { type: 'boolean' } }, required: ['confirm'] },
+            }),
+          },
+          requestState: token,
+        });
+      }
+
+      // ── 第二轮：用户已响应 ──
+      if (!confirmed || confirmed.confirm !== true) {
+        consumeToken(token);  // 消费掉防止重放
+        return opsErrorResult('ELICITATION_DENIED',
+          `执行需用户经 elicitation out-of-band 确认。Elicitation 被 decline/cancel/不支持或返回非确认,中止(堵 AI 自确认)。可信环境可设 GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 降级。`);
+      }
+
+      const pending = consumeToken(token);
+      if (!pending) return opsErrorResult('TOKEN_EXPIRED', 'Confirmation token expired during MRTR round-trip');
+      const __confirmedResult2 = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
+      const __audit2 = await this._auditConfirmedExecution(pending, startTime, __confirmedResult2, traceId, callerAgentId);
+      if (__audit2.strict) {
+        // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
+        return opsErrorResult('AUDIT_WRITE_FAILED',
+          `Tool "${pending.toolName}" executed but audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
+          `Side effects may already have occurred — verify manually.`);
+      }
+      return __audit2.result;  // 批4-T3: 剥离 _audit 后的结果
+    }
+    // 恒真守卫的不可达兜底(调用方已判 name 才进入;TS 控制流无法跨方法推断恒真)
+    throw new InternalError(`_handleConfirmAndExecute called with non-confirm tool: ${name}`);
   }
 
   private buildMiddleware(): Middleware[] {
@@ -584,93 +607,8 @@ export class ToolDispatcher {
     });
 
     // IMPORTANT-5: 全局 rate limit(防 AI 失控循环耗尽资源)。默认 60 次/秒软限。
-    // G3 (2026-08-13): 操作级审计 after middleware(借鉴 devtool,appendFile 原子修复 writeFile 竞态)。
-    // 只审计 write/destructive/process(getActionRisk 复用 guard 数据源);read 跳过。
-    // 1B (2026-09-19): risk 未知(未映射动态工具/漏声明)按 write 保守落审计(fail-closed,对齐确认门)。
-    // audit 是 side effect,默认不改 result;1A:审计失败计数+首次 warn,STRICT env 下操作判失败。
-    // ⚠️ 顺序约定(审查 Nit-5): audit 须保持为 buildMiddleware 中**最后一个带 after 的 hook**——
-    // 1A STRICT 靠改写 result 生效,若在其后注册带 after 的 middleware,改判结果会被覆盖。
-    mw.push({
-      name: 'audit',
-      before: async () => ({ passed: true }),
-      after: async (ctx, result) => {
-        if (!isAuditEnabled()) return result;
-        // C-3 (2026-08-14): 动态工具名(如 engine_call_method)不在静态 metaRegistry,
-        // 平铺名 getActionRisk 恒 undefined → 动态通道所有写操作静默零审计。
-        // 经 resolveDynamicTool 反查回静态 (tool, action)(复用 executeToolCall 既有解析),
-        // 与 confirm/action-gate 两道门的 A1 反查对齐。落盘也记解析后的名字
-        // (audit get_log 的 `${tool}.${action}` key 与静态调用一致)。
-        const auditDynMap = isDynamicToolName(ctx.toolName) ? resolveDynamicTool(ctx.toolName) : undefined;
-        const unmappedDynamic = isDynamicToolName(ctx.toolName) && !auditDynMap;
-        const auditTool = auditDynMap?.tool ?? ctx.toolName;
-        const auditAction = auditDynMap?.action ?? String(ctx.args.action ?? '');
-        let risk = getActionRisk(auditTool, auditAction);
-        // 1B (2026-09-19): fail-closed——risk 未知(未映射动态工具/静态漏声明)按保守档
-        // (write)落审计而非静默跳过,与确认门"未映射动态工具强制确认"(:434-441)语义对齐。
-        let unmappedDetails: Record<string, unknown> | undefined;
-        if (!risk) {
-          // I-1(2026-09-19 审查修复): 豁免两类"天然 undefined 且工具级已声明只读"的调用形态,
-          // 防审计语义污染——a) readonly 平铺工具(help/godot_get_context 的 `_: 'read'` 占位键,
-          // action='' 查不中 `_` 键恒 undefined,派生 readonly=true);b) confirm_and_execute
-          // (registerInlineTool 显式 readonly=true,真实执行的审计由 _auditConfirmedExecution
-          // 补记,带真实 tool/action + confirmed 标记,middleware 层落 risk_unknown 只会双写)。
-          // 未映射动态工具名不在 registry → isReadOnly=false → 仍走 fail-closed(1B 核心目标)。
-          if (isReadOnly(auditTool)) return result;
-          risk = 'write';
-          unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
-        }
-        if (risk === 'read') return result;
-        // B-1 修复(审查):令牌请求响应(返回 requires_confirmation,操作未执行)不记虚假 ok=true。
-        // 真实执行经 confirm_and_execute → _auditConfirmedExecution 补审计(_confirmExecute 绕过 middleware)。
-        if (isTokenRequestResult(result)) return result;
-        // project_path fallback(elicitation 浅拷贝 footgun:after hook args.project_path 可能丢注入值)
-        // I-2(设计 §6):fallback 链中间插活跃桶——args.project_path 缺失时审计落活跃项目而非
-        // env 项目,防多桶并存下 runtime 域 risk='process' 操作(stop_project 等)审计归属漂移。
-        const projectPath = (typeof ctx.args.project_path === 'string' && ctx.args.project_path)
-          ? ctx.args.project_path : (ps.getProjectDir() || resolveProjectPath());
-        if (!projectPath) return result;
-        const isError = result.isError === true || this.checkJsonSuccessFalse(result);
-        // 批4-T3: 提取工具上报的审计提示(structuredContent._audit.before_values)并入 details,
-        // 返回剥离 _audit 后的 result(防其传回 MCP 客户端成为半公共 API)
-        const { hint: auditHint, result: cleanedResult } = extractAuditHint(result);
-        const { files, batch } = inferChangedFiles(auditTool, auditAction, ctx.args, projectPath);
-        const auditDetails: Record<string, unknown> | undefined =
-          (batch || unmappedDetails || auditHint?.before_values)
-            ? {
-                ...(batch ? { batch: true } : {}),
-                ...(unmappedDetails ?? {}),
-                ...(auditHint?.before_values ? { before_values: auditHint.before_values } : {}),
-              }
-            : undefined;
-        try {
-          await appendAuditLine(projectPath, {
-            timestamp: new Date().toISOString(),
-            trace_id: ctx.traceId,
-            tool: auditTool,
-            action: auditAction,
-            risk,
-            ok: !isError,
-            project_path: projectPath,
-            changed_files: files,
-            duration_ms: Date.now() - ctx.startTime,
-            ...(ctx.caller !== undefined ? { caller: ctx.caller } : {}),  // 1C: best-effort 调用者归因
-            ...(auditDetails ? { details: auditDetails } : {}),
-          });
-        } catch (e) {
-          // 1A (2026-09-19): 失败可观测(计数+首次 warn);默认仍不影响工具结果(G2 catch 哲学)。
-          recordAuditWriteFailure(e);
-          if (isAuditStrict()) {
-            // STRICT 模式:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)。
-            // 不能靠 throw——middleware 框架对 after 抛错是静默吞掉(middleware.ts Phase 3 catch)。
-            return opsErrorResult('AUDIT_WRITE_FAILED',
-              `Audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
-              `The tool's side effects may already have occurred — verify manually. ` +
-              `Error: ${e instanceof Error ? e.message : String(e)}`);
-          }
-        }
-        return cleanedResult;
-      },
-    });
+    // W6 批3: audit middleware 抽 _auditMiddleware 工厂(纯搬移;顺序约定见其 docstring)
+    mw.push(this._auditMiddleware());
 
     mw.push(createRateLimitMiddleware());
 
@@ -686,6 +624,93 @@ export class ToolDispatcher {
 
     return mw;
   }
+  /** W6(2026-09-20 批3): audit middleware 工厂——从 buildMiddleware 原样搬移(缩进 -1 层)。
+   * ⚠️ 顺序约定(审查 Nit-5)原样保留:audit 必须是 buildMiddleware 中最后一个带 after 的
+   * hook——1A STRICT 靠改写 result 生效,其后注册的 after 会覆盖改判结果。 */
+  private _auditMiddleware(): Middleware {
+    return {
+    name: 'audit',
+    before: async () => ({ passed: true }),
+    after: async (ctx, result) => {
+      if (!isAuditEnabled()) return result;
+      // C-3 (2026-08-14): 动态工具名(如 engine_call_method)不在静态 metaRegistry,
+      // 平铺名 getActionRisk 恒 undefined → 动态通道所有写操作静默零审计。
+      // 经 resolveDynamicTool 反查回静态 (tool, action)(复用 executeToolCall 既有解析),
+      // 与 confirm/action-gate 两道门的 A1 反查对齐。落盘也记解析后的名字
+      // (audit get_log 的 `${tool}.${action}` key 与静态调用一致)。
+      const auditDynMap = isDynamicToolName(ctx.toolName) ? resolveDynamicTool(ctx.toolName) : undefined;
+      const unmappedDynamic = isDynamicToolName(ctx.toolName) && !auditDynMap;
+      const auditTool = auditDynMap?.tool ?? ctx.toolName;
+      const auditAction = auditDynMap?.action ?? String(ctx.args.action ?? '');
+      let risk = getActionRisk(auditTool, auditAction);
+      // 1B (2026-09-19): fail-closed——risk 未知(未映射动态工具/静态漏声明)按保守档
+      // (write)落审计而非静默跳过,与确认门"未映射动态工具强制确认"(:434-441)语义对齐。
+      let unmappedDetails: Record<string, unknown> | undefined;
+      if (!risk) {
+        // I-1(2026-09-19 审查修复): 豁免两类"天然 undefined 且工具级已声明只读"的调用形态,
+        // 防审计语义污染——a) readonly 平铺工具(help/godot_get_context 的 `_: 'read'` 占位键,
+        // action='' 查不中 `_` 键恒 undefined,派生 readonly=true);b) confirm_and_execute
+        // (registerInlineTool 显式 readonly=true,真实执行的审计由 _auditConfirmedExecution
+        // 补记,带真实 tool/action + confirmed 标记,middleware 层落 risk_unknown 只会双写)。
+        // 未映射动态工具名不在 registry → isReadOnly=false → 仍走 fail-closed(1B 核心目标)。
+        if (isReadOnly(auditTool)) return result;
+        risk = 'write';
+        unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
+      }
+      if (risk === 'read') return result;
+      // B-1 修复(审查):令牌请求响应(返回 requires_confirmation,操作未执行)不记虚假 ok=true。
+      // 真实执行经 confirm_and_execute → _auditConfirmedExecution 补审计(_confirmExecute 绕过 middleware)。
+      if (isTokenRequestResult(result)) return result;
+      // project_path fallback(elicitation 浅拷贝 footgun:after hook args.project_path 可能丢注入值)
+      // I-2(设计 §6):fallback 链中间插活跃桶——args.project_path 缺失时审计落活跃项目而非
+      // env 项目,防多桶并存下 runtime 域 risk='process' 操作(stop_project 等)审计归属漂移。
+      const projectPath = (typeof ctx.args.project_path === 'string' && ctx.args.project_path)
+        ? ctx.args.project_path : (ps.getProjectDir() || resolveProjectPath());
+      if (!projectPath) return result;
+      const isError = result.isError === true || this.checkJsonSuccessFalse(result);
+      // 批4-T3: 提取工具上报的审计提示(structuredContent._audit.before_values)并入 details,
+      // 返回剥离 _audit 后的 result(防其传回 MCP 客户端成为半公共 API)
+      const { hint: auditHint, result: cleanedResult } = extractAuditHint(result);
+      const { files, batch } = inferChangedFiles(auditTool, auditAction, ctx.args, projectPath);
+      const auditDetails: Record<string, unknown> | undefined =
+        (batch || unmappedDetails || auditHint?.before_values)
+          ? {
+              ...(batch ? { batch: true } : {}),
+              ...(unmappedDetails ?? {}),
+              ...(auditHint?.before_values ? { before_values: auditHint.before_values } : {}),
+            }
+          : undefined;
+      try {
+        await appendAuditLine(projectPath, {
+          timestamp: new Date().toISOString(),
+          trace_id: ctx.traceId,
+          tool: auditTool,
+          action: auditAction,
+          risk,
+          ok: !isError,
+          project_path: projectPath,
+          changed_files: files,
+          duration_ms: Date.now() - ctx.startTime,
+          ...(ctx.caller !== undefined ? { caller: ctx.caller } : {}),  // 1C: best-effort 调用者归因
+          ...(auditDetails ? { details: auditDetails } : {}),
+        });
+      } catch (e) {
+        // 1A (2026-09-19): 失败可观测(计数+首次 warn);默认仍不影响工具结果(G2 catch 哲学)。
+        recordAuditWriteFailure(e);
+        if (isAuditStrict()) {
+          // STRICT 模式:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)。
+          // 不能靠 throw——middleware 框架对 after 抛错是静默吞掉(middleware.ts Phase 3 catch)。
+          return opsErrorResult('AUDIT_WRITE_FAILED',
+            `Audit write failed in STRICT mode (GODOT_MCP_AUDIT_STRICT=true). ` +
+            `The tool's side effects may already have occurred — verify manually. ` +
+            `Error: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      return cleanedResult;
+    },
+    };
+  }
+
 
   /** Schedule a connection mode change. Applied at the start of the next handleCall
    *  to prevent mid-request mode switches from editor disconnect callbacks (C-01). */

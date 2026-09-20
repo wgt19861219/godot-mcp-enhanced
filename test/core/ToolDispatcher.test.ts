@@ -82,12 +82,12 @@ vi.mock('../../src/core/guard.js', () => ({
   TOKEN_TTL_MS: 120_000,  // P0-2 MRTR: TTL 调整为 120s
 }));
 
-vi.mock('../../src/helpers.js', () => ({
-  isPathInAllowedRoots: mockIsPathInAllowedRoots,
+vi.mock('../../src/core/config-parser.js', () => ({
   parseGodotConfig: vi.fn().mockReturnValue({}),
 }));
 
 vi.mock('../../src/core/path-utils.js', () => ({
+  isPathInAllowedRoots: mockIsPathInAllowedRoots,
   resolveProjectPath: vi.fn().mockReturnValue('/default/project'),
   _resetProjectPathCache: vi.fn(),
 }));
@@ -2367,5 +2367,28 @@ describe('audit middleware (1A STRICT / 1B fail-closed / 1C caller)', () => {
     expect((out as { isError?: boolean }).isError).toBe(true);
     expect(JSON.stringify((out as { content: unknown }).content)).toContain('AUDIT_WRITE_FAILED');
     fs.rmSync(blocker, { recursive: true, force: true });
+  });
+});
+
+// ── middleware 顺序锁(批3审查 Nit-1 处置) ─────────────────────────────────
+// audit 必须是 buildMiddleware 中最后一个带 after 的 hook——1A STRICT 靠改写 result
+// 生效,其后任何 after 都会覆盖改判结果(源约束注释见 _auditMiddleware docstring)。
+// W6 批3 把 audit 抽为工厂方法后,该约定此前仅靠注释维系;此测试为机械护栏。
+describe('ToolDispatcher.buildMiddleware 顺序锁(Nit-5)', () => {
+  it('audit 是 middleware 数组中最后一个带 after 的 hook', () => {
+    const options = createOptions();
+    const dispatcher = new ToolDispatcher(options);
+    const mw = (dispatcher as unknown as { middleware: Array<{ name?: string; after?: unknown }> }).middleware;
+    const withAfter = mw.filter(m => typeof m.after === 'function');
+    expect(withAfter.length).toBeGreaterThan(0);
+    expect(withAfter[withAfter.length - 1]!.name).toBe('audit');
+    // rate-limit 与 elicitation 均为 before-only(若未来加 after 会破坏 STRICT 语义,此断言即报警)
+    const rateLimit = mw.find(m => m.name === 'rate-limit');
+    const elicitation = mw.find(m => m.name === 'elicitation');
+    // 批4审查 Nit-2:先锁探测目标存在,防重命名后 find 返 undefined 使第二道防线静默通过
+    expect(rateLimit).toBeDefined();
+    expect(elicitation).toBeDefined();
+    expect(typeof rateLimit!.after === 'function').toBeFalsy();
+    expect(typeof elicitation!.after === 'function').toBeFalsy();
   });
 });

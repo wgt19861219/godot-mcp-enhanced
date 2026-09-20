@@ -60,7 +60,7 @@ import { ProjectsStore } from './web-gui/projects-store.js';
 // 资源工作台批(2026-09-15 spec §3.1):FilesApi 实例注入(纯逻辑模块,web-gui 内部互引合法)
 import { FilesApi } from './web-gui/files-api.js';
 import { executeRunProject } from './tools/runtime.js';
-import { buildSafeEnv } from './helpers.js';
+import { buildSafeEnv } from './core/godot-finder.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
 import { setProgressSender, setProgressClientReady } from './core/progress.js';
 import { setElicitServer } from './core/elicit.js';

@@ -2,7 +2,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
-import { parseGodotConfig } from '../../build/helpers.js';
+import { parseGodotConfig } from '../../build/core/config-parser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OPS_SCRIPT = join(__dirname, '..', '..', 'build', 'scripts', 'godot_operations.gd');

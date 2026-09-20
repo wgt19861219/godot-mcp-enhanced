@@ -1,7 +1,8 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath, resolveWithinRoot } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
+import { resolveWithinRoot } from '../core/path-utils.js';
 import { executeGdscriptTrusted } from '../gdscript-executor.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, escapeForGdLiteral } from './shared.js';
 import { sendToBridge, setBridgeProjectDir, BridgeNotConnectedError, BridgeTimeoutError } from './game-bridge.js';

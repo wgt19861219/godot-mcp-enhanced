@@ -2,11 +2,11 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { executeGdscriptTrusted } from '../gdscript-executor.js';
 import { normalizeNodePath, gdEscape, escapeForGdLiteral, sanitizeResPath, validateIdentifier } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult, appendRuntimePersistWarning } from './shared.js';
-import { BLOCKED_PROPS } from './scene/helpers.js';  // IMP-1 (2026-06-26 review): 复用 scene BLOCKED_PROPS 防 set_params 改危险属性(未来抽 shared)
+import { BLOCKED_PROPS } from '../core/shared/blocked-props.js';  // IMP-1 (2026-06-26 review): 复用 BLOCKED_PROPS 防 set_params 改危险属性(W1 下沉 core/shared,2026-09-20)
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 

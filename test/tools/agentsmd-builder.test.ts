@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAgentsMd, buildAgentsMdSections, mergeAgentsMd, AGENTS_SECTION_IDS } from '../../src/tools/agentsmd-builder.js';
-import type { GodotConfig } from '../../src/helpers.js';
+import type { GodotConfig } from '../../src/core/config-parser.js';
 
 const config: GodotConfig = {
   application: { 'config/name': 'TestGame', 'config/features': 'PackedStringArray("4.6")', 'run/main_scene': 'res://main.tscn' },

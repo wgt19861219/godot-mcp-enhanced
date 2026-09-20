@@ -269,7 +269,8 @@ import { readFileSync } from "fs";
 import { opsErrorResult } from './shared.js';
 import type { ToolContext, ToolResult } from "../types.js";
 import { getErrorMessage } from '../types.js';
-import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from "../helpers.js";
+import { requireProjectPath } from '../core/args-validation.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
 
 export function getToolDefinitions(): Tool[] {
   console.warn(`[DEPRECATED] game-design module is absorbed into validation. Do not register directly.`);

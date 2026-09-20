@@ -24,7 +24,7 @@ import { randomUUID, createHash } from 'crypto';
 import { analyzeOutput, type ParsedError } from './error-analyzer.js';
 import { forceKillTree, getRunSessionProc, acquireShortRunningSlot, releaseShortRunningSlot, registerSpawnedGodotPid, unregisterSpawnedGodotPid } from './core/process-state.js';
 import { tokenize, classifyFirstArgument } from './core/gdscript-scanner.js';
-import { buildSafeEnv } from './helpers.js';
+import { buildSafeEnv } from './core/godot-finder.js';
 import { MARKER_RESULT as MARKER_RESULT_SHARED, MARKER_ERROR as MARKER_ERROR_SHARED, GD_MCP_GET_ROOT, GD_MCP_GET_NODE, GD_MCP_LOAD_MAIN_SCENE, GD_MCP_OUTPUT } from './tools/shared.js';
 import { normalizeIndentToTabs as _sharedNormalizeIndent } from './tools/shared/value-serializer.js';
 import { getLogger, resolveLogDir } from './core/logger.js';

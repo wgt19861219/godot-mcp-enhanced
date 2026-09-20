@@ -8,7 +8,8 @@ import { textResult } from '../types.js';
 import { opsErrorResult } from './shared.js';
 import { captureScreenshot } from '../screenshot.js';
 import { parseDetailLevel, downsampleToThumbnail, downsampleToAscii, diffPngBuffers } from './screenshot-detail.js';
-import { validatePath, requireProjectPath, resolveWithinRoot, normalizeUserProjectPath, allowOutsideProjectPaths, isPathInAllowedRoots, describeAllowedRoots } from '../helpers.js';
+import { validatePath, resolveWithinRoot, normalizeUserProjectPath, allowOutsideProjectPaths, isPathInAllowedRoots, describeAllowedRoots } from '../core/path-utils.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { PathError } from '../core/tool-errors.js';
 import { routeImage } from '../core/vision-router.js';
 

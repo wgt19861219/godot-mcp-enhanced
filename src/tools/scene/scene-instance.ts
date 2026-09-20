@@ -4,11 +4,13 @@ import { existsSync, readFileSync } from 'fs';
 import { writeFileAtomic } from '../../core/fs-atomic.js';
 import type { ToolContext, ToolResult } from '../../types.js';
 import { textResult } from '../../types.js';
-import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from '../../helpers.js';
+import { requireProjectPath } from '../../core/args-validation.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../../core/path-utils.js';
 import { findInstanceNode, detachInstance, nodePathToNameAndParent } from '../../tscn/tscn-editor.js';
 import { executeGdscriptRuntime as executeGdscript } from '../../gdscript-executor.js';
 import { normalizeNodePath, gdEscape, escapeForGdLiteral, toSnakeCase, SCENE_TREE_HEADER, opsErrorResult, parseGdscriptResult } from '../shared.js';
-import { gdScriptSetLine, TRY_SET_HELPER, BLOCKED_PROPS } from './helpers.js';
+import { gdScriptSetLine, TRY_SET_HELPER } from './helpers.js';
+import { BLOCKED_PROPS } from '../../core/shared/blocked-props.js';
 
 // A3 (2026-07-13 enhanced-vs-godogen 对比测试核实): instance_scene/set_instance_property 此前
 // 只做运行时 add_child/改属性就 _mcp_done(), 无 pack+save 回写 .tscn → 进程退出实例丢失,

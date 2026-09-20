@@ -25,7 +25,7 @@ import type { Tool } from '@modelcontextprotocol/server';
 import type { ToolResult, ToolContext } from '../../types.js';
 import { textResult } from '../../types.js';
 import { opsErrorResult } from '../shared.js';
-import { requireProjectPath } from '../../helpers.js';
+import { requireProjectPath } from '../../core/args-validation.js';
 import { isPathInAllowedRoots } from '../../core/path-utils.js';
 import { classifyError } from '../../core/tool-errors.js';
 import { getLogger } from '../../core/logger.js';

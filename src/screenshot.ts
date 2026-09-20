@@ -23,7 +23,7 @@ import { existsSync, statSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { forceKillTree } from './core/process-state.js';
-import { buildSafeEnv } from './helpers.js';
+import { buildSafeEnv } from './core/godot-finder.js';
 
 export interface ScreenshotResult {
   success: boolean;

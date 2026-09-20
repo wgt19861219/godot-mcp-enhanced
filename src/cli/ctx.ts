@@ -6,7 +6,7 @@ import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import type { ToolContext } from '../types.js';
-import { parseGodotConfig } from '../helpers.js';
+import { parseGodotConfig } from '../core/config-parser.js';
 import { findGodot } from '../core/godot-finder.js';
 import * as ps from '../core/process-state.js';
 

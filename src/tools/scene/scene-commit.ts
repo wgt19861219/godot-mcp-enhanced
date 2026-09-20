@@ -3,7 +3,7 @@
 // optionally saves, and reports structured results via COMMIT_RESULT prefix.
 
 import { gdEscape, escapeForGdLiteral } from '../shared/value-serializer.js';
-import { BLOCKED_PROPS } from './helpers.js';
+import { BLOCKED_PROPS } from '../../core/shared/blocked-props.js';
 
 export const COMMIT_OPERATIONS = [
   'tile_set', 'tile_fill', 'tile_erase', 'tile_clear',

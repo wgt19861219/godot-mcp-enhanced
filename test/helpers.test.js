@@ -3,7 +3,10 @@ import { resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 
-import { validatePath, resolveWithinRoot, ensureDir, normalizeUserProjectPath, parseConfigValue, isPathInAllowedRoots, allowOutsideProjectPaths, buildSafeEnv } from '../src/helpers.js';
+import { validatePath, resolveWithinRoot, normalizeUserProjectPath, isPathInAllowedRoots, allowOutsideProjectPaths } from '../src/core/path-utils.js';
+import { ensureDir } from '../src/core/fs-atomic.js';
+import { parseConfigValue } from '../src/core/config-parser.js';
+import { buildSafeEnv } from '../src/core/godot-finder.js';
 import { isolatePathEnv } from './helpers/path-isolation.js';
 import { getLogger, resetLogger } from '../src/core/logger.js';
 

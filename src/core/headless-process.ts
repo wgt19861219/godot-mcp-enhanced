@@ -3,7 +3,7 @@
 // label 参与错误文本前缀——blender/godot 各自的历史测试断言依赖该前缀,不可统一。
 import { spawn } from 'child_process';
 import { forceKillTree } from './process-state.js';
-import { buildSafeEnv } from '../helpers.js';
+import { buildSafeEnv } from './godot-finder.js';
 
 export interface HeadlessRunResult {
   exitCode: number | null;  // null = 超时被杀

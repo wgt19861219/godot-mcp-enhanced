@@ -4,7 +4,7 @@
 // 必须把全部 godot-mcp 规则合并进单文件，并对规则文件标题做降级（避免与
 // AGENTS.md 的 ## MCP 段冲突）。复用 claudemd-builder 的元数据 builders +
 // rule-templates 的 DETAILED_RULE_TEMPLATES + shared/section-merge 的合并逻辑。
-import type { GodotConfig } from '../helpers.js';
+import type { GodotConfig } from '../core/config-parser.js';
 import {
   buildEngineVersion, buildRenderer, buildKeyPaths, buildMainScene,
   buildAutoloads, buildInputMap, buildPhysics, buildLayerNames,

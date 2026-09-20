@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process';
-import { buildSafeEnv } from '../helpers.js';
+import { buildSafeEnv } from '../core/godot-finder.js';
 import { forceKillTree } from '../core/process-state.js';
 
 export interface SpawnResult {

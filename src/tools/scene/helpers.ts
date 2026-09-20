@@ -81,17 +81,6 @@ func _try_set(node: Node, prop: String, value: Variant) -> void:
 \t\t\t\tnode.add_theme_constant_override(prop, int(value))
 `;
 
-export const BLOCKED_PROPS = new Set([
-  'script', 'owner', 'name', 'parent', 'children', 'tree',
-  'meta', 'process_mode', 'process_priority',
-  'process_input', 'process_unhandled_input', 'process_unhandled_key_input',
-  'process_internal', 'physics_process_mode', 'input_event', 'ready',
-  // I-2: instance 属性可被注入 ExtResource(1),formatTscnValue 对 ExtResource\( 不加引号原样输出,
-  // Godot 会让新节点实例化该 ext_resource 指向的资源(含脚本),间接触发 _ready()。
-  // 与 script 同级危险,必须阻断。
-  'instance',
-]);
-
 /** Atomic file write: write to temp then rename. Uses temp+rename on all platforms (NTFS same-volume rename is atomic).
  * A-ATOMIC (2026-09-01): 实现上移合并至 src/core/fs-atomic.ts(三份重复实现的并集语义:
  * mode 保持 + 随机 tmp 后缀 + Windows 锁定降级),此处保留签名薄委托,消费方零改动。 */

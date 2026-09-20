@@ -2,7 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { existsSync } from 'fs';
 import { getLogger } from './logger.js';
-import { buildSafeEnv } from '../helpers.js';
+import { buildSafeEnv } from './godot-finder.js';
 
 const execFileAsync = promisify(execFile);
 

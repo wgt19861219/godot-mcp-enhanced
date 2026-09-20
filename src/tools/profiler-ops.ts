@@ -3,7 +3,7 @@ import { ProfilerError } from '../core/function-profiler.js';
 import { textResult } from '../types.js';
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
-import { requireProjectPath } from '../helpers.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
 import { escapeForGdLiteral, ff } from './shared.js';
 import { SCENE_TREE_HEADER, NON_PERSIST, opsErrorResult, parseGdscriptResult } from './shared.js';

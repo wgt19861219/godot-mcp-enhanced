@@ -239,7 +239,8 @@ import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 import { textResult } from '../types.js';
 import { opsErrorResult } from '../core/shared/errors.js';
-import { resolveWithinRoot, normalizeUserProjectPath, requireProjectPath } from '../helpers.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
+import { requireProjectPath } from '../core/args-validation.js';
 import { executeGdscriptTrusted as executeGdscript } from '../gdscript-executor.js';
 
 /** CSV 字节上限(F-7 防 OOM/tmpdir 满,复发 tscn-parser-no-byte-limit 同构)。

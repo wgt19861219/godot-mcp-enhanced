@@ -71,10 +71,17 @@ export const FIXED_DEFECTS: DefectEntry[] = [
     // fix: executeToolCall 入口(currentMode 快照前)加 isToolAllowed 强制检查,返 TOOL_NOT_ALLOWED。
     // detect: executeToolCall 函数体到 const currentMode 之间无 isToolAllowed(name) 调用 → 1(复发)。
     // 锚定 `private async executeToolCall`(唯一函数签名),避开日志字符串 "executeToolCall: tool %s" 误匹配。
+    // W6 批3(2026-09-20)谓词随重构演进:isToolAllowed 强制抽入 _enforceGates 私有方法,
+    // executeToolCall 以 `const gateErr = this._enforceGates(name, args); if (gateErr) return gateErr;`
+    // 接线。防复发语义等价升级:①主方法到 currentMode 间必须调用 _enforceGates 且错误即 return;
+    // ②_enforceGates 方法体内必须含 isToolAllowed(name) 强制。任一缺失 → 复发。
     detect: () => {
       const f = readSrc('src/core/ToolDispatcher.ts');
       const m = f.match(/private async executeToolCall[\s\S]{0,1000}?const currentMode/);
-      return m && !/isToolAllowed\s*\(\s*name\s*\)/.test(m[0]) ? 1 : 0;
+      const wired = m && /this\._enforceGates\(name,\s*args\)/.test(m[0]) && /if \(gateErr\) return gateErr;/.test(m[0]);
+      const gatesBody = f.match(/private _enforceGates[\s\S]{0,4000}?\n  \}/);  // 批3审查 Nit-2:上限放宽防注释增补误报
+      const enforced = gatesBody && /isToolAllowed\s*\(\s*name\s*\)/.test(gatesBody[0]);
+      return wired && enforced ? 0 : 1;
     } },
   { key: 'gdscript-template-injection', status: 'fixed', severity: 'CRITICAL', dimension: 'Security',
     detect: () => {

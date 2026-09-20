@@ -4,7 +4,7 @@ import { genSceneSnapshotScript } from '../../src/tools/workflow.js';
 // ── Task 4 mocks: dev_loop 的外部依赖（避免真跑 godot）──
 // 注：export 名按 workflow.ts 实际 import 核实（brief 的 shared.js mock 名不符）：
 //   - textResult 来自 ../types.js（非 shared.js）
-//   - requireProjectPath 来自 ../helpers.js（非 shared.js）
+//   - requireProjectPath 来自 ../core/args-validation.js(W5 批2 迁移)（非 shared.js）
 //   - shared.js 实际 export: SCENE_TREE_HEADER/parseGdscriptResult/wrapAssertionCode/opsErrorResult/validateTimeout/gdEscape
 vi.mock('../../src/gdscript-executor.js', () => ({
   executeGdscript: vi.fn(),
@@ -13,8 +13,10 @@ vi.mock('../../src/gdscript-executor.js', () => ({
 vi.mock('../../src/types.js', () => ({
   textResult: vi.fn((s: string) => ({ content: [{ type: 'text' as const, text: s }] })),
 }));
-vi.mock('../../src/helpers.js', () => ({
+vi.mock('../../src/core/args-validation.js', () => ({
   requireProjectPath: vi.fn(() => '/fake/project'),
+}));
+vi.mock('../../src/core/path-utils.js', () => ({
   resolveWithinRoot: vi.fn((_root: string, p: string) => `/fake/project/${p}`),
   normalizeUserProjectPath: vi.fn((p: string) => p),
 }));

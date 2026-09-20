@@ -4,7 +4,7 @@ import { homedir } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getLogger } from './logger.js';
-import { buildSafeEnv } from '../helpers.js';
+import { getErrorMessage } from '../types.js';
 import { safeRealPath } from './path-utils.js';
 import { InternalError } from './tool-errors.js';
 
@@ -124,6 +124,7 @@ export function isGodotPathAllowed(candidatePath: string): boolean {
     return realCandidate === realA || realCandidate.startsWith(realA + sep) || realCandidate.startsWith(realA + '/');
   });
   if (!isAllowed) {
+    // 批3审查 Nit-3:白名单拒绝属安全事件,有意用 'security' 域与其余 'godot-finder' 区分
     getLogger().warn('security', `godot path "${candidatePath}" rejected by GODOT_MCP_ALLOWED_GODOT_PATHS whitelist`);
   }
   return isAllowed;
@@ -476,4 +477,95 @@ async function findViaScoop(): Promise<string | null> {
     if (existsSync(scoopShim) && await validateGodotBinary(scoopShim)) return scoopShim;
   } catch { /* ignore */ }
   return null;
+}
+
+// ── Godot 子进程 spawn 基建(W5 安家,2026-09-20 批2) ─────────────────────────
+// buildSafeEnv/checkVersionMismatch 原住 src/helpers.ts 废弃桶,语义同属「Godot
+// 二进制查找/版本探测/子进程 env」域,收编本文件。函数体零变化,纯搬家。
+
+/**
+ * Build a sanitized environment for Godot child processes.
+ *
+ * SECURITY NOTE (I-04): The following user-directory variables are passed
+ * because Godot needs them to locate editor data, cache, and config:
+ * HOME, USERPROFILE, LOCALAPPDATA, APPDATA, XDG_*, DISPLAY.
+ * All other env vars are stripped to prevent credential leakage to child processes.
+ *
+ * S4/S5 (2026-06-24): GODOT_MCP_BRIDGE_* prefixed vars are passed through.
+ * This is the mcp_bridge.gd runtime config sub-namespace (toggles like
+ * GODOT_MCP_BRIDGE_PERSISTENT_SECRET / GODOT_MCP_BRIDGE_EXTRA_METHODS), NOT user
+ * credentials. Stripping them at the spawn boundary silently breaks the GDScript-side
+ * fixes — the env switch never flips, so the secret-reuse / method-whitelist logic
+ * never runs.
+ *
+ * S4-editor (2026-07-11): GODOT_MCP_EDITOR_* added symmetrically — editor plugin
+ * (addons/godot_mcp_server/websocket_server.gd) reads GODOT_MCP_EDITOR_PERSISTENT_SECRET
+ * at _ready via OS.get_environment(); launch_editor spawns the editor with buildSafeEnv,
+ * so without passthrough the env is stripped and PERSISTENT never triggers. Same
+ * sub-namespace rule (runtime config, NOT credentials).
+ *
+ * Scope is intentionally narrow (GODOT_MCP_BRIDGE_ / GODOT_MCP_EDITOR_, not bare
+ * GODOT_MCP_): server-side
+ * security/sandbox switches (GODOT_MCP_UNRESTRICTED, GODOT_MCP_ALLOW_UNSAFE,
+ * ALLOW_EXECUTE_GDSCRIPT, ALLOWED_PROJECT_PATHS) MUST stay stripped — a child
+ * process must not unlock its own restrictions. See gdscript-executor-core.test.js.
+ */
+export function buildSafeEnv(): NodeJS.ProcessEnv {
+  const godotMcpEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if ((key.startsWith('GODOT_MCP_BRIDGE_') || key.startsWith('GODOT_MCP_EDITOR_')) && value !== undefined) {
+      godotMcpEnv[key] = value;
+    }
+  }
+  return {
+    PATH: process.env.PATH ?? '',
+    HOME: process.env.HOME ?? '',
+    USERPROFILE: process.env.USERPROFILE ?? '',
+    LOCALAPPDATA: process.env.LOCALAPPDATA ?? '',
+    APPDATA: process.env.APPDATA ?? '',
+    TEMP: process.env.TEMP ?? '',
+    TMP: process.env.TMP ?? '',
+    GODOT: process.env.GODOT ?? '',
+    SystemRoot: process.env.SystemRoot ?? '',
+    COMSPEC: process.env.COMSPEC ?? '',
+    OS: process.env.OS ?? '',
+    PATHEXT: process.env.PATHEXT ?? '',
+    DISPLAY: process.env.DISPLAY ?? '',
+    // XAUTHORITY 与 DISPLAY 配对的 X11 认证文件。缺它 xvfb-run 下 spawn 的 Godot
+    // 无法认证 X 连接 → 游戏进程秒退 → bridge 永不就绪(2026-08-15 CI matrix L2 根因)
+    XAUTHORITY: process.env.XAUTHORITY ?? '',
+    WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? '',
+    XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? '',
+    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME ?? '',
+    XDG_DATA_HOME: process.env.XDG_DATA_HOME ?? '',
+    LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH ?? '',
+    ...godotMcpEnv,
+  };
+}
+
+const GODOT_VERSION_CHECK_TIMEOUT_MS = 5000;
+
+export async function checkVersionMismatch(projectPath: string, godotBin: string): Promise<string | null> {
+  try {
+    const configPath = join(projectPath, 'project.godot');
+    if (!existsSync(configPath)) return null;
+    const config = readFileSync(configPath, 'utf-8');
+    const featuresMatch = config.match(/config\/features=PackedStringArray\("([^"]+)"\)/);
+    if (!featuresMatch) return null;
+    const projectVersion = featuresMatch[1];
+
+    const { stdout, stderr } = await execFileAsync(godotBin, ['--version'], { timeout: GODOT_VERSION_CHECK_TIMEOUT_MS, env: buildSafeEnv() });
+    const binVersion = (stdout || stderr || '').trim();
+    const binMatch = binVersion.match(/^(\d+\.\d+)/);
+    if (!binMatch) return null;
+    const binMajorMinor = binMatch[1];
+
+    if (projectVersion !== binMajorMinor) {
+      return `[WARNING] Version mismatch: project.godot expects Godot ${projectVersion}, but binary is ${binVersion} (${binMajorMinor}). Errors may be inaccurate.`;
+    }
+    return null;
+  } catch (err) {
+    getLogger().warn('godot-finder', `checkVersionMismatch failed: ${getErrorMessage(err)}`);
+    return null;
+  }
 }

@@ -4,7 +4,8 @@ import type { Tool } from "@modelcontextprotocol/server";
 // P2: MCP tool wrapper for scene_commit.
 import type { ToolContext, ToolResult } from '../../types.js';
 import { textResult } from '../../types.js';
-import { requireProjectPath, resolveWithinRoot, normalizeUserProjectPath } from '../../helpers.js';
+import { requireProjectPath } from '../../core/args-validation.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../../core/path-utils.js';
 import { executeGdscriptRuntime as executeGdscript } from '../../gdscript-executor.js';
 import { generateCommitScript, validateCommitOperations, TILESET_RESOURCE_OPS, type CommitOperation } from './scene-commit.js';
 import { acquireShortRunningSlot, releaseShortRunningSlot } from '../../core/process-state.js';

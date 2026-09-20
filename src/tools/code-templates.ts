@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolResult } from '../types.js';
 import { textResult as okResult, errorResult } from '../types.js';
-import { validateProjectRoot, resolveWithinRoot, ensureDir } from '../helpers.js';
+import { validateProjectRoot, resolveWithinRoot } from '../core/path-utils.js';
+import { ensureDir } from '../core/fs-atomic.js';
 import { getLogger } from '../core/logger.js';
 import { scanScriptSandboxOrThrow } from './script.js';
 

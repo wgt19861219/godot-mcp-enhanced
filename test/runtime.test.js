@@ -45,14 +45,15 @@ vi.mock('../src/core/function-profiler.js', async (importOriginal) => {
 });
 const fakeProfiler = () => ({ port: 9555, close: vi.fn() });
 
-vi.mock('../src/helpers.js', () => ({
+vi.mock('../src/core/path-utils.js', () => ({
   validatePath: vi.fn(p => p),
+}));
+vi.mock('../src/core/args-validation.js', () => ({
   requireProjectPath: vi.fn(args => typeof args === 'string' ? args : args.project_path),
+}));
+vi.mock('../src/core/godot-finder.js', () => ({
   buildSafeEnv: vi.fn(() => process.env),
   checkVersionMismatch: vi.fn(async () => null),
-}));
-
-vi.mock('../src/core/godot-finder.js', () => ({
   detectGodotVersion: vi.fn(async () => '4.6.stable'),
 }));
 
