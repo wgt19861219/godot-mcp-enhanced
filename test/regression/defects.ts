@@ -208,9 +208,11 @@ export const FIXED_DEFECTS: DefectEntry[] = [
   { key: 'path-sandbox-touctou-bypass', status: 'fixed', severity: 'IMPORTANT', dimension: 'Security',
     detect: () => {
       // fixed：resolveWithinRoot 改 realpathSync。命中「用 resolve 而非 realpathSync」即复发
-      const helpers = readSrc('src/helpers.ts');
-      const usesResolve = /function\s+(resolveWithinRoot|isSafePath)[\s\S]*?resolve\(/m.test(helpers);
-      const usesRealpath = /realpathSync/.test(helpers);
+      // 批2(2026-09-20, 26cf1e6b) helpers.ts 退役后 resolveWithinRoot 安家 core/path-utils.ts，
+      // 此谓词当时漏演进致 readSrc('') 恒假绿；批7 审查(B-1)发现补指新家。
+      const utils = readSrc('src/core/path-utils.ts');
+      const usesResolve = /function\s+(resolveWithinRoot|isSafePath)[\s\S]*?resolve\(/m.test(utils);
+      const usesRealpath = /realpathSync/.test(utils);
       return (usesResolve && !usesRealpath) ? 1 : 0;
     } },
   { key: 'swallowed-empty-catch', status: 'fixed', severity: 'IMPORTANT', dimension: 'Completeness',
