@@ -5,6 +5,7 @@
 import { getLogger } from './logger.js';
 import type { Tool } from "@modelcontextprotocol/server";
 import { errorResult } from '../types.js';
+import { opsErrorResult } from './shared/errors.js';
 import type { DispatchContext, Middleware, MiddlewareResult, ToolResult, HandlerResult } from '../types.js';
 import { isInputRequiredResult } from '@modelcontextprotocol/server';
 import { isFeatureEnabled } from './feature-flags.js';
@@ -208,11 +209,18 @@ export function createRateLimitMiddleware(
       count++;
       if (count > maxPerWindow) {
         getLogger().warn('middleware', `Rate limit exceeded: ${count}/${maxPerWindow} per ${windowMs}ms`);
+        // 2026-09-20 可靠性批任务③: 原裸文本 errorResult('RATE_LIMITED: ...') 与全局
+        // opsErrorResult 结构化口径(error_code/retryable/suggestion)不一致,客户端无法
+        // 程序化消费。retryable=true(瞬态限流,稍候即恢复);对齐 tool-errors.ts RateLimitError。
         return {
           rejected: true,
-          error: errorResult(
-            `RATE_LIMITED: 超过 ${maxPerWindow} 次/${windowMs}ms 调用上限。AI 调用循环可能失控,请检查流程。`,
-          ),
+          error: opsErrorResult('RATE_LIMIT',
+            `超过 ${maxPerWindow} 次/${windowMs}ms 调用上限。AI 调用循环可能失控,请检查流程。`,
+            {
+              retryable: true,
+              errorCategory: 'guard',
+              suggestion: `Wait ~${Math.ceil(windowMs / 1000)}s for the window to reset, then retry; if repeated, check the agent loop.`,
+            }),
         };
       }
       return { passed: true };

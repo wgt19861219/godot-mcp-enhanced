@@ -38,7 +38,7 @@ import {
 import { validateArgs } from './args-validator.js';
 import { isPathInAllowedRoots, parseGodotConfig } from '../helpers.js';
 import { opsErrorResult, COMMON_ERROR_CODES } from './shared/errors.js';
-import { classifyError, newTraceId, InternalError } from './tool-errors.js';
+import { classifyError, newTraceId, InternalError, ToolDeadlineError } from './tool-errors.js';
 import { isAuditEnabled, appendAuditLine, inferChangedFiles, isTokenRequestResult, recordAuditWriteFailure, isAuditStrict, extractAuditHint } from './audit-log.js';
 import { truncateResponse } from './response-limiter.js';
 import { isErrorText } from './response-format.js';
@@ -47,11 +47,25 @@ import { getLogger, withRequestLogLevelAsync, withRequestLogFn, type LogLevel } 
 import { resolveProjectPath } from './path-utils.js';
 import { record as recordTelemetry, hashProject, isTelemetryEnabled } from '../telemetry/index.js';
 import type { AgentContextManager } from './agent-context.js';
-import { createProgressEmitter, withToolHeartbeat, type ProgressEmitter, type ProgressToken } from './progress.js';
+import { createProgressEmitter, withToolDeadline, type ProgressEmitter, type ProgressToken } from './progress.js';
 import { markInflight, clearInflight } from './inflight.js';
 
 /** Known profile names for IDE autocomplete. Unknown strings fall through to resolveProfile(). */
 type KnownProfile = 'full' | 'basic' | 'lite' | 'minimal' | 'bridge_dev' | '3d_dev';
+
+/**
+ * 工具调用全局 deadline 兜底(2026-09-20 可靠性批任务①)。默认 3600000ms(1h)对齐
+ * qa run_timeout_s 上限(src/tools/qa/spec.ts:185)——所有已知合法长操作不误伤;真
+ * "handler 忘写内部超时"的无限挂起最迟 1h 返回结构化 TOOL_DEADLINE_EXCEEDED(retryable)。
+ * env GODOT_MCP_TOOL_DEADLINE_MS 可调;<=0 禁用(退化为纯心跳,即改动前行为)。
+ * 与心跳分工:心跳防客户端 idle 杀(只保活),deadline 防无限挂起(会终止等待)。
+ */
+function getToolDeadlineMs(): number {
+  const raw = Number(process.env.GODOT_MCP_TOOL_DEADLINE_MS);
+  // 未设/非数字 → Number() = NaN → 走默认;数值化结果 <=0(含空串:JS 里 Number('')===0
+  // 而非 NaN,审查 Nit-1 实测纠正)与显式 0/负数 = 禁用
+  return Number.isFinite(raw) ? raw : 3_600_000;
+}
 
 const DEBUG = process.env.DEBUG === 'true';
 function log(...args: unknown[]): void {
@@ -276,8 +290,21 @@ export class ToolDispatcher {
           // (BuildersGate 取消经济学:把"静默损失"变成可诊断事件)。见 core/inflight.ts。
           markInflight(name);
           try {
-            return await withToolHeartbeat(progressEmitter, name, () =>
-              this.executeToolCall(name, args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, callerLabel));
+            // 任务①(2026-09-20): withToolDeadline = 心跳保活 + 全局 deadline 兜底双 timer。
+            // deadline 超时以 ToolDeadlineError reject,此处就地转结构化 opsErrorResult——
+            // 不能冒泡到 executeMiddleware Phase 2(那里会转 'Tool execution error: ...'
+            // 裸文本,违背结构化口径)。其余异常原样 rethrow,保持既有行为不变。
+            return await withToolDeadline(progressEmitter, name,
+              () => this.executeToolCall(name, args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, callerLabel),
+              getToolDeadlineMs(),
+            ).catch((err: unknown) => {
+              if (err instanceof ToolDeadlineError) {
+                log('Tool deadline exceeded:', name, ctx.traceId);
+                return opsErrorResult(err.code, err.safeMessage,
+                  { retryable: err.retryable, errorCategory: err.category, traceId: ctx.traceId });
+              }
+              throw err;
+            });
           } finally {
             clearInflight(name);
           }

@@ -82,6 +82,19 @@ export class TimeoutError extends ToolError {
   }
 }
 
+/**
+ * dispatcher 级工具调用全局 deadline 兜底(可重试,2026-09-20 可靠性批任务①)。
+ * 与 TimeoutError 区分:TimeoutError 是各 handler 内部的业务超时(如 Godot 进程 30s);
+ * ToolDeadlineError 是 ToolDispatcher 包的最后一道网——handler 忘写内部超时导致调用
+ * 无限挂起时,由 GODOT_MCP_TOOL_DEADLINE_MS(默认 3600000ms)兜底 reject。
+ */
+export class ToolDeadlineError extends ToolError {
+  constructor(safeMessage = 'Tool call exceeded global deadline') {
+    super('TOOL_DEADLINE_EXCEEDED', 'timeout', true, safeMessage);
+    this.name = 'ToolDeadlineError';
+  }
+}
+
 /** 传输层错误:socket 断开等非超时(可重试)。 */
 export class TransportError extends ToolError {
   constructor(safeMessage = 'Transport error', code = 'TRANSPORT') {

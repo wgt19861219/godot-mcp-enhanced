@@ -402,6 +402,31 @@ describe('ToolDispatcher.handleCall', () => {
     expect(calledArgs).not.toHaveProperty('projectPath');
   });
 
+  // 任务①(2026-09-20 可靠性批): 全局工具 deadline 端到端——挂起的 handler 在
+  // GODOT_MCP_TOOL_DEADLINE_MS 到点后返回结构化 TOOL_DEADLINE_EXCEEDED(retryable/
+  // error_category),而非无限挂起。真实 timers(50ms deadline,短等待)。
+  it('returns structured TOOL_DEADLINE_EXCEEDED when handler hangs past global deadline (DL-E2E)', async () => {
+    vi.stubEnv('GODOT_MCP_TOOL_DEADLINE_MS', '50');
+    try {
+      const guard = createMockGuard(false);
+      // handleTool 永不 settle——模拟"handler 忘写内部超时"的挂死路径
+      const mockModule = { handleTool: vi.fn().mockReturnValue(new Promise(() => {})) };
+      mockGetModuleForTool.mockReturnValue(mockModule);
+      const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+      const result = await dispatcher.handleCall({ params: { name: 'scene', arguments: {} } });
+      expect(result.isError).toBe(true);
+      const text = (result.content[0] as { text: string }).text;
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      expect(parsed['error_code']).toBe('TOOL_DEADLINE_EXCEEDED');
+      expect(parsed['retryable']).toBe(true);
+      expect(parsed['error_category']).toBe('timeout');
+      expect(typeof parsed['trace_id']).toBe('string');
+    } finally {
+      // Nit-4(审查): finally 恢复 env——断言失败时 '50' 不泄漏到同文件后续用例
+      vi.unstubAllEnvs();
+    }
+  });
+
   // [T3] readOnlyGuard.blocked → 返回错误
   it('returns error when readOnlyGuard blocks the tool', async () => {
     const guard = createMockGuard(true);
