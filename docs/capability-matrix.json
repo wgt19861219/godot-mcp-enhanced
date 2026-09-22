@@ -1,10 +1,10 @@
 {
-  "version": "0.33.8",
+  "version": "0.33.9",
   "tools": [
     {
       "name": "analysis",
       "group": "code",
-      "description": "理解层静态分析（零 Godot 依赖）。action=signal_map 列全项目信号连接（.tscn [connection] 声明 + .gd 代码 connect/emit 引用，两来源分开标注）；action=impact_check 改动前影响面评估——改信号列出全部连接方/发射方/监听方，改脚本列出引用它的场景与节点，改场景列出其连接/脚本/被实例化处。盲区诚实标注：运行时动态信号名/autoload 间连接不可见。",
+      "description": "理解层静态分析（零 Godot 依赖）。action=signal_map 列全项目信号连接（.tscn [connection] 声明 + .gd 代码 connect/emit 引用，两来源分开标注）；action=impact_check 改动前影响面评估——改信号列出全部连接方/发射方/监听方，改脚本列出引用它的场景与节点，改场景列出其连接/脚本/被实例化处。action=layout_compare 布局树读数容差比对（ref/cand 两份 JSON，DRIFT/MISSING/EXTRA 数值差异清单，锚点与 null 项自动跳过防假阳性，支持 rebase 相对化）——跨引擎迁移/版本快照对齐的数值审计层，配合 game_query dump_layout_tree 导出。盲区诚实标注：运行时动态信号名/autoload 间连接不可见。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -12,13 +12,14 @@
             "type": "string",
             "enum": [
               "signal_map",
-              "impact_check"
+              "impact_check",
+              "layout_compare"
             ],
-            "description": "signal_map=信号连接全景；impact_check=改动影响面"
+            "description": "signal_map=信号连接全景；impact_check=改动影响面；layout_compare=布局树读数比对"
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录；layout_compare 不需要）"
           },
           "signal": {
             "type": "string",
@@ -39,30 +40,49 @@
           "limit": {
             "type": "number",
             "description": "每列表截断上限（默认 200）"
+          },
+          "ref_path": {
+            "type": "string",
+            "description": "layout_compare: 基准树读数 JSON 路径（平铺 {名:[x,y,w,h]} 或包装 {\"controls\":{...},\"_anchored\":[...]}）"
+          },
+          "cand_path": {
+            "type": "string",
+            "description": "layout_compare: 候选树读数 JSON 路径（同上格式）"
+          },
+          "tol": {
+            "type": "number",
+            "description": "layout_compare: 坐标容差 px（默认 2；恰好等于 tol 不判 DRIFT）"
+          },
+          "rebase": {
+            "type": "string",
+            "description": "layout_compare: cand 侧以指定控件 origin 为原点相对化（global→皮肤根相对，跨源比对必需）"
           }
         },
         "required": [
-          "action",
-          "project_path"
+          "action"
         ]
       },
       "requiredParams": [
-        "action",
-        "project_path"
+        "action"
       ],
       "optionalParams": [
+        "project_path",
         "signal",
         "scene",
         "script_path",
         "scene_path",
-        "limit"
+        "limit",
+        "ref_path",
+        "cand_path",
+        "tol",
+        "rebase"
       ],
       "readonly": true,
       "longRunning": false,
       "guarded": false,
       "securityLevel": "safe",
       "riskDistribution": {
-        "read": 2,
+        "read": 3,
         "write": 0,
         "destructive": 0,
         "process": 0
@@ -89,9 +109,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 453,
-        "schemaBytes": 848,
-        "totalBytes": 1301
+        "descBytes": 745,
+        "schemaBytes": 1470,
+        "totalBytes": 2215
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2221,11 +2241,11 @@
           },
           "method": {
             "type": "string",
-            "description": "方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。"
+            "description": "方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/dump_layout_tree/get_font_report/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。"
           },
           "params": {
             "type": "object",
-            "description": "方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。"
+            "description": "方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path=\"/root\",max_depth=32,visible_only=false}(整树控件坐标表导出:controls/hidden 两组 {名:[x,y,w,h]} 运行态 global 坐标 roundi,重名 _2 后缀,visible_only=true 隐藏子树剪枝;配合 analysis.layout_compare 比对);get_font_report{path=\"/root\",max_depth=32}(子树 Label 字体度量:font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量,负=偏上;跨引擎字体不居中诊断);get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。"
           },
           "timeout": {
             "type": "number",
@@ -2404,8 +2424,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 8498,
-        "totalBytes": 8891
+        "schemaBytes": 9004,
+        "totalBytes": 9397
       },
       "annotations": {
         "readOnlyHint": false,

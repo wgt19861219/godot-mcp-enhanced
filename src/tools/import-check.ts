@@ -12,6 +12,7 @@ import { existsSync, statSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { runGodotHeadless } from '../core/godot-spawn.js';
 import { getLogger } from '../core/logger.js';
+import { checkImportIntegrity, warnIfGutted, type ImportIntegrityReport } from './import-integrity.js';
 
 // ─── Cache state ──────────────────────────────────────────────────────────────
 
@@ -93,13 +94,18 @@ export function needsImport(projectPath: string): boolean {
 /**
  * Run `godot --headless --import` to warm up the resource import cache.
  *
+ * 能力 D (2026-09-21)：导入完成后执行 .import 完整性自检（TMXYH5 反馈：
+ * --import 曾把位图字体引用的 png.import 重写为只剩 [remap] 段）。返回检测
+ * 报告——gutted 非空时调用方可上浮到工具输出；自动 warmup 链至少有 logger
+ * 告警（warnIfGutted）。
+ *
  * @throws Error if the import process fails or times out.
  */
 export async function runImport(
   projectPath: string,
   godotPath: string,
   timeoutMs: number = 60_000,
-): Promise<void> {
+): Promise<ImportIntegrityReport> {
   const result = await runGodotHeadless(
     ['--headless', '--import', '--path', projectPath], godotPath, timeoutMs,
   );
@@ -120,6 +126,16 @@ export async function runImport(
   _lastCheckedAssetMtime = latestMtime || Date.now();
   _lastCheckedProject = projectPath;
   getLogger().info('import-check', `Import warmup completed for ${projectPath}`);
+
+  // 能力 D：导入后自检（纯文本扫描 + git 增强，毫秒级；失败不影响导入结果语义）
+  try {
+    const report = checkImportIntegrity(projectPath);
+    warnIfGutted(projectPath, report);
+    return report;
+  } catch (err) {
+    getLogger().debug('import-check', `integrity check skipped: ${err instanceof Error ? err.message : err}`);
+    return { scanned: 0, gutted: [], gitModified: null };
+  }
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

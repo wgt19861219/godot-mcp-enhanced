@@ -4,7 +4,7 @@
 > 「系统化安全防护 + 三层架构 + 运行时控制」的开源方案。
 
 给 AI(Claude Code、Cursor、CodeBuddy 等 MCP 客户端)一个能真正读、写、跑、验证 Godot 项目的
-工具层:46 个 MCP 工具(merged,共 271 个 action;完整清单见 [capability-matrix](docs/capability-matrix.md))覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出/3D 参数化资产(asset:11 shape + 路径阵列 + batch 原子 undo),三层架构
+工具层:46 个 MCP 工具(merged,共 272 个 action;完整清单见 [capability-matrix](docs/capability-matrix.md))覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出/3D 参数化资产(asset:11 shape + 路径阵列 + batch 原子 undo),三层架构
 (headless + editor + game bridge)+ 路径白名单 / 注入防御 / sandbox 安全体系。
 赛道竞品普遍押注「生成」(authoring),本项目押注「验证」(verification)——QA 编排、回归 diff、操作审计与确定性 playtest 共同构成 **AI 游戏开发的持续验证管线**(CI for AI-assisted game development)。
 
@@ -228,7 +228,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 ## 工具一览
 
-> 共 46 个 MCP 工具(merged tool definition,共 271 个 action),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](docs/capability-matrix.md)。
+> 共 46 个 MCP 工具(merged tool definition,共 272 个 action),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](docs/capability-matrix.md)。
 >
 > **怎么按名找到工具**:下表「工具」列绝大多数是 **action 名**(如 `read_scene`),实际调用时作为对应**顶层工具**的 `action` 参数传入——`read_scene`/`quick_scene` 走 `scene` 工具,`read_script`/`write_script` 走 `script` 工具,以此类推(顶层工具名 = 域名词:`scene`/`script`/`runtime`/`validation`/`game` 等 46 个)。action 命名存在三种历史语序(`read_scene`/`tilemap_read`/裸 `read`),不确定时让 AI 先查 `help` 工具(46 工具全覆盖 + 拼写纠错)。
 >
@@ -236,7 +236,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 >
 > **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
 >
-> **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:271**(matrix 的 risk 聚合 read 133+write 112+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
+> **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:272**(matrix 的 risk 聚合 read 134+write 112+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
 
 ### 执行工具
 
@@ -799,6 +799,7 @@ npm install && npm run build
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| **v0.33.9** | 2026-09-22 | **布局审计能力批（TMXYH5 两条 🔴 反馈落地,方案+审查修正）**：①`game_query dump_layout_tree` 整树控件坐标表导出（运行态 global 坐标 roundi,controls/hidden 分组,重名 `_2` 平铺,visible_only 剪枝）;②`analysis layout_compare` 树读数容差比对（DRIFT/MISSING/EXTRA,锚点/null 自动跳过防假阳性,rebase 相对化,白名单校验）;③`game_query get_font_report` Label 字体度量报表（ink 度量走 TextServer.font_get_glyph_* 正确 API——方案原稿 Font.get_glyph_size 经 4.6.3 ClassDB 实测不存在;ink_center_shift 直接读"文字实际偏上量"）;④`.import` 砍残自检（import-integrity.ts,挂 runImport 汇聚点+run_and_verify+import_resources 三入口,覆盖自动 warmup 隐蔽链;git 项目 M 状态增强）——防 `--headless --import` 静默重写 .import 只剩 remap 段。bridge 规则双副本同步 + analysis schema 修 project_path required 不自洽（既有 bug）。 |
 | **v0.33.8** | 2026-09-18 | **2026-09-17 架构审查批 5（O1 哨兵延迟通道收敛,M-7）**：五条延迟通道（call_method await/click real_event/playtest.step/step_until/input_sequence）从"handler 临时变量×5 + 五种哨兵字符串 + 消费端五段 elif"归一为单例槽 `_deferred`——handler 平铺返 `{"__deferred__": kind,...payload}`、识别端单键 id 并入、消费端按 kind 分派;行为守恒由 e2e 守恒网保证（playtest.step 补真机用例,五命令全覆盖,重构前后同绿）,契约测试断言锚同步 7 文件;净 -10 行。 |
 | **v0.33.7** | 2026-09-18 | **2026-09-17 架构审查批 4（bridge 行为对称）+ 批 2/3 定版随行**：①M-5 uninstall 判活护栏——删 secret 前查 machine registry 新鲜心跳，在跑实例的 secret 保留并点名（原行为无条件删光，多实例在跑时 TS 侧重连即断）；②M-6/O3 sync_state 快照记录来源 project/port，compare 跨项目比对置 `cross_project` 警告、同 label 跨项目覆盖响应带 overwrote 警告（静默覆盖/无意义 diff 消除）；③M-8 -32601 错误自动补 ping 版本比对——非 ping 路径撞项目内旧版 mcp_bridge.gd 也能看到 `versionWarning` 重装指引；④心跳 `lastSeenMs` 毫秒精度 + pid 平票决胜（同秒双开不再靠目录顺序摇摆）+ `_doConnect` 端口单次解析（secret 读取与 TCP 连接同源，TOCTOU 消除）；⑤批1 终审 I-1：addons editor 命令族 40 处 `int/float(params.get(...))` 裸转守卫收口（H-2 覆盖盲区，command_helpers 建 `num_guarded`/`int_guarded` 三副本守卫 + 全命令族契约负向断言）。随行定版批 2（dap closeAll/profiler 直关/inflight 双清/首连装配归位控制面）与批 3（web-gui token 恒定时间比较/rotate-token/READ_ONLY 入口页短路/CSP sha256 等 M-1~M-4+Low×5）。 |
 | **v0.33.6** | 2026-09-17 | **2026-09-17 架构审查 H-1/H-2 收口（bridge 参数守卫统一收口）**：①`_math_comp` 分量类型白名单——set_node_property 数学属性 `position={"x":{}}` 容器/null 分量穿透到 `float()` 即 SCRIPT ERROR（同步分发无异常隔离→响应静默 result:null），白名单外返 null 走上游 -8 可读错误；②新增 `_int_guarded` int 守卫（对齐 `_num` 先例：仅整值/合法数字串放行），19 处 `int/float(params.get(...))` 裸转全量替换（get_tree/find_nodes/monitor/watch/ui/playtest/step_until/弱网注入/touch·drag index），深预检首步 `int(e["at_frame"])` 毒参数回 0 落入既有 1-600 可读报错分支；③契约测试负向断言扩全文件（`int(params.get(`/`float(params.get(`` 禁绝，批次C只扫两函数致漏网的教训）。 |

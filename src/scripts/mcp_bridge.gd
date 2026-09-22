@@ -1153,6 +1153,10 @@ func _handle_message(raw: String, pid: int) -> String:
 			result = _cmd_get_node_properties(params)
 		"get_node_layout":
 			result = _cmd_get_node_layout(params)
+		"dump_layout_tree":
+			result = _cmd_dump_layout_tree(params)
+		"get_font_report":
+			result = _cmd_get_font_report(params)
 		"set_node_property":
 			result = _cmd_set_node_property(params)
 		"call_method":
@@ -1669,6 +1673,161 @@ func _cmd_get_node_layout(params: Dictionary) -> Variant:
 	if player_mode:
 		_project_dict(node, data)  # P7: layout 键(position/global_position/...)过字段规则
 	return {"layout": data, "node": path}
+
+
+# ── 布局审计能力 A (2026-09-21)：整树控件坐标表导出 ──────────────────────────
+# 参考 TMXYH5 client/_probe.gd _collect()（三期 152+ 例视觉巡检验证：坐标级数值
+# 审计零假阳性 vs 整图视觉判读高误报）。设计态 .tscn 文本 rect 不含 anchors
+# 解算结果，比对无意义——导出走运行态 global 坐标。命名避开 get_node_layout
+# （已有：单节点布局快照）；本 method 是整树批量导出，配合 analysis.layout_compare。
+# 隐藏层单独分组（"内容态隐藏"与"真缺失"两类性质，混判必误报）；重名 _2 后缀
+# 平铺（比对最小单元是 名字→rect）；相对化（global→皮肤根）交给比对工具 rebase。
+
+func _cmd_dump_layout_tree(params: Dictionary) -> Variant:
+	var path: String = str(params.get("path", "/root"))
+	var max_depth: int = _int_guarded(params.get("max_depth"), 32)
+	var visible_only: bool = bool(params.get("visible_only", false))
+	var node := get_node_or_null(path)
+	if not is_instance_valid(node):
+		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
+	var controls: Dictionary = {}
+	var hidden: Dictionary = {}
+	if node is Control:
+		_collect_layout(node, controls, hidden, 0, max_depth, visible_only)
+	else:
+		for ch in node.get_children():
+			if ch is Control:
+				_collect_layout(ch, controls, hidden, 1, max_depth, visible_only)
+	return {
+		"controls": controls,
+		"hidden": hidden,
+		"meta": {
+			"root": path, "visible_count": controls.size(), "hidden_count": hidden.size(),
+			"visible_only": visible_only, "max_depth": max_depth,
+		},
+	}
+
+
+func _collect_layout(c: Control, out: Dictionary, hid: Dictionary,
+		depth: int, max_depth: int, visible_only: bool) -> void:
+	if depth > max_depth:
+		return
+	# 分组口径 = 自身 visible（参考 _probe.gd："内容态隐藏"指自身标志——皮肤数据态
+	# 如售罄章 imgSellOut.visible=false）；visible_only 口径 = 视觉（父隐藏整棵剪枝，
+	# is_visible_in_tree 等价）。两口径有意不同：父隐藏但自身 visible=true 的子控件
+	# 进 controls（数据态正常），在 visible_only 下被剪（视觉不可见）——见
+	# test/layout-audit-e2e.test.ts E2E-1。
+	if not c.visible and visible_only:
+		return
+	if not c.is_queued_for_deletion():
+		var target := out if c.visible else hid
+		# 重名后缀循环消解（审查 N-1）：加 _2 后仍可能撞原生同名控件（树里本就
+		# 有 Foo_2 时一次性改名会静默覆盖原生条目），故 while 直至空位。
+		var nm: String = c.name
+		var base_nm := nm
+		var n := 1
+		while target.has(nm):
+			n += 1
+			nm = "%s_%d" % [base_nm, n]
+		var gp: Vector2 = c.global_position
+		# roundi 而非 int() 截断（TMXYH5 交叉验证两者差 1px，round 更准）
+		target[nm] = [roundi(gp.x), roundi(gp.y), roundi(c.size.x), roundi(c.size.y)]
+	for ch in c.get_children():
+		if ch is Control:
+			_collect_layout(ch, out, hid, depth + 1, max_depth, visible_only)
+
+
+# ── 布局审计能力 C (2026-09-21)：子树 Label 字体度量报表 ─────────────────────
+# 跨引擎迁移「字体不居中」第一步诊断：Egret 按字形 ink 高度居中 vs Godot 按行盒
+# (ascent+descent) 居中，中文字形 ink 集中行盒上部 → 垂直偏上。ink 度量走
+# TextServer.font_get_glyph_index / font_get_glyph_size / font_get_glyph_offset
+# （2026-09-22 审查实测 Godot 4.6.3：Font 类无 get_glyph_size/get_glyph_index，
+# 方案原稿 API 名有误；正确路径在 TextServer 上，font_rid 从 Font.get_rids() 取，
+# get_primary_server 在 4.6 已更名 get_primary_interface，glyph 度量的 size 参数
+# 是 Vector2i(font_size, outline_size) 而非 int——三处签名均经探针实测）。
+# 字段口径：ink_gap_top = (line_height-ink_height)/2 理论留白（假设 ink 行盒内
+# 对称，跨引擎粗对齐口径）；ink_center_shift = ink 中心-行盒中心（负=偏上，union
+# 盒口径：ink 范围=min/max 聚合全部字形的 offset.y~offset.y+size.y，混排字形下
+# 仍为真实 ink 范围），后者即"文字实际偏上量"直接可读。
+
+func _cmd_get_font_report(params: Dictionary) -> Variant:
+	var path: String = str(params.get("path", "/root"))
+	var max_depth: int = _int_guarded(params.get("max_depth"), 32)
+	var node := get_node_or_null(path)
+	if not is_instance_valid(node):
+		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
+	var ts: TextServer = TextServerManager.get_primary_interface()
+	var reports: Array = []
+	_collect_font_report(node, ts, reports, 0, max_depth)
+	return {"labels": reports, "meta": {"root": path, "count": reports.size()}}
+
+
+func _collect_font_report(node: Node, ts: TextServer, reports: Array, depth: int, max_depth: int) -> void:
+	if depth > max_depth:
+		return
+	if node is Label and not node.is_queued_for_deletion():
+		reports.append(_label_font_metrics(node, ts))
+	for ch in node.get_children():
+		_collect_font_report(ch, ts, reports, depth + 1, max_depth)
+
+
+func _label_font_metrics(label: Label, ts: TextServer) -> Dictionary:
+	var font := label.get_theme_font("font")
+	# Label 的字号主题项键是 "font_size"（font 键对应 Font 资源；写错键会静默拿默认 16）
+	var font_size: int = label.get_theme_font_size("font_size")
+	var entry: Dictionary = {
+		"name": label.name,
+		"text": label.text.substr(0, 32),
+		"font_size": font_size,
+		"h_align": label.horizontal_alignment,
+		"v_align": label.vertical_alignment,
+	}
+	if font == null:
+		entry["font_source"] = "none"
+		return entry
+	# override → theme → 引擎默认的生效顺序由 get_theme_font 内部处理；fallback 链
+	# （SystemFont 内部多字体/FontFile fallbacks）引擎归因不可见，统一标 "theme"
+	entry["font_source"] = "override" if label.has_theme_font_override("font") else "theme"
+	if font is SystemFont:
+		entry["font_names"] = font.font_names
+	elif font is FontFile:
+		entry["font_names"] = ["(font_file)"]
+	else:
+		entry["font_names"] = [font.get_font_name()]
+	var line_height: float = font.get_height(font_size)
+	entry["line_height"] = snappedf(line_height, 0.1)
+	var rids: Array = font.get_rids()
+	if ts == null or rids.is_empty() or label.text.is_empty():
+		entry["ink_height"] = null
+		entry["ink_gap_top"] = null
+		entry["ink_center_shift"] = null
+		return entry
+	var font_rid: RID = rids[0]
+	var fsize := Vector2i(font_size, 0)  # glyph 度量 API 的 size 参数是 (font_size, outline_size) 对
+	# union 盒口径（审查 N-2）：ink 顶取 min(offset.y)、ink 底取 max(offset.y+size.y)——
+	# 混排字形（含下伸部 g/p、全半角）时各字形 offset/size 不一致，"最高顶"与"最高
+	# 字形高度"混用会产生数 px 偏差；union 盒才是整段文字的真实 ink 范围。
+	var ink_top: float = 1e9   # ink 顶相对 baseline（y 向上为负）
+	var ink_bottom: float = -1e9  # ink 底相对 baseline
+	for i in mini(label.text.length(), 16):
+		var code: int = label.text.unicode_at(i)
+		var glyph: int = ts.font_get_glyph_index(font_rid, font_size, code, 0)
+		var gsize: Vector2 = ts.font_get_glyph_size(font_rid, fsize, glyph)
+		var goffset: Vector2 = ts.font_get_glyph_offset(font_rid, fsize, glyph)
+		ink_top = minf(ink_top, goffset.y)
+		ink_bottom = maxf(ink_bottom, goffset.y + gsize.y)
+	var ink_h: float = ink_bottom - ink_top
+	if ink_h <= 0.0:
+		entry["ink_height"] = null
+		entry["ink_gap_top"] = null
+		entry["ink_center_shift"] = null
+		return entry
+	var ascent: float = font.get_ascent(font_size)
+	entry["ink_height"] = snappedf(ink_h, 0.1)
+	entry["ink_gap_top"] = snappedf((line_height - ink_h) / 2.0, 0.1)
+	var ink_top_in_line: float = ascent + ink_top
+	entry["ink_center_shift"] = snappedf((ink_top_in_line + ink_h / 2.0) - line_height / 2.0, 0.1)
+	return entry
 
 
 func _cmd_set_node_property(params: Dictionary) -> Variant:

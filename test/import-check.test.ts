@@ -219,9 +219,11 @@ describe('import-check', () => {
       mockedExistsSync.mockReturnValue(false);
       mockedReaddirSync.mockReturnValue([]);
 
+      // 布局审计能力 D (2026-09-22)：runImport 返回 .import 完整性报告（原 void）——
+      // mock 的空项目（无 .git、无可扫文件）应得到零扫描零砍残的干净报告
       await expect(
         runImport(TEST_PROJECT, '/path/to/godot', 5000),
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({ scanned: 0, gutted: [], gitModified: null });
     });
 
     it('rejects on non-zero exit code', async () => {

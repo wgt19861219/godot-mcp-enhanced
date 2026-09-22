@@ -5,6 +5,7 @@ import type { ToolContext, ToolResult } from '../../types.js';
 import { opsErrorResult } from '../shared.js';
 import { scanGdscriptSandbox } from '../../gdscript-executor.js';
 import { runImport } from '../import-check.js';
+import { formatImportIntegrity } from '../import-integrity.js';
 
 /** P1-2 (2026-07-06 review): editor 文本资源写守卫。ctx.checkEditorTextResourceWrite 由
  *  dispatcher 在 editorExecutor 可用时注入(headless 模式不注入 → 直接放行)。
@@ -69,8 +70,12 @@ export async function ensureClassNameImport(
   if (before === after) return '';  // class_name 未变化
   try {
     const godot = await ctx.findGodot();
-    await runImport(projectPath, godot, 30_000);
-    return `\n\n⚠️ 检测到 class_name '${after}'，已自动 --import 重建 .godot/global_script_class_cache。后续 execute_gdscript / F5 可直接引用。`;
+    const integrity = await runImport(projectPath, godot, 30_000);
+    let msg = `\n\n⚠️ 检测到 class_name '${after}'，已自动 --import 重建 .godot/global_script_class_cache。后续 execute_gdscript / F5 可直接引用。`;
+    // 能力 D：导入后 .import 完整性异常上浮到工具输出（自动 warmup 链的用户可见口）
+    const integrityText = formatImportIntegrity(integrity);
+    if (integrityText) msg += `\n\n${integrityText}`;
+    return msg;
   } catch (err) {
     return `\n\n⚠️ 检测到 class_name '${after}' 但自动 --import 失败: ${err instanceof Error ? err.message : String(err)}。需手动 \`godot --headless --import --path <project>\` 重建 cache，否则后续可能 "Identifier not declared"。`;
   }
