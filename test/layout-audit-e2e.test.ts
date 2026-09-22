@@ -71,6 +71,55 @@ const PROBE = [
   '\tquit()',
 ].join('\n');
 
+// 原生后缀名碰撞（审查 R2-5 回归）：row0 内原生就有 nameLabel_2（皮肤自带
+// Foo_2 形态），row1 跨子树重名 nameLabel 平铺 _2 时撞原生 → N-1 while 循环
+// 递增至 _3，原生条目不被覆盖。坐标故意错开以区分两个来源。
+const PROBE2 = [
+  'extends SceneTree',
+  'func _init():',
+  '\tvar B = load("res://src/scripts/mcp_bridge.gd")',
+  '\tvar b = B.new()',
+  '\tvar panel := Control.new()',
+  '\tpanel.name = "panel2"',
+  '\tpanel.position = Vector2(10, 20)',
+  '\tpanel.size = Vector2(400, 120)',
+  '\tvar row0 := Control.new()',
+  '\trow0.name = "row0"',
+  '\tvar a := Label.new()',
+  '\ta.name = "nameLabel"',
+  '\ta.position = Vector2(5, 5)',
+  '\ta.size = Vector2(80, 24)',
+  '\tvar native2 := Label.new()',
+  '\tnative2.name = "nameLabel_2"',
+  '\tnative2.position = Vector2(90, 5)',
+  '\tnative2.size = Vector2(80, 24)',
+  '\trow0.add_child(a)',
+  '\trow0.add_child(native2)',
+  '\tpanel.add_child(row0)',
+  '\tvar row1 := Control.new()',
+  '\trow1.name = "row1"',
+  '\tvar c := Label.new()',
+  '\tc.name = "nameLabel"',
+  '\tc.position = Vector2(5, 35)',
+  '\tc.size = Vector2(80, 24)',
+  '\trow1.add_child(c)',
+  '\tpanel.add_child(row1)',
+  '\troot.add_child(panel)',
+  '\tawait process_frame',
+  '\tvar out := {}',
+  '\tvar hidden := {}',
+  '\tb._collect_layout(panel, out, hidden, 0, 32, false)',
+  '\tprint("RESULT controls=", JSON.stringify(out))',
+  '\tprint("RESULT hidden=", JSON.stringify(hidden))',
+  '\tvar out2 := {}',
+  '\tvar hidden2 := {}',
+  '\tb._collect_layout(panel, out2, hidden2, 0, 32, true)',
+  '\tprint("RESULT vo_controls=", JSON.stringify(out2))',
+  '\tprint("RESULT vo_hidden=", JSON.stringify(hidden2))',
+  '\tb.free()',
+  '\tquit()',
+].join('\n');
+
 interface ProbeResult {
   controls: Record<string, number[]>;
   hidden: Record<string, number[]>;
@@ -78,8 +127,8 @@ interface ProbeResult {
   vo_hidden: Record<string, number[]>;
 }
 
-async function runProbe(): Promise<ProbeResult> {
-  const result = await executeGdscript({ godotPath: GODOT_PATH, projectPath: CHECK_PROJECT, timeout: 30, code: PROBE });
+async function runProbe(code: string = PROBE): Promise<ProbeResult> {
+  const result = await executeGdscript({ godotPath: GODOT_PATH, projectPath: CHECK_PROJECT, timeout: 30, code });
   const values: Record<string, string> = {};
   for (const line of result.raw_output.split('\n')) {
     const m = line.match(/^RESULT\s+(\S+?)=(.*)$/);
@@ -144,5 +193,18 @@ describe.skipIf(!hasGodot)('布局审计 e2e（真跑 Godot：dump_layout_tree �
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('E2E-3: 原生 nameLabel_2 碰撞——平铺避让递增至 _3 且原生条目不被覆盖', async () => {
+    const { controls } = await runProbe(PROBE2);
+
+    // row1 的跨子树重名 nameLabel：_2 撞原生 → N-1 while 递增至 _3
+    expect(Object.keys(controls).sort()).toEqual([
+      'nameLabel', 'nameLabel_2', 'nameLabel_3', 'panel2', 'row0', 'row1',
+    ]);
+    // 原生 nameLabel_2 保持自身坐标（一次性改名会静默覆盖成 row1 的坐标）
+    expect(controls['nameLabel_2']).toEqual([100, 25, 80, 24]); // panel2(10,20)+native2(90,5)
+    // 避让出的 _3 坐标来自 row1（panel2(10,20)+(5,35)）
+    expect(controls['nameLabel_3']).toEqual([15, 55, 80, 24]);
   });
 });
