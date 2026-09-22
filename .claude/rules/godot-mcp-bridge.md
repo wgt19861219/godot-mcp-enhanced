@@ -32,6 +32,8 @@ Game Bridge 是 MCP 服务端与**运行中的游戏**之间的 TCP 通信层。
 | `find_nodes` | 按名称/类型/路径查找节点。params 可传 root 限定子树搜索范围（推荐绝对路径如 /root/Main；节点不存在时报错非静默全树）；near_node+max_distance 近邻查询（锚点须 Node2D/Node3D，只收同维度节点按距离升序含 distance 字段，锚点自身排除；max_distance 默认 1000）；observation_profile 观察档见「语义观察层」段 |
 | `get_node_properties` | 获取节点属性值 |
 | `get_node_layout` | 获取节点完整布局快照（type + position/global_position 成对 + Control anchor/offset + Sprite2D centered + Node3D Vector3，全走 _jsonify） |
+| `dump_layout_tree` | 整树控件坐标表导出（运行态 global 坐标 roundi，controls/hidden 两组 {名:[x,y,w,h]}，重名 _2 后缀平铺，visible_only 隐藏子树剪枝；跨源比对配合 analysis.layout_compare） |
+| `get_font_report` | 子树 Label 字体度量报表（font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量——跨引擎迁移字体不居中第一步诊断） |
 | `get_performance` | 获取性能统计（FPS/内存等） |
 | `get_viewport_info` | 获取视口信息 |
 | `take_screenshot` | 从运行中的游戏截图 |

@@ -303,11 +303,11 @@ export function getToolDefinitions(): Tool[] {
           },
           method: {
             type: 'string',
-            description: '方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。',
+            description: '方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/dump_layout_tree/get_font_report/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。',
           },
           params: {
             type: 'object',
-            description: '方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。',
+            description: '方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path="/root",max_depth=32,visible_only=false}(整树控件坐标表导出:controls/hidden 两组 {名:[x,y,w,h]} 运行态 global 坐标 roundi,重名 _2 后缀,visible_only=true 隐藏子树剪枝;配合 analysis.layout_compare 比对);get_font_report{path="/root",max_depth=32}(子树 Label 字体度量:font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量,负=偏上;跨引擎字体不居中诊断);get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。',
           },
           timeout: { type: 'number', description: 'game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000)' },
           interval_ms: { type: 'number', description: 'game_wait 专用：轮询探测间隔（毫秒，默认 200，范围 50-2000）。仅 wait_for_node/wait_for_property 生效', default: 200 },
@@ -341,6 +341,8 @@ export function getToolDefinitions(): Tool[] {
 
 export const QUERY_METHODS = new Set([
   'ping', 'get_tree', 'find_nodes', 'get_node_properties', 'get_node_layout',
+  // 布局审计能力 A/C (2026-09-21)：整树坐标导出 + Label 字体度量报表
+  'dump_layout_tree', 'get_font_report',
   'get_performance', 'get_viewport_info', 'take_screenshot',
   // CMP-2 (2026-08-08): runtime error 捕获——查询/清除游戏运行时错误
   'get_errors', 'clear_errors',
@@ -349,6 +351,7 @@ export const QUERY_METHODS = new Set([
 /** Read-only query methods excluding take_screenshot (handled separately via bridge.screenshot). */
 export const BRIDGE_READ_ONLY_METHODS = new Set([
   'ping', 'get_tree', 'find_nodes', 'get_node_properties', 'get_node_layout',
+  'dump_layout_tree', 'get_font_report',
   'get_performance', 'get_viewport_info',
   // CMP-2: get_errors/clear_errors 只操作 bridge 内部 buffer 不影响游戏,归只读集合
   'get_errors', 'clear_errors',

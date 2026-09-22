@@ -109,11 +109,15 @@ for (const f of ruleFiles) {
   }
 
   const gdConst = (file, name) => {
-    const mm = readFileSync(join(repoRoot, file), 'utf8').match(new RegExp(`const ${name}\\s*:?=?\\s*(\\d+)`));
+    // 2026-09-22 顺带修复:P4(0.33.8 端口可配)把 editor 常量从 `const BASE_PORT` 改为
+    // `var _base_port`(ProjectSettings 可配,默认值即文档口径)——正则覆盖 const NAME 与
+    // var _NAME 两形态,提取默认值。此失败为 P4 遗留(master 上即失败),非内容 drift。
+    const mm = readFileSync(join(repoRoot, file), 'utf8').match(new RegExp(`(?:const|var)\\s+_?${name}\\s*:?=?\\s*(\\d+)`));
     return mm ? Number(mm[1]) : null;
   };
-  const editorBase = gdConst('addons/godot_mcp_server/websocket_server.gd', 'BASE_PORT');
-  const editorMax = gdConst('addons/godot_mcp_server/websocket_server.gd', 'MAX_PORT');
+  // editor 侧 P4 起为 var _base_port/_max_port(ProjectSettings 可配);bridge 侧仍是 const PORT_*
+  const editorBase = gdConst('addons/godot_mcp_server/websocket_server.gd', '_base_port');
+  const editorMax = gdConst('addons/godot_mcp_server/websocket_server.gd', '_max_port');
   const bridgeBase = gdConst('src/scripts/mcp_bridge.gd', 'PORT_DEFAULT');
   const bridgeAttempts = gdConst('src/scripts/mcp_bridge.gd', 'PORT_ATTEMPTS');
   if (editorBase === null || editorMax === null || bridgeBase === null || bridgeAttempts === null) {

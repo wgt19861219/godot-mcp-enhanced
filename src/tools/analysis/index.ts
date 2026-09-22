@@ -1,9 +1,11 @@
-// src/tools/analysis/index.ts — 理解层工具：signal_map / impact_check（v0.30 C 批）
+// src/tools/analysis/index.ts — 理解层工具：signal_map / impact_check / layout_compare
 //
 // 定位（对标 GodotIQ Pro 的免费开源版）：改信号/脚本/场景前列出受影响面，
-// 防"改一处坏五处"。纯静态分析（tscn parser + .gd 文本扫描），零 Godot 依赖。
-// 诚实边界：运行时动态信号名、autoload 单例间 connect 在扫描可见面之外，
-// blindspots 字段显式标注。
+// 防"改一处坏五处"。纯静态分析（tscn parser + .gd 文本扫描 + 树读数比对），
+// 零 Godot 依赖。诚实边界：运行时动态信号名、autoload 单例间 connect 在扫描
+// 可见面之外，blindspots 字段显式标注。
+// layout_compare（2026-09-21 布局审计能力 B）：ref/cand 两份树读数 JSON 容差
+// 比对——跨引擎迁移/版本快照对齐的数值审计层，配合 game_query dump_layout_tree。
 
 import { readFileSync } from 'fs';
 import { isAbsolute, join } from 'path';
@@ -14,6 +16,7 @@ import { opsSuccess, opsErrorResult } from '../shared.js';
 import { requireProjectPath } from '../../core/args-validation.js';
 import { scanProject, sceneScriptBindings, toResPath, type ProjectScan } from './scanner.js';
 import { scanGdScriptSignals, type GdSignalRef } from './gdscan.js';
+import { layoutCompare } from './layout-compare.js';
 import type { Connection } from '../../tscn/tscn-parser.js';
 
 const TOOL_NAMES = ['analysis'] as const;
@@ -28,16 +31,19 @@ export function getToolDefinitions(): Tool[] {
       + '（.tscn [connection] 声明 + .gd 代码 connect/emit 引用，两来源分开标注）；'
       + 'action=impact_check 改动前影响面评估——改信号列出全部连接方/发射方/监听方，'
       + '改脚本列出引用它的场景与节点，改场景列出其连接/脚本/被实例化处。'
+      + 'action=layout_compare 布局树读数容差比对（ref/cand 两份 JSON，DRIFT/MISSING/EXTRA '
+      + '数值差异清单，锚点与 null 项自动跳过防假阳性，支持 rebase 相对化）——跨引擎迁移/'
+      + '版本快照对齐的数值审计层，配合 game_query dump_layout_tree 导出。'
       + '盲区诚实标注：运行时动态信号名/autoload 间连接不可见。',
     inputSchema: {
       type: 'object' as const,
       properties: {
         action: {
           type: 'string',
-          enum: ['signal_map', 'impact_check'],
-          description: 'signal_map=信号连接全景；impact_check=改动影响面',
+          enum: ['signal_map', 'impact_check', 'layout_compare'],
+          description: 'signal_map=信号连接全景；impact_check=改动影响面；layout_compare=布局树读数比对',
         },
-        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录；layout_compare 不需要）' },
         // signal_map 过滤
         signal: { type: 'string', description: '信号名过滤（signal_map 精确匹配；impact_check 必填三选一）' },
         scene: { type: 'string', description: 'signal_map: 场景路径子串过滤（如 scenes/ui）' },
@@ -45,8 +51,15 @@ export function getToolDefinitions(): Tool[] {
         script_path: { type: 'string', description: 'impact_check: 脚本路径（res:// 或绝对）' },
         scene_path: { type: 'string', description: 'impact_check: 场景路径（res:// 或绝对）' },
         limit: { type: 'number', description: `每列表截断上限（默认 ${DEFAULT_LIMIT}）` },
+        // layout_compare 参数
+        ref_path: { type: 'string', description: 'layout_compare: 基准树读数 JSON 路径（平铺 {名:[x,y,w,h]} 或包装 {"controls":{...},"_anchored":[...]}）' },
+        cand_path: { type: 'string', description: 'layout_compare: 候选树读数 JSON 路径（同上格式）' },
+        tol: { type: 'number', description: 'layout_compare: 坐标容差 px（默认 2；恰好等于 tol 不判 DRIFT）' },
+        rebase: { type: 'string', description: 'layout_compare: cand 侧以指定控件 origin 为原点相对化（global→皮肤根相对，跨源比对必需）' },
       },
-      required: ['action', 'project_path'],
+      // project_path 有 GODOT_PROJECT_PATH/cwd 兜底（requireProjectPath），且 layout_compare
+      // 不消费它——不列 required（修复原 schema "description 说可选但 required 强制"的不自洽）
+      required: ['action'],
     },
   }];
 }
@@ -58,6 +71,7 @@ export const TOOL_META = {
     actionRisks: {
       signal_map: 'read' as const,
       impact_check: 'read' as const,
+      layout_compare: 'read' as const,
     },
   },
 };
@@ -73,8 +87,10 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return signalMap(args);
       case 'impact_check':
         return impactCheck(args);
+      case 'layout_compare':
+        return layoutCompare(args);
       default:
-        return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}（可用：signal_map/impact_check）`);
+        return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}（可用：signal_map/impact_check/layout_compare）`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

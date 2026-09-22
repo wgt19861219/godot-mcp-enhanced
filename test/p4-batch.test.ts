@@ -33,7 +33,9 @@ describe('P4-1: game 描述瘦身', () => {
     // 反馈批A (2026-09-16) install 增 force/clean_stale_secrets 两参数(drift 刷新 + 陈旧 secret 清理,
     // send_drag 五踩根治入口)后实测 8080——锚校准 8200(描述已精简一轮,先例同款正当功能增量)
     // 易用性批 1 (2026-09-19) game action 描述补全(审查 A-3)后实测 8498——锚校准 8600(同款正当增量)
-    expect(schemaBytes).toBeLessThan(8600);
+    // 布局审计批 (2026-09-22) 新增 dump_layout_tree/get_font_report 两 method 参数形状(能力 A/C,
+    // TMXYH5 反馈落地)后实测 9004——锚校准 9200(同款正当功能增量)
+    expect(schemaBytes).toBeLessThan(9200);
     expect(def!.description).toContain('见规则文档');
     const methodDesc = (def!.inputSchema as { properties: { method: { description: string } } }).properties.method.description;
     const paramsDesc = (def!.inputSchema as { properties: { params: { description: string } } }).properties.params.description;

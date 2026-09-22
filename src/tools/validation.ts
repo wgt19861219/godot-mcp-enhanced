@@ -22,6 +22,7 @@ import { getLogger } from '../core/logger.js';
 import { handleTestAction } from './test-framework.js';
 import { handleGameDesignAction } from './game-design.js';
 import { handleVerifyDelivery } from './delivery.js';
+import { checkImportIntegrity, formatImportIntegrity } from './import-integrity.js';
 
 // ─── Known base class methods/properties whitelist ───────────────────────────
 // The Godot headless parser cannot resolve inherited methods from base classes
@@ -97,6 +98,8 @@ interface ExtendedAnalysisResult extends AnalysisResult {
   precheck_errors?: BatchValidateResult[];
   scene_tree?: unknown;
   sample_window?: { timed_out: boolean; duration_seconds: number; coverage: string };
+  /** 能力 D (2026-09-21)：run_and_verify 后的 .import 完整性自检（gutted/git_modified/...） */
+  import_integrity?: { scanned: number; gutted: string[]; git_modified: string[] | null };
 }
 
 const execFileAsync = promisify(execFile);
@@ -640,6 +643,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         } catch (err) { getLogger().debug('validation', `capture scene tree: ${err instanceof Error ? err.message : err}`); }
       }
 
+      // 能力 D (2026-09-21)：顺手做 .import 完整性自检（纯文本扫描+git 增强，毫秒级）。
+      // run_and_verify 不跑 --import，但 headless 启动链（含此前 execute 的自动 warmup）
+      // 可能已触发导入——在此给用户一个显式诊断点。检测失败不影响验证结果。
+      try {
+        const integrity = checkImportIntegrity(projectPath);
+        (analysis as ExtendedAnalysisResult).import_integrity = {
+          scanned: integrity.scanned,
+          gutted: integrity.gutted,
+          git_modified: integrity.gitModified,
+        };
+        const integrityText = formatImportIntegrity(integrity);
+        if (integrityText) {
+          (analysis as ExtendedAnalysisResult).summary += '\nWarning: .import integrity issues detected — see import_integrity field.';
+        }
+      } catch (err) { getLogger().debug('validation', `import integrity check: ${err instanceof Error ? err.message : err}`); }
+
       return textResult(JSON.stringify(analysis, null, 2));
     }
 
@@ -1068,6 +1087,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       scanDir(targetDir, 0);
 
+      // 能力 D (2026-09-21)：同目录既有 .import 完整性自检——本工具不跑引擎导入，
+      // 但它逐个接触 .import，顺手暴露历史砍残文件（含 git 项目 M 状态增强）。
+      let integrityNote = '';
+      try {
+        integrityNote = formatImportIntegrity(checkImportIntegrity(p, [normalizedDir]));
+      } catch (err) { getLogger().debug('validation', `import integrity check: ${err instanceof Error ? err.message : err}`); }
+
       return textResult(
         `Import scan complete.\n\n` +
         `Directory: ${normalizedDir}\n` +
@@ -1075,6 +1101,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         `Already imported (skipped): ${skippedFiles.length}\n` +
         `Extensions: ${extensions.join(', ')}\n\n` +
         (importedFiles.length > 0 ? `Newly imported:\n${importedFiles.slice(0, 50).map(f => '  ' + f).join('\n')}${importedFiles.length > 50 ? `\n  ... and ${importedFiles.length - 50} more` : ''}\n\n` : '') +
+        (integrityNote ? `${integrityNote}\n\n` : '') +
         `⚠️ EXPERIMENTAL: Generated .import files use approximate uid values that may differ from Godot's internal algorithm. ` +
         `Open the project in Godot editor to let it reconcile imports — Godot will regenerate correct uid values automatically.`
       );

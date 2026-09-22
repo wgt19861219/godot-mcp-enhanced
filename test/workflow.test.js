@@ -97,6 +97,9 @@ describe('workflow dev_loop bridge logic', () => {
     // CMP-2 (2026-08-08): get_errors/clear_errors 加入只读集合(只操作 bridge 内部 buffer)
     expect(BRIDGE_READ_ONLY_METHODS.has('get_errors')).toBe(true);
     expect(BRIDGE_READ_ONLY_METHODS.has('clear_errors')).toBe(true);
-    expect(BRIDGE_READ_ONLY_METHODS.size).toBe(9);
+    // 布局审计批 (2026-09-22): dump_layout_tree/get_font_report 加入只读集合(能力 A/C 只读导出)
+    expect(BRIDGE_READ_ONLY_METHODS.has('dump_layout_tree')).toBe(true);
+    expect(BRIDGE_READ_ONLY_METHODS.has('get_font_report')).toBe(true);
+    expect(BRIDGE_READ_ONLY_METHODS.size).toBe(11);
   });
 });
