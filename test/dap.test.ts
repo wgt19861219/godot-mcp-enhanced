@@ -263,9 +263,11 @@ describe('P9: dap 工具 — TS 直连 DAP server(LuoxuanLove 移植)', () => {
     const r2 = await call({ action: 'initialize', host: '192.168.1.5', port: 1, timeout_ms: 300 });
     expect(r2.isError).toBe(true);
     // 连接失败(非门禁拒 DAP_UNAVAILABLE)。失败分类形态环境相关(2026-09-22 处置):
-    // 本机网段存在且快速 unreachable → socket 异常走 catch 兜底 DAP_ERROR;网段
-    // 不可路由/防火墙静默丢包 → 挂起至超时走显式失败 DAP_REQUEST_FAILED——两者
-    // 都是"连接失败"的合法分类,断言集合而非单值(原单值断言在本机连真实
+    // 直连环境下 connect 失败——快速 unreachable 的 socket error 与挂起到超时——
+    // 都走 _connect rejectPromise(onError / connect timeout 两处)冒泡至
+    // handleTool catch 兜底 DAP_ERROR;仅当本机 VPN/透明代理把 TCP 接住(连接
+    // 成功但无 DAP 响应)时才走读超时显式失败 DAP_REQUEST_FAILED——两者都是
+    // "连接失败"的合法分类,断言集合而非单值(原单值断言在本机连真实
     // 192.168.1.5 的可达性行为下 flaky)。
     expect(['DAP_ERROR', 'DAP_REQUEST_FAILED']).toContain(r2.data.error_code);
     expect(r2.data.error_code).not.toBe('DAP_UNAVAILABLE');

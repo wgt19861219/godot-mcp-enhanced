@@ -82,6 +82,7 @@ describe('checkImportIntegrity', () => {
       const report = checkImportIntegrity(empty);
       expect(report.scanned).toBe(0);
       expect(report.gutted).toEqual([]);
+      expect(report.gitModified).toBeNull(); // 临时目录无 .git → git 层静默降级 null（标题第三项的对应断言）
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
