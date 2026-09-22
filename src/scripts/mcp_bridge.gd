@@ -1712,8 +1712,13 @@ func _collect_layout(c: Control, out: Dictionary, hid: Dictionary,
 		depth: int, max_depth: int, visible_only: bool) -> void:
 	if depth > max_depth:
 		return
+	# 分组口径 = 自身 visible（参考 _probe.gd："内容态隐藏"指自身标志——皮肤数据态
+	# 如售罄章 imgSellOut.visible=false）；visible_only 口径 = 视觉（父隐藏整棵剪枝，
+	# is_visible_in_tree 等价）。两口径有意不同：父隐藏但自身 visible=true 的子控件
+	# 进 controls（数据态正常），在 visible_only 下被剪（视觉不可见）——见
+	# test/layout-audit-e2e.test.ts E2E-1。
 	if not c.visible and visible_only:
-		return  # 父隐藏则子必不可见（CanvasItem 语义），整棵剪枝
+		return
 	if not c.is_queued_for_deletion():
 		var target := out if c.visible else hid
 		# 重名后缀循环消解（审查 N-1）：加 _2 后仍可能撞原生同名控件（树里本就

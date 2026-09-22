@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+> 2026-09-22 布局审计批遗留待办处置（不 bump 版本；随 0.33.9 分支 `feat/layout-audit-capabilities`）。
+- **DAP-f 测试稳定化**：`test/dap.test.ts` 连真实 `192.168.1.5:1` 的失败分类断言从单值 `DAP_ERROR` 改为集合 `['DAP_ERROR','DAP_REQUEST_FAILED']`——两者都是"连接失败（非门禁拒）"的合法分类,形态环境相关（快速 unreachable 走 catch 兜底 / 挂起超时走显式失败返回）,原单值断言在本机网络环境下 flaky（2026-09-22 布局审计批全量测试唯一失败,经 diff 归属甄别非该批引入,本处置根治）。
+- **布局审计 A→B 端到端 e2e**（`test/layout-audit-e2e.test.ts`,真跑 Godot）:①E2E-1 兑现方案验收"同皮肤行实例×3"——3 棵同构行子树断言 `nameLabel/_2/_3` 递增平铺、hidden 分组、visible_only 剪枝、运行态 global 坐标;②E2E-2 GD 侧导出 JSON 直接喂 TS `layout_compare` 检出 DRIFT/MISSING/EXTRA（数值审计工作流最小闭环）。顺带固化语义边界:分组口径=自身 visible（数据态,参考 `_probe.gd`）与 visible_only 口径=视觉剪枝有意不同（父隐藏但自身 visible=true 的子进 controls,在 visible_only 下被剪）——`mcp_bridge.gd _collect_layout` 注释同步。
+
 ## [0.33.9] - 2026-09-22
 
 > 2026-09-22 布局审计能力批（输入:TMXYH5 插件反馈两条 🔴〔布局审计三缺口 + --import 砍残 .import〕+ 方案 `D:\workspace\Obsidian\GodotMCP\布局审计工具方案-20260921.md` + 审查修正〔方案原稿能力 C 的 Font.get_glyph_size/get_glyph_index API 名经 Godot 4.6.3 ClassDB 实测证伪,正确路径在 TextServer 上〕）；改 `src/scripts/mcp_bridge.gd` + `src/tools/rule-templates.ts` + `.claude/rules/` 触发 bump；npm publish / tag 待用户指令。
