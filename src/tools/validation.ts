@@ -643,7 +643,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         } catch (err) { getLogger().debug('validation', `capture scene tree: ${err instanceof Error ? err.message : err}`); }
       }
 
-      // 能力 D (2026-09-21)：顺手做 .import 完整性自检（纯文本扫描+git 增强，毫秒级）。
+      // 能力 D (2026-09-21)：顺手做 .import 完整性自检（纯文本扫描+git 增强；数百
+      // .import 量级实测毫秒级,数千级 NTFS 项目为百 ms 量级同步阻塞——审查 N-3 已
+      // 知限制,run_and_verify 本身是秒级 spawn Godot 重操作,占比可接受）。
       // run_and_verify 不跑 --import，但 headless 启动链（含此前 execute 的自动 warmup）
       // 可能已触发导入——在此给用户一个显式诊断点。检测失败不影响验证结果。
       try {

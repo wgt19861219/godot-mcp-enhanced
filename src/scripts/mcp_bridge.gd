@@ -1692,13 +1692,12 @@ func _cmd_dump_layout_tree(params: Dictionary) -> Variant:
 		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
 	var controls: Dictionary = {}
 	var hidden: Dictionary = {}
-	var dup: Dictionary = {}
 	if node is Control:
-		_collect_layout(node, controls, hidden, dup, 0, max_depth, visible_only)
+		_collect_layout(node, controls, hidden, 0, max_depth, visible_only)
 	else:
 		for ch in node.get_children():
 			if ch is Control:
-				_collect_layout(ch, controls, hidden, dup, 1, max_depth, visible_only)
+				_collect_layout(ch, controls, hidden, 1, max_depth, visible_only)
 	return {
 		"controls": controls,
 		"hidden": hidden,
@@ -1709,7 +1708,7 @@ func _cmd_dump_layout_tree(params: Dictionary) -> Variant:
 	}
 
 
-func _collect_layout(c: Control, out: Dictionary, hid: Dictionary, dup: Dictionary,
+func _collect_layout(c: Control, out: Dictionary, hid: Dictionary,
 		depth: int, max_depth: int, visible_only: bool) -> void:
 	if depth > max_depth:
 		return
@@ -1717,16 +1716,20 @@ func _collect_layout(c: Control, out: Dictionary, hid: Dictionary, dup: Dictiona
 		return  # 父隐藏则子必不可见（CanvasItem 语义），整棵剪枝
 	if not c.is_queued_for_deletion():
 		var target := out if c.visible else hid
+		# 重名后缀循环消解（审查 N-1）：加 _2 后仍可能撞原生同名控件（树里本就
+		# 有 Foo_2 时一次性改名会静默覆盖原生条目），故 while 直至空位。
 		var nm: String = c.name
-		if target.has(nm):
-			dup[nm] = int(dup.get(nm, 1)) + 1
-			nm = "%s_%d" % [nm, dup[nm]]
+		var base_nm := nm
+		var n := 1
+		while target.has(nm):
+			n += 1
+			nm = "%s_%d" % [base_nm, n]
 		var gp: Vector2 = c.global_position
 		# roundi 而非 int() 截断（TMXYH5 交叉验证两者差 1px，round 更准）
 		target[nm] = [roundi(gp.x), roundi(gp.y), roundi(c.size.x), roundi(c.size.y)]
 	for ch in c.get_children():
 		if ch is Control:
-			_collect_layout(ch, out, hid, dup, depth + 1, max_depth, visible_only)
+			_collect_layout(ch, out, hid, depth + 1, max_depth, visible_only)
 
 
 # ── 布局审计能力 C (2026-09-21)：子树 Label 字体度量报表 ─────────────────────
@@ -1738,8 +1741,9 @@ func _collect_layout(c: Control, out: Dictionary, hid: Dictionary, dup: Dictiona
 # get_primary_server 在 4.6 已更名 get_primary_interface，glyph 度量的 size 参数
 # 是 Vector2i(font_size, outline_size) 而非 int——三处签名均经探针实测）。
 # 字段口径：ink_gap_top = (line_height-ink_height)/2 理论留白（假设 ink 行盒内
-# 对称，跨引擎粗对齐口径）；ink_center_shift = ink 中心-行盒中心（负=偏上，
-# baseline 几何精确值），后者即"文字实际偏上量"直接可读。
+# 对称，跨引擎粗对齐口径）；ink_center_shift = ink 中心-行盒中心（负=偏上，union
+# 盒口径：ink 范围=min/max 聚合全部字形的 offset.y~offset.y+size.y，混排字形下
+# 仍为真实 ink 范围），后者即"文字实际偏上量"直接可读。
 
 func _cmd_get_font_report(params: Dictionary) -> Variant:
 	var path: String = str(params.get("path", "/root"))
@@ -1795,15 +1799,19 @@ func _label_font_metrics(label: Label, ts: TextServer) -> Dictionary:
 		return entry
 	var font_rid: RID = rids[0]
 	var fsize := Vector2i(font_size, 0)  # glyph 度量 API 的 size 参数是 (font_size, outline_size) 对
-	var ink_h: float = 0.0
-	var ink_top_min: float = 1e9  # ink 顶相对 baseline 的最小值（y 向上为负）
+	# union 盒口径（审查 N-2）：ink 顶取 min(offset.y)、ink 底取 max(offset.y+size.y)——
+	# 混排字形（含下伸部 g/p、全半角）时各字形 offset/size 不一致，"最高顶"与"最高
+	# 字形高度"混用会产生数 px 偏差；union 盒才是整段文字的真实 ink 范围。
+	var ink_top: float = 1e9   # ink 顶相对 baseline（y 向上为负）
+	var ink_bottom: float = -1e9  # ink 底相对 baseline
 	for i in mini(label.text.length(), 16):
 		var code: int = label.text.unicode_at(i)
 		var glyph: int = ts.font_get_glyph_index(font_rid, font_size, code, 0)
 		var gsize: Vector2 = ts.font_get_glyph_size(font_rid, fsize, glyph)
 		var goffset: Vector2 = ts.font_get_glyph_offset(font_rid, fsize, glyph)
-		ink_h = maxf(ink_h, gsize.y)
-		ink_top_min = minf(ink_top_min, goffset.y)
+		ink_top = minf(ink_top, goffset.y)
+		ink_bottom = maxf(ink_bottom, goffset.y + gsize.y)
+	var ink_h: float = ink_bottom - ink_top
 	if ink_h <= 0.0:
 		entry["ink_height"] = null
 		entry["ink_gap_top"] = null
@@ -1812,7 +1820,7 @@ func _label_font_metrics(label: Label, ts: TextServer) -> Dictionary:
 	var ascent: float = font.get_ascent(font_size)
 	entry["ink_height"] = snappedf(ink_h, 0.1)
 	entry["ink_gap_top"] = snappedf((line_height - ink_h) / 2.0, 0.1)
-	var ink_top_in_line: float = ascent + ink_top_min
+	var ink_top_in_line: float = ascent + ink_top
 	entry["ink_center_shift"] = snappedf((ink_top_in_line + ink_h / 2.0) - line_height / 2.0, 0.1)
 	return entry
 

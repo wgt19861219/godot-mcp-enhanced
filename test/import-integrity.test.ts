@@ -75,7 +75,7 @@ describe('checkImportIntegrity', () => {
     expect(report.gutted.length).toBe(2); // 砍残检测独立于 git 层
   });
 
-  it('读失败的 .import 不判砍残（hasImporterLine 容错）', () => {
+  it('无 .import 的空项目：零扫描零砍残、git 层为 null', () => {
     // 无 .import 目录的项目 → 零扫描零砍残
     const empty = mkdtempSync(join(tmpdir(), 'import-integrity-empty-'));
     try {
