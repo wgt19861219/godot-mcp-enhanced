@@ -28,6 +28,7 @@ import { isPathInAllowedRoots } from '../core/path-utils.js';
 import { PathError } from '../core/tool-errors.js';
 import { FilesError, type FilesApi, type FilesErrorCode } from './files-api.js';
 import type { ProjectView } from './projects-store.js';
+import type { SettingsApi } from './settings-api.js';
 
 /** 项目面板 store 注入面(spec 2026-09-15 §4;Task 5 接线传 ProjectsStore 四方法)。
  *  缺席 → 涉清单的项目端点 503,hello 的 projects 字段为 null(v2/M6)。 */
@@ -70,6 +71,8 @@ export interface WebGuiServerOptions {
   editProject?: (projectPath: string) => Promise<unknown>;
   /** READ_ONLY 判定(spec v2/IMP-3,接线层取 GODOT_MCP_READ_ONLY 同源状态);缺席视为非只读。 */
   isReadOnly?: () => boolean;
+  /** 设置面板(2026-09-29 设置批):get/verify/save 三方法注入;缺席 → 设置端点 503。 */
+  settings?: SettingsApi;
 }
 
 /** /api/stats 与 SSE stats 快照形态(html.ts 契约,设计 §3.3.4)。 */
@@ -301,7 +304,8 @@ export class WebGuiServer {
         if (url.pathname === '/api/sessions/stop' || url.pathname === '/api/sessions/remove'
           || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
           || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
-          || url.pathname === '/api/projects/file') {
+          || url.pathname === '/api/projects/file' || url.pathname === '/api/settings'
+          || url.pathname === '/api/settings/verify') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -377,6 +381,11 @@ export class WebGuiServer {
       if (url.pathname === '/api/sessions') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify(this.opts.getSessions()));
+        return;
+      }
+      // 设置面板读路径(2026-09-29 设置批):get() 异步 → 独立 async handler(鉴权已在上方过)
+      if (url.pathname === '/api/settings') {
+        void this.handleSettingsGet(res);
         return;
       }
       // 项目面板读路径(spec §4):list() 异步 → 独立 async handler(鉴权已在上方过)
@@ -539,6 +548,45 @@ export class WebGuiServer {
       }
       const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
 
+      // ── POST /api/settings(2026-09-29 设置批:READ_ONLY 403 → 类型校验 →
+      //    service 校验/持久化/热生效;失败 400 带 stage)────────────────────────
+      if (url.pathname === '/api/settings') {
+        const s = this.opts.settings;
+        if (!s) return json(503, { error: 'not configured' });
+        // READ_ONLY 拦截(对齐 file_save 分支:设置写入不得绕过 AI 侧防线)
+        if (this.opts.isReadOnly?.()) {
+          getLogger().info('web-gui', 'action=settings_save result=403_readonly');
+          return json(403, { error: 'read-only mode' });
+        }
+        const godotPath = fields.godotPath;
+        const allowed = fields.allowedProjectPaths;
+        if (godotPath !== undefined && typeof godotPath !== 'string') {
+          return json(400, { error: 'godotPath must be a string' });
+        }
+        if (allowed !== undefined && (!Array.isArray(allowed) || allowed.some(p => typeof p !== 'string'))) {
+          return json(400, { error: 'allowedProjectPaths must be a string array' });
+        }
+        const patch: { godotPath?: string; allowedProjectPaths?: string[] } = {};
+        if (godotPath !== undefined) patch.godotPath = godotPath;
+        if (allowed !== undefined) patch.allowedProjectPaths = allowed as string[];
+        const r = await s.save(patch);
+        if (!r.ok) {
+          getLogger().info('web-gui', `action=settings_save result=400 stage=${r.stage ?? 'unknown'}`);
+          return json(400, { error: r.error, ...(r.stage !== undefined ? { stage: r.stage } : {}) });
+        }
+        return json(200, { ok: true, persisted: r.persisted });
+      }
+
+      // ── POST /api/settings/verify(只读探测 --version,不拦 READ_ONLY;
+      //    探测结果即响应语义,恒 200 用 body.ok 区分)──────────────────────────
+      if (url.pathname === '/api/settings/verify') {
+        const s = this.opts.settings;
+        if (!s) return json(503, { error: 'not configured' });
+        const path = fields.path;
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        return json(200, await s.verify(path));
+      }
+
       // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────
       if (url.pathname === '/api/projects/add') {
         const p = this.opts.projects;
@@ -697,6 +745,23 @@ export class WebGuiServer {
       const list = await p.list();
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(list));
+    } catch {
+      if (!res.headersSent) res.writeHead(500).end();
+    }
+  }
+
+  /** GET /api/settings:设置视图快照(2026-09-29 设置批);注入缺席 503。鉴权已在 handle() 过。 */
+  private async handleSettingsGet(res: ServerResponse): Promise<void> {
+    try {
+      const s = this.opts.settings;
+      if (!s) {
+        res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'not configured' }));
+        return;
+      }
+      const view = await s.get();
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(view));
     } catch {
       if (!res.headersSent) res.writeHead(500).end();
     }

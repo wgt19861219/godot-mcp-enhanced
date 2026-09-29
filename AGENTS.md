@@ -191,7 +191,7 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
     - `src/scoring/` — 评分系统(CLI + 门禁)
     - `src/tscn/` — `.tscn` 场景文件解析/生成
     - `src/dashboard/` — dashboard UI(**独立只读 CLI 进程**,非 server 前端（仅指 TUI；Web 见 src/web-gui/）;LogReader→Aggregator→render,无 HTTP/写入/editor 连接。配置开关走 env 或 `~/.godot-mcp/settings.json`,**不能**在 dashboard 加设置项影响 server 行为)
-    - `src/web-gui/` — Web GUI 监控面板（**server 进程内嵌** HTTP+SSE，默认开 env `GODOT_MCP_WEB_GUI=0` 关；per-pid 登记 `~/.godot-mcp/web-gui/`；CLI `dashboard --web` 打开。注意与 dashboard TUI 区分:TUI 是独立只读 CLI 进程读日志文件,web-gui 是 server 内监控面——两者都**无设置项影响 server 行为**）
+    - `src/web-gui/` — Web GUI 监控面板（**server 进程内嵌** HTTP+SSE，默认开 env `GODOT_MCP_WEB_GUI=0` 关；per-pid 登记 `~/.godot-mcp/web-gui/`；CLI `dashboard --web` 打开。注意与 dashboard TUI 区分:TUI 是独立只读 CLI 进程读日志文件、**无设置项影响 server 行为**;web-gui 是 server 内监控面 + **设置面板**——2026-09-29 设置批起支持 Godot 路径/项目白名单配置（持久化 `~/.godot-mcp/settings.json` + 保存即热生效改 env,GUI 设置优先于客户端注入 env、清除恢复启动快照;`GODOT_MCP_UNRESTRICTED` 仍 env-only 不进 GUI）,核心层 `src/core/user-settings.ts` + 逻辑层 `src/web-gui/settings-api.ts`）
     - `src/cli/` — CLI 子系统(`clients/` 15 客户端适配器(2026-08-19 加 ZCode 计数修正 + Warp)+ `setup.ts` 一键配置 + `configure.ts` 定向配置单客户端(P0-2)+ `skills.ts` skills 分发 + `doctor.ts` 诊断 + `init.ts` + `router.ts` 子命令路由 `setup`/`configure`/`skills`/`doctor`/`init`/`dashboard`/`qa`。⚠️ 竞品研究易误判"enhanced 无客户端配置能力",实际此目录已含 Claude Desktop/Cursor/Cline/Windsurf/Zed/Claude Code CLI/Codex CLI/Cherry Studio/Antigravity/Trae/Qwen Code/Gemini CLI/OpenCode/ZCode/Warp)
   - `addons/` — Godot editor 插件(MCP Bridge,分发给目标项目)
   - `scripts/` — 构建/版本/检查脚本(`install-plugin.js`、`version-sync.mjs`、`check-token-budget.mjs` 等)

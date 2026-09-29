@@ -74,13 +74,16 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 使 hash 变更;新 hash 由独立重算路径(下)与 server 实算 CSP 双向互证后锁入。
     // 安全加固批2 (2026-09-19) 二次重锚:2B token hash 通道(内联脚本加 location.hash
     // token 提取段)使 hash 变更;同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-4EHDPVCTzyjJ29iZLnK+WcfXsyjac1MzfNRCn3Y3bmA='");
+    // 设置批 (2026-09-29) 三次重锚:中列加「设置」tab(showTab 三态 + loadSettings/
+    // verifyGodot/saveSettings 函数段)使 hash 变更;同款双通道互证后锁入(独立重算
+    // = build 产物 split 提取 + CRLF 归一含前导换行,与 server 实算 CSP 一致)。
+    expect(WEB_GUI_CSP).toContain("'sha256-5um2wvWtsXoE3iwEYpItqUJ0hE/YCdZVRX81SZzTP+M='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('4EHDPVCTzyjJ29iZLnK+WcfXsyjac1MzfNRCn3Y3bmA=');   // 独立重算与锚互证
+    expect(hash).toBe('5um2wvWtsXoE3iwEYpItqUJ0hE/YCdZVRX81SZzTP+M=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });

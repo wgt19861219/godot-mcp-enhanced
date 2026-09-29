@@ -93,6 +93,20 @@ export const INDEX_HTML: string = `<!doctype html>
   .hex-off { color: var(--dim); margin-right: 14px; }
   .hex-bytes { min-width: 47ch; }   /* 16 字节两位 hex+15 空格:末行不足 16 字节时 ASCII 列仍对齐(等宽字体下 ch 精确) */
   .hex-ascii { color: var(--dim); }
+  /* 设置面板(2026-09-29 设置批):表单分区 + 候选点选 + 只读信息区 */
+  #settingsPane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
+  .set-section { padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .set-section label { display: block; color: var(--dim); font-size: 12px; margin-bottom: 4px; }
+  .set-row { display: flex; gap: 6px; }
+  .set-row input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+  .set-hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
+  .set-result { font-size: 12px; margin-top: 4px; word-break: break-all; }
+  .set-result.ok { color: var(--green); } .set-result.err { color: var(--red); }
+  #setAllowed { width: 100%; min-height: 72px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: 12px/1.5 Consolas, monospace; resize: vertical; }
+  .set-cand { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .set-info { color: var(--dim); font-size: 11px; line-height: 1.7; word-break: break-all; }
+  .set-actions { padding: 8px 10px; display: flex; gap: 8px; align-items: center; }
+  .set-actions .ctl { color: var(--fg); }
 </style>
 </head>
 <body>
@@ -113,12 +127,36 @@ export const INDEX_HTML: string = `<!doctype html>
     <section><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
   </div>
   <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
-    <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button></div>
+    <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button><button type="button" id="tabSettings" class="tab">设置</button></div>
     <div id="logsPane">
       <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
       <div class="scroll" id="logList"></div>
     </div>
-    <div id="filesPane" style="display:none"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div></section>
+    <div id="filesPane" style="display:none"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div>
+    <!-- 设置面板(2026-09-29 设置批):静态 DOM,进 tab 时 GET /api/settings 填充;
+         保存 = 完整表单语义(路径留空/白名单清空 = 清除该设置,恢复启动 env 快照) -->
+    <div id="settingsPane" style="display:none">
+      <div class="set-section">
+        <label>Godot 可执行路径</label>
+        <div class="set-row"><input id="setGodotPath" placeholder="D:\\godot\\Godot_v4.7.1-stable_win64.exe"><button type="button" class="ctl" id="setVerifyBtn">验证</button></div>
+        <div class="set-result" id="setGodotResult"></div>
+        <div class="set-cand" id="setCands"></div>
+        <div class="set-hint">候选来自 ~/.godot-mcp/godot-paths.json(CLI install 登记),点击即填入并验证;「验证」会运行 --version 确认版本;留空 = 清除设置,恢复启动时配置</div>
+      </div>
+      <div class="set-section">
+        <label>项目目录白名单(每行一个绝对路径)</label>
+        <textarea id="setAllowed" placeholder="D:\\GitHub\\my-game&#10;D:\\Projects\\demo"></textarea>
+        <div class="set-hint">即 ALLOWED_PROJECT_PATHS,影响所有工具可访问的目录范围;清空 = 恢复启动时配置(deny-by-default 收缩到工作目录)</div>
+      </div>
+      <div class="set-actions">
+        <button type="button" class="ctl" id="setSave">保存设置</button>
+        <span class="set-hint" id="setSaveHint"></span>
+      </div>
+      <div class="set-section">
+        <label>当前生效(只读)</label>
+        <div class="set-info" id="setInfo"></div>
+      </div>
+    </div></section>
   <section><h2>工具统计 <select id="projSel"><option value="">全部</option></select></h2>
     <div class="scroll"><table id="statsTable"><thead><tr><th>tool</th><th>calls</th><th>err</th><th>avg</th><th>min</th><th>max</th></tr></thead><tbody></tbody></table></div>
     <h2 style="border-top:1px solid var(--line)">分钟时序</h2><div id="chart"><div class="empty" style="flex:1">等待数据…</div></div></section>
@@ -394,10 +432,97 @@ export const INDEX_HTML: string = `<!doctype html>
     var logs = name === 'logs';
     if (logs && dirtyBlock()) return;
     $('tabLogs').className = 'tab' + (logs ? ' on' : '');
-    $('tabFiles').className = 'tab' + (logs ? '' : ' on');
-    $('midTitle').textContent = logs ? '日志流' : '文件';
+    $('tabFiles').className = 'tab' + (name === 'files' ? ' on' : '');
+    $('tabSettings').className = 'tab' + (name === 'settings' ? ' on' : '');
+    $('midTitle').textContent = logs ? '日志流' : (name === 'files' ? '文件' : '设置');
     $('logsPane').style.display = logs ? 'flex' : 'none';
-    $('filesPane').style.display = logs ? 'none' : 'flex';
+    $('filesPane').style.display = name === 'files' ? 'flex' : 'none';
+    $('settingsPane').style.display = name === 'settings' ? 'flex' : 'none';
+    if (name === 'settings') loadSettings();
+  }
+
+  // ── 设置面板(2026-09-29 设置批)────────────────────────────────────────────
+  // 契约:GET /api/settings → {persisted, effective, candidates, readOnly};
+  // POST /api/settings {godotPath, allowedProjectPaths}(完整表单语义:空 = 清除);
+  // POST /api/settings/verify {path} → {ok, version} | {ok:false, stage, detail}。
+  // 表单填充用 persisted(用户上次的显式设置),生效值另列只读信息区。
+  function loadSettings() {
+    authFetch('/api/settings').then(function (r) {
+      if (r.status === 401 || r.status === 403) { $('setSaveHint').textContent = '设置读取失败(无权限)'; return; }
+      return r.json().then(function (v) {
+        $('setGodotPath').value = (v.persisted && v.persisted.godotPath) || '';
+        $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\n') : '';
+        renderSettingsCands(v.candidates || []);
+        renderSettingsInfo(v);
+        $('setGodotResult').textContent = '';
+        $('setSaveHint').textContent = '';
+        if (v.readOnly) { $('setSave').disabled = true; $('setSaveHint').textContent = '只读模式,保存已禁用'; }
+      });
+    }).catch(function () { $('setSaveHint').textContent = '网络异常,设置读取失败'; });
+  }
+
+  // 候选按钮零监听器、只带 data-cand(对齐 filesPane 委托模式);basename 显示,title 全路径。
+  function renderSettingsCands(cands) {
+    var host = $('setCands'); host.textContent = '';
+    cands.forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'ctl'; b.type = 'button';
+      b.textContent = (c.split(/[\\\\/]/).pop()) || c; b.title = c;
+      b.setAttribute('data-cand', c);
+      host.appendChild(b);
+    });
+  }
+
+  // 只读信息区:当前生效 env 值(textContent 逐行建 div)。
+  function renderSettingsInfo(v) {
+    var eff = v.effective || {};
+    var lines = [
+      '当前 Godot 路径: ' + (eff.godotPath || '(未设置,自动查找)'),
+      '当前白名单: ' + (eff.allowedProjectPaths && eff.allowedProjectPaths.length ? eff.allowedProjectPaths.join(' ; ') : '(未设置,收缩到工作目录)'),
+      'UNRESTRICTED: ' + (eff.unrestricted ? 'true(所有限制旁路)' : 'false'),
+      'Godot 二进制白名单: ' + (eff.godotAllowedList || '(未配置)'),
+    ];
+    if (v.readOnly) lines.push('READ_ONLY: true');
+    var host = $('setInfo'); host.textContent = '';
+    lines.forEach(function (l) { var d = document.createElement('div'); d.textContent = l; host.appendChild(d); });
+  }
+
+  function verifyGodot() {
+    var p = $('setGodotPath').value.trim();
+    var out = $('setGodotResult');
+    if (!p) { out.className = 'set-result'; out.textContent = '(留空 = 清除设置,恢复启动时配置)'; return; }
+    out.className = 'set-result'; out.textContent = '验证中(运行 --version)…';
+    fetch('/api/settings/verify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ path: p }),
+    }).then(function (r) { return r.json(); }).then(function (v) {
+      if (v && v.ok) { out.className = 'set-result ok'; out.textContent = '✓ ' + v.version; }
+      else { out.className = 'set-result err'; out.textContent = '✗ ' + ((v && (v.detail || v.stage)) || '校验失败'); }
+    }).catch(function () { out.className = 'set-result err'; out.textContent = '网络异常,验证请求未送达'; });
+  }
+
+  function saveSettings() {
+    var godot = $('setGodotPath').value.trim();
+    var allowed = $('setAllowed').value.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });
+    var btn = $('setSave'); btn.disabled = true;
+    $('setSaveHint').textContent = '保存中…(含二进制校验,可能数秒)';
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ godotPath: godot, allowedProjectPaths: allowed }),
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(function (r) {
+        if (r.ok) { $('setSaveHint').textContent = '已保存并立即生效(重启后仍生效)'; loadSettings(); return; }
+        btn.disabled = false;
+        if (r.status === 403 && JSON.stringify(r.body).indexOf('read-only') !== -1) {   // 对齐 startSession/saveEditor I-2 判定
+          state.readOnly = true;
+          $('setSaveHint').textContent = '只读模式,保存已禁用';
+          return;
+        }
+        $('setSaveHint').textContent = '保存失败: ' + ((r.body && r.body.error) ? r.body.error : JSON.stringify(r.body).slice(0, 100));
+      })
+      .catch(function () { btn.disabled = false; $('setSaveHint').textContent = '网络异常,保存请求未送达'; });
   }
 
   function openFiles(projectPath) {
@@ -922,6 +1047,17 @@ export const INDEX_HTML: string = `<!doctype html>
   // (与 logFilter/projSearch 静态控件同模式;重绘容器内的按钮才须走 data-action 委托)。
   $('tabLogs').addEventListener('click', function () { showTab('logs'); });
   $('tabFiles').addEventListener('click', function () { showTab('files'); });
+  $('tabSettings').addEventListener('click', function () { showTab('settings'); });
+  // 设置面板静态控件直接绑定(tab/输入/按钮均为静态 DOM,从不重绘);候选列表是唯一
+  // 动态区,容器一次性委托(data-cand 点选即填入并验证)。
+  $('setVerifyBtn').addEventListener('click', verifyGodot);
+  $('setSave').addEventListener('click', saveSettings);
+  $('setCands').addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('button[data-cand]') : null;
+    if (!b) return;
+    $('setGodotPath').value = b.getAttribute('data-cand') || '';
+    verifyGodot();
+  });
 
   // #filesPane 容器一次性事件委托(资源管理批 spec §6.2/§6.3):面包屑段([data-sub]
   // 回根/回跳层级)、目录行([data-dir] 进子目录)、文件行([data-file] →

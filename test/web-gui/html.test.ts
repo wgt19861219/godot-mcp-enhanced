@@ -159,4 +159,26 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('面板服务已全部停止');                // 全死友好文案
     expect(INDEX_HTML).toContain('dashboard --web');                 // 指引命令
   });
+
+  // ── 设置面板批(2026-09-29)───────────────────────────────────────────────────
+  it('设置 tab 三态切换 + 进 tab 拉取视图', () => {
+    expect(INDEX_HTML).toContain('tabSettings');                       // tab 按钮
+    expect(INDEX_HTML).toContain("showTab('settings')");               // 绑定接线
+    expect(INDEX_HTML).toContain("name === 'settings' ? 'flex' : 'none'");   // 三态 display
+    expect(INDEX_HTML).toContain('settingsPane');                      // 面板容器
+    expect(INDEX_HTML).toContain('loadSettings()');                    // 进 tab 即拉取
+  });
+  it('设置面板三端点接线 + 完整表单语义(空=清除)', () => {
+    expect(INDEX_HTML).toContain("authFetch('/api/settings')");        // GET 视图
+    expect(INDEX_HTML).toContain("fetch('/api/settings',");            // POST 保存
+    expect(INDEX_HTML).toContain("fetch('/api/settings/verify'");      // POST 验证
+    expect(INDEX_HTML).toContain('godotPath: godot');                  // 恒发两字段(完整表单)
+    expect(INDEX_HTML).toContain('allowedProjectPaths: allowed');
+  });
+  it('设置面板:候选点选委托 + readOnly 403 判定 + 版本结果显示', () => {
+    expect(INDEX_HTML).toContain("closest('button[data-cand]')");      // 候选容器委托(对齐 filesPane 模式)
+    expect(INDEX_HTML).toContain("'read-only'");                       // 保存 403 判定(对齐 startSession I-2)
+    expect(INDEX_HTML).toContain('setGodotResult');                    // 版本/错误结果显示位
+    expect(INDEX_HTML).toContain('renderSettingsInfo');                // 只读生效值信息区
+  });
 });

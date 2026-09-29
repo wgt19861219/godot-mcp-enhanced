@@ -59,6 +59,7 @@ import { INDEX_HTML } from './web-gui/html.js';
 import { ProjectsStore } from './web-gui/projects-store.js';
 // 资源工作台批(2026-09-15 spec §3.1):FilesApi 实例注入(纯逻辑模块,web-gui 内部互引合法)
 import { FilesApi } from './web-gui/files-api.js';
+import { UserSettingsService } from './web-gui/settings-api.js';
 import { executeRunProject } from './tools/runtime.js';
 import { buildSafeEnv } from './core/godot-finder.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
@@ -639,6 +640,10 @@ export class GodotServer {
           },
           // READ_ONLY 状态源与 index.ts:94 同源(spec v2/IMP-3:面板不得绕过 AI 侧 ReadOnlyGuard 防线)
           isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
+          // 设置面板(2026-09-29 设置批):get/verify/save;READ_ONLY 同源注入
+          settings: new UserSettingsService({
+            isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
+          }),
         });
         await this.webGuiServer.start();
         this.webGuiActive = true;
