@@ -126,7 +126,11 @@ export class UserSettingsService implements SettingsApi {
         godotValue = trimmed;
       }
     }
-    // ── 校验(allowedProjectPaths:每条非空绝对路径且为存在目录)────────────────────
+    // ── 校验(allowedProjectPaths:每条非空绝对路径且为存在目录;拒绝含分号条目)──────
+    // 审查 Important-1(2026-09-29):白名单是 deny-by-default 安全边界,修改白名单被拒
+    // 与 godotPath 被拒同属安全事件——全部校验失败分支补机器级留痕(empty-patch 豁免:
+    // 无内容无事件)。含分号条目显式拒绝(审查 Nit-3):env 以分号分隔,含分号目录名保存
+    // 后会被 getAllowedProjectPaths 的 split 撕裂,热生效语义错乱,宁拒不让。
     const patchAllowed = patch.allowedProjectPaths;
     let allowedValue: string[] | undefined;   // undefined = 保持现值
     if (patchAllowed !== undefined) {
@@ -136,17 +140,25 @@ export class UserSettingsService implements SettingsApi {
         const cleaned: string[] = [];
         for (const p of patchAllowed) {
           if (typeof p !== 'string' || p.trim() === '') {
+            this.auditSave(false, { error: 'allowedProjectPaths rejected: bad-entry' });
             return { ok: false, error: '白名单条目不能为空', stage: 'bad-entry' };
           }
           const t = p.trim();
+          if (t.includes(';')) {
+            this.auditSave(false, { error: 'allowedProjectPaths rejected: contains-semicolon' });
+            return { ok: false, error: `白名单条目不能含分号(env 以分号分隔,会被撕裂):${t}`, stage: 'contains-semicolon' };
+          }
           if (!isAbsolute(t)) {
+            this.auditSave(false, { error: 'allowedProjectPaths rejected: not-absolute' });
             return { ok: false, error: `白名单条目必须是绝对路径:${t}`, stage: 'not-absolute' };
           }
           try {
             if (!(await stat(t)).isDirectory()) {
+              this.auditSave(false, { error: 'allowedProjectPaths rejected: not-a-directory' });
               return { ok: false, error: `白名单条目不是目录:${t}`, stage: 'not-a-directory' };
             }
           } catch {
+            this.auditSave(false, { error: 'allowedProjectPaths rejected: not-found' });
             return { ok: false, error: `白名单条目不存在:${t}`, stage: 'not-found' };
           }
           cleaned.push(t);

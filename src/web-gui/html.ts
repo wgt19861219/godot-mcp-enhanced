@@ -141,7 +141,7 @@ export const INDEX_HTML: string = `<!doctype html>
         <div class="set-row"><input id="setGodotPath" placeholder="D:\\godot\\Godot_v4.7.1-stable_win64.exe"><button type="button" class="ctl" id="setVerifyBtn">验证</button></div>
         <div class="set-result" id="setGodotResult"></div>
         <div class="set-cand" id="setCands"></div>
-        <div class="set-hint">候选来自 ~/.godot-mcp/godot-paths.json(CLI install 登记),点击即填入并验证;「验证」会运行 --version 确认版本;留空 = 清除设置,恢复启动时配置</div>
+        <div class="set-hint">候选来自 ~/.godot-mcp/godot-paths.json(CLI install 登记),点击即填入并验证;「验证」会运行 --version 确认版本;留空 = 清除设置,恢复启动时配置。注:项目若配了 .godot/mcp-godot.json 等项目级 override,该项目仍优先用 override 的路径</div>
       </div>
       <div class="set-section">
         <label>项目目录白名单(每行一个绝对路径)</label>

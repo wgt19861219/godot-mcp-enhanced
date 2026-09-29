@@ -187,6 +187,23 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     expect(Array.isArray(storeArgs.getSessions!())).toBe(true);
   });
 
+  it('settings 注入(2026-09-29 设置批,审查 Nit-1):UserSettingsService 实例三方法 + isReadOnly 同源透传', async () => {
+    const opts = await runAndGetOpts();
+    const settings = opts.settings as
+      | { get: () => Promise<{ readOnly: boolean }>; verify: (p: string) => Promise<unknown>; save: (p: unknown) => Promise<unknown> }
+      | undefined;
+    expect(settings, '缺少注入键 settings').toBeDefined();
+    expect(typeof settings!.get).toBe('function');
+    expect(typeof settings!.verify).toBe('function');
+    expect(typeof settings!.save).toBe('function');
+    // isReadOnly 同源透传(get 只读展示;get 读 ~/.godot-mcp/settings.json,测试机无该文件
+    // → 空设置容错,零写操作)
+    process.env.GODOT_MCP_READ_ONLY = 'true';
+    expect((await settings!.get()).readOnly).toBe(true);
+    process.env.GODOT_MCP_READ_ONLY = 'false';
+    expect((await settings!.get()).readOnly).toBe(false);
+  });
+
   it('projects 四方法委托 ProjectsStore 实例四方法(scan 回调透传)', async () => {
     const opts = await runAndGetOpts();
     const projects = opts.projects as {
