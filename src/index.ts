@@ -22,7 +22,25 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-export async function startMcpServer(args: string[]): Promise<void> {
+/**
+ * daemon 批(spec §3.3):启动序共享段——stdio 入口(startMcpServer)与 daemon 入口
+ * (src/daemon/main.ts,Task 5)同源复用,防两个进程的安全门/提示行为漂移。含四段:
+ * ① env 安全门(H-08 危险 bypass flag 生产拒绝 + I-05 激活告警)
+ * ② applyUserSettingsAtStartup(GUI 设置重放——必须在 C-08 前应用,防按旧 env 误报)
+ * ③ C-08 白名单未设提示(deny-by-default)
+ * ④ 审计关闭告警(1E:关闭行为本身要留启动日志)
+ * 不含 Dashboard TUI / self-update / stdin 钩子 / server.run()——stdio 入口自行接
+ * (见 startMcpServer),daemon 入口按 opts 全 false 裁剪。
+ *
+ * ⚠️ `_opts` 体内暂无消费:dashboard/selfUpdate 的实际裁剪发生在各入口自身的组装段
+ * (stdio 入口恒有 TUI/self-update;daemon 入口 Task 5 的代码里本来就没有这两段)。
+ * 参数是声明式裁剪契约(spec 第 2 轮 m-2 的签名要求),前缀 `_` 过 no-unused-vars
+ * 门禁;Task 5 落地时若改为体内分支消费,去掉前缀即可(调用方签名不变)。
+ * ⚠️ Task 5 注意:import 本模块会连带执行文件底部入口 IIFE(argv 分流,可能落入
+ * startMcpServer)——daemon 入口需 argv[1] 守卫或将本函数迁独立共享模块;本任务
+ * 不动入口行为(stdio 行为零变化是硬约束)。
+ */
+export async function runStartupSequence(_opts: { dashboard: boolean; selfUpdate: boolean }): Promise<void> {
   // H-08: Reject security bypass flags in production unless explicitly acknowledged
   const dangerousBypassFlags = [
     'GODOT_MCP_DISABLE_SAFETY',
@@ -77,6 +95,10 @@ export async function startMcpServer(args: string[]): Promise<void> {
   if (!isAuditEnabled()) {
     getLogger().warn('security', 'GODOT_MCP_AUDIT is disabled — operation audit trail will NOT be recorded (non-repudiation degraded)');
   }
+}
+
+export async function startMcpServer(args: string[]): Promise<void> {
+  await runStartupSequence({ dashboard: true, selfUpdate: true });
 
   // Feature flags info
   const { getAllFeatureFlags } = await import('./core/feature-flags.js');

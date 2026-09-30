@@ -1,6 +1,10 @@
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { Server } from "@modelcontextprotocol/server";
 import type { Tool } from "@modelcontextprotocol/server";
+// daemon 批(2026-09-30 spec §3.3):Transport 类型仅类型引用——测试 mock SDK 运行时
+// 不受影响(type import 编译期擦除);HTTP transport 实例由 src/daemon/main.ts 传入。
+import type { Transport } from "@modelcontextprotocol/server";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 // P1-3: legacy era 版本列表(SDK core SUPPORTED_PROTOCOL_VERSIONS 的快照,避免测试 mock 耦合)。
 // SDK 更新此列表时需同步(低频,约每年新版本);核实命令:
@@ -95,6 +99,17 @@ export interface ServerOptions {
   noFallback?: boolean;
   /** P2-1: --overrides CLI flag 指定的默认 override 脚本路径列表,graceful shutdown 时批量卸载 */
   overrides?: string[];
+  /** daemon 批(2026-09-30 spec §3.3):进程模式。stdio=缺省,行为与历史完全一致;
+   *  daemon=由 src/daemon/main.ts 组装(HTTP transport + mcpHandler 透传 + 不注册 stdin 钩子)。
+   *  ⚠️ 命名与 plan 有意偏离:plan 原文写 `mode`,但 ServerOptions.mode 已是工具档位字符串
+   *  (构造 ToolDispatcher 时 `this.options.mode ?? 'full'` 消费),同名重复声明 union 类型
+   *  属 TS2717 编译错误——故取 processMode(对齐 connectionMode 词汇),Task 5 daemon 入口消费。 */
+  processMode?: 'stdio' | 'daemon';
+  /** daemon 批(spec §3.2 注入链):daemon 模式下 /mcp 的 HTTP 处理器,run() 构造
+   *  WebGuiServer 时透传挂载(Task 3 加 WebGuiServerOptions.mcpHandler 字段后接线;
+   *  本任务 Task 2 只定字段,不接线)。web-gui 不 import MCP SDK——本字段类型只用
+   *  node:http,组装在 src/daemon/mcp-endpoint.ts(Task 4)。 */
+  mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void;
 }
 
 export class GodotServer {
@@ -539,9 +554,18 @@ export class GodotServer {
   
   // ─── Run ───────────────────────────────────────────────────────────────────
 
-  async run(): Promise<void> {
-    const transport = new StdioServerTransport();
+  /** daemon 批(spec §3.3):transport 注入点,从 run() 拆出。stdio 路径由 run() 传
+   *  StdioServerTransport(原 run() 前两行等价搬移,行为零变化);daemon 路径由
+   *  src/daemon/main.ts(Task 5)传 HTTP transport 调用本方法。
+   *  本方法只做 connect——不注册任何 process.stdin 钩子(daemon 纪律:detached 进程
+   *  stdin 立即 end,stdio 式自杀钩子会让 daemon 启动即死,spec 第 2 轮 m-1;
+   *  stdio 入口的 stdin-end 钩子在 index.ts 入口层注册,不在本类)。 */
+  async connectTransport(transport: Transport): Promise<void> {
     await this.server.connect(transport);
+  }
+
+  async run(): Promise<void> {
+    await this.connectTransport(new StdioServerTransport());
     log('Godot MCP Enhanced server running on stdio');
 
     // 批4-T7(五维评估 P2 抗抵赖): server 启动事件落机器级审计——含审计开关状态。
