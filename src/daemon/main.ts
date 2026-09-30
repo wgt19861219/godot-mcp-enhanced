@@ -42,7 +42,6 @@ export function parseDaemonArgs(args: string[]): DaemonArgs {
 export interface DaemonStartupGateDeps {
   /** env 注入(缺省生产侧传 process.env;测试传字面量对象)。 */
   env: NodeJS.ProcessEnv;
-  port?: number;
   respawnOf?: number;
   /** registry 目录注入(测试隔离);缺省 ~/.godot-mcp/web-gui/。 */
   registryDir?: string;
@@ -83,11 +82,15 @@ function daemonOpsScript(): string {
  */
 export async function runDaemon(args: string[]): Promise<void> {
   const { port, respawnOf } = parseDaemonArgs(args);
-  await runDaemonStartupGate({ env: process.env, port, respawnOf });
+  // N-3(批 A 审查)后启动门不再收 port(决策段零消费,端口语义归组装段 gui 构造)。
+  await runDaemonStartupGate({ env: process.env, respawnOf });
   await runStartupSequence({ dashboard: false, selfUpdate: false });
 
   const token = getOrCreateSharedToken();
-  const server = new GodotServer(daemonOpsScript(), { processMode: 'daemon' });
+  // N-2(批 A 审查)后 ServerOptions 不再携带 processMode/mcpHandler——daemon 与 stdio
+  // 的差异全部落在本入口的组装方式(daemon 不调 run()/connect stdio,自走 buildWebGuiOptions
+  // 工厂 + connectTransport),构造参数与 stdio 侧一致。
+  const server = new GodotServer(daemonOpsScript());
 
   // /mcp 端点与面板的鸡生蛋(spec §3.2):mcpHandler 须在 WebGuiServer 构造期注入
   // (构造器注入面,无 setMcpHandler),而 endpoint 的 deps.port 要 gui.start() 后

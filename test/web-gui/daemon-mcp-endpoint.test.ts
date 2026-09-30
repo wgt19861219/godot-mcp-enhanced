@@ -3,11 +3,20 @@
 // fake transport 注入测 wiring/闸门(真 transport 端到端由 Task 1 spike 脚本 +
 // 批 C 真机验收覆盖,单测不起真 McpServer)。
 // Host 伪造/无 Host 用 raw socket(fetch 不允许改 Host 头,Node http 客户端同)。
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { createMcpEndpoint } from '../../src/daemon/mcp-endpoint.js';
+import { appendMachineAuditLine } from '../../src/core/audit-log.js';
+
+// N-1(批 A 审查):401/403 落审计。appendMachineAuditLine 写死 homedir() 的机器级
+// 文件(getMachineAuditFile 无路径注入点)——真写会污染用户机器审计流,mock 模块
+// 注入 spy 断言载荷形态(isAuditEnabled=true 强制走审计路径)。
+vi.mock('../../src/core/audit-log.js', () => ({
+  isAuditEnabled: () => true,
+  appendMachineAuditLine: vi.fn(async () => {}),
+}));
 
 const TOKEN = 'a'.repeat(43);
 
@@ -303,5 +312,49 @@ describe('mcp-endpoint 缺省构造分支(真 transport)', () => {
     await ep.connect();
     expect(connect).toHaveBeenCalledOnce();
     expect(connect.mock.calls[0]![0]).toBe(ep.transport);
+  });
+});
+
+describe('mcp-endpoint 401/403 落审计(N-1:spec §3.5 失败落审计,批 A 审查处置)', () => {
+  beforeEach(() => { vi.mocked(appendMachineAuditLine).mockClear(); });
+
+  it('401(无 Authorization)→ 落一条机器级审计行,载荷不含 token 值', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' });
+      expect(res.status).toBe(401);
+      expect(vi.mocked(appendMachineAuditLine)).toHaveBeenCalledTimes(1);
+      const entry = vi.mocked(appendMachineAuditLine).mock.calls[0]![0];
+      expect(entry.action).toBe('mcp-auth-reject');
+      expect(entry.ok).toBe(false);
+      expect(entry.caller).toBe('daemon:mcp');
+      expect(entry.details).toEqual({ error: 'unauthorized', hasAuth: false });
+      expect(JSON.stringify(entry).includes(TOKEN)).toBe(false);   // 审计载荷不落 token 值
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('403(伪造 Host,带正确 Bearer)→ 落一条机器级审计行,载荷不含 Host 原文与 token 值', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const raw = await rawHttp(port,
+        `POST /mcp HTTP/1.1\r\nHost: evil.example\r\nAuthorization: Bearer ${TOKEN}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+      expect(raw.startsWith('HTTP/1.1 403')).toBe(true);
+      expect(vi.mocked(appendMachineAuditLine)).toHaveBeenCalledTimes(1);
+      const entry = vi.mocked(appendMachineAuditLine).mock.calls[0]![0];
+      expect(entry.action).toBe('mcp-host-reject');
+      expect(entry.ok).toBe(false);
+      expect(entry.caller).toBe('daemon:mcp');
+      expect(entry.details).toEqual({ error: 'host_not_allowed', hasAuth: true });
+      expect(JSON.stringify(entry).includes('evil.example')).toBe(false);   // 403 不回显 Host(已审结论)
+      expect(JSON.stringify(entry).includes(TOKEN)).toBe(false);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
   });
 });

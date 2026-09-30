@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { appendMachineAuditLine, isAuditEnabled } from '../core/audit-log.js';
 import {
   WebStandardStreamableHTTPServerTransport,
   validateHostHeader,
@@ -64,17 +65,37 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
+  // 拒绝审计(N-1,spec §3.5 "失败落审计"):401/403 各落一条机器级审计行。
+  // 载荷不含 token 值与 Host 原文(403 不回显 Host 是已审结论);hasAuth 仅记"是否
+  // 携带 Authorization 头"布尔。fire-and-forget + .catch:审计失败 best-effort 不
+  // 影响拒绝响应(对齐 main.ts daemon-startup / server.ts auditInstanceAction 先例,
+  // caller 命名取 'daemon:mcp' 与 'web-gui:instances' 同款 域:子系统 风格)。
+  function auditMcpReject(error: 'unauthorized' | 'host_not_allowed', hasAuth: boolean): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `daemon-mcp-${randomUUID().slice(0, 16)}`,
+      tool: 'daemon',
+      action: error === 'unauthorized' ? 'mcp-auth-reject' : 'mcp-host-reject',
+      risk: 'process',
+      ok: false, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'daemon:mcp',
+      details: { error, hasAuth },
+    }).catch(() => { /* best-effort:审计失败不影响拒绝响应 */ });
+  }
+
   async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       // 闸门 1:Host(rebinding 防)——仅认本机回环 hostname(port-agnostic,SDK 判定)。
       const hostCheck = validateHostHeader(req.headers.host, localhostAllowedHostnames());
       if (!hostCheck.ok) {
+        auditMcpReject('host_not_allowed', req.headers.authorization !== undefined);
         res.writeHead(403, { 'content-type': 'application/json' })
           .end(JSON.stringify({ error: 'host not allowed' }));
         return;
       }
       // 闸门 2:鉴权——仅 Authorization: Bearer <token>;401 响应体不含 token 值。
       if (!bearerOk(req.headers.authorization)) {
+        auditMcpReject('unauthorized', req.headers.authorization !== undefined);
         res.writeHead(401, { 'content-type': 'application/json' })
           .end(JSON.stringify({ error: 'unauthorized: /mcp requires Authorization: Bearer <token>' }));
         return;

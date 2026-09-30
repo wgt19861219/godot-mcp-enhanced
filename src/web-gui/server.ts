@@ -91,7 +91,8 @@ export interface WebGuiServerOptions {
   instanceKind?: 'stdio' | 'daemon';
   /** daemon 批 A(spec §3.2 注入链):daemon 模式下 POST/GET/DELETE /mcp 三方法
    *  (Streamable HTTP transport 方法面)路由到它;缺席不挂该路由(/mcp 404)。
-   *  签名与 GodotServer.ServerOptions.mcpHandler 逐字一致(Task 5 透传零适配);
+   *  由 src/daemon/main.ts 构造 WebGuiServer 时直接注入(两段式接线闭包,批 A 审查
+   *  N-2 后 ServerOptions 不再有同名字段——注入不走 GodotServer 透传);
    *  web-gui 对 handler 内部零假设(鉴权/协议/响应头全归 handler)——本模块不
    *  import MCP SDK 的分层兑现,组装在 src/daemon/mcp-endpoint.ts(Task 4)。 */
   mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void;
