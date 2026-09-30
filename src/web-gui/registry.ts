@@ -26,6 +26,10 @@ export interface WebGuiRegistration {
   /** daemon 批 A(2026-09-30 spec §3.4):实例类型。可选——旧登记无此字段,
    *  parseRegistrationFile 不校验(对齐 version 字段先例),前端按「早期实例」语义兼容。 */
   kind?: 'stdio' | 'daemon';
+  /** daemon 批 B(2026-09-30 spec §3.7):受控交接关联——新 daemon 以 --respawn-of=<旧pid>
+   *  启动时写入旧 pid,前端/daemon status 对旧条目显示「交接中」的标注数据源。
+   *  可选,parseRegistrationFile 不校验(对齐 kind 字段先例,向后兼容)。 */
+  respawnOf?: number;
 }
 
 export interface RegistryOpts {
