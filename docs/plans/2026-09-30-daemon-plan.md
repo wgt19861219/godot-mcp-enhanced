@@ -33,9 +33,9 @@
 
 > Task 1 执行后在此登记三项结论;后续任务若与结论冲突,以实测为准修订对应任务代码块再实施。
 
-- [ ] **S-1 Node↔Web wiring**:`IncomingMessage → Request`(含 body 流,duplex:'half')与 `Response → ServerResponse`(含 SSE 流式 body)的转换在本仓 Node 版本下可用(预期:Node ≥18 全局 Request/Response + `Readable.toWeb/fromWeb`)。实测:______
-- [ ] **S-2 stateful 会话语义**:`sessionIdGenerator: () => randomUUID()` 时 Initialize 响应带 `mcp-session-id` 头;无 session 的非初始化请求 400;`onsessioninitialized`/`onsessionclosed`(仅 DELETE 触发 closed)回调时序符合"中间件层拦第二 Initialize"的实现假设。实测:______
-- [ ] **S-3 SDK client 直连**:探针脚本用 `Client` + HTTP transport 对 spike server 完成 initialize → tools/list 往返。实测:______
+- [x] **S-1 Node↔Web wiring**:`IncomingMessage → Request`(含 body 流,duplex:'half')与 `Response → ServerResponse`(含 SSE 流式 body)的转换在本仓 Node 版本下可用(预期:Node ≥18 全局 Request/Response + `Readable.toWeb/fromWeb`)。实测:Node v24.14.0 下全链路可用——`Readable.toWeb(req)` + `duplex:'half'` 作 Request body,tools/call 参数无损到达(echo:hi 原样返回);`Readable.fromWeb(webRes.body).pipe(res)` 回写 SSE 长流(POST 响应 content-type: `text/event-stream`)成功读回 JSON-RPC result。**关键细节:SDK 2.0.0 的 exports 无 `/mcp.js`、`/streamablehttp.js` 子路径,`McpServer`/`WebStandardStreamableHTTPServerTransport`/`registerTool`(实例方法)/`validateHostHeader`/`localhostAllowedHostnames` 一律从主入口 `@modelcontextprotocol/server` 导入**(Task 4 代码块现写法已正确)。探针:`scripts/spike-daemon-transport.mjs`(11/11 PASS,复跑 2 次稳定)。
+- [x] **S-2 stateful 会话语义**:`sessionIdGenerator: () => randomUUID()` 时 Initialize 响应带 `mcp-session-id` 头;无 session 的非初始化请求 400;`onsessioninitialized`/`onsessionclosed`(仅 DELETE 触发 closed)回调时序符合"中间件层拦第二 Initialize"的实现假设。实测:全部符合——initialize 响应头 `mcp-session-id`(UUID,如 `54cb6f4a-…`)+ `mcp-protocol-version: 2025-11-25`;无 session 头的 tools/list POST → 400;`onsessioninitialized` 在 initialize 后恰好 1 次;`onsessionclosed` 仅 DELETE(返回 200)触发 1 次,SSE 流提前 abort 断开**不**触发 closed(批 C 单会话拦截可放心用这对计数)。notification POST(initialized)返回 202 无响应体。
+- [x] **S-3 SDK client 直连**:探针脚本用 `Client` + HTTP transport 对 spike server 完成 initialize → tools/list 往返。实测:**降级验证通过**——本仓未安装 `@modelcontextprotocol/client`(node_modules 与 package.json 均无,按 brief 预案不盲装),改用原生 fetch 手写 JSON-RPC(initialize → notifications/initialized → tools/list → tools/call → DELETE)走同一条 Node↔Web↔transport wiring,全链路往返成功(tools=[spike_echo]、echo:hi)。SDK Client 侧行为留待批 C 真机验收(真 MCP 客户端连 daemon)覆盖。
 
 ---
 
