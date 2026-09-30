@@ -1,0 +1,307 @@
+// test/web-gui/daemon-mcp-endpoint.test.ts
+// daemon 批 A(2026-09-30 spec §3.2/§3.5):Task 4——/mcp 端点组装。
+// fake transport 注入测 wiring/闸门(真 transport 端到端由 Task 1 spike 脚本 +
+// 批 C 真机验收覆盖,单测不起真 McpServer)。
+// Host 伪造/无 Host 用 raw socket(fetch 不允许改 Host 头,Node http 客户端同)。
+import { describe, it, expect, vi } from 'vitest';
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { connect as netConnect } from 'node:net';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
+import { createMcpEndpoint } from '../../src/daemon/mcp-endpoint.js';
+
+const TOKEN = 'a'.repeat(43);
+
+/** fake transport 收到的 Web Request 快照(body 已消费为文本)。 */
+interface SeenRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: string | undefined;
+}
+
+/** fake transport:handleRequest 记录请求 + 可定制响应;缺省固定 200 JSON + 自定义头。 */
+function makeFakeTransport(respond?: (req: Request) => Promise<Response>): {
+  seen: SeenRequest[];
+  transport: { handleRequest: (req: Request) => Promise<Response> };
+} {
+  const seen: SeenRequest[] = [];
+  return {
+    seen,
+    transport: {
+      handleRequest: async (webReq: Request): Promise<Response> => {
+        seen.push({
+          url: webReq.url,
+          method: webReq.method,
+          headers: Object.fromEntries(webReq.headers.entries()),
+          body: webReq.body ? await webReq.text() : undefined,
+        });
+        return respond
+          ? respond(webReq)
+          : new Response('{"ok":1}', { status: 200, headers: { 'content-type': 'application/json', 'x-custom': 'kept' } });
+      },
+    },
+  };
+}
+
+/** 起 127.0.0.1 随机端口空 server(先拿端口再建 endpoint,deps.port 才能对上)。 */
+async function serveEmpty(): Promise<{ srv: Server; port: number }> {
+  const srv = createServer();
+  await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
+  const port = (srv.address() as { port: number }).port;
+  return { srv, port };
+}
+
+async function closeServer(srv: Server): Promise<void> {
+  srv.closeAllConnections?.();
+  await new Promise<void>(r => srv.close(() => r()));
+}
+
+/** raw socket 发手写 HTTP(伪造/省略 Host 头——fetch 与 http 客户端都不允许),收全响应。 */
+function rawHttp(port: number, payload: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const sock = netConnect({ host: '127.0.0.1', port }, () => sock.write(payload));
+    let buf = '';
+    sock.on('data', (d: Buffer) => { buf += d.toString('utf8'); });
+    sock.on('end', () => resolve(buf));
+    sock.on('error', reject);
+    sock.setTimeout(4000, () => { sock.destroy(); reject(new Error('raw socket timeout')); });
+  });
+}
+
+/** 挂 endpoint 到已监听 server,返回 fetch 基址。 */
+function attach(srv: Server, handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>): void {
+  srv.on('request', (req, res) => { void handler(req, res); });
+}
+
+describe('mcp-endpoint /mcp 鉴权闸门(spec §3.5:仅认 Authorization Bearer header)', () => {
+  it('无 Authorization → 401,body 不含 token 值', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST' });
+      expect(res.status).toBe(401);
+      expect(res.headers.get('content-type')).toBe('application/json');
+      const body = await res.text();
+      expect(body.includes('unauthorized')).toBe(true);
+      expect(body.includes(TOKEN)).toBe(false);
+      expect(fake.seen.length).toBe(0);   // 闸门拦截在 transport 之前
+    } finally { await closeServer(srv); }
+  });
+
+  it('Authorization: Bearer <正确 token> → 放行到 transport(fake 响应透传)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST', headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('{"ok":1}');
+      expect(fake.seen.length).toBe(1);
+    } finally { await closeServer(srv); }
+  });
+
+  it('错误 token → 401,body 不含真 token 值', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST', headers: { authorization: `Bearer ${'b'.repeat(43)}` },
+      });
+      expect(res.status).toBe(401);
+      expect((await res.text()).includes(TOKEN)).toBe(false);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('非 Bearer scheme(Basic)→ 401', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST', headers: { authorization: `Basic ${Buffer.from(TOKEN).toString('base64')}` },
+      });
+      expect(res.status).toBe(401);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('query ?token=<正确值> 不放行(仅认 header,不复用 web-gui extractToken)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp?token=${TOKEN}`, { method: 'POST' });
+      expect(res.status).toBe(401);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('cookie gui-token=<正确值> 不放行(仅认 header)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST', headers: { cookie: `gui-token=${TOKEN}` },
+      });
+      expect(res.status).toBe(401);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+});
+
+describe('mcp-endpoint Host 闸门(rebinding 防,raw socket 伪造)', () => {
+  it('Host: evil.example(带正确 Bearer)→ 403', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const raw = await rawHttp(port,
+        `POST /mcp HTTP/1.1\r\nHost: evil.example\r\nAuthorization: Bearer ${TOKEN}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+      expect(raw.startsWith('HTTP/1.1 403')).toBe(true);
+      expect(raw.includes('host not allowed')).toBe(true);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('无 Host 头(HTTP/1.0,带正确 Bearer)→ 403', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const raw = await rawHttp(port,
+        `GET /mcp HTTP/1.0\r\nAuthorization: Bearer ${TOKEN}\r\n\r\n`);
+      expect(raw.startsWith('HTTP/1.1 403') || raw.startsWith('HTTP/1.0 403')).toBe(true);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
+  });
+
+  it('Host: localhost:<port>(回环别名形态)→ 放行(port-agnostic)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const raw = await rawHttp(port,
+        `POST /mcp HTTP/1.1\r\nHost: localhost:${port}\r\nAuthorization: Bearer ${TOKEN}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}`);
+      expect(raw.startsWith('HTTP/1.1 200')).toBe(true);
+      expect(raw.includes('{"ok":1}')).toBe(true);
+    } finally { await closeServer(srv); }
+  });
+});
+
+describe('mcp-endpoint Node↔Web wiring(spike S-1 同款)', () => {
+  it('POST:method/url/authorization/body 透传,Host 规范化为 127.0.0.1:<port>', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    const bodyText = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: bodyText,
+      });
+      expect(res.status).toBe(200);
+      expect(fake.seen.length).toBe(1);
+      const seen = fake.seen[0]!;
+      expect(seen.method).toBe('POST');
+      expect(seen.url).toBe(`http://127.0.0.1:${port}/mcp`);
+      expect(seen.headers['authorization']).toBe(`Bearer ${TOKEN}`);
+      expect(seen.headers['host']).toBe(`127.0.0.1:${port}`);   // spike 同款:固定 Host(rebinding 闸已在此前完成)
+      expect(seen.headers['content-type']).toBe('application/json');
+      expect(seen.body).toBe(bodyText);   // Readable.toWeb body 流无损
+    } finally { await closeServer(srv); }
+  });
+
+  it('GET/DELETE:无 body 构造(不带 duplex),method 透传', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const g = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'GET', headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(g.status).toBe(200);
+      const d = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'DELETE', headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(d.status).toBe(200);
+      expect(fake.seen.map(s => s.method)).toEqual(['GET', 'DELETE']);
+      expect(fake.seen.every(s => s.body === undefined)).toBe(true);
+    } finally { await closeServer(srv); }
+  });
+
+  it('Web Response 状态与自定义头透传回 Node 响应', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-custom')).toBe('kept');
+      expect(res.headers.get('content-type')).toBe('application/json');
+    } finally { await closeServer(srv); }
+  });
+});
+
+describe('mcp-endpoint 错误自理(Task 3 交接:headersSent 后不得再 writeHead)', () => {
+  it('transport.handleRequest 抛错(头未发)→ 500 JSON,不含 token', async () => {
+    const fake = makeFakeTransport(() => { throw new Error('transport blew up'); });
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(res.status).toBe(500);
+      const body = await res.text();
+      expect(body.includes(TOKEN)).toBe(false);
+    } finally { await closeServer(srv); }
+  });
+
+  it('响应流中途 error(头已发)→ 连接销毁,客户端读到终止流而非 200 完整体', async () => {
+    const broken = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('{"par'));
+        setTimeout(() => c.error(new Error('mid-stream boom')), 30);
+      },
+    });
+    const fake = makeFakeTransport(async () => new Response(broken, { status: 200, headers: { 'content-type': 'application/json' } }));
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(res.status).toBe(200);   // 头已发出(真实场景:headersSent=true,只能 destroy)
+      await expect(res.text()).rejects.toThrow();   // 半截 body 不允许以 200 正常结束
+    } finally { await closeServer(srv); }
+  });
+});
+
+describe('mcp-endpoint 缺省构造分支(真 transport)', () => {
+  it('未注入 _transportForTest → transport 是 WebStandardStreamableHTTPServerTransport 实例', () => {
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port: 1 });
+    expect(ep.transport).toBeInstanceOf(WebStandardStreamableHTTPServerTransport);
+    expect(ep.activeSessionCount()).toBe(0);   // 尚无会话(fake 注入时恒 0,真 transport 由回调计数)
+  });
+
+  it('connect() 把 transport 交给 mcpServer.connect', async () => {
+    const connect = vi.fn(async () => {});
+    const ep = createMcpEndpoint({ mcpServer: { connect } as never, token: TOKEN, port: 1 });
+    await ep.connect();
+    expect(connect).toHaveBeenCalledOnce();
+    expect(connect.mock.calls[0]![0]).toBe(ep.transport);
+  });
+});
