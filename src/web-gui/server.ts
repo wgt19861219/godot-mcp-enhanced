@@ -603,8 +603,9 @@ export class WebGuiServer {
   /** daemon 生命周期操作审计(daemon 批 B 2026-09-30):恒落机器级,形态对齐
    *  auditInstanceAction(不复用它——其 caller 绑定 instances 子系统);caller 取
    *  'web-gui:daemon',与 'web-gui:instances'/'daemon:mcp' 同款「域:子系统」风格
-   *  (见 src/daemon/mcp-endpoint.ts 同款注释)。仅成功路径落痕(503 未注入是配置态
-   *  非安全事件,对齐 files/projects 未注入不落痕现状);best-effort,失败不阻断响应。 */
+   *  (见 src/daemon/mcp-endpoint.ts 同款注释)。成功路径落痕;鉴权拒绝走
+   *  auditDaemonReject(N-1);503 未注入是配置态非安全事件,不落(对齐
+   *  files/projects 未注入不落痕现状);best-effort,失败不阻断响应。 */
   private auditDaemonAction(details: Record<string, unknown>): void {
     if (!isAuditEnabled()) return;
     void appendMachineAuditLine({
@@ -616,6 +617,22 @@ export class WebGuiServer {
     }).catch((e: unknown) => { recordAuditWriteFailure(e); });
   }
 
+  /** daemon 关停指令鉴权拒绝审计(N-1,批级审查 2026-09-30):spec §3.9 "401 拒绝→
+   *  机器级审计"。形态对齐批 A auditMcpReject(src/daemon/mcp-endpoint.ts):action
+   *  'shutdown-auth-reject'、ok:false、details 不含 token 值(仅 error 语义 + hasAuth
+   *  布尔)。403/401 分流:token 验对但 Origin 不符 → 'origin_forbidden',token 缺失
+   *  或错误 → 'unauthorized'。best-effort,失败不阻断拒绝响应。 */
+  private auditDaemonReject(error: 'unauthorized' | 'origin_forbidden', hasAuth: boolean): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action: 'shutdown-auth-reject', risk: 'process',
+      ok: false, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'web-gui:daemon',
+      details: { error, hasAuth },
+    }).catch((e: unknown) => { recordAuditWriteFailure(e); });
+  }
+
   private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -623,7 +640,15 @@ export class WebGuiServer {
     };
     try {
       if (!this.authorized(req, url)) {
-        res.writeHead(this.tokenEquals(this.extractToken(req, url)) ? 403 : 401).end();
+        const presented = this.extractToken(req, url);
+        const code = this.tokenEquals(presented) ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
+        // N-1(批级审查 2026-09-30):shutdown 鉴权失败落机器级审计(spec §3.9),403/401
+        // 分流见 auditDaemonReject。仅 shutdown 分支——其余 POST /api/* 的 401/403
+        // 零留痕是既有现状,不在本批扩面。hasAuth=任一通道(query/头/cookie)是否携带凭据。
+        if (url.pathname === '/api/shutdown') {
+          this.auditDaemonReject(code === 403 ? 'origin_forbidden' : 'unauthorized', presented !== null);
+        }
+        res.writeHead(code).end();
         return;
       }
 

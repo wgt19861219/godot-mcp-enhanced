@@ -858,4 +858,71 @@ describe('POST /api/shutdown(daemon 批 B 2026-09-30)', () => {
       await rm(fakeHome, { recursive: true, force: true });
     }
   });
+
+  // ── N-1(批级审查 2026-09-30):shutdown 鉴权失败零留痕 → 补机器级审计 ──
+  // spec §3.9 "401 拒绝→机器级审计";形态对齐批 A /mcp 的 auditMcpReject 先例
+  // (src/daemon/mcp-endpoint.ts):details 只含 error 语义 + hasAuth 布尔,不含 token 值。
+  it('N-1: 无 token 401 → 审计行 action=shutdown-auth-reject ok:false error=unauthorized hasAuth=false', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-daemon-rej-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    try {
+      const t = await startDaemonServer({ onControlledShutdown: () => { /* noop:拒绝路径不应触达回调 */ } });
+      active = t.srv;
+      expect((await cliPost(t.base, '/api/shutdown', null)).status).toBe(401);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'shutdown-auth-reject' && e.caller === 'web-gui:daemon');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '拒绝路径机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.tool).toBe('web-gui');
+      expect(hit!.risk).toBe('process');
+      expect(hit!.ok).toBe(false);
+      const details = hit!.details as { error?: string; hasAuth?: boolean };
+      expect(details.error).toBe('unauthorized');
+      expect(details.hasAuth).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('N-1: 对 token + 跨端口 Origin 403 → 审计行 error=origin_forbidden(403/401 分流)', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-daemon-rej-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    try {
+      const t = await startDaemonServer({ onControlledShutdown: () => { /* noop */ } });
+      active = t.srv;
+      const res = await fetch(t.base + '/api/shutdown', {
+        method: 'POST',
+        headers: { 'x-gui-token': t.token, origin: 'http://127.0.0.1:1' },
+      });
+      expect(res.status).toBe(403);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'shutdown-auth-reject' && e.caller === 'web-gui:daemon');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '403 拒绝路径机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.ok).toBe(false);
+      const details = hit!.details as { error?: string; hasAuth?: boolean };
+      expect(details.error).toBe('origin_forbidden');
+      expect(details.hasAuth).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
 });
