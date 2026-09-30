@@ -79,6 +79,12 @@ export interface WebGuiServerOptions {
   /** 实例管理批(2026-09-30):重启"本实例"的有序退出回调(先响应 200 再走 close 链,
    *  登记文件随 stop() 清理);缺席兜底 process.exit(0)。构造器注入,不新增模块级 setter。 */
   onSelfRestart?: () => void;
+  /** daemon 批 B(2026-09-30 spec §3.7/Task 7):受控关停/重启回调(T2 CLI 通道,面板
+   *  亦可触发)。POST /api/shutdown(?restart=1 → mode 'restart',缺省 'stop')先 200
+   *  响应再异步 150ms 触发本回调(时序对齐 onSelfRestart 先例,防 stop 模式退出竞态
+   *  吃掉响应)。未注入时端点 503(stdio 实例不注入,端点不活跃);由 src/daemon/main.ts
+   *  接线注入。构造器注入,不新增模块级 setter。 */
+  onControlledShutdown?: (mode: 'stop' | 'restart') => void;
   /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
   isPidAlive?: (pid: number) => boolean;
   /** daemon 批 A(2026-09-30 spec §3.4/M-2):严格端口。true = 只试 portStart 一个端口,
@@ -355,7 +361,8 @@ export class WebGuiServer {
           || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
           || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
           || url.pathname === '/api/projects/file' || url.pathname === '/api/settings'
-          || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart') {
+          || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart'
+          || url.pathname === '/api/shutdown') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -548,6 +555,22 @@ export class WebGuiServer {
     }).catch((e: unknown) => { recordAuditWriteFailure(e); });
   }
 
+  /** daemon 生命周期操作审计(daemon 批 B 2026-09-30):恒落机器级,形态对齐
+   *  auditInstanceAction(不复用它——其 caller 绑定 instances 子系统);caller 取
+   *  'web-gui:daemon',与 'web-gui:instances'/'daemon:mcp' 同款「域:子系统」风格
+   *  (见 src/daemon/mcp-endpoint.ts 同款注释)。仅成功路径落痕(503 未注入是配置态
+   *  非安全事件,对齐 files/projects 未注入不落痕现状);best-effort,失败不阻断响应。 */
+  private auditDaemonAction(details: Record<string, unknown>): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action: 'shutdown', risk: 'process',
+      ok: true, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'web-gui:daemon',
+      details,
+    }).catch((e: unknown) => { recordAuditWriteFailure(e); });
+  }
+
   private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -594,6 +617,27 @@ export class WebGuiServer {
         this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
         killPidTree(pid);
         return json(200, { ok: true });
+      }
+
+      // ── POST /api/shutdown(daemon 批 B 2026-09-30,spec §3.7/Task 7)─────────
+      // daemon 受控停止/重启的指令入口(T2 CLI 通道,面板亦可触发)。无 body 契约——
+      // mode 由 query 判别:?restart=1 → 'restart',缺省 'stop'。响应时序对齐
+      // instances/restart 自重启先例:先 200 响应再 setTimeout 150ms 异步调回调
+      // (stop 模式下回调若同步退进程,竞态会吃掉响应)。caller 判别落审计 details:
+      // 无 Origin(CLI 形态)→ 'daemon-cli',有 Origin(浏览器)→ 'panel'。不受
+      // READ_ONLY 拦:运维操作,对齐 sessions/stop / instances-restart 现状。
+      if (url.pathname === '/api/shutdown') {
+        const mode: 'stop' | 'restart' = url.searchParams.get('restart') === '1' ? 'restart' : 'stop';
+        const caller = req.headers.origin === undefined ? 'daemon-cli' : 'panel';
+        const cb = this.opts.onControlledShutdown;
+        if (!cb) {
+          getLogger().info('web-gui', `action=shutdown mode=${mode} result=503_not_configured`);
+          return json(503, { error: 'not configured' });
+        }
+        getLogger().info('web-gui', `action=shutdown mode=${mode} caller=${caller} result=200`);
+        this.auditDaemonAction({ mode, caller });
+        setTimeout(() => cb(mode), 150);
+        return json(200, { ok: true, mode });
       }
 
       // ── POST /api/projects/file(spec §4:保存流,body 预检→乐观锁保存)──────
