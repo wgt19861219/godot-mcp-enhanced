@@ -157,4 +157,14 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     expect(byPid.get(5001)?.version).toBe('0.33.9');
     expect(byPid.get(5002)?.version).toBeUndefined();   // 旧登记不拒读、字段缺席
   });
+
+  // ── daemon 批 A(2026-09-30 Task 3):kind 可选字段——stdio/daemon 实例类型登记 ──
+  it('kind 可选字段:writeRegistration 落盘带 kind 读回一致;无 kind 旧登记照常读回(向后兼容)', async () => {
+    await writeRegistration({ pid: 6001, port: 9550, token: 'tok_k1', startedAt: 't1', kind: 'daemon' }, { dir });
+    await writeRegistration({ pid: 6002, port: 9551, token: 'tok_k2', startedAt: 't2' }, { dir });   // 旧形态:无 kind
+    const list = await listRegistrations({ dir, isPidAlive: ALIVE });
+    const byPid = new Map(list.map((e) => [e.pid, e]));
+    expect(byPid.get(6001)?.kind).toBe('daemon');
+    expect(byPid.get(6002)?.kind).toBeUndefined();   // 旧登记不拒读、字段缺席
+  });
 });

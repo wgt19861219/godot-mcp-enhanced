@@ -23,6 +23,9 @@ export interface WebGuiRegistration {
    *  可选——旧版本登记文件无此字段,parseRegistrationFile 不校验它(向后兼容),
    *  前端以在场性显示「早期实例」。 */
   version?: string;
+  /** daemon 批 A(2026-09-30 spec §3.4):实例类型。可选——旧登记无此字段,
+   *  parseRegistrationFile 不校验(对齐 version 字段先例),前端按「早期实例」语义兼容。 */
+  kind?: 'stdio' | 'daemon';
 }
 
 export interface RegistryOpts {
