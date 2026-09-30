@@ -115,6 +115,7 @@ export class UserSettingsService implements SettingsApi {
         godotValue = undefined;           // '' = 清除字段(写盘时省略)
       } else {
         if (!isAbsolute(trimmed)) {
+          this.auditSave(false, { error: 'godotPath rejected: not-absolute' });   // 二轮 Nit-B: 与 allowed 侧同层格式预检留痕对称
           return { ok: false, error: 'Godot 路径必须是绝对路径', stage: 'not-absolute' };
         }
         const check = await validateGodotBinaryDetailed(trimmed);

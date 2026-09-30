@@ -76,3 +76,25 @@ AGENTS.md web-gui 段更新且 dashboard TUI 禁令表述保留；README/CHANGEL
 - `npm run build` 通过；build 产物独立重算 CSP hash = `5um2wvWtsXoE3iwEYpItqUJ0hE/YCdZVRX81SZzTP+M=`（与 server-http.test.ts 锚一致，双通道互证）。
 - 受影响 6 测试文件（user-settings / settings-api / server-settings / server-http / html / wiring-projects）96 用例全绿。
 - 全量 `npm test` 最终结果见开发日志与 CHANGELOG（471 files / 6986+ tests 全绿）。
+
+---
+
+# 第二轮独立审查（2026-09-30，处置 commit `5c7fcb20` 复核 + 合并判定）
+
+> 审查者：code-reviewer 子代理（再次隔离）。工具约束同前（无 Bash，git 层以 refs/reflog 静态取证，局限如实声明）。
+
+## 总体判定：SHIPPED WITH NITS —— 可合并性结论：**GO**
+
+处置 commit 全部声称修复经逐项实测属实（Important-1 五分支留痕在位且测试真实断言、Nit-1 wiring 断言跨机器稳健（readOnly 字段与 settings.json 内容无关）、Nit-3 五要素齐备、Nit-4 hint 三方一致、Nit-2/Nit-5 不修论断核实成立）。抽查面（启动重放对测试环境零影响、原子写竞态、审计敏感性、git 层）无异。合并前必须处置项：**无**。
+
+## 二轮新发现（均不阻断）
+
+- **Nit-A（已修）**：bad-entry 分支留痕无测试覆盖——已在 settings-api.test.ts 补空条目拒绝断言（审计计数 4→5）。
+- **Nit-B（已修）**：godotPath 的 not-absolute 快速拒绝无审计留痕，与 allowed 侧不对称——已补 `auditSave(false, ...)` + 测试断言，审计对称性彻底闭合。
+- **Nit-C（记录待办）**：一轮 Nit-5「对齐 file_save 先例」的论据不完全适用——file_save 不留机器级痕是因拿不到 projectPath，而 settings 的审计通道本就是机器级（无 projectPath 依赖），403_readonly 留机器级痕无障碍。后续若统一升级写端点 403 留痕，settings 端点有现成通道应优先纳入。
+
+## 二轮处置 commit 与验证
+
+- Nit-A/Nit-B 修复于 merge 前追加 commit（见 git log `fix(review): 设置批二轮审查处置`）。
+- 验证：`npm run lint`（0 problems）+ 受影响测试 29 用例全绿 + 全量 `npm test`（合并前最终门禁，结果见下）。
+

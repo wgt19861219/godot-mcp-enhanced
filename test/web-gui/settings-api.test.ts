@@ -102,10 +102,12 @@ describe('UserSettingsService(逻辑层)', () => {
     expect(await svc().save({})).toMatchObject({ ok: false, stage: 'empty-patch' });
   });
 
-  it('save:godotPath 相对路径 → not-absolute(不调二进制校验)', async () => {
+  it('save:godotPath 相对路径 → not-absolute(不调二进制校验,含留痕——二轮 Nit-B)', async () => {
     const r = await svc().save({ godotPath: 'relative/godot.exe' });
     expect(r).toMatchObject({ ok: false, stage: 'not-absolute' });
     expect(validateGodotBinaryDetailed).not.toHaveBeenCalled();
+    expect(h.auditLines.length).toBe(1);
+    expect(h.auditLines[0]).toMatchObject({ ok: false, action: 'settings_save', caller: 'web-gui:settings' });
   });
 
   it('save:godotPath 二进制校验失败 → stage 透传 + 失败审计行', async () => {
@@ -116,16 +118,18 @@ describe('UserSettingsService(逻辑层)', () => {
     expect(h.auditLines[0]).toMatchObject({ ok: false, action: 'settings_save', caller: 'web-gui:settings' });
   });
 
-  it('save:allowedProjectPaths 相对路径/不存在/非目录/含分号逐一拒绝 + 失败审计留痕(审查 Important-1)', async () => {
+  it('save:allowedProjectPaths 空条目/相对路径/不存在/非目录/含分号逐一拒绝 + 失败审计留痕(审查 Important-1 + 二轮 Nit-A)', async () => {
     await mkdir(join(dir, 'adir'), { recursive: true });
     await writeFile(join(dir, 'afile.txt'), 'x', 'utf8');
+    // 空条目拒绝(二轮 Nit-A 补测:bad-entry 留痕行为锁定)
+    expect(await svc().save({ allowedProjectPaths: ['  '] })).toMatchObject({ ok: false, stage: 'bad-entry' });
     expect(await svc().save({ allowedProjectPaths: ['relative/path'] })).toMatchObject({ ok: false, stage: 'not-absolute' });
     expect(await svc().save({ allowedProjectPaths: [join(dir, 'missing')] })).toMatchObject({ ok: false, stage: 'not-found' });
     expect(await svc().save({ allowedProjectPaths: [join(dir, 'afile.txt')] })).toMatchObject({ ok: false, stage: 'not-a-directory' });
     // 含分号条目拒绝(审查 Nit-3):env 分号分隔,含分号目录名保存后被 split 撕裂
     expect(await svc().save({ allowedProjectPaths: [join(dir, 'a;b')] })).toMatchObject({ ok: false, stage: 'contains-semicolon' });
-    // 全部校验失败分支均有机器级留痕(4 条拒绝 → 4 行 ok:false)
-    expect(h.auditLines.length).toBe(4);
+    // 全部校验失败分支均有机器级留痕(5 条拒绝 → 5 行 ok:false)
+    expect(h.auditLines.length).toBe(5);
     for (const line of h.auditLines) expect(line).toMatchObject({ ok: false, action: 'settings_save', caller: 'web-gui:settings' });
     // 合法目录照常通过且不再新增失败审计
     const before = h.auditLines.length;
