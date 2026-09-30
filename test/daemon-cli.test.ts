@@ -29,6 +29,7 @@ interface Harness {
   spawnCalls: DaemonSpawnOptions[];
   shutdownCalls: Array<{ port: number; token: string; restart: boolean; timeoutMs: number }>;
   killCalls: number[];
+  auditKillCalls: Array<{ pid: number; reason: string }>;
   openedUrls: string[];
   portProbes: number[];
   log: MockInstance;
@@ -43,6 +44,7 @@ function harness(listSeq: WebGuiRegistration[][]): Harness {
   const spawnCalls: DaemonSpawnOptions[] = [];
   const shutdownCalls: Array<{ port: number; token: string; restart: boolean; timeoutMs: number }> = [];
   const killCalls: number[] = [];
+  const auditKillCalls: Array<{ pid: number; reason: string }> = [];
   const openedUrls: string[] = [];
   const portProbes: number[] = [];
   let listIdx = 0;
@@ -63,6 +65,9 @@ function harness(listSeq: WebGuiRegistration[][]): Harness {
       return { status: 200 };
     }),
     killPidTree: vi.fn((pid: number) => { killCalls.push(pid); }),
+    // 审查 Important(2026-09-30):kill 兜底审计注入 fake——真实直调 appendMachineAuditLine
+    // 会写真审计文件,测试断言"被调 + reason 归因"而非审计文件内容(文件落盘验收归批 C 真机)
+    auditKill: vi.fn((pid: number, reason: string) => { auditKillCalls.push({ pid, reason }); }),
     isPortFree: vi.fn(async (p: number) => { portProbes.push(p); return true; }),
     opener: vi.fn((u: string) => { openedUrls.push(u); }),
     sleep: vi.fn(async () => { /* 测试零等待 */ }),
@@ -70,7 +75,7 @@ function harness(listSeq: WebGuiRegistration[][]): Harness {
   };
   const log = vi.spyOn(console, 'log').mockImplementation((m: unknown) => { out.push(String(m)); });
   const logErr = vi.spyOn(console, 'error').mockImplementation((m: unknown) => { err.push(String(m)); });
-  return { deps, out, err, exitCodes, spawnCalls, shutdownCalls, killCalls, openedUrls, portProbes, log, logErr };
+  return { deps, out, err, exitCodes, spawnCalls, shutdownCalls, killCalls, auditKillCalls, openedUrls, portProbes, log, logErr };
 }
 
 describe('daemon CLI(批 B Task 8)', () => {
@@ -215,32 +220,35 @@ describe('daemon CLI(批 B Task 8)', () => {
     expect(h.killCalls.length).toBe(0);
   });
 
-  it('stop:受控路径——POST /api/shutdown(query token=登记 token)→ 登记消失 → exit 0,不 kill', async () => {
+  it('stop:受控路径——POST /api/shutdown(query token=登记 token)→ 登记消失 → exit 0,不 kill;kill 审计不落(正常路径零噪音)', async () => {
     const d = reg({ pid: 777, port: 9550, token: 'tok_stop_123' });
     const h = harness([[d], [], []]);
     await runDaemonCli(['stop'], h.deps);
     expect(h.shutdownCalls).toEqual([{ port: 9550, token: 'tok_stop_123', restart: false, timeoutMs: 5000 }]);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
     expect(h.killCalls.length).toBe(0);
+    expect(h.auditKillCalls).toEqual([]);
     expect(h.out.join('\n')).toContain('已停止');
   });
 
-  it('stop:HTTP 超时/网络错误 → killPidTree 兜底 → 登记消失 → exit 0', async () => {
+  it('stop:HTTP 超时/网络错误 → killPidTree 兜底 → 登记消失 → exit 0;kill 前落审计(reason=timeout)', async () => {
     const d = reg({ pid: 777, port: 9550 });
     const h = harness([[d], [], []]);
     h.deps.postShutdown = vi.fn(async () => { throw new Error('ETIMEDOUT'); });
     await runDaemonCli(['stop'], h.deps);
     expect(h.killCalls).toEqual([777]);
+    expect(h.auditKillCalls).toEqual([{ pid: 777, reason: 'timeout' }]);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
     expect(h.err.join('\n')).toContain('强制');
   });
 
-  it('stop --force:跳过受控通道直接 killPidTree', async () => {
+  it('stop --force:跳过受控通道直接 killPidTree;kill 前落审计(reason=force)', async () => {
     const d = reg({ pid: 777, port: 9550 });
     const h = harness([[d], [], []]);
     await runDaemonCli(['stop', '--force'], h.deps);
     expect(h.shutdownCalls.length).toBe(0);
     expect(h.killCalls).toEqual([777]);
+    expect(h.auditKillCalls).toEqual([{ pid: 777, reason: 'force' }]);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
   });
 
@@ -254,11 +262,12 @@ describe('daemon CLI(批 B Task 8)', () => {
     expect(h.killCalls.length).toBe(0);
   });
 
-  it('stop:200 后登记迟迟不消失 → killPidTree 兜底(目标达成优先)', async () => {
+  it('stop:200 后登记迟迟不消失 → killPidTree 兜底(目标达成优先);kill 前落审计(reason=stale_registry)', async () => {
     const d = reg({ pid: 777, port: 9550 });
     const h = harness([[d], [d], [d], [d], [d], [d]]);
     await runDaemonCli(['stop'], h.deps);
     expect(h.killCalls).toEqual([777]);
+    expect(h.auditKillCalls).toEqual([{ pid: 777, reason: 'stale_registry' }]);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
   });
 
@@ -350,7 +359,7 @@ describe('daemon CLI(批 B Task 8)', () => {
     expect(h.out.join('\n')).toContain('pid=4321');
   });
 
-  it('restart:活 daemon + HTTP 超时 → killPidTree 后退化为重新 start', async () => {
+  it('restart:活 daemon + HTTP 超时 → killPidTree 后退化为重新 start;kill 前落审计(reason=restart_fallback)', async () => {
     const old = reg({ pid: 777, port: 9550 });
     const fresh = reg({ pid: 4321, port: 9550 });
     // 序列:target 检测 [old] → gone 轮询 [] → start 单例检测 [] → 就绪轮询 [fresh]
@@ -358,6 +367,7 @@ describe('daemon CLI(批 B Task 8)', () => {
     h.deps.postShutdown = vi.fn(async () => { throw new Error('ETIMEDOUT'); });
     await runDaemonCli(['restart'], h.deps);
     expect(h.killCalls).toEqual([777]);
+    expect(h.auditKillCalls).toEqual([{ pid: 777, reason: 'restart_fallback' }]);
     expect(h.spawnCalls).toEqual([{ port: 9550 }]);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
   });

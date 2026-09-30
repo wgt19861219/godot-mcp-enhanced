@@ -13,12 +13,14 @@
 import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { request } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, openSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXIT_CODES } from '../core/exit-codes.js';
 import { killPidTree as defaultKillPidTree } from '../core/process-state.js';
+import { appendMachineAuditLine } from '../core/audit-log.js';
 import { defaultOpener } from '../web-gui/open.js';
 import type { WebGuiRegistration } from '../web-gui/registry.js';
 
@@ -72,6 +74,8 @@ export interface DaemonCliDeps {
   opener?: (url: string) => void;
   /** 轮询 sleep 注入(测试零等待)。 */
   sleep?: (ms: number) => Promise<void>;
+  /** kill 兜底审计注入(测试 fake 断言被调;缺省直调 appendMachineAuditLine 真实现)。 */
+  auditKill?: (pid: number, reason: KillFallbackReason) => void | Promise<void>;
   /** 进程退出注入(缺省 process.exit;exit code 经 EXIT_CODES 注册表)。 */
   exit?: (code: number) => never;
 }
@@ -127,6 +131,10 @@ function defaultSpawnDaemon(opts: DaemonSpawnOptions): DaemonSpawnResult {
   }
   const logDir = join(homedir(), '.godot-mcp', 'logs');
   mkdirSync(logDir, { recursive: true });
+  // 日志名偏差声明(审查 Minor 2026-09-30):spec §3.8 字面为 daemon-<pid>.log,实现用
+  // daemon-<timestamp>.log——pid 在 spawn 之后才确定,而日志文件必须先于 spawn 打开
+  // (stdio fd 是 spawn 参数);timestamp 同秒重试不互相覆盖(同 pid 复用会混写)。
+  // spec 不改,以此注释 + 报告 §8 声明对照。
   const logFile = join(logDir, `daemon-${timestampForLog()}.log`);
   const fd = openSync(logFile, 'a');
   try {
@@ -170,12 +178,37 @@ function defaultPostShutdown(opts: { port: number; token: string; restart: boole
 
 // ─── 内部工具 ──────────────────────────────────────────────────────────────
 
+/** kill 兜底路径的审计归因(spec §3.9 daemon 生命周期机器级留痕):
+ *  force=--force 直杀;timeout=受控请求超时/网络错误;stale_registry=200 确认但
+ *  登记迟迟不清;restart_fallback=restart 受控失败退化为 kill+start。 */
+export type KillFallbackReason = 'force' | 'timeout' | 'stale_registry' | 'restart_fallback';
+
+/** kill 兜底审计(审查 Important 2026-09-30:此前 4 处兜底路径直接 killPidTree 零留痕,
+ *  risk=process 最高危面不可抵赖)。直调 appendMachineAuditLine 对齐 cli/audit-helper.ts
+ * 与 web-exporter.ts:102 先例——机器级恒写(T7 有意设计,不受 isAuditEnabled 控制),
+ * await 保证审计先于 kill 落盘(web-exporter 同款;fire-and-forget 在 CLI 进程退出时
+ * 可能被截断);失败 warn 不阻断,best-effort 对齐仓库惯例。形态对齐 server.ts
+ * auditDaemonAction(tool/action/risk/caller 同族),details.caller='daemon-cli' 对齐
+ * /api/shutdown 端点的 caller 判别落 details 先例(无 Origin=CLI 形态)。 */
+async function defaultAuditKill(pid: number, reason: KillFallbackReason): Promise<void> {
+  await appendMachineAuditLine({
+    trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+    tool: 'web-gui', action: 'shutdown', risk: 'process',
+    ok: true, project_path: '', changed_files: [], duration_ms: 0,
+    caller: 'web-gui:daemon',
+    details: { caller: 'daemon-cli', reason, pid },
+  }).catch((e: unknown) => {
+    console.warn(`[godot-mcp] machine-audit write failed (best-effort): ${e instanceof Error ? e.message : e}`);
+  });
+}
+
 interface ResolvedDeps {
   env: NodeJS.ProcessEnv;
   listRegistrations: () => Promise<WebGuiRegistration[]>;
   spawnDaemon: (opts: DaemonSpawnOptions) => DaemonSpawnResult;
   postShutdown: (opts: { port: number; token: string; restart: boolean; timeoutMs: number }) => Promise<{ status: number }>;
   killPidTree: (pid: number) => void;
+  auditKill: (pid: number, reason: KillFallbackReason) => void | Promise<void>;
   isPortFree: (port: number) => Promise<boolean>;
   opener: (url: string) => void;
   sleep: (ms: number) => Promise<void>;
@@ -194,6 +227,7 @@ async function resolveDeps(deps: DaemonCliDeps): Promise<ResolvedDeps> {
     spawnDaemon: deps.spawnDaemon ?? defaultSpawnDaemon,
     postShutdown: deps.postShutdown ?? defaultPostShutdown,
     killPidTree: deps.killPidTree ?? defaultKillPidTree,
+    auditKill: deps.auditKill ?? defaultAuditKill,
     isPortFree: deps.isPortFree ?? defaultIsPortFree,
     opener: deps.opener ?? defaultOpener,
     sleep: deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms))),
@@ -297,6 +331,7 @@ async function cmdStop(d: ResolvedDeps, force: boolean): Promise<number> {
   }
   if (force) {
     console.log(`已发送强制终止(pid=${target.pid},进程树)。`);
+    await d.auditKill(target.pid, 'force');
     d.killPidTree(target.pid);
     await waitForDaemonGone(target.pid, d);
     return EXIT_CODES.EXIT_OK;
@@ -306,6 +341,7 @@ async function cmdStop(d: ResolvedDeps, force: boolean): Promise<number> {
     ({ status } = await d.postShutdown({ port: target.port, token: target.token, restart: false, timeoutMs: SHUTDOWN_TIMEOUT_MS }));
   } catch (err) {
     console.error(`受控停止请求失败(${err instanceof Error ? err.message : err})→ 强制终止 pid=${target.pid}`);
+    await d.auditKill(target.pid, 'timeout');
     d.killPidTree(target.pid);
     await waitForDaemonGone(target.pid, d);
     return EXIT_CODES.EXIT_OK;
@@ -325,6 +361,7 @@ async function cmdStop(d: ResolvedDeps, force: boolean): Promise<number> {
     return EXIT_CODES.EXIT_OK;
   }
   console.error(`受控停止已确认但登记未清(pid=${target.pid})→ 强制终止兜底`);
+  await d.auditKill(target.pid, 'stale_registry');
   d.killPidTree(target.pid);
   await waitForDaemonGone(target.pid, d);
   return EXIT_CODES.EXIT_OK;
@@ -358,6 +395,7 @@ async function cmdRestart(d: ResolvedDeps, open: boolean): Promise<number> {
   } catch (err) {
     // 受控交接超时 → kill 兜底后退化为重新 start(目标:重启完成)
     console.error(`受控重启请求失败(${err instanceof Error ? err.message : err})→ 强制终止 pid=${target.pid} 后重新启动`);
+    await d.auditKill(target.pid, 'restart_fallback');
     d.killPidTree(target.pid);
     await waitForDaemonGone(target.pid, d);
     return cmdStart(d, open);
