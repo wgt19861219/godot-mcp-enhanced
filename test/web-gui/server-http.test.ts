@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, afterAll, beforeAll, vi } from 'vitest';
 import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions, type ProjectsApi } from '../../src/web-gui/server.js';
-import { rotateSharedToken } from '../../src/web-gui/registry.js';
+import { rotateSharedToken, writeRegistration } from '../../src/web-gui/registry.js';
 import { INDEX_HTML } from '../../src/web-gui/html.js';
 import type { RunSessionDetailed } from '../../src/core/process-state.js';
 
@@ -81,13 +81,15 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 换行炸掉浏览器脚本语法(面板永远"连接中"根因);修复改双写使脚本内容变更 → hash
     // 轮换。同款双通道互证后锁入;此后 INDEX_HTML 内联脚本语法由 html.test.ts 的
     // vm.Script 编译测试独立把关。
-    expect(WEB_GUI_CSP).toContain("'sha256-PBn35Bzj4osYxK5A2BGTm/NXpmQBKZ4jjkcP3UmDa04='");
+    // 实例管理批 (2026-09-30) 五次重锚:左列新增 #instPane 区(renderInstances/委托/
+    // pollInstancesGone 函数段)使脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-fxmxYFhUMrqZMijFNkdlS3Rfk37FyGh36vT464Y16p4='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('PBn35Bzj4osYxK5A2BGTm/NXpmQBKZ4jjkcP3UmDa04=');   // 独立重算与锚互证
+    expect(hash).toBe('fxmxYFhUMrqZMijFNkdlS3Rfk37FyGh36vT464Y16p4=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
@@ -208,7 +210,8 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
   afterEach(async () => { if (active) { await active.stop(); active = null; } });
 
   type CtrlHooks = Partial<Pick<WebGuiServerOptions, 'stopSession' | 'removeSession'
-    | 'runProject' | 'editProject' | 'isReadOnly' | 'projects'>>;
+    | 'runProject' | 'editProject' | 'isReadOnly' | 'projects'
+    | 'isPidAlive' | 'onSelfRestart'>>;   // 实例管理批(2026-09-30)
 
   async function startCtrlServer(hooks: CtrlHooks): Promise<{ srv: WebGuiServer; base: string; token: string }> {
     const srv = new WebGuiServer({
@@ -435,7 +438,7 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
   // 断言组合覆盖;错误 token 401 / 正确 token 200 的行为由上方既有用例锁定不回归。
   it('源码契约(M-1):server.ts 引入 timingSafeEqual,无 === this.token / !== this.token 字面比较', () => {
     const src = readFileSync(new URL('../../src/web-gui/server.ts', import.meta.url), 'utf-8');
-    expect(src).toContain("import { timingSafeEqual } from 'node:crypto'");
+    expect(src).toContain("import { timingSafeEqual, randomUUID } from 'node:crypto'");   // 实例管理批(2026-09-30)并段 randomUUID(机器级审计 trace_id)
     expect(src).not.toContain('=== this.token');
     expect(src).not.toContain('!== this.token');
   });
@@ -605,5 +608,133 @@ describe('rotateSharedToken 与 server 联动(M-2)', () => {
     await a.stop();
     await b.stop();
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+// ── 实例管理批(2026-09-30): GET /api/instances + POST /api/instances/restart ──
+// isPidAlive 注入 mock 绕过真实探活——预写登记的假 pid 无需真实进程;杀他实例
+// 用例先探测本机 TEST_PID 确实不存在才跑(mock 绕过探活后 taskkill 若 pid 恰被
+// 真实进程占用会误杀,probe-then-run 防御)。
+describe('实例管理端点(2026-09-30 实例管理批)', () => {
+  let active: WebGuiServer | null = null;
+  let dir = '';
+
+  beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'web-gui-inst-test-')); });
+  afterAll(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { if (active) { await active.stop(); active = null; } });
+
+  const ALIVE_MOCK_PIDS = new Set<number>();
+  function isPidAliveMock(p: number): boolean { return ALIVE_MOCK_PIDS.has(p); }
+
+  async function startInstServer(hooks: Partial<Pick<WebGuiServerOptions, 'isPidAlive' | 'onSelfRestart'>> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
+    const srv = new WebGuiServer({
+      getSessions: () => FAKE_SESSIONS,
+      getIndexHtml: () => FAKE_HTML,
+      portStart: 0,
+      registryDir: dir,
+      ...hooks,
+    });
+    await srv.start();
+    return { srv, base: `http://127.0.0.1:${srv.port}`, token: srv.token };
+  }
+
+  function post(base: string, path: string, token: string, body: unknown): Promise<Response> {
+    return fetch(base + path, {
+      method: 'POST',
+      headers: { 'x-gui-token': token, 'content-type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+  }
+
+  it('GET /api/instances:登记行(带/不带 version)+ current 标记 + 死 pid 惰性清', async () => {
+    ALIVE_MOCK_PIDS.clear();
+    ALIVE_MOCK_PIDS.add(111); ALIVE_MOCK_PIDS.add(222); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    await writeRegistration({ pid: 111, port: 9551, token: t.token, startedAt: '2026-09-30T01:00:00Z', version: '9.9.9' }, { dir });
+    await writeRegistration({ pid: 222, port: 9552, token: t.token, startedAt: '2026-09-30T02:00:00Z' }, { dir });
+    await writeRegistration({ pid: 333, port: 9553, token: t.token, startedAt: '2026-09-30T03:00:00Z' }, { dir });   // 死 pid:mock 不认 → 惰性清
+    const res = await fetch(t.base + '/api/instances', { headers: { 'x-gui-token': t.token } });
+    expect(res.status).toBe(200);
+    const v = await res.json() as { me: number; instances: Array<{ pid: number; port: number; startedAt: string; version: string | null; current: boolean }> };
+    expect(v.me).toBe(process.pid);
+    const byPid = new Map(v.instances.map((e) => [e.pid, e]));
+    expect(byPid.get(111)?.version).toBe('9.9.9');
+    expect(byPid.get(111)?.current).toBe(false);
+    expect(byPid.get(222)?.version).toBeNull();   // 无 version 字段 → null(前端「早期实例」判据)
+    expect(byPid.get(process.pid)?.current).toBe(true);   // 测试 server 自身(start() 自动登记)
+    expect(byPid.has(333)).toBe(false);   // 死 pid 被过滤 + 登记文件惰性清
+  });
+
+  it('GET /api/instances 无 token → 401(与其余 api 路径同鉴权)', async () => {
+    const t = await startInstServer({ isPidAlive: () => false });
+    active = t.srv;
+    const res = await fetch(t.base + '/api/instances');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST restart:bad json → 400;pid 非整数/非法 → 400;未登记 pid → 404(不触 kill)', async () => {
+    ALIVE_MOCK_PIDS.clear();
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    expect((await post(t.base, '/api/instances/restart', t.token, 'not-json{')).status).toBe(400);
+    expect((await post(t.base, '/api/instances/restart', t.token, { pid: 'abc' })).status).toBe(400);
+    expect((await post(t.base, '/api/instances/restart', t.token, { pid: 1.5 })).status).toBe(400);
+    expect((await post(t.base, '/api/instances/restart', t.token, { pid: 12345 })).status).toBe(404);
+  });
+
+  it('POST restart 自 pid → 200 {ok:true,self:true} + onSelfRestart 注入点被调(不真退出)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(process.pid);
+    let restarted = false;
+    const t = await startInstServer({ isPidAlive: isPidAliveMock, onSelfRestart: () => { restarted = true; } });
+    active = t.srv;
+    const res = await post(t.base, '/api/instances/restart', t.token, { pid: process.pid });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, self: true });
+    await new Promise((r) => { setTimeout(r, 300); });   // server.ts 内 setTimeout 150ms 后才调注入点
+    expect(restarted).toBe(true);
+  });
+
+  // 防御性条件跑:TEST_PID 在本机确无进程才执行 kill 路径(见 describe 头注释)
+  const TEST_PID = 999999;
+  const testPidVacant = (() => { try { process.kill(TEST_PID, 0); return false; } catch { return true; } })();
+  (testPidVacant ? it : it.skip)('POST restart 他实例(登记+活 mock)→ 200 {ok:true}(taskkill 对空 pid 无害失败)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(TEST_PID); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    await writeRegistration({ pid: TEST_PID, port: 9559, token: t.token, startedAt: '2026-09-30T04:00:00Z', version: '0.0.0' }, { dir });
+    const res = await post(t.base, '/api/instances/restart', t.token, { pid: TEST_PID });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('审计留痕:restart 落机器级 caller=web-gui:instances(实例操作无项目归属)', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-inst-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(process.pid);
+    try {
+      const t = await startInstServer({ isPidAlive: isPidAliveMock, onSelfRestart: () => { /* noop:仅验留痕 */ } });
+      active = t.srv;
+      const res = await post(t.base, '/api/instances/restart', t.token, { pid: process.pid });
+      expect(res.status).toBe(200);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'restart' && e.caller === 'web-gui:instances');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.tool).toBe('web-gui');
+      expect(hit!.risk).toBe('process');
+      expect((hit!.details as { self?: boolean })?.self).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
   });
 });

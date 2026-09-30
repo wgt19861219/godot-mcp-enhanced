@@ -8,12 +8,13 @@
 // INDEX_SCRIPT_SHA256 精确放行唯一内联脚本,批3 去 'unsafe-inline')+ raw 响应头防线。
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { RunSessionDetailed } from '../core/process-state.js';
-import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken } from './registry.js';
+import { killPidTree, type RunSessionDetailed } from '../core/process-state.js';
+import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
@@ -21,6 +22,8 @@ import type { LogEntry } from '../core/logger.js';
 // 批4-T8(五维评估 P2 抗抵赖): 写端点统一审计出口——sessions/process、projects/write
 // 补线(批2 仅 files-api 一处),caller 细分 web-gui:<子系统>
 import { auditWebGui } from './audit-helper.js';
+// 实例管理批(2026-09-30):实例重启无项目归属,恒落机器级审计(见 auditInstanceAction)
+import { appendMachineAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import { LogReader } from '../dashboard/log-reader.js';
 import { Aggregator } from '../dashboard/aggregator.js';
 import type { ToolStats, TimeSeriesBucket } from '../dashboard/aggregator.js';
@@ -73,6 +76,11 @@ export interface WebGuiServerOptions {
   isReadOnly?: () => boolean;
   /** 设置面板(2026-09-29 设置批):get/verify/save 三方法注入;缺席 → 设置端点 503。 */
   settings?: SettingsApi;
+  /** 实例管理批(2026-09-30):重启"本实例"的有序退出回调(先响应 200 再走 close 链,
+   *  登记文件随 stop() 清理);缺席兜底 process.exit(0)。构造器注入,不新增模块级 setter。 */
+  onSelfRestart?: () => void;
+  /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
+  isPidAlive?: (pid: number) => boolean;
 }
 
 /** /api/stats 与 SSE stats 快照形态(html.ts 契约,设计 §3.3.4)。 */
@@ -92,6 +100,12 @@ interface StatsSnapshot extends ProjectStatsSnapshot {
 
 const DEFAULT_PORT_START = 9550;
 const PORT_ATTEMPTS = 20;
+
+// 实例管理批(2026-09-30):本 server 版本,登记进 registry(面板区分新旧代码实例的判据)。
+// createRequire idiom 同 GodotServer.ts pkgVersion;本模块在 src/web-gui/(build 后
+// build/web-gui/)子目录,包根 package.json 在上两级——vitest 从 src 跑与 node 从
+// build 跑的相对深度一致,同一路径双场景成立。
+const PKG_VERSION: string = (createRequire(import.meta.url)('../../package.json') as { version?: string }).version ?? 'unknown';
 
 /**
  * 面板主文档 CSP(导出供测试精确断言)。
@@ -197,7 +211,7 @@ export class WebGuiServer {
     _active = true;
     const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
     this.startedAtIso = new Date().toISOString();
-    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso }, regOpts);
+    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION }, regOpts);
     // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
     // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
     void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
@@ -305,7 +319,7 @@ export class WebGuiServer {
           || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
           || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
           || url.pathname === '/api/projects/file' || url.pathname === '/api/settings'
-          || url.pathname === '/api/settings/verify') {
+          || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -393,6 +407,12 @@ export class WebGuiServer {
         void this.handleProjectsList(res);
         return;
       }
+      // 实例列表(2026-09-30 实例管理批):registry 直读(server.ts import registry 先例;
+      // 实例清单非 GodotServer 状态,不走 opts 注入——计划决策 1)
+      if (url.pathname === '/api/instances') {
+        void this.handleInstancesList(res);
+        return;
+      }
       // 资源工作台读路径(spec §4,2026-09-15 v2):列目录 + 单文件三模式读(均异步 fs)
       if (url.pathname === '/api/projects/files') {
         void this.handleFilesList(url, res);
@@ -450,6 +470,48 @@ export class WebGuiServer {
     }
   }
 
+  // ─── 实例管理批(2026-09-30)─────────────────────────────────────────────────
+
+  /** registry 调用参数归一(注入优先;start() 内 regOpts 同款字面量的读路径复用版)。 */
+  private regOpts(): RegistryOpts {
+    const o: RegistryOpts = {};
+    if (this.opts.registryDir) o.dir = this.opts.registryDir;
+    if (this.opts.isPidAlive) o.isPidAlive = this.opts.isPidAlive;
+    return o;
+  }
+
+  /** GET /api/instances:registry 直读活实例清单。version null = 早期实例(前端判据),
+   *  current 标记本实例(前端"重启自己"走特殊提示)。token 不外发(响应无凭据字段)。 */
+  private async handleInstancesList(res: ServerResponse): Promise<void> {
+    try {
+      const entries = await listRegistrations(this.regOpts());
+      const body = JSON.stringify({
+        me: process.pid,
+        instances: entries.map(e => ({ pid: e.pid, port: e.port, startedAt: e.startedAt, version: e.version ?? null, current: e.pid === process.pid })),
+      });
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(body);
+    } catch (err) {
+      getLogger().warn('web-gui', `instances list failed: ${err instanceof Error ? err.message : err}`);
+      res.writeHead(500).end();
+    }
+  }
+
+  /** 实例操作审计:恒落机器级(~/.godot-mcp/machine-audit.jsonl)——实例重启无项目
+   *  归属,语义对齐批6-N-e"安全事件归机器"判例。不复用 auditWebGui:其 projectPath
+   *  语义绑定项目目录,空路径的成功调用会被 existsSync 守卫整条丢弃(audit-helper
+   *  批6-N-e 分支),实例操作走它会零留痕。best-effort,失败不阻断 HTTP 响应。 */
+  private auditInstanceAction(action: string, ok: boolean, details?: Record<string, unknown>): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action, risk: 'process',
+      ok, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'web-gui:instances',
+      ...(details && Object.keys(details).length ? { details } : {}),
+    }).catch((e: unknown) => { recordAuditWriteFailure(e); });
+  }
+
   private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -459,6 +521,43 @@ export class WebGuiServer {
       if (!this.authorized(req, url)) {
         res.writeHead(this.tokenEquals(this.extractToken(req, url)) ? 403 : 401).end();
         return;
+      }
+
+      // ── POST /api/instances/restart(实例管理批 2026-09-30)─────────────────
+      // 安全边界(计划决策 3):pid 必须是 registry 活实例——绝不裸收 pid 杀进程,
+      // 防任意进程 kill 后门(过 listRegistrations 的 parseRegistrationFile 三字段
+      // 判型 + token 字符集白名单 + isPidAlive 探活三重过滤)。
+      // 不受 READ_ONLY 拦:重启是运维操作非项目写,对齐 sessions/stop 不被拦的现状。
+      if (url.pathname === '/api/instances/restart') {
+        const body = await this.readJsonBody(req);
+        if (!body.ok) return json(400, { error: 'bad json' });
+        const pid = (body.value as { pid?: unknown } | null)?.pid;
+        if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+          getLogger().info('web-gui', `action=instance_restart result=400_bad_pid`);
+          return json(400, { error: 'pid (integer) required' });
+        }
+        const entries = await listRegistrations(this.regOpts());
+        const target = entries.find(e => e.pid === pid);
+        if (!target) {
+          getLogger().info('web-gui', `action=instance_restart pid=${pid} result=404_not_registered`);
+          this.auditInstanceAction('restart', false, { pid, error: 'not_registered' });
+          return json(404, { error: 'not registered or dead' });
+        }
+        if (pid === process.pid) {
+          // 自重启:先响应 200,再走注入的有序退出(close 链清登记文件,前端收到响应后
+          // SSE 断开自愈迁移);缺省兜底硬退出(登记由下次 listRegistrations 惰性清)。
+          getLogger().info('web-gui', `action=instance_restart pid=${pid} result=200_self`);
+          this.auditInstanceAction('restart', true, { pid, self: true });
+          setTimeout(() => (this.opts.onSelfRestart ?? (() => process.exit(0)))(), 150);
+          return json(200, { ok: true, self: true });
+        }
+        // 杀他实例:Windows 无跨进程优雅信号(taskkill /F /T 是唯一可行),MCP 客户端
+        // 检测到子进程退出后重连拉起新进程——新代码生效即此路径。正在跑的 Godot 游戏
+        // 会话随目标 server 退出被清理(前端 confirm 文案如实告知)。
+        getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} version=${target.version ?? 'legacy'} result=200`);
+        this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
+        killPidTree(pid);
+        return json(200, { ok: true });
       }
 
       // ── POST /api/projects/file(spec §4:保存流,body 预检→乐观锁保存)──────

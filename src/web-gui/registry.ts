@@ -19,6 +19,10 @@ export interface WebGuiRegistration {
   port: number;
   token: string;
   startedAt: string;
+  /** server 版本(实例管理批 2026-09-30):面板区分新旧代码实例的判据。
+   *  可选——旧版本登记文件无此字段,parseRegistrationFile 不校验它(向后兼容),
+   *  前端以在场性显示「早期实例」。 */
+  version?: string;
 }
 
 export interface RegistryOpts {

@@ -147,4 +147,14 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     writeFileSync(join(dir, 'bad5.json'), JSON.stringify({ pid: 1, port: 9550, token: 'a b;rm' }), 'utf-8');
     await expect(parseRegistrationFile(dir, 'bad5.json')).resolves.toBeNull();
   });
+
+  // ── 实例管理批(2026-09-30):version 可选字段——面板区分新旧代码实例的判据 ──
+  it('version 可选字段:writeRegistration 落盘带 version 读回一致;无 version 旧登记照常读回(向后兼容)', async () => {
+    await writeRegistration({ pid: 5001, port: 9550, token: 'tok_v1', startedAt: 't1', version: '0.33.9' }, { dir, isPidAlive: () => true });
+    await writeRegistration({ pid: 5002, port: 9551, token: 'tok_v2', startedAt: 't2' }, { dir, isPidAlive: () => true });   // 旧形态:无 version
+    const list = await listRegistrations({ dir, isPidAlive: () => true });
+    const byPid = new Map(list.map((e) => [e.pid, e]));
+    expect(byPid.get(5001)?.version).toBe('0.33.9');
+    expect(byPid.get(5002)?.version).toBeUndefined();   // 旧登记不拒读、字段缺席
+  });
 });

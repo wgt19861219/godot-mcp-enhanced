@@ -46,10 +46,12 @@ export const INDEX_HTML: string = `<!doctype html>
   .ctl:hover { color: var(--fg); border-color: var(--dim); }
   .ctl.stop:hover { color: var(--red); border-color: var(--red); }
   .ctl:disabled { opacity: .4; cursor: default; }
-  /* 项目面板批(spec §7.1):左列上项目(~55%)下会话(~45%),三列外框不变 */
+  /* 项目面板批(spec §7.1):左列上项目(~55%)下会话(~45%),三列外框不变
+     实例管理批(2026-09-30):左列改三段——项目 42/会话 33/实例 25(原 55/45) */
   #left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-  #projPane { flex: 55 1 0; }
-  #left > section:last-child { flex: 45 1 0; }
+  #projPane { flex: 42 1 0; }
+  #sessionsPane { flex: 33 1 0; }
+  #instPane { flex: 25 1 0; }
   .proj-row { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
   .proj-row .ctl { padding: 1px 6px; }
   .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -124,7 +126,10 @@ export const INDEX_HTML: string = `<!doctype html>
       <div class="log-tools"><input id="projSearch" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
       <div class="log-tools" id="addRow"><input id="addPath" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
       <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
-    <section><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+    <section id="sessionsPane"><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+    <!-- 实例管理批(2026-09-30):本机全部 MCP server 实例(=各 MCP 客户端会话拉起的
+         godot-mcp-enhanced 进程),面板自身的宿主也在其中;「重启」用于让实例吃到新 build -->
+    <section id="instPane"><h2>实例 <span class="dim" style="font-weight:normal">「重启」中断该实例的 MCP 会话,客户端重连拉起新进程</span></h2><div class="scroll" id="instList"><div class="empty">加载中…</div></div></section>
   </div>
   <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
     <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button><button type="button" id="tabSettings" class="tab">设置</button></div>
@@ -177,7 +182,7 @@ export const INDEX_HTML: string = `<!doctype html>
   // 失败不阻塞:query 通道兜底,哪个通用哪个;响应体无需处理。
   if (token) { fetch('/api/auth?token=' + encodeURIComponent(token)).catch(function () { /* 握手失败不阻塞:query 通道兜底 */ }); }
   var $ = function (id) { return document.getElementById(id); };
-  var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set(), readOnly: false };
+  var state = { logs: [], stats: null, sessions: [], projects: null, dedup: new Set(), readOnly: false, instances: [], mePid: 0 };
   var stopped = false;   // 401 凭据失效后停 SSE 死循环(M-2 语义,2026-09-16 保留)
   // 文件浏览状态(spec §6.1,Task 5 消费):当前项目/当前子目录/当前目录条目快照。
   var filesState = { project: null, sub: '', entries: [] };
@@ -254,6 +259,72 @@ export const INDEX_HTML: string = `<!doctype html>
       tr.append(td1, td2, td3, td4, td5, td6); tbody.appendChild(tr);
     });
     tbl.append(thead, tbody); host.appendChild(tbl);
+  }
+
+  // ── 实例管理(2026-09-30)────────────────────────────────────────────────────
+  // GET /api/instances → {me, instances:[{pid,port,startedAt,version,current}]}。
+  // version null = 早期实例(登记无版本字段,面板死锁修复前的 build)——用户判断哪个
+  // 实例该重启的判据。行按钮零监听器、只带 data-action + data-pid,#instPane 容器
+  // 一次性委托(同 #sessions 模式);列表低频变化,15s 静默轮询 + 重启后定向确认。
+  function loadInstances() {
+    authFetch('/api/instances').then(function (r) {
+      if (!r.ok) return;
+      return r.json().then(function (v) {
+        state.mePid = v.me || 0;
+        state.instances = Array.isArray(v.instances) ? v.instances : [];
+        renderInstances();
+      });
+    }).catch(function () { /* 静默轮询,失败下轮再试 */ });
+  }
+
+  function renderInstances() {
+    var host = $('instList'); host.textContent = '';
+    if (!state.instances.length) {
+      var d = document.createElement('div'); d.className = 'empty'; d.textContent = '没有运行中的实例';
+      host.appendChild(d); return;
+    }
+    var tbl = document.createElement('table');
+    var thead = document.createElement('thead');
+    var htr = document.createElement('tr');
+    ['pid', '端口', '版本', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
+    thead.appendChild(htr);
+    var tbody = document.createElement('tbody');
+    state.instances.forEach(function (e) {
+      var tr = document.createElement('tr');
+      var td1 = document.createElement('td');
+      td1.textContent = e.current ? e.pid + ' ·本实例' : String(e.pid);
+      tr.title = 'started ' + (e.startedAt || '-');
+      var td2 = document.createElement('td'); td2.textContent = String(e.port);
+      var td3 = document.createElement('td');
+      var ver = e.version ? 'v' + e.version : '早期实例';
+      if (e.current) { var b = document.createElement('span'); b.className = 'badge st-running'; b.textContent = ver; td3.appendChild(b); }
+      else td3.textContent = ver;
+      var td4 = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.className = 'ctl'; btn.textContent = '重启';
+      btn.setAttribute('data-action', 'inst-restart');
+      btn.setAttribute('data-pid', String(e.pid));
+      td4.appendChild(btn);
+      tr.append(td1, td2, td3, td4); tbody.appendChild(tr);
+    });
+    tbl.append(thead, tbody); host.appendChild(tbl);
+  }
+
+  // 重启后定向确认:2s×5 轮询目标 pid 是否退出(客户端重连拉起新进程是另一 pid,
+  // 会以新行出现——statusBar 提示用户;新实例 version 即当前 build 的判据)。
+  function pollInstancesGone(pid) {
+    var n = 0;
+    var t = setInterval(function () {
+      n++;
+      loadInstances();
+      var gone = !state.instances.some(function (e) { return e.pid === pid; });
+      if (gone || n >= 5) {
+        clearInterval(t);
+        $('statusBar').textContent = gone
+          ? '实例 pid=' + pid + ' 已退出;客户端重连后新实例将出现在列表(版本列=新 build)'
+          : '实例 pid=' + pid + ' 仍在运行(重启可能未生效,列表 15s 自动刷新)';
+      }
+    }, 2000);
   }
 
   // ── 项目面板(spec §7.2/§7.3,2026-09-15)────────────────────────────────────
@@ -1042,6 +1113,43 @@ export const INDEX_HTML: string = `<!doctype html>
       $('statusBar').textContent = '网络异常,操作未送达';
     });
   });
+
+  // #instPane 容器一次性事件委托(实例管理批 2026-09-30,同 #sessions 模式):
+  // 重启按钮 data-action=inst-restart + data-pid。confirm 文案语义诚实——不承诺
+  // 客户端自动重连(ZCode 重连行为未定论,实测前按"可能需手动重连"告知)。
+  $('instPane').addEventListener('click', function (ev) {
+    var btn = ev.target && ev.target.closest ? ev.target.closest('button[data-action="inst-restart"]') : null;
+    if (!btn) return;
+    var pid = Number(btn.getAttribute('data-pid')) || 0;
+    var isSelf = pid !== 0 && pid === state.mePid;
+    var msg = isSelf
+      ? '重启本实例?面板将短暂断开,自动迁移到其他活实例(若无其他实例,等客户端重连后刷新本页即可)。'
+      : '重启实例 pid=' + pid + '?\\n会中断该实例正在服务的一个 MCP 会话,其正在跑的游戏会话也会被清理;\\n客户端通常自动重连并拉起新进程(新代码生效),若未自动重连请在客户端手动重连。';   // 双写反斜杠n:模板求值后剩字面转义,JS 解析为换行;单写即死锁根因同款
+    if (!window.confirm(msg)) return;
+    btn.disabled = true;
+    $('statusBar').textContent = '重启中… pid=' + pid;
+    fetch('/api/instances/restart', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ pid: pid }),
+    }).then(function (r) {
+      if (!r.ok) {
+        btn.disabled = false;
+        return r.text().then(function (t) { $('statusBar').textContent = '重启失败: ' + t.slice(0, 80); });
+      }
+      if (isSelf) { $('statusBar').textContent = '本实例重启中,面板即将断开…'; return; }
+      $('statusBar').textContent = '已请求重启 pid=' + pid + ',等待客户端拉起新进程…';
+      pollInstancesGone(pid);
+    }).catch(function () {
+      btn.disabled = false;
+      $('statusBar').textContent = '网络异常,重启请求未送达';
+    });
+  });
+
+  // 实例列表:初始拉取 + 15s 静默轮询(实例清单非 SSE 推送——server 侧感知不到其他
+  // 实例的 registry 变化,客户端拉取是唯一真相源;静默失败,下轮再试)。
+  loadInstances();
+  setInterval(loadInstances, 15000);
 
   // 中列 tab 切换(资源管理批 spec §6.1):tab 按钮为静态 DOM、从不重绘,直接绑定
   // (与 logFilter/projSearch 静态控件同模式;重绘容器内的按钮才须走 data-action 委托)。

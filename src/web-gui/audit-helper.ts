@@ -17,7 +17,11 @@ import { appendAuditLine, appendMachineAuditLine, isAuditEnabled, recordAuditWri
 import type { RiskLevel } from '../core/tool-registry.js';
 
 export function auditWebGui(
-  subsystem: 'files' | 'sessions' | 'projects',
+  // 'instances' 为预留扩展(实例管理批 2026-09-30):实例操作无项目归属,实际走
+  // server.ts auditInstanceAction 直调 appendMachineAuditLine(机器级)——本函数的
+  // projectPath 语义绑定项目目录,空路径成功调用会被 existsSync 守卫整条丢弃,
+  // 不适用;未来实例类操作若涉及具体项目再走本函数。
+  subsystem: 'files' | 'sessions' | 'projects' | 'instances',
   action: string,
   risk: RiskLevel,
   projectPath: string,

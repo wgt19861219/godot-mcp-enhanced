@@ -183,6 +183,29 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('renderSettingsInfo');                // 只读生效值信息区
   });
 
+  // ── 实例管理批(2026-09-30):左列第三区——实例列表 + 一键重启 ──────────────────
+  it('实例区:section 结构 + 三段 flex(CSS) + 加载/空态', () => {
+    expect(INDEX_HTML).toContain('id="instPane"');                      // 左列第三个 section
+    expect(INDEX_HTML).toContain('id="instList"');                      // 列表容器(.scroll)
+    expect(INDEX_HTML).toContain('#projPane { flex: 42 1 0; }');        // 三段 flex:42/33/25
+    expect(INDEX_HTML).toContain('#sessionsPane { flex: 33 1 0; }');
+    expect(INDEX_HTML).toContain('#instPane { flex: 25 1 0; }');
+  });
+  it('实例区:GET /api/instances 接线 + 渲染契约(早期实例/本实例标记/委托)', () => {
+    expect(INDEX_HTML).toContain("authFetch('/api/instances')");       // 列表拉取
+    expect(INDEX_HTML).toContain('function renderInstances');           // 渲染函数
+    expect(INDEX_HTML).toContain('早期实例');                            // version null 的显示文案
+    expect(INDEX_HTML).toContain('·本实例');                            // current 标记
+    expect(INDEX_HTML).toContain('data-action="inst-restart"');         // 重启按钮零监听器 + 数据属性
+    expect(INDEX_HTML).toContain("closest('button[data-action=\"inst-restart\"]')");   // #instPane 容器委托(对齐 #sessions 模式)
+  });
+  it('实例区:重启 POST 接线 + confirm 语义诚实文案 + 轮询确认', () => {
+    expect(INDEX_HTML).toContain("fetch('/api/instances/restart'");    // POST 重启
+    expect(INDEX_HTML).toContain('window.confirm');                     // 二次确认
+    expect(INDEX_HTML).toContain('客户端手动重连');                       // 不承诺自动恢复的诚实文案
+    expect(INDEX_HTML).toContain('function pollInstancesGone');        // 2s×5 定向确认
+    expect(INDEX_HTML).toContain('setInterval(loadInstances, 15000)');  // 15s 静默轮询
+  });
 });
 
 // ── 语法防回归(2026-09-30 面板死锁根因)────────────────────────────────────

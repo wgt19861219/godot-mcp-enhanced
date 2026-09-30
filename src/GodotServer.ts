@@ -644,6 +644,13 @@ export class GodotServer {
           settings: new UserSettingsService({
             isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
           }),
+          // 实例管理批(2026-09-30):面板"重启本实例"的有序退出——close() 走完整清理链
+          // (含 stopWebGui 删登记文件)后 exit(0),对齐 index.ts gracefulShutdown 语义;
+          // close() 抛错不阻退出(catch 吞),理论悬死窗(close 永不 settle)接受——
+          // close 链各步 best-effort 有界,极端场景由 MCP 客户端杀进程兜底。
+          onSelfRestart: () => {
+            void this.close().catch(() => { /* 清理失败不阻退出 */ }).finally(() => process.exit(0));
+          },
         });
         await this.webGuiServer.start();
         this.webGuiActive = true;
