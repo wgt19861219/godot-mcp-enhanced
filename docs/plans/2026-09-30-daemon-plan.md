@@ -175,7 +175,7 @@ git commit -m "test(daemon): transport wiring 与会话语义 spike 探针(R1/R3
 
 **Interfaces:**
 - Produces(API 后续任务依赖,签名固定):
-  - `ServerOptions` 新增:`mode?: 'stdio' | 'daemon'`(缺省 `'stdio'`)、`mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void`
+  - `ServerOptions` 新增:`processMode?: 'stdio' | 'daemon'`(缺省 `'stdio'`;**Task 2 实施裁定:plan 初稿写 `mode`,与既有 `ServerOptions.mode` 工具档位字段 TS2717 冲突,改名 `processMode`**)、`mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void`
   - `GodotServer.connectTransport(transport: Transport): Promise<void>`——从 `run()` 拆出;`run()` 保持原签名原行为(stdio 路径内部调 `connectTransport(new StdioServerTransport())`)
   - `src/index.ts` 新导出:`runStartupSequence(opts: { dashboard: boolean; selfUpdate: boolean }): Promise<void>`——含 env 安全门(H-08)+ `applyUserSettingsAtStartup()` + C-08 白名单提示 + 审计关闭告警;不含 Dashboard TUI / self-update / stdin 钩子 / `server.run()`(这些留在 stdio 入口,daemon 入口按 opts 裁剪)
 
@@ -188,7 +188,7 @@ import { GodotServer } from '../../src/GodotServer.js';
 
 describe('GodotServer transport 参数化(daemon 批 A)', () => {
   it('connectTransport 接受外部 transport 并 connect', async () => {
-    const server = new GodotServer('res://ops.gd', { mode: 'daemon' });
+    const server = new GodotServer('res://ops.gd', { processMode: 'daemon' });
     const fake = { start: vi.fn(), send: vi.fn(), close: vi.fn() };
     await server.connectTransport(fake as unknown as Transport);
     expect(fake.start).toHaveBeenCalledOnce();
@@ -212,7 +212,7 @@ Expected: FAIL(`connectTransport is not a function`)。
 // src/GodotServer.ts — ServerOptions 加(现有 readOnly? 同区块):
   /** daemon 批(2026-09-30 spec §3.3):进程模式。stdio=缺省,行为与历史完全一致;
    *  daemon=由 src/daemon/main.ts 组装(HTTP transport + mcpHandler 透传 + 不注册 stdin 钩子)。 */
-  mode?: 'stdio' | 'daemon';
+  processMode?: 'stdio' | 'daemon';
   /** daemon 模式:/mcp HTTP 处理器,经 run() 构造 WebGuiServer 时透传挂载(§3.2 注入链)。
    *  web-gui 不 import MCP SDK——本字段类型只用 node:http,组装在 src/daemon/mcp-endpoint.ts。 */
   mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void;
@@ -463,6 +463,9 @@ describe('daemon 入口(批 A)', () => {
 // src/daemon/main.ts — daemon 进程入口(spec §3.1/§3.3/§3.10)
 // 与 CLI 壳(src/cli/daemon.ts,批 B)的分工:壳薄(参数组装+spawn+轮询),本文件厚(进程内组装)。
 import { runStartupSequence } from '../index.js';
+// ⚠️ Task 2 实测:index.ts 底部是无条件入口 IIFE(import 即跑 startMcpServer)——
+// Task 5 实现时须给该 IIFE 加 process.argv[1]?.endsWith('index.js') 守卫
+// (直接跑 index.js 放行、被 import 不放行),否则 daemon import 即误起 stdio server。
 import { GodotServer } from '../GodotServer.js';
 import { WebGuiServer } from '../web-gui/server.js';
 import { createMcpEndpoint } from './mcp-endpoint.js';
@@ -485,7 +488,7 @@ export async function runDaemon(args: string[]): Promise<void> {
   }
 
   const token = getOrCreateSharedToken();
-  const server = new GodotServer('res://ops.gd', { mode: 'daemon' });
+  const server = new GodotServer('res://ops.gd', { processMode: 'daemon' });
   // /mcp 端点:端口在 WebGuiServer listen 后才知(strictPort 指定下 = portArg),
   // 故 endpoint 构造放 WebGuiServer.start() 之后、GodotServer.run() 之前由入口胶水完成。
   const gui = new WebGuiServer({
