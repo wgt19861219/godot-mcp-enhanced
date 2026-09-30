@@ -77,13 +77,17 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 设置批 (2026-09-29) 三次重锚:中列加「设置」tab(showTab 三态 + loadSettings/
     // verifyGodot/saveSettings 函数段)使 hash 变更;同款双通道互证后锁入(独立重算
     // = build 产物 split 提取 + CRLF 归一含前导换行,与 server 实算 CSP 一致)。
-    expect(WEB_GUI_CSP).toContain("'sha256-5um2wvWtsXoE3iwEYpItqUJ0hE/YCdZVRX81SZzTP+M='");
+    // 死锁修复批 (2026-09-30) 四次重锚:设置批在模板字符串内单写反斜杠 n,求值成真实
+    // 换行炸掉浏览器脚本语法(面板永远"连接中"根因);修复改双写使脚本内容变更 → hash
+    // 轮换。同款双通道互证后锁入;此后 INDEX_HTML 内联脚本语法由 html.test.ts 的
+    // vm.Script 编译测试独立把关。
+    expect(WEB_GUI_CSP).toContain("'sha256-PBn35Bzj4osYxK5A2BGTm/NXpmQBKZ4jjkcP3UmDa04='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('5um2wvWtsXoE3iwEYpItqUJ0hE/YCdZVRX81SZzTP+M=');   // 独立重算与锚互证
+    expect(hash).toBe('PBn35Bzj4osYxK5A2BGTm/NXpmQBKZ4jjkcP3UmDa04=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });

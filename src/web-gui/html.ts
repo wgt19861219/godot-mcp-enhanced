@@ -451,7 +451,7 @@ export const INDEX_HTML: string = `<!doctype html>
       if (r.status === 401 || r.status === 403) { $('setSaveHint').textContent = '设置读取失败(无权限)'; return; }
       return r.json().then(function (v) {
         $('setGodotPath').value = (v.persisted && v.persisted.godotPath) || '';
-        $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\n') : '';
+        $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\\n') : '';   // 反斜杠n须双写:模板字符串内单写会被求值成真实换行,炸掉浏览器脚本语法(2026-09-30 面板死锁根因)
         renderSettingsCands(v.candidates || []);
         renderSettingsInfo(v);
         $('setGodotResult').textContent = '';
@@ -504,7 +504,7 @@ export const INDEX_HTML: string = `<!doctype html>
 
   function saveSettings() {
     var godot = $('setGodotPath').value.trim();
-    var allowed = $('setAllowed').value.split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });
+    var allowed = $('setAllowed').value.split('\\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });   // \\n:同上,模板字符串内双转义
     var btn = $('setSave'); btn.disabled = true;
     $('setSaveHint').textContent = '保存中…(含二进制校验,可能数秒)';
     fetch('/api/settings', {

@@ -1,5 +1,6 @@
 // test/web-gui/html.test.ts
 import { describe, it, expect } from 'vitest';
+import vm from 'node:vm';
 import { INDEX_HTML } from '../../src/web-gui/html.js';
 
 describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验收)', () => {
@@ -180,5 +181,31 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain("'read-only'");                       // 保存 403 判定(对齐 startSession I-2)
     expect(INDEX_HTML).toContain('setGodotResult');                    // 版本/错误结果显示位
     expect(INDEX_HTML).toContain('renderSettingsInfo');                // 只读生效值信息区
+  });
+
+});
+
+// ── 语法防回归(2026-09-30 面板死锁根因)────────────────────────────────────
+// 设置批(2b9b4efa)曾在 INDEX_HTML 模板字符串内给 join/split 写了单反斜杠 n 分隔符,
+// TS 模板求值把它变成真实换行写进内联脚本 → 字符串字面量裸断行 → 浏览器 SyntaxError
+// → 整个脚本不执行,面板永远停在"连接中…"。CSP hash 对同一份损坏脚本求值,自洽放行;
+// 子串契约测试也拦不住。vm.Script 编译(不执行)在 CI 即拦——比子串契约强一级。
+describe('INDEX_HTML 内联脚本语法可解析(2026-09-30 死锁根因防回归)', () => {
+  it('内联脚本经 vm.Script 编译通过(经典脚本语义,含 strict 指令)', () => {
+    const m = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML);
+    expect(m).not.toBeNull();
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const body = m![1];
+    expect(() => new vm.Script(body, { filename: 'index-inline.js' })).not.toThrow();
+  });
+  it('模板字符串转义陷阱定向定位:join/split 分隔符求值后须为字面反斜杠n', () => {
+    // String.raw 消 TS 源转义歧义:断言 body 含 join(单引号+反斜杠n+单引号) 字面形态。
+    // 若源码回归成模板内单写,求值结果变成真实换行,vm.Script 编译测试同步失败。
+    const m = /<script>([\s\S]*?)<\/script>/.exec(INDEX_HTML);
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const body = m![1];
+    expect(body).toContain(String.raw`.join('\n')`);
+    expect(body).toContain(String.raw`.split('\n')`);
+    // 裸换行检测不另写正则("单引号+行尾"形态正常代码遍地必误报),vm.Script 编译是权威。
   });
 });
