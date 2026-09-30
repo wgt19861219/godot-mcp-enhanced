@@ -8,6 +8,9 @@
 //    (Task 3 交接)——本 handler 全程 try/catch,headersSent 后仅 destroy,不再 writeHead。
 // Task 11(批 C,spec §3.6):单会话独占闸——POST body 缓冲嗅探 Initialize,已有
 //    活跃会话(活性判定,防 SDK 计数残留死锁)→ 409 + 指引文案 + 落审计。
+// 审查处置:SDK transport 单会话终态(_initialized/_closed 无 reset)——终态
+//    (DELETE 完成/崩溃残留)后的新 Initialize 先重建 transport 实例再放行,
+//    落 mcp-transport-rebuild 审计;否则 409 死锁只是换成 404/400。
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Readable } from 'node:stream';
@@ -34,27 +37,37 @@ export interface McpEndpointDeps {
   /** 端口(constructing Web Request 的 URL 与规范化 Host 用)。 */
   port: number;
   /** 单会话闸(spec §3.6)的活性超时 ms:会话超过此时长无任何请求流量即视为死
-   *  残留(拦截判定视作无活跃会话)。缺省 5 分钟——SDK onsessionclosed 仅 DELETE
-   *  触发(批 A 审查),客户端崩溃/断连时计数单调高估,纯计数拦截会让新连接永远
-   *  409 死锁;正常 MCP 客户端有请求流或 SSE 心跳(keepalive 秒级),5 分钟零流量
-   *  视为死是合理启发(代价:空闲超阈值的活会话被误放一次,新会话建立后 SDK 的
-   *  会话校验仍会拒绝旧 id 的请求,不产生互踩双活)。 */
+   *  残留(拦截判定视作无活跃会话,并触发 transport 重建)。缺省 5 分钟——SDK
+   *  onsessionclosed 仅 DELETE 触发(dist/index.mjs:770-775),客户端崩溃/断连时
+   *  计数单调高估,纯计数拦截会让新连接永远 409 死锁;正常 MCP 客户端有请求流或
+   *  SSE 心跳(keepalive 秒级),5 分钟零流量视为死是合理启发(代价:空闲超阈值的
+   *  活会话被误放一次——旧会话被新会话顶替,SDK validateSession 404 旧 id,不产生
+   *  双活互踩)。注意:SDK transport 的 _initialized/_closed 是**实例终态无 reset**
+   *  (审查核实 dist/index.mjs:655/:658/:667/:820),终态后的放行必须换新 transport
+   *  实例(见 rebuildTransport),否则 DELETE 后永久 404、崩溃残留后新 Initialize
+   *  撞 400 "Server already initialized"——死锁只是换了错误码,没真解。 */
   sessionStaleMs?: number;
   /** 测试注入假 transport(鸭子:仅用 handleRequest);缺省构造真 stateful transport。
    *  真 transport 端到端由 Task 1 spike 脚本 + 批 C 真机验收覆盖,单测不起真 McpServer。 */
   _transportForTest?: WebStandardStreamableHTTPServerTransport;
+  /** 测试注入 transport 重建工厂(终态后新 Initialize 触发重建时调用;缺省造真
+   *  transport)——与 _transportForTest 配对验证重建路径(fake 不触发真回调)。 */
+  _rebuildTransportForTest?: () => WebStandardStreamableHTTPServerTransport;
   /** 测试注入种子活性状态(fake transport 不触发 onsessioninitialized/closed 真
    *  回调,单测直接摆状态驱动闸门分支;生产不传)。 */
   _sessionStateForTest?: {
     activeSessions?: number;
     /** [sessionId, lastSeenAt(epoch ms)] 种子条目。 */
     lastSeen?: Array<[string, number]>;
+    /** 种子"当前 transport 已服务过会话"(模拟 DELETE 完成/崩溃残留的终态)。 */
+    transportServed?: boolean;
   };
 }
 
 export interface McpEndpoint {
   /** 即 WebGuiServerOptions.mcpHandler 的实现(签名逐字一致);Promise 不外抛(全内消)。 */
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  /** 当前活跃 transport(终态重建后重指向新实例——消费方经 getter 取,勿缓存引用)。 */
   transport: WebStandardStreamableHTTPServerTransport;
   /** 活跃会话数(真 transport 由 onsessioninitialized/closed 维护;批 C 单会话拦截消费)。 */
   activeSessionCount(): number;
@@ -75,19 +88,31 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
   let activeSessions = deps._sessionStateForTest?.activeSessions ?? 0;
   const sessionLastSeen = new Map<string, number>(deps._sessionStateForTest?.lastSeen ?? []);
   const staleMs = deps.sessionStaleMs ?? 5 * 60_000;
-  const transport = deps._transportForTest ?? new WebStandardStreamableHTTPServerTransport({
-    // stateful(spec §3.6 单会话拦截的判定基础);allowedHosts/enableDnsRebindingProtection
-    // 是 @deprecated 选项不使用——Host 校验走本文件闸门(external middleware,SDK 文档同荐)。
-    sessionIdGenerator: () => randomUUID(),
-    onsessioninitialized: (sessionId: string) => {
-      activeSessions++;
-      sessionLastSeen.set(sessionId, Date.now());
-    },
-    onsessionclosed: (sessionId: string) => {
-      activeSessions--;
-      sessionLastSeen.delete(sessionId);
-    },
-  });
+  // transportServed:当前 transport 实例是否服务过会话(onsessioninitialized 置位)。
+  //  SDK transport 的 _initialized/_closed 是实例终态无 reset(审查核实),终态后
+  //  的新 Initialize 必须换新实例——此标记即"需要重建"的判定基础。
+  let transportServed = deps._sessionStateForTest?.transportServed ?? false;
+  // 重建互斥:并发到达的终态 Initialize 共享同一重建 promise,防双重建(第二次会把
+  //  第一次刚接好的新 transport 又 close 掉)。
+  let rebuildInFlight: Promise<void> | null = null;
+
+  function makeTransport(): WebStandardStreamableHTTPServerTransport {
+    return new WebStandardStreamableHTTPServerTransport({
+      // stateful(spec §3.6 单会话拦截的判定基础);allowedHosts/enableDnsRebindingProtection
+      // 是 @deprecated 选项不使用——Host 校验走本文件闸门(external middleware,SDK 文档同荐)。
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (sessionId: string) => {
+        activeSessions++;
+        sessionLastSeen.set(sessionId, Date.now());
+        transportServed = true;
+      },
+      onsessionclosed: (sessionId: string) => {
+        activeSessions--;
+        sessionLastSeen.delete(sessionId);
+      },
+    });
+  }
+  let transport = deps._transportForTest ?? makeTransport();
 
   /** 活性判定 + 懒清理:返回新鲜(< staleMs)会话数;stale 条目就地删除(Map 迭代
    *  中删当前项是 JS 规范允许的)。SDK 计数为 0 时直接返回 0(双轨 AND 的计数侧)。 */
@@ -99,6 +124,28 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
       else sessionLastSeen.delete(sid);
     }
     return live;
+  }
+
+  /** transport 重建(审查处置,spec §3.6):SDK transport 单会话终态(_initialized/
+   *  _closed 无 reset)——DELETE 完成或崩溃残留后,新 Initialize 必须换新实例,
+   *  否则旧 transport 对一切请求 404(_closed)或 400 "already initialized"。
+   *  spike 证据:Protocol.connect(src-CX2iR2pK.mjs:6290)直接替换 _transport 指针无
+   *  二次接线守卫,旧实例 close 经 Protocol._onclose(:6320)清 in-flight 并置空指针
+   *  ——McpServer 可反复 connect 新实例;新实例字段初值即干净(_initialized=false/
+   *  _closed=false/sessionId=undefined,dist/index.mjs:303-311)。
+   *  ⚠️ 顺序约束:必须先 close 旧再 connect 新(_onclose 置空 _transport,后 close
+   *  会清掉新接线)。状态归位放 connect 成功之后——失败则 transport/计数原样,
+   *  下个 Initialize 重试重建(自愈),不留半接线。 */
+  async function rebuildTransport(reason: 'delete' | 'stale'): Promise<void> {
+    const make = deps._rebuildTransportForTest ?? makeTransport;
+    try { await transport.close(); } catch { /* best-effort:已 closed / 测试 fake 无 close */ }
+    const next = make();
+    await deps.mcpServer.connect(next);
+    transport = next;
+    transportServed = false;
+    activeSessions = 0;   // 归位 SDK 残留计数(否则 stale 终态的虚高计数在下个会话 DELETE 时减成负数)
+    sessionLastSeen.clear();
+    auditMcpTransportRebuild(reason);
   }
 
   /** 嗅探 JSON-RPC method(单会话闸判定 Initialize 用):仅认单 JSON 对象的顶层
@@ -154,8 +201,24 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
       risk: 'process',
       ok: false, project_path: '', changed_files: [],
       duration_ms: 0, caller: 'daemon:mcp',
-      details: { error: 'session_busy', activeSessions: liveSessions, staleMs },
+      details: { error: 'session_busy', liveSessions, staleMs },
     }).catch(() => { /* best-effort:审计失败不影响拒绝响应 */ });
+  }
+
+  // 审查处置:transport 重建审计(自愈动作,ok=true 非拒绝)——details.reason 区分
+  // 终态成因:'delete'=SDK 回调干净终止过(计数归零);'stale'=崩溃残留(计数虚高,
+  // 懒清理刚清了活性 Map)。排障可辨"正常会话轮换"与"客户端异常断连"。
+  function auditMcpTransportRebuild(reason: 'delete' | 'stale'): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `daemon-mcp-${randomUUID().slice(0, 16)}`,
+      tool: 'daemon',
+      action: 'mcp-transport-rebuild',
+      risk: 'process',
+      ok: true, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'daemon:mcp',
+      details: { reason },
+    }).catch(() => { /* best-effort:审计失败不影响放行 */ });
   }
 
   async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -204,11 +267,13 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
         const body = new Uint8Array(Buffer.concat(chunks));
-        // 闸门 3:单会话独占——仅 POST 且嗅探出 initialize 且存在新鲜(活跃)会话
-        // → 409(spec m-8:明确 4xx + 可读 message,不静默排队)。非 Initialize
-        // (tools/list 等)不拦:存量会话请求照旧放行,无 session 头的由 SDK 自理
-        // 400;嗅探失败(非 JSON)放行交 SDK。stale 判定在 liveSessionCount 内
-        // 懒清理计数残留,防崩溃客户端把端点永久锁死。
+        // 闸门 3:单会话独占——仅 POST 且嗅探出 initialize:①存在新鲜(活跃)会话
+        // → 409(spec m-8:明确 4xx + 可读 message,不静默排队)。②无活跃会话但当前
+        // transport 已服务过会话(终态:DELETE 完成或崩溃残留)→ 先重建 transport
+        // 再放行(SDK transport 的 _initialized/_closed 是实例终态无 reset,直通会
+        // 404/400 假死——审查 Critical/Important 处置)。非 Initialize(tools/list
+        // 等)不拦:存量会话请求照旧放行,无 session 头的由 SDK 自理 400;嗅探失败
+        // (非 JSON)放行交 SDK。
         if (method === 'POST' && rpcMethodOf(body) === 'initialize') {
           const live = liveSessionCount(Date.now());
           if (live > 0) {
@@ -216,6 +281,15 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
             res.writeHead(409, { 'content-type': 'application/json' })
               .end(JSON.stringify({ error: SESSION_BUSY_ERROR }));
             return;
+          }
+          if (transportServed) {
+            // 原因判定:计数>0 = onsessionclosed 未触发过的崩溃残留('stale');
+            // 计数归零 = DELETE 干净终止过('delete')。
+            const reason: 'delete' | 'stale' = activeSessions > 0 ? 'stale' : 'delete';
+            if (!rebuildInFlight) {
+              rebuildInFlight = rebuildTransport(reason).finally(() => { rebuildInFlight = null; });
+            }
+            await rebuildInFlight;   // 并发终态 Initialize 共享同一重建;失败冒泡至外层 catch(500),状态未动可重试
           }
         }
         webReq = new Request(reqUrl, { method, headers, body });
@@ -252,7 +326,7 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
 
   return {
     handler,
-    transport,
+    get transport() { return transport; },   // getter:重建后外部始终取当前活跃实例
     activeSessionCount: () => activeSessions,
     connect: async () => { await deps.mcpServer.connect(transport); },
   };

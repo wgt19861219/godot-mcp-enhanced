@@ -233,7 +233,7 @@ describe('mcp-endpoint Node↔Web wiring(spike S-1 同款)', () => {
       expect(seen.headers['authorization']).toBe(`Bearer ${TOKEN}`);
       expect(seen.headers['host']).toBe(`127.0.0.1:${port}`);   // spike 同款:固定 Host(rebinding 闸已在此前完成)
       expect(seen.headers['content-type']).toBe('application/json');
-      expect(seen.body).toBe(bodyText);   // Readable.toWeb body 流无损
+      expect(seen.body).toBe(bodyText);   // POST body 缓冲重建后字节无损(Task 11 缓冲嗅探改流式为缓冲)
     } finally { await closeServer(srv); }
   });
 
@@ -482,7 +482,7 @@ describe('mcp-endpoint 单会话独占(spec §3.6:第二 Initialize 409;活性�
       expect(entry.action).toBe('mcp-session-reject');
       expect(entry.ok).toBe(false);
       expect(entry.caller).toBe('daemon:mcp');
-      expect(entry.details).toEqual({ error: 'session_busy', activeSessions: 1, staleMs: STALE_MS });
+      expect(entry.details).toEqual({ error: 'session_busy', liveSessions: 1, staleMs: STALE_MS });
       expect(JSON.stringify(entry).includes(TOKEN)).toBe(false);   // 审计载荷不落 token 值
     } finally { await closeServer(srv); }
   });
@@ -535,6 +535,79 @@ describe('mcp-endpoint 单会话独占(spec §3.6:第二 Initialize 409;活性�
       expect(res.status).toBe(200);
       expect(fake.seen.length).toBe(1);
       expect(fake.seen[0]!.body).toBe('not json at all');
+    } finally { await closeServer(srv); }
+  });
+
+  // 审查处置(Critical/Important):SDK transport 的 _initialized/_closed 是实例终态
+  // 无 reset——DELETE 完成后旧 transport 永久 404(_closed),崩溃残留后新 Initialize
+  // 撞 400 "already initialized"。终态后的新 Initialize 必须换新 transport 实例再放行。
+  it('DELETE 终态(计数归零但 transport 已服务过)后新 Initialize → 重建 transport 放行,不撞 SDK 终态', async () => {
+    const fakeOld = makeFakeTransport();
+    const fakeNew = makeFakeTransport();
+    const connect = vi.fn(async () => {});
+    let rebuilt = 0;
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fakeOld.transport as never,
+      _rebuildTransportForTest: () => { rebuilt++; return fakeNew.transport as never; },
+      _sessionStateForTest: { activeSessions: 0, transportServed: true },   // DELETE 走完:SDK 回调已减计数,transport 处于终态
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(200);
+      expect(rebuilt).toBe(1);                      // 重建动作被触发
+      expect(fakeOld.seen.length).toBe(0);          // 旧 transport 不再接客
+      expect(fakeNew.seen.length).toBe(1);          // 请求路由到重建后的新 transport
+      expect(fakeNew.seen[0]!.body).toBe(INIT_BODY);
+      expect(connect).toHaveBeenCalledTimes(1);      // mcpServer 二次 connect 新 transport(spike:Protocol.connect 无守卫)
+      expect(connect.mock.calls[0]![0]).toBe(fakeNew.transport);
+      expect(ep.transport).toBe(fakeNew.transport); // 暴露的 transport getter 跟随重建
+      expect(vi.mocked(appendMachineAuditLine)).toHaveBeenCalledTimes(1);
+      const entry = vi.mocked(appendMachineAuditLine).mock.calls[0]![0];
+      expect(entry.action).toBe('mcp-transport-rebuild');
+      expect(entry.ok).toBe(true);                  // 自愈动作非拒绝
+      expect(entry.caller).toBe('daemon:mcp');
+      expect(entry.details).toEqual({ reason: 'delete' });
+    } finally { await closeServer(srv); }
+  });
+
+  it('stale 终态(残留计数 + lastSeen 过期)后新 Initialize → 重建(reason=stale)放行', async () => {
+    const fakeOld = makeFakeTransport();
+    const fakeNew = makeFakeTransport();
+    let rebuilt = 0;
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fakeOld.transport as never,
+      _rebuildTransportForTest: () => { rebuilt++; return fakeNew.transport as never; },
+      _sessionStateForTest: {
+        activeSessions: 1,   // 崩溃残留:onsessionclosed 未触发,SDK 计数虚高
+        transportServed: true,
+        lastSeen: [['s1', Date.now() - (STALE_MS + 5000)]],
+      },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(200);
+      expect(rebuilt).toBe(1);
+      expect(fakeNew.seen.length).toBe(1);
+      expect(ep.activeSessionCount()).toBe(0);   // 重建顺手归位残留计数(否则下个会话 DELETE 减成负数)
+      const entry = vi.mocked(appendMachineAuditLine).mock.calls[0]![0];
+      expect(entry.action).toBe('mcp-transport-rebuild');
+      expect(entry.details).toEqual({ reason: 'stale' });   // 计数>0 判为崩溃残留
     } finally { await closeServer(srv); }
   });
 });
