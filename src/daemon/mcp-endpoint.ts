@@ -71,6 +71,11 @@ export interface McpEndpoint {
   transport: WebStandardStreamableHTTPServerTransport;
   /** 活跃会话数(真 transport 由 onsessioninitialized/closed 维护;批 C 单会话拦截消费)。 */
   activeSessionCount(): number;
+  /** 活性判定(daemon 前端批 C,2026-09-30):面板实例区「会话占用中/空闲」的数据源。
+   *  与单会话 409 闸门同源同判(计数>0 AND lastSeen 新鲜)——SDK 计数在客户端崩溃/
+   *  断连时残留虚高(onsessionclosed 仅 DELETE 触发),裸暴露 activeSessionCount 会把
+   *  死残留误报成「占用中」。调用带懒清理副作用(顺手删 stale 条目),对展示无害。 */
+  hasLiveSession(): boolean;
   /** 把 transport 交给 McpServer(Task 2 GodotServer.connectTransport 的等价直连)。 */
   connect(): Promise<void>;
 }
@@ -328,6 +333,8 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
     handler,
     get transport() { return transport; },   // getter:重建后外部始终取当前活跃实例
     activeSessionCount: () => activeSessions,
+    // 面板占用状态判定源(批 C):与 409 闸门共用 liveSessionCount——闸门怎么判,面板怎么显示
+    hasLiveSession: () => liveSessionCount(Date.now()) > 0,
     connect: async () => { await deps.mcpServer.connect(transport); },
   };
 }

@@ -99,6 +99,9 @@ export async function runDaemon(args: string[]): Promise<void> {
   // 才知(gui.port 实际监听值)。两段式接线:先挂转发闭包(start 到回填之间的窗口
   // 请求回 503,诚实表达"端点未就绪"),start 后按实际端口构造 endpoint 再回填实现。
   let mcpHandlerImpl: ((req: IncomingMessage, res: ServerResponse) => void) | null = null;
+  // 会话占用活性(前端批 C,Task 12)同款两段式:isMcpSessionActive 也在构造期注入,
+  // 而活性真源 endpoint 同样 start 后才造——回填前恒 false(诚实:端点未就绪 = 无会话)。
+  let hasLiveSessionImpl: () => boolean = () => false;
 
   let shuttingDown = false;
   const gui = new WebGuiServer(server.buildWebGuiOptions({
@@ -115,6 +118,10 @@ export async function runDaemon(args: string[]): Promise<void> {
     // respawnOf:登记写入受控交接关联字段(§3.7"交接中"标注数据源);条件展开遵守
     // "daemon 侧仅传确定值键"惯例(spread 的 undefined 会覆盖基座,见 GodotServer 注释)。
     ...(respawnOf !== undefined ? { respawnOf } : {}),
+    // 会话占用活性(前端批 C):面板 /api/instances 本实例行 sessionActive 的数据源;
+    // 用 hasLiveSession(活性双轨判定)而非 activeSessionCount(SDK 计数崩溃残留虚高,
+    // 详见 mcp-endpoint.ts 注释)——回填见下方 hasLiveSessionImpl 赋值(两段式)。
+    isMcpSessionActive: () => hasLiveSessionImpl(),
     token,
     mcpHandler: (req, res) => {
       if (mcpHandlerImpl) { mcpHandlerImpl(req, res); return; }
@@ -178,6 +185,7 @@ export async function runDaemon(args: string[]): Promise<void> {
     port: gui.port,
   });
   mcpHandlerImpl = (req, res) => { void endpoint.handler(req, res); };
+  hasLiveSessionImpl = () => endpoint.hasLiveSession();   // 占用活性回填(两段式后半段)
   await endpoint.connect();
 
   // 进程保活:WebGuiServer 的 listener 与定时器全 unref(附属功能纪律,stdio 进程靠

@@ -611,3 +611,39 @@ describe('mcp-endpoint 单会话独占(spec §3.6:第二 Initialize 409;活性�
     } finally { await closeServer(srv); }
   });
 });
+
+// ── daemon 前端批(2026-09-30 批 C):hasLiveSession——面板实例区占用状态的判定源 ──
+// 暴露活性双轨判定(计数>0 AND lastSeen 新鲜)而非裸 activeSessionCount:SDK 计数在
+// 客户端崩溃/断连时残留虚高(onsessionclosed 仅 DELETE 触发),裸计数会把死残留
+// 误报成「占用中」。与单会话 409 闸门同源同判——闸门怎么判,面板就怎么显示。
+describe('mcp-endpoint hasLiveSession(批 C:面板占用状态暴露,与 409 闸门同源判定)', () => {
+  const STALE_MS = 10_000;
+
+  it('新鲜会话(计数=1 + lastSeen 新鲜)→ true', () => {
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port: 9000,
+      sessionStaleMs: STALE_MS,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now()]] },
+    });
+    expect(ep.hasLiveSession()).toBe(true);
+  });
+
+  it('计数残留但 lastSeen 全 stale → false(懒清理顺手发生,面板不误报占用)', () => {
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port: 9000,
+      sessionStaleMs: STALE_MS,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now() - (STALE_MS + 5000)]] },
+    });
+    expect(ep.hasLiveSession()).toBe(false);
+    expect(ep.activeSessionCount()).toBe(1);   // SDK 计数仍残留——这正是不能裸暴露计数的原因
+  });
+
+  it('无会话(缺省状态)→ false', () => {
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port: 9000,
+      sessionStaleMs: STALE_MS,
+    });
+    expect(ep.hasLiveSession()).toBe(false);
+    expect(ep.activeSessionCount()).toBe(0);
+  });
+});

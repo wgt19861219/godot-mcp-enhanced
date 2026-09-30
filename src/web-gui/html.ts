@@ -52,6 +52,8 @@ export const INDEX_HTML: string = `<!doctype html>
   #projPane { flex: 42 1 0; }
   #sessionsPane { flex: 33 1 0; }
   #instPane { flex: 25 1 0; }
+  /* daemon 前端批(2026-09-30):实例类型列的弱化文本(daemon 空闲态/跨实例指引文案) */
+  .inst-dim { color: var(--dim); font-size: 11px; }
   .proj-row { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
   .proj-row .ctl { padding: 1px 6px; }
   .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -262,10 +264,13 @@ export const INDEX_HTML: string = `<!doctype html>
   }
 
   // ── 实例管理(2026-09-30)────────────────────────────────────────────────────
-  // GET /api/instances → {me, instances:[{pid,port,startedAt,version,current}]}。
-  // version null = 早期实例(登记无版本字段,面板死锁修复前的 build)——用户判断哪个
-  // 实例该重启的判据。行按钮零监听器、只带 data-action + data-pid,#instPane 容器
-  // 一次性委托(同 #sessions 模式);列表低频变化,15s 静默轮询 + 重启后定向确认。
+  // GET /api/instances → {me, instances:[{pid,port,startedAt,version,kind,respawnOf,
+  // sessionActive?,current}]}。version/kind null = 早期实例(登记无对应字段,面板
+  // 死锁修复前的 build)——用户判断哪个实例该重启的判据。daemon 前端批 C(2026-09-30):
+  // kind 三态徽标 + daemon 会话占用(sessionActive 仅本实例行且注入在场才有,undefined
+  // = 数据不可得不显示)+ 交接中标注 + 跨实例对 daemon 的重启指引。行按钮零监听器、
+  // 只带 data-action + data-pid,#instPane 容器一次性委托(同 #sessions 模式);列表
+  // 低频变化,15s 静默轮询 + 重启后定向确认。
   function loadInstances() {
     authFetch('/api/instances').then(function (r) {
       if (!r.ok) return;
@@ -286,26 +291,62 @@ export const INDEX_HTML: string = `<!doctype html>
     var tbl = document.createElement('table');
     var thead = document.createElement('thead');
     var htr = document.createElement('tr');
-    ['pid', '端口', '版本', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
+    ['pid', '端口', '类型', '版本', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
     thead.appendChild(htr);
     var tbody = document.createElement('tbody');
     state.instances.forEach(function (e) {
+      // 交接中判定(批 B 审查关键输入):respawnOf 交接完成后永久残留(仍指向已死
+      // pid),只有其指向的旧 pid 登记仍在 instances 数组在场才显示「交接中」;旧登记
+      // 消失(受控交接完成/被清扫)后 respawnOf 只是历史痕迹,不显示。数据源即本数组
+      // 自身,无需额外接口。
+      var handingOver = e.respawnOf != null && state.instances.some(function (o) { return o.pid === e.respawnOf; });
       var tr = document.createElement('tr');
       var td1 = document.createElement('td');
       td1.textContent = e.current ? e.pid + ' ·本实例' : String(e.pid);
       tr.title = 'started ' + (e.startedAt || '-');
       var td2 = document.createElement('td'); td2.textContent = String(e.port);
+      // 类型列:kind 徽标三态(daemon/stdio/早期实例=登记无 kind 字段,对齐 version
+      // 先例)+ daemon 专属状态标注。交接中优先于占用显示(交接窗口的会话占用意义有限)。
       var td3 = document.createElement('td');
-      var ver = e.version ? 'v' + e.version : '早期实例';
-      if (e.current) { var b = document.createElement('span'); b.className = 'badge st-running'; b.textContent = ver; td3.appendChild(b); }
-      else td3.textContent = ver;
+      var kb = document.createElement('span');
+      kb.className = 'badge ' + (e.kind === 'daemon' ? 'st-starting' : 'st-exited');
+      kb.textContent = e.kind === 'daemon' ? 'daemon' : (e.kind === 'stdio' ? 'stdio' : '早期实例');
+      td3.appendChild(kb);
+      if (e.kind === 'daemon') {
+        if (handingOver) {
+          var hb = document.createElement('span'); hb.className = 'badge st-stopping'; hb.textContent = '交接中';
+          hb.title = 'respawnOf=' + e.respawnOf + ' 的旧登记仍在场,受控交接进行中';
+          td3.appendChild(hb);
+        } else if (e.sessionActive === true) {
+          var ab = document.createElement('span'); ab.className = 'badge st-running'; ab.textContent = '占用中';
+          ab.title = '有活跃 MCP 会话(/mcp 单会话独占中)';
+          td3.appendChild(ab);
+        } else if (e.sessionActive === false) {
+          var fb = document.createElement('span'); fb.className = 'inst-dim'; fb.textContent = '空闲';
+          td3.appendChild(fb);
+        }
+        // sessionActive undefined(注入缺席的 stdio 面板/他实例行):数据不可得,不显示
+      }
       var td4 = document.createElement('td');
-      var btn = document.createElement('button');
-      btn.className = 'ctl'; btn.textContent = '重启';
-      btn.setAttribute('data-action', 'inst-restart');
-      btn.setAttribute('data-pid', String(e.pid));
-      td4.appendChild(btn);
-      tr.append(td1, td2, td3, td4); tbody.appendChild(tr);
+      // 「早期」语义已由类型列徽标承载,版本缺显示 '-'(避免同行两遍「早期实例」)
+      var ver = e.version ? 'v' + e.version : '-';
+      if (e.current) { var b = document.createElement('span'); b.className = 'badge st-running'; b.textContent = ver; td4.appendChild(b); }
+      else td4.textContent = ver;
+      var td5 = document.createElement('td');
+      // 跨实例指引(M-1,daemon 前端批 C):他实例视角对 daemon 的重启按钮换指引——
+      // 跨实例 kill 会绕过受控关停链(误伤交接对端/丢登记);自身实例保留按钮(T1 通道)。
+      if (e.kind === 'daemon' && !e.current) {
+        td5.className = 'inst-dim';
+        td5.textContent = '在 daemon 面板或 CLI';
+        td5.title = '跨实例重启已禁用:请在 daemon 自身面板点「重启」,或 CLI 运行 npx godot-mcp-enhanced daemon restart';
+      } else {
+        var btn = document.createElement('button');
+        btn.className = 'ctl'; btn.textContent = '重启';
+        btn.setAttribute('data-action', 'inst-restart');
+        btn.setAttribute('data-pid', String(e.pid));
+        td5.appendChild(btn);
+      }
+      tr.append(td1, td2, td3, td4, td5); tbody.appendChild(tr);
     });
     tbl.append(thead, tbody); host.appendChild(tbl);
   }
