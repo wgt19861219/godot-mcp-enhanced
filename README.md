@@ -749,6 +749,72 @@ npm install && npm run build
 
 </details>
 
+### 常驻守护进程模式（daemon，HTTP 接入）
+
+stdio 模式下 MCP server 的生命周期绑定 AI 客户端会话——客户端退出，server 进程随之消亡，面板、运行中的 Godot 实例上下文一并丢失。`daemon` 子命令把 server 变成**独立后台常驻进程**：内嵌 Web GUI 面板 + MCP streamable HTTP 端点（`http://127.0.0.1:<port>/mcp`，默认端口 9550 起递增），AI 客户端以 `type:"http"` 直连，客户端开关会话不再影响 server 存活。
+
+```bash
+godot-mcp-enhanced daemon start [--open]          # 拉起后台 daemon;--open 顺手开面板浏览器
+godot-mcp-enhanced daemon stop [--force]          # 停止(主路走受控关停端点;--force 直接强杀进程树)
+godot-mcp-enhanced daemon status [--show-token]   # 查看实例清单;--show-token 显示全量 token
+godot-mcp-enhanced daemon restart [--open]        # 重启(活实例走受控交接,端口不漂移;死实例等价 start)
+```
+
+`daemon start` 成功后打印面板地址、`/mcp` 端点地址（token 打码）与 token 获取方式；完整 token 用 `daemon status --show-token` 获取。
+
+**与 `web` / `dashboard` 的区别**（三者都是 CLI 子命令，勿混淆）：
+
+| 命令 | 性质 | 说明 |
+|------|------|------|
+| `daemon` | 常驻后台进程管理 | 独立后台进程，面板与 `/mcp` MCP 端点常驻，供 AI 客户端 http 直连 |
+| `web <project>` | 一次性导出试玩 | 单项目 Web 导出 + 本地服务器供浏览器试玩，不是 MCP 服务 |
+| `dashboard [--web]` | 监控面板入口 | 默认 TUI；`--web` 打开（已运行实例的）Web GUI 面板，不创建 MCP 端点 |
+
+**客户端配置（http 直连）**——ZCode（`.zcode/config.json` 的 `mcp.servers`，或等价的 `.agents/mcp.json`）：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "godot": {
+        "type": "http",
+        "url": "http://127.0.0.1:<port>/mcp",
+        "headers": {
+          "Authorization": "Bearer <token>"
+        }
+      }
+    }
+  }
+}
+```
+
+Claude Code（`mcpServers` 键，字段同形）：
+
+```json
+{
+  "mcpServers": {
+    "godot": {
+      "type": "http",
+      "url": "http://127.0.0.1:<port>/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+`<port>` 是 daemon 实际监听端口（`daemon start` / `daemon status` 输出），`<token>` 是共享 token（`daemon status --show-token` 全量获取）。`/mcp` 仅认 `Authorization: Bearer` 头，无 token 返回 401。
+
+**配置契约**——daemon 由用户终端拉起（非 AI 客户端 spawn），拿不到客户端注入的 `GODOT_PATH` / `ALLOWED_PROJECT_PATHS` 环境变量时，**GUI 设置面板就是 daemon 的配置界面**：在 daemon 自己的面板「设置」页配置 Godot 路径与项目白名单，保存即热生效（持久化 `~/.godot-mcp/settings.json`，daemon 启动自动重放），无需重启 daemon。终端 env 中的配置仍按既有优先级参与（GUI 设置优先，清除即恢复启动快照）。
+
+**诚实边界**：
+
+- **崩溃不自愈**：daemon 异常退出（或所在机器重启）后面板与 `/mcp` 一同消亡，需手动 `daemon start` 重拉；没有 watchdog、没有开机自启。
+- **单会话独占**：同一时刻 `/mcp` 只服务一个 MCP 会话——第二个客户端 Initialize 会收到 409（明确拒绝，不静默排队）；需要第二个会话时另起 daemon 或连 stdio 实例。
+- **localhost http 客户端行为以真机实测为准**：各客户端对本地 http MCP 端点的支持程度（重连、会话保活）可能不同，遇到问题优先核对客户端文档。
+- **工具档位与 stdio 同源**：daemon 默认 `basic` 档（与 stdio 生产默认一致），拉起 daemon 的终端设 `GODOT_MCP_PROFILE` 可调（如 `=full`，缺席时回落 `GODOT_MCP_MODE` 的 minimal/lite/full）——daemon 启动时读取该 env，无 CLI 参数面。
+
 ## 致谢
 
 - [godot-mcp](https://github.com/Coding-Solo/godot-mcp) — 原始项目，本项目基于其二次开发（Copyright (c) 2025 Solomon Elias，MIT，见 [LICENSE](LICENSE)）

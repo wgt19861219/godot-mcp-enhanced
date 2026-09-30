@@ -83,13 +83,21 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // vm.Script 编译测试独立把关。
     // 实例管理批 (2026-09-30) 五次重锚:左列新增 #instPane 区(renderInstances/委托/
     // pollInstancesGone 函数段)使脚本内容变更 → hash 轮换;同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-fxmxYFhUMrqZMijFNkdlS3Rfk37FyGh36vT464Y16p4='");
+    // daemon 前端批 (2026-09-30) 六次重锚:renderInstances 扩 kind 徽标三态/daemon
+    // 会话占用(sessionActive)/交接中判定/跨实例重启指引 + .inst-dim 样式与「类型」列,
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入(独立重算 = split 提取 + CRLF
+    // 归一含前导换行,与 server 实算 INDEX_SCRIPT_SHA256 一致)。
+    // daemon 终验收 V1 (2026-09-30) 七次重锚:首启预检 cfgWarn 黄条(resetAll 消费
+    // hello.settingsConfigured + updateCfgWarn 函数 + loadSettings 按 effective 刷新)
+    // 使脚本内容变更 → hash 轮换;同款双通道互证后锁入(build 产物导入实算
+    // INDEX_SCRIPT_SHA256 与本测试独立重算一致)。
+    expect(WEB_GUI_CSP).toContain("'sha256-BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('fxmxYFhUMrqZMijFNkdlS3Rfk37FyGh36vT464Y16p4=');   // 独立重算与锚互证
+    expect(hash).toBe('BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
@@ -626,7 +634,7 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
   const ALIVE_MOCK_PIDS = new Set<number>();
   function isPidAliveMock(p: number): boolean { return ALIVE_MOCK_PIDS.has(p); }
 
-  async function startInstServer(hooks: Partial<Pick<WebGuiServerOptions, 'isPidAlive' | 'onSelfRestart'>> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
+  async function startInstServer(hooks: Partial<Pick<WebGuiServerOptions, 'isPidAlive' | 'onSelfRestart' | 'isMcpSessionActive'>> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
     const srv = new WebGuiServer({
       getSessions: () => FAKE_SESSIONS,
       getIndexHtml: () => FAKE_HTML,
@@ -671,6 +679,41 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
     active = t.srv;
     const res = await fetch(t.base + '/api/instances');
     expect(res.status).toBe(401);
+  });
+
+  // ── daemon 前端批(2026-09-30 批 C):instances 契约扩展(kind/respawnOf/sessionActive)──
+  it('GET /api/instances 透传 kind/respawnOf;sessionActive 注入时仅本实例行携带', async () => {
+    ALIVE_MOCK_PIDS.clear();
+    ALIVE_MOCK_PIDS.add(4241); ALIVE_MOCK_PIDS.add(4242); ALIVE_MOCK_PIDS.add(4243); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock, isMcpSessionActive: () => true });
+    active = t.srv;
+    // 他实例登记:kind=daemon + respawnOf(受控交接关联);旧 pid 4241 也登记(交接中判定的前端数据源)
+    await writeRegistration({ pid: 4241, port: 9554, token: t.token, startedAt: '2026-09-30T05:00:00Z', kind: 'daemon' }, { dir });
+    await writeRegistration({ pid: 4242, port: 9555, token: t.token, startedAt: '2026-09-30T06:00:00Z', kind: 'daemon', respawnOf: 4241 }, { dir });
+    await writeRegistration({ pid: 4243, port: 9556, token: t.token, startedAt: '2026-09-30T07:00:00Z' }, { dir });   // 旧登记:无 kind/respawnOf → null
+    const res = await fetch(t.base + '/api/instances', { headers: { 'x-gui-token': t.token } });
+    expect(res.status).toBe(200);
+    type Inst = { pid: number; kind: string | null; respawnOf: number | null; sessionActive?: boolean; current: boolean };
+    const v = await res.json() as { instances: Inst[] };
+    const byPid = new Map(v.instances.map((e) => [e.pid, e]));
+    expect(byPid.get(4242)?.kind).toBe('daemon');
+    expect(byPid.get(4242)?.respawnOf).toBe(4241);
+    expect(byPid.get(4242)).not.toHaveProperty('sessionActive');   // 他实例行:面板无从得知其会话占用,不携带
+    expect(byPid.get(4241)?.respawnOf).toBeNull();                  // 无 respawnOf 字段 → null(向后兼容)
+    expect(byPid.get(4243)?.kind).toBeNull();                       // 无 kind 字段 → null(前端「早期实例」判据)
+    const me = byPid.get(process.pid);                              // 本实例行:注入在场 → 透传布尔
+    expect(me?.current).toBe(true);
+    expect(me?.sessionActive).toBe(true);
+  });
+
+  it('GET /api/instances:isMcpSessionActive 缺席 → 全部行无 sessionActive 字段(stdio 实例语义)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    const res = await fetch(t.base + '/api/instances', { headers: { 'x-gui-token': t.token } });
+    const v = await res.json() as { instances: Array<{ sessionActive?: boolean }> };
+    expect(v.instances.length).toBeGreaterThan(0);
+    v.instances.forEach((e) => expect(e).not.toHaveProperty('sessionActive'));   // 注入缺席 → 不显示(非误导性 false)
   });
 
   it('POST restart:bad json → 400;pid 非整数/非法 → 400;未登记 pid → 404(不触 kill)', async () => {

@@ -40,6 +40,24 @@ export function parseDaemonArgs(args: string[]): DaemonArgs {
   };
 }
 
+/**
+ * 工具档位解析(终审 Fix-2 收口):与 index.ts startMcpServer 的 stdio 生产语义同链——
+ * `GODOT_MCP_PROFILE` 优先,缺席落 `GODOT_MCP_MODE` 的 minimal/lite/full legacy 档,
+ * 兜底 basic(G7 默认)。daemon 无 --profile/--minimal/--lite CLI 参数面(配置入口唯一
+ * 防两通道漂移,spec §3.10 ⑦),故只接 env。此前 daemon 构造 GodotServer 不传 options,
+ * 落 GodotServer 兜底 full 档(GodotServer.ts `mode ?? 'full'`),与 stdio 默认 basic
+ * 决策悬空——本函数即构造入参的唯一来源。纯函数注入 env 直测;两处解析链若单侧
+ * 变更需同步另一侧(index.ts :111-125 ↔ 此处,无机械门禁靠注释互指)。
+ */
+export function resolveDaemonToolMode(env: NodeJS.ProcessEnv): string {
+  return env.GODOT_MCP_PROFILE ?? (
+    env.GODOT_MCP_MODE === 'minimal' ? 'minimal'
+    : env.GODOT_MCP_MODE === 'lite' ? 'lite'
+    : env.GODOT_MCP_MODE === 'full' ? 'full'
+    : 'basic'
+  );
+}
+
 /** 启动门依赖(可测性拆分:决策段零副作用注入,组装段才碰真实进程设施)。 */
 export interface DaemonStartupGateDeps {
   /** env 注入(缺省生产侧传 process.env;测试传字面量对象)。 */
@@ -91,14 +109,18 @@ export async function runDaemon(args: string[]): Promise<void> {
   const token = getOrCreateSharedToken();
   // N-2(批 A 审查)后 ServerOptions 不再携带 processMode/mcpHandler——daemon 与 stdio
   // 的差异全部落在本入口的组装方式(daemon 不调 run()/connect stdio,自走 buildWebGuiOptions
-  // 工厂 + connectTransport),构造参数与 stdio 侧一致。
-  const server = new GodotServer(daemonOpsScript());
+  // 工厂 + connectTransport);工具档位 mode 与 stdio 同源接 env(终审 Fix-2 收口,缺省
+  // basic 对齐 stdio 生产默认,不再落 GodotServer 兜底 full)。
+  const server = new GodotServer(daemonOpsScript(), { mode: resolveDaemonToolMode(process.env) });
 
   // /mcp 端点与面板的鸡生蛋(spec §3.2):mcpHandler 须在 WebGuiServer 构造期注入
   // (构造器注入面,无 setMcpHandler),而 endpoint 的 deps.port 要 gui.start() 后
   // 才知(gui.port 实际监听值)。两段式接线:先挂转发闭包(start 到回填之间的窗口
   // 请求回 503,诚实表达"端点未就绪"),start 后按实际端口构造 endpoint 再回填实现。
   let mcpHandlerImpl: ((req: IncomingMessage, res: ServerResponse) => void) | null = null;
+  // 会话占用活性(前端批 C,Task 12)同款两段式:isMcpSessionActive 也在构造期注入,
+  // 而活性真源 endpoint 同样 start 后才造——回填前恒 false(诚实:端点未就绪 = 无会话)。
+  let hasLiveSessionImpl: () => boolean = () => false;
 
   let shuttingDown = false;
   const gui = new WebGuiServer(server.buildWebGuiOptions({
@@ -115,6 +137,10 @@ export async function runDaemon(args: string[]): Promise<void> {
     // respawnOf:登记写入受控交接关联字段(§3.7"交接中"标注数据源);条件展开遵守
     // "daemon 侧仅传确定值键"惯例(spread 的 undefined 会覆盖基座,见 GodotServer 注释)。
     ...(respawnOf !== undefined ? { respawnOf } : {}),
+    // 会话占用活性(前端批 C):面板 /api/instances 本实例行 sessionActive 的数据源;
+    // 用 hasLiveSession(活性双轨判定)而非 activeSessionCount(SDK 计数崩溃残留虚高,
+    // 详见 mcp-endpoint.ts 注释)——回填见下方 hasLiveSessionImpl 赋值(两段式)。
+    isMcpSessionActive: () => hasLiveSessionImpl(),
     token,
     mcpHandler: (req, res) => {
       if (mcpHandlerImpl) { mcpHandlerImpl(req, res); return; }
@@ -178,6 +204,7 @@ export async function runDaemon(args: string[]): Promise<void> {
     port: gui.port,
   });
   mcpHandlerImpl = (req, res) => { void endpoint.handler(req, res); };
+  hasLiveSessionImpl = () => endpoint.hasLiveSession();   // 占用活性回填(两段式后半段)
   await endpoint.connect();
 
   // 进程保活:WebGuiServer 的 listener 与定时器全 unref(附属功能纪律,stdio 进程靠

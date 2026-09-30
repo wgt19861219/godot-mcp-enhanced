@@ -103,6 +103,39 @@ ZCode 设置 → MCP 服务器 → **导入图标**，自动扫描可导入的�
 
 > **⚠️ 这是「导入」，不是 Warp 那种运行时 auto-spawn**。ZCode 把选中配置拷贝进自己的 `.zcode/config.json`，**原外部配置文件不被修改**。后续外部配置变更不会自动同步——需重新点导入。与 [使用指南-Warp 方式 C](使用指南-Warp.md#方式-c复用-claude-code-配置零配置最强) 的运行时自动 spawn 语义不同，不要混淆。
 
+### 方式 D：连接常驻 daemon（HTTP）
+
+前三种方式都是 stdio（ZCode 会话启动时 spawn 一个 server 子进程，会话结束子进程消亡）。若已用 CLI 拉起常驻 daemon（`godot-mcp-enhanced daemon start`），ZCode 可改为 http 直连——server 独立后台常驻，面板与 `/mcp` 端点（`http://127.0.0.1:<port>/mcp`，默认 9550 起）不随 ZCode 会话开关而存亡。
+
+`.zcode/config.json`（或 `.agents/mcp.json`）片段：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "godot": {
+        "type": "http",
+        "url": "http://127.0.0.1:<port>/mcp",
+        "headers": {
+          "Authorization": "Bearer <token>"
+        }
+      }
+    }
+  }
+}
+```
+
+- `<port>`：`daemon start` / `daemon status` 输出的实际端口；`<token>`：`godot-mcp-enhanced daemon status --show-token` 获取（`/mcp` 仅认 Authorization Bearer 头，无 token 401）。
+- 配置界面 = daemon 面板「设置」页：daemon 由终端拉起拿不到 ZCode 注入的 `GODOT_PATH`/`ALLOWED_PROJECT_PATHS` env，在面板设置页配置后保存即热生效（持久化 `~/.godot-mcp/settings.json`，daemon 启动自动重放），无需重启 daemon、也无需改 ZCode 配置。
+
+**重连语义（与 stdio 的关键差异）**：
+
+- ZCode 会话结束/重开不再杀 server——重开会话直接重连既有 daemon，工具状态（运行中的面板、已配置的白名单）延续。
+- `daemon restart` 走受控交接，端口不漂移，但交接窗口（秒级）`/mcp` 拒连——ZCode 侧表现为一次连接闪断，重试/重开会话即恢复。
+- **单会话独占**：同一 daemon 同一时刻只服务一个 MCP 会话，第二个 ZCode 客户端（或另一 MCP 客户端）Initialize 会收到 409；需要并行会话时另起 daemon 或退回 stdio 方式。
+- ZCode 对 localhost http MCP 端点的实际行为（重连时机、会话保活）以真机为准，异常时先 `daemon status` 核对端点存活。
+- daemon 崩溃不自愈（无 watchdog），需手动 `daemon start` 重拉。
+
 ---
 
 ## 3. 让 godot 规则在 ZCode 生效（关键）

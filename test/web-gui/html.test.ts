@@ -182,6 +182,12 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('setGodotResult');                    // 版本/错误结果显示位
     expect(INDEX_HTML).toContain('renderSettingsInfo');                // 只读生效值信息区
   });
+  it('首启预检提示(终验收 V1,spec §3.10 条款 3):hello.settingsConfigured 消费 + cfgWarn 黄条 + 保存后经 effective 刷新', () => {
+    expect(INDEX_HTML).toContain('settingsConfigured');                // hello 字段消费
+    expect(INDEX_HTML).toContain('cfgWarn');                           // 显著提示黄条容器
+    expect(INDEX_HTML).toContain('未配置 Godot 路径与项目白名单');      // 提示文案
+    expect(INDEX_HTML).toContain('function updateCfgWarn');            // 提示刷新函数(hello 与 loadSettings 共用)
+  });
 
   // ── 实例管理批(2026-09-30):左列第三区——实例列表 + 一键重启 ──────────────────
   it('实例区:section 结构 + 三段 flex(CSS) + 加载/空态', () => {
@@ -194,7 +200,7 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   it('实例区:GET /api/instances 接线 + 渲染契约(早期实例/本实例标记/委托)', () => {
     expect(INDEX_HTML).toContain("authFetch('/api/instances')");       // 列表拉取
     expect(INDEX_HTML).toContain('function renderInstances');           // 渲染函数
-    expect(INDEX_HTML).toContain('早期实例');                            // version null 的显示文案
+    expect(INDEX_HTML).toContain('早期实例');                            // kind null(登记无字段)的显示文案;daemon 前端批起「早期」语义由类型列承载,版本缺显示 '-'
     expect(INDEX_HTML).toContain('·本实例');                            // current 标记
     expect(INDEX_HTML).toContain('data-action="inst-restart"');         // 重启按钮零监听器 + 数据属性
     expect(INDEX_HTML).toContain("closest('button[data-action=\"inst-restart\"]')");   // #instPane 容器委托(对齐 #sessions 模式)
@@ -205,6 +211,30 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('客户端手动重连');                       // 不承诺自动恢复的诚实文案
     expect(INDEX_HTML).toContain('function pollInstancesGone');        // 2s×5 定向确认
     expect(INDEX_HTML).toContain('setInterval(loadInstances, 15000)');  // 15s 静默轮询
+  });
+
+  // ── daemon 前端批(2026-09-30 批 C):kind 徽标/会话占用/交接中/跨实例指引 ──────
+  it('实例区:kind 徽标三态渲染(daemon/stdio/早期实例)+ 新「类型」列', () => {
+    expect(INDEX_HTML).toContain("'类型'");   // 表头新列(kind + daemon 状态的承载列)
+    // 三态链(锁行为码):daemon / stdio / 登记无 kind 字段的早期实例(对齐 version 先例)
+    expect(INDEX_HTML).toContain("e.kind === 'daemon' ? 'daemon' : (e.kind === 'stdio' ? 'stdio' : '早期实例')");
+  });
+  it('实例区:daemon 会话占用状态(sessionActive 三值:占用中/空闲/数据不可得不显示)', () => {
+    expect(INDEX_HTML).toContain('e.sessionActive === true');    // 仅 true/false 显式判定,undefined(注入缺席/他实例)不显示
+    expect(INDEX_HTML).toContain('e.sessionActive === false');
+    expect(INDEX_HTML).toContain('占用中');
+    expect(INDEX_HTML).toContain('空闲');
+  });
+  it('实例区:交接中判定 = respawnOf 在场 且 指向的旧 pid 登记仍在 instances 数组(防永久残留误报)', () => {
+    // 批 B 审查关键输入:respawnOf 交接完成后永久残留(指向已死 pid),只有旧 pid 登记
+    // 仍在清单(数据源=本数组)才显示「交接中」;旧登记消失后是历史痕迹,不显示。
+    expect(INDEX_HTML).toContain('e.respawnOf != null && state.instances.some');
+    expect(INDEX_HTML).toContain('交接中');
+  });
+  it('实例区:跨实例指引(M-1)——他实例视角 daemon 行重启按钮替换为指引;自身实例保留按钮(T1 通道)', () => {
+    expect(INDEX_HTML).toContain("e.kind === 'daemon' && !e.current");   // 他实例 + daemon 双条件
+    expect(INDEX_HTML).toContain('在 daemon 面板或 CLI');                 // 指引文案
+    expect(INDEX_HTML).toContain('daemon restart');                       // title 内完整 CLI 指引命令
   });
 });
 

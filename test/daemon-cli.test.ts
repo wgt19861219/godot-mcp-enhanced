@@ -13,6 +13,7 @@ import {
   type DaemonCliDeps,
   type DaemonSpawnOptions,
 } from '../src/cli/daemon.js';
+import { isGodotConfigMissing } from '../src/core/user-settings.js';
 import type { WebGuiRegistration } from '../src/web-gui/registry.js';
 import { EXIT_CODES } from '../src/core/exit-codes.js';
 
@@ -50,6 +51,9 @@ function harness(listSeq: WebGuiRegistration[][]): Harness {
   let listIdx = 0;
   const deps: DaemonCliDeps = {
     env: {},
+    // 首启预检(V1)settings 读取注入:默认空 settings——不注入会真实读
+    // ~/.godot-mcp/settings.json,用例行为随测试机配置漂移(必须隔离)
+    readSettings: vi.fn(async () => ({ version: 1 })),
     listRegistrations: vi.fn(async () => {
       // 序列消费:耗尽后停在第 4 步快照——用例无特殊声明时不重复改写返回值
       const step = listSeq[Math.min(listIdx, listSeq.length - 1)] ?? [];
@@ -113,6 +117,21 @@ describe('daemon CLI(批 B Task 8)', () => {
     });
     it('合法数字起点透传', () => {
       expect(resolveBasePort({ GODOT_MCP_WEB_GUI_PORT: '9600' })).toBe(9600);
+    });
+  });
+
+  describe('isGodotConfigMissing(首启预检判定,core/user-settings 共用纯函数,CLI 与 hello 同源防漂移)', () => {
+    it('settings 与 env 均空 → true;任一来源有值 → false', () => {
+      expect(isGodotConfigMissing({ version: 1 }, {})).toBe(true);
+      expect(isGodotConfigMissing({ version: 1 }, { GODOT_PATH: 'D:/godot/godot.exe' })).toBe(false);
+      expect(isGodotConfigMissing({ version: 1 }, { ALLOWED_PROJECT_PATHS: 'D:/a;D:/b' })).toBe(false);
+      expect(isGodotConfigMissing({ version: 1, godotPath: 'D:/godot/godot.exe' }, {})).toBe(false);
+      expect(isGodotConfigMissing({ version: 1, allowedProjectPaths: ['D:/a'] }, {})).toBe(false);
+    });
+    it('env 空洞值(空串/纯分号)不算配置(split 对齐 getAllowedProjectPaths 的过滤语义)', () => {
+      expect(isGodotConfigMissing({ version: 1 }, { GODOT_PATH: '', ALLOWED_PROJECT_PATHS: '' })).toBe(true);
+      expect(isGodotConfigMissing({ version: 1 }, { ALLOWED_PROJECT_PATHS: ';;' })).toBe(true);
+      expect(isGodotConfigMissing({ version: 1 }, { ALLOWED_PROJECT_PATHS: '; D:/a ;' })).toBe(false);
     });
   });
 
@@ -208,6 +227,36 @@ describe('daemon CLI(批 B Task 8)', () => {
     await runDaemonCli(['start', '--open'], h.deps);
     expect(h.openedUrls).toEqual(['http://127.0.0.1:9550/#token=abcdzzzzzzzzzzzzzzzzzzzz']);
     expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
+  });
+
+  // ── start 首启预检(终验收 V1,spec §3.10 条款 3)───────────────────────
+
+  it('start:首启预检——settings.json 与 env 均无 Godot 路径/白名单 → 就绪块后追加显著提示,daemon 照常起(exit 0)', async () => {
+    const ready = reg({ pid: 4321, port: 9550 });
+    const h = harness([[], [ready]]);   // harness 默认:readSettings 空 settings + env={} → 两者皆空
+    await runDaemonCli(['start'], h.deps);
+    const text = h.out.join('\n');
+    expect(h.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);   // 预检不阻断启动(spec:daemon 照常起)
+    expect(text).toContain('未配置 Godot 路径与项目白名单');
+    expect(text).toContain('设置');                       // 指引面板设置页
+    // 提示在就绪块之后(先 URL 三件套,再首启提示——"就绪输出后追加"语义)
+    expect(text.indexOf('daemon status --show-token')).toBeLessThan(text.indexOf('未配置 Godot'));
+  });
+
+  it('start:首启预检——env 或 settings.json 任一有配置 → 无首启提示', async () => {
+    const ready = reg({ pid: 4321, port: 9550 });
+    // 变体 A:终端 env 有 GODOT_PATH
+    const a = harness([[], [ready]]);
+    a.deps.env = { GODOT_PATH: 'D:/godot/Godot_v4.7.1-stable_win64.exe' };
+    await runDaemonCli(['start'], a.deps);
+    expect(a.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
+    expect(a.out.join('\n')).not.toContain('未配置 Godot');
+    // 变体 B:settings.json(GUI 设置面板持久化)有 godotPath
+    const b = harness([[], [ready]]);
+    b.deps.readSettings = vi.fn(async () => ({ version: 1, godotPath: 'D:/godot/Godot_v4.7.1-stable_win64.exe' }));
+    await runDaemonCli(['start'], b.deps);
+    expect(b.exitCodes).toEqual([EXIT_CODES.EXIT_OK]);
+    expect(b.out.join('\n')).not.toContain('未配置 Godot');
   });
 
   // ── stop ────────────────────────────────────────────────────────────────
