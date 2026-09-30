@@ -813,6 +813,7 @@ Claude Code（`mcpServers` 键，字段同形）：
 - **崩溃不自愈**：daemon 异常退出（或所在机器重启）后面板与 `/mcp` 一同消亡，需手动 `daemon start` 重拉；没有 watchdog、没有开机自启。
 - **单会话独占**：同一时刻 `/mcp` 只服务一个 MCP 会话——第二个客户端 Initialize 会收到 409（明确拒绝，不静默排队）；需要第二个会话时另起 daemon 或连 stdio 实例。
 - **localhost http 客户端行为以真机实测为准**：各客户端对本地 http MCP 端点的支持程度（重连、会话保活）可能不同，遇到问题优先核对客户端文档。
+- **工具档位与 stdio 同源**：daemon 默认 `basic` 档（与 stdio 生产默认一致），拉起 daemon 的终端设 `GODOT_MCP_PROFILE` 可调（如 `=full`，缺席时回落 `GODOT_MCP_MODE` 的 minimal/lite/full）——daemon 启动时读取该 env，无 CLI 参数面。
 
 ## 致谢
 

@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runDaemon, runDaemonStartupGate, parseDaemonArgs } from '../../src/daemon/main.js';
+import { runDaemon, runDaemonStartupGate, parseDaemonArgs, resolveDaemonToolMode } from '../../src/daemon/main.js';
 import { writeRegistration } from '../../src/web-gui/registry.js';
 
 describe('daemon 入口(批 A Task 5)', () => {
@@ -53,6 +53,26 @@ describe('daemon 入口(批 A Task 5)', () => {
       await writeRegistration({ pid: process.pid, port: 19571, token: 'tok_daemon_b', startedAt: 't', kind: 'daemon' }, { dir });
       await expect(runDaemonStartupGate({ env: {}, respawnOf: process.pid, registryDir: dir }))
         .resolves.toBeUndefined();
+    });
+  });
+
+  describe('resolveDaemonToolMode(终审 Fix-2:工具档位接 env 收口)', () => {
+    // 接线点:runDaemon 内 new GodotServer(daemonOpsScript(), { mode: resolveDaemonToolMode(process.env) })
+    // ——此前 daemon 构造无 options,落 GodotServer 兜底 full 档(GodotServer.ts `mode ?? 'full'`),
+    // 与 stdio 生产默认 basic(G7)决策悬空;现与 index.ts 的 env 解析链同款(daemon 无
+    // --profile CLI 参数面,配置入口唯一防两通道漂移,只接 env)。
+    it('GODOT_MCP_PROFILE=full → full(构造入参同值,与 stdio 同一 env 入口)', () => {
+      expect(resolveDaemonToolMode({ GODOT_MCP_PROFILE: 'full' })).toBe('full');
+    });
+
+    it('缺省 → basic(对齐 stdio 生产默认 G7,不再落 GodotServer 兜底 full)', () => {
+      expect(resolveDaemonToolMode({})).toBe('basic');
+    });
+
+    it('GODOT_MCP_MODE legacy 档与 stdio 同链:PROFILE 缺席才生效,优先级 PROFILE > MODE > basic', () => {
+      expect(resolveDaemonToolMode({ GODOT_MCP_MODE: 'full' })).toBe('full');
+      expect(resolveDaemonToolMode({ GODOT_MCP_MODE: 'lite' })).toBe('lite');
+      expect(resolveDaemonToolMode({ GODOT_MCP_PROFILE: 'lite', GODOT_MCP_MODE: 'full' })).toBe('lite');
     });
   });
 
