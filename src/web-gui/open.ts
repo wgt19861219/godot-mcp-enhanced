@@ -18,7 +18,9 @@ export interface OpenWebDashboardOpts {
   showToken?: boolean;
 }
 
-function defaultOpener(url: string): void {
+/** 跨平台浏览器 opener 导出复用(daemon 批 B 2026-09-30:cli/daemon.ts --open 同款
+ *  调用;函数体不变,仅开放导出)。 */
+export function defaultOpener(url: string): void {
   const platform = process.platform;
   const cmd = platform === 'win32' ? `start "" "${url}"`
     : platform === 'darwin' ? `open "${url}"`
