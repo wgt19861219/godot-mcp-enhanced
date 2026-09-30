@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { EXIT_CODES } from '../core/exit-codes.js';
 import { killPidTree as defaultKillPidTree } from '../core/process-state.js';
 import { appendMachineAuditLine } from '../core/audit-log.js';
+import { readUserSettings, isGodotConfigMissing, type UserSettings } from '../core/user-settings.js';
 import { defaultOpener } from '../web-gui/open.js';
 import type { WebGuiRegistration } from '../web-gui/registry.js';
 
@@ -62,6 +63,12 @@ export interface DaemonCliDeps {
   registryDir?: string;
   /** registry 读取注入(测试序列可控;缺省真 listRegistrations 绑 registryDir)。 */
   listRegistrations?: (opts: { dir?: string }) => Promise<WebGuiRegistration[]>;
+  /** settings.json 读取注入(测试 fake;缺省真实 readUserSettings 绑 settingsDir)。
+   *  首启预检(终验收 V1,spec §3.10 条款 3)消费——readUserSettings 容错设计
+   *  永不 reject(缺失/损坏 → 空 settings),CLI 侧无需再包防御。 */
+  readSettings?: (dir?: string) => Promise<UserSettings>;
+  /** settings.json 目录注入(透传真实 readUserSettings;缺省 ~/.godot-mcp/)。 */
+  settingsDir?: string;
   /** daemon spawn 注入(测试 fake;缺省真实 detached spawn + 日志 fd)。 */
   spawnDaemon?: (opts: DaemonSpawnOptions) => DaemonSpawnResult;
   /** 受控关停 HTTP 注入(测试 fake;缺省真实 node:http POST,超时 reject)。 */
@@ -205,6 +212,7 @@ async function defaultAuditKill(pid: number, reason: KillFallbackReason): Promis
 interface ResolvedDeps {
   env: NodeJS.ProcessEnv;
   listRegistrations: () => Promise<WebGuiRegistration[]>;
+  readSettings: () => Promise<UserSettings>;
   spawnDaemon: (opts: DaemonSpawnOptions) => DaemonSpawnResult;
   postShutdown: (opts: { port: number; token: string; restart: boolean; timeoutMs: number }) => Promise<{ status: number }>;
   killPidTree: (pid: number) => void;
@@ -224,6 +232,7 @@ async function resolveDeps(deps: DaemonCliDeps): Promise<ResolvedDeps> {
     listRegistrations: () => (deps.listRegistrations
       ? deps.listRegistrations({})
       : realList(deps.registryDir ? { dir: deps.registryDir } : {})),
+    readSettings: deps.readSettings ?? (() => readUserSettings(deps.settingsDir)),
     spawnDaemon: deps.spawnDaemon ?? defaultSpawnDaemon,
     postShutdown: deps.postShutdown ?? defaultPostShutdown,
     killPidTree: deps.killPidTree ?? defaultKillPidTree,
@@ -275,6 +284,16 @@ function printDaemonReady(r: WebGuiRegistration, extra?: string): void {
   if (extra) console.log(`  ${extra}`);
 }
 
+/** 首启预检显著提示(终验收 V1,spec §3.10 条款 3):settings.json 与终端 env 均无
+ *  有效 Godot 路径/白名单 → daemon 照常起,但 CLI 输出显著提示(daemon 日志侧仅有
+ *  C-08 warn,首启用户在终端看不见——本提示补该盲区)。面板侧同款信号:
+ *  hello.settingsConfigured(黄条,见 web-gui/server.ts sendHello)。 */
+function printFirstRunConfigHint(): void {
+  console.log('');
+  console.log('⚠️ 未配置 Godot 路径与项目白名单——除 daemon 启动目录外,工具无法访问其他目录。');
+  console.log('  请在面板「设置」页配置(保存即热生效),或以 GODOT_PATH / ALLOWED_PROJECT_PATHS 环境变量重启 daemon。');
+}
+
 // ─── 子命令(返回 exit code,runDaemonCli 统一退出——deps.exit 注入 fake 不真
 //      终止进程,子命令内直调 exit 会穿透后续分支,故收口到单一调用点)──────────────
 
@@ -306,6 +325,12 @@ async function cmdStart(d: ResolvedDeps, open: boolean): Promise<number> {
     return EXIT_CODES.EXIT_OPERATION_FAILED;
   }
   printDaemonReady(reg, `日志: ${spawned.logFile}`);
+  // 首启预检(终验收 V1,spec §3.10 条款 3):CLI 壳进程不经启动序重放,须 settings
+  // + env 合并判定(daemon 子进程自身会经 applyUserSettingsAtStartup 重放,面板
+  // hello 的 env-only 判定在 daemon 侧完备,两处语义同源于 isGodotConfigMissing 族)。
+  // 只挂 start 成功路径:restart 的死实例分支复用 cmdStart 自动获得;活实例受控交接
+  // 路径(spec §3.7)非"首启"语义,不提示(精确编辑,报告 §遗留有对照)。
+  if (isGodotConfigMissing(await d.readSettings(), d.env)) printFirstRunConfigHint();
   if (open) d.opener(`http://127.0.0.1:${reg.port}/#token=${reg.token}`);
   return EXIT_CODES.EXIT_OK;
 }

@@ -28,6 +28,7 @@ import { LogReader } from '../dashboard/log-reader.js';
 import { Aggregator } from '../dashboard/aggregator.js';
 import type { ToolStats, TimeSeriesBucket } from '../dashboard/aggregator.js';
 import { isPathInAllowedRoots } from '../core/path-utils.js';
+import { hasEnvGodotConfig } from '../core/user-settings.js';
 import { PathError } from '../core/tool-errors.js';
 import { FilesError, type FilesApi, type FilesErrorCode } from './files-api.js';
 import type { ProjectView } from './projects-store.js';
@@ -1143,6 +1144,12 @@ export class WebGuiServer {
       stats: this.statsSnapshot(),
       logs: s.recentLogs.toArray().slice(-500),
       projects,   // spec §5:注入缺席 null(v2/M6)
+      // 首启预检面板信号(终验收 V1,spec §3.10 条款 3):settings.json 与 env 均无
+      // 有效 Godot 路径/白名单 → false,前端 cfgWarn 黄条显著提示。daemon/stdio 入口
+      // 都经 runStartupSequence.applyUserSettingsAtStartup 把 settings 重放进 env,
+      // env 即合并生效视图——hasEnvGodotConfig 判 env 即完备(CLI 壳侧 settings+env
+      // 合并版见 cli/daemon.ts cmdStart,判定同源于 core/user-settings 纯函数族)。
+      settingsConfigured: hasEnvGodotConfig(process.env),
     });
   }
 

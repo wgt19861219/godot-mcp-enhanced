@@ -182,6 +182,12 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('setGodotResult');                    // 版本/错误结果显示位
     expect(INDEX_HTML).toContain('renderSettingsInfo');                // 只读生效值信息区
   });
+  it('首启预检提示(终验收 V1,spec §3.10 条款 3):hello.settingsConfigured 消费 + cfgWarn 黄条 + 保存后经 effective 刷新', () => {
+    expect(INDEX_HTML).toContain('settingsConfigured');                // hello 字段消费
+    expect(INDEX_HTML).toContain('cfgWarn');                           // 显著提示黄条容器
+    expect(INDEX_HTML).toContain('未配置 Godot 路径与项目白名单');      // 提示文案
+    expect(INDEX_HTML).toContain('function updateCfgWarn');            // 提示刷新函数(hello 与 loadSettings 共用)
+  });
 
   // ── 实例管理批(2026-09-30):左列第三区——实例列表 + 一键重启 ──────────────────
   it('实例区:section 结构 + 三段 flex(CSS) + 加载/空态', () => {

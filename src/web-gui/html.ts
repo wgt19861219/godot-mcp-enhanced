@@ -18,7 +18,7 @@ export const INDEX_HTML: string = `<!doctype html>
   header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); }
   header h1 { font-size: 14px; font-weight: 600; }
   header .dim { color: var(--dim); font-size: 12px; }
-  #warn { display: none; background: #3d2e00; color: var(--yellow); padding: 4px 12px; font-size: 12px; }
+  #warn, #cfgWarn { display: none; background: #3d2e00; color: var(--yellow); padding: 4px 12px; font-size: 12px; }
   main { flex: 1; display: grid; grid-template-columns: 340px 1fr 420px; gap: 8px; padding: 8px; min-height: 0; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-height: 0; }
   section h2 { font-size: 12px; color: var(--dim); padding: 6px 10px; border-bottom: 1px solid var(--line); font-weight: 600; display:flex; justify-content:space-between; align-items:center; }
@@ -120,6 +120,9 @@ export const INDEX_HTML: string = `<!doctype html>
   <span class="dim" id="connInfo"></span>
 </header>
 <div id="warn"></div>
+<!-- 首启预检提示(终验收 V1,spec §3.10 条款 3):hello.settingsConfigured=false 显示;
+     与 #warn(断线黄条)同款样式、独立容器(互不抢位) -->
+<div id="cfgWarn"></div>
 <main>
   <div id="left">
     <!-- 易用性批5 (2026-09-19):面板虽名「监控」,但项目/会话/文件区含写操作
@@ -219,6 +222,17 @@ export const INDEX_HTML: string = `<!doctype html>
     if (payload.projects !== undefined) { state.projects = payload.projects; renderProjects(); }   // null → 未配置空态
     $('statusBar').textContent = '已连接';
     $('connInfo').textContent = payload.stats && payload.stats.mode ? ('mode: ' + payload.stats.mode) : '';
+    // 首启预检(终验收 V1):仅显式 false 显示(旧实例 hello 无此字段 → undefined → 隐藏,向后兼容)
+    updateCfgWarn(payload.settingsConfigured !== false);
+  }
+
+  // 首启预检提示黄条(终验收 V1,spec §3.10 条款 3):settings.json 与 env 均无 Godot
+  // 路径/白名单 → 显著提示。刷新入口两处:hello(连接/重连)与 loadSettings(保存成功
+  // 后按 effective 刷新——保存即热生效,提示即隐;清空保存则重现)。
+  function updateCfgWarn(ok) {
+    var w = $('cfgWarn');
+    w.style.display = ok ? 'none' : 'block';
+    w.textContent = ok ? '' : '未配置 Godot 路径与项目白名单——工具仅可访问启动目录;请在下方「设置」页配置(保存即热生效)。';
   }
 
   // 面板控制(2026-09-14):alive 态(starting/running/stopping)→「停止」;
@@ -569,6 +583,9 @@ export const INDEX_HTML: string = `<!doctype html>
         $('setGodotResult').textContent = '';
         $('setSaveHint').textContent = '';
         if (v.readOnly) { $('setSave').disabled = true; $('setSaveHint').textContent = '只读模式,保存已禁用'; }
+        // 首启预检黄条随保存刷新(终验收 V1):effective 反映热生效后 env(保存成功
+        // 回调重拉本视图);hello 重连前提示状态由此保持最新。
+        updateCfgWarn(!!(v.effective && (v.effective.godotPath !== '' || (v.effective.allowedProjectPaths && v.effective.allowedProjectPaths.length > 0))));
       });
     }).catch(function () { $('setSaveHint').textContent = '网络异常,设置读取失败'; });
   }

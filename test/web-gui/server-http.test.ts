@@ -87,13 +87,17 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 会话占用(sessionActive)/交接中判定/跨实例重启指引 + .inst-dim 样式与「类型」列,
     // 脚本内容变更 → hash 轮换;同款双通道互证后锁入(独立重算 = split 提取 + CRLF
     // 归一含前导换行,与 server 实算 INDEX_SCRIPT_SHA256 一致)。
-    expect(WEB_GUI_CSP).toContain("'sha256-ieusdRGn61VPlqirzYf2zmjPiJ7TFyXyXHLIrsyyKKI='");
+    // daemon 终验收 V1 (2026-09-30) 七次重锚:首启预检 cfgWarn 黄条(resetAll 消费
+    // hello.settingsConfigured + updateCfgWarn 函数 + loadSettings 按 effective 刷新)
+    // 使脚本内容变更 → hash 轮换;同款双通道互证后锁入(build 产物导入实算
+    // INDEX_SCRIPT_SHA256 与本测试独立重算一致)。
+    expect(WEB_GUI_CSP).toContain("'sha256-BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('ieusdRGn61VPlqirzYf2zmjPiJ7TFyXyXHLIrsyyKKI=');   // 独立重算与锚互证
+    expect(hash).toBe('BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
