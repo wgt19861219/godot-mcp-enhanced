@@ -358,3 +358,183 @@ describe('mcp-endpoint 401/403 落审计(N-1:spec §3.5 失败落审计,批 A �
     } finally { await closeServer(srv); }
   });
 });
+
+// Task 11(批 C,spec §3.6):/mcp 单会话独占——第二 Initialize 409;SDK onsessionclosed
+// 仅 DELETE 触发(批 A 审查:客户端崩溃/断连时计数不减),纯计数拦截会让新连接
+// 永远 409 死锁——闸门以"会话 lastSeen 活性"判定,超 staleMs 无流量视为死残留放行。
+describe('mcp-endpoint 单会话独占(spec §3.6:第二 Initialize 409;活性超时防计数残留死锁)', () => {
+  const STALE_MS = 10_000;
+  const INIT_BODY = JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'second-client', version: '1.0' } },
+  });
+  const BUSY_JSON =
+    '{"error":"mcp endpoint busy: one session at a time (spec §3.6); connect a stdio instance or start another daemon"}';
+
+  beforeEach(() => { vi.mocked(appendMachineAuditLine).mockClear(); });
+
+  it('有活跃会话(计数=1 且 lastSeen 新鲜)+ Initialize → 409 + spec 文案,不进 transport', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now()]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(409);
+      expect(res.headers.get('content-type')).toBe('application/json');
+      expect(await res.text()).toBe(BUSY_JSON);
+      expect(fake.seen.length).toBe(0);   // 闸门拦截在 transport 之前
+    } finally { await closeServer(srv); }
+  });
+
+  it('无活跃会话(缺省状态)Initialize → 放行到 transport,body 透传无损', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(200);
+      expect(fake.seen.length).toBe(1);
+      expect(fake.seen[0]!.body).toBe(INIT_BODY);   // 缓冲重建后 body 无损
+    } finally { await closeServer(srv); }
+  });
+
+  it('计数残留(activeSessions=1 但 lastSeen 超 staleMs)Initialize → 放行,不死锁', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now() - (STALE_MS + 5000)]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(200);
+      expect(fake.seen.length).toBe(1);
+      expect(ep.activeSessionCount()).toBe(1);   // SDK 计数残留仍在(回调未触发),闸门靠活性放行而非计数清零
+    } finally { await closeServer(srv); }
+  });
+
+  it('活跃会话 + 非 Initialize POST(tools/list)→ 放行(拦截只针对新会话建立)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now()]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json', 'mcp-session-id': 's1' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+      });
+      expect(res.status).toBe(200);
+      expect(fake.seen.length).toBe(1);   // 存量会话的请求照旧放行
+    } finally { await closeServer(srv); }
+  });
+
+  it('409 落一条机器级审计行(mcp-session-reject),载荷不含 token 值', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now()]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(409);
+      expect(vi.mocked(appendMachineAuditLine)).toHaveBeenCalledTimes(1);
+      const entry = vi.mocked(appendMachineAuditLine).mock.calls[0]![0];
+      expect(entry.action).toBe('mcp-session-reject');
+      expect(entry.ok).toBe(false);
+      expect(entry.caller).toBe('daemon:mcp');
+      expect(entry.details).toEqual({ error: 'session_busy', activeSessions: 1, staleMs: STALE_MS });
+      expect(JSON.stringify(entry).includes(TOKEN)).toBe(false);   // 审计载荷不落 token 值
+    } finally { await closeServer(srv); }
+  });
+
+  it('带 mcp-session-id 的请求刷新 lastSeen——已 stale 的会话被迟到请求复活,Initialize 仍 409', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    // 种子已超 staleMs:若无刷新逻辑,后续 Initialize 应放行(上一用例);本用例
+    // 先发一个带 s1 头的存量会话请求把 lastSeen 刷到当下 → Initialize 必须仍 409。
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now() - (STALE_MS + 2000)]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const refresh = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json', 'mcp-session-id': 's1' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+      });
+      expect(refresh.status).toBe(200);
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+        body: INIT_BODY,
+      });
+      expect(res.status).toBe(409);
+      expect(fake.seen.length).toBe(1);   // 只有 tools/list 进了 transport,Initialize 被闸门拦下
+    } finally { await closeServer(srv); }
+  });
+
+  it('POST body 非 JSON + 活跃会话 → 放行(嗅探失败不误拦,交 SDK 自理)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({
+      mcpServer: { connect: async () => {} } as never, token: TOKEN, port,
+      sessionStaleMs: STALE_MS,
+      _transportForTest: fake.transport as never,
+      _sessionStateForTest: { activeSessions: 1, lastSeen: [['s1', Date.now()]] },
+    });
+    attach(srv, ep.handler);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'text/plain' },
+        body: 'not json at all',
+      });
+      expect(res.status).toBe(200);
+      expect(fake.seen.length).toBe(1);
+      expect(fake.seen[0]!.body).toBe('not json at all');
+    } finally { await closeServer(srv); }
+  });
+});
