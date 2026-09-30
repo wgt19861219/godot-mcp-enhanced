@@ -13,7 +13,9 @@ import { runStartupSequence } from '../index.js';
 import { GodotServer } from '../GodotServer.js';
 import { WebGuiServer } from '../web-gui/server.js';
 import { createMcpEndpoint } from './mcp-endpoint.js';
-import { getOrCreateSharedToken, listRegistrations } from '../web-gui/registry.js';
+import { controlledRestart, spawnDaemonDetached } from './controlled-restart.js';
+import { getOrCreateSharedToken, listRegistrations, removeRegistrationVerified } from '../web-gui/registry.js';
+import { killPidTree } from '../core/process-state.js';
 import { getLogger } from '../core/logger.js';
 import { appendMachineAuditLine, isAuditEnabled } from '../core/audit-log.js';
 
@@ -110,6 +112,9 @@ export async function runDaemon(args: string[]): Promise<void> {
     strictPort: port !== undefined,
     portStart: port,
     instanceKind: 'daemon',
+    // respawnOf:登记写入受控交接关联字段(§3.7"交接中"标注数据源);条件展开遵守
+    // "daemon 侧仅传确定值键"惯例(spread 的 undefined 会覆盖基座,见 GodotServer 注释)。
+    ...(respawnOf !== undefined ? { respawnOf } : {}),
     token,
     mcpHandler: (req, res) => {
       if (mcpHandlerImpl) { mcpHandlerImpl(req, res); return; }
@@ -117,6 +122,27 @@ export async function runDaemon(args: string[]): Promise<void> {
         .end(JSON.stringify({ error: 'mcp endpoint not ready' }));
     },
     onSelfRestart: () => { void shutdownDaemon(); },
+    // 受控关停/重启回调(§3.7 T1 面板 + T2 CLI 通道的服务端执行点,Task 7 注入端):
+    // stop = 既有有序退出链;restart = 受控交接四步序列(close listener → spawn 新
+    // daemon(--port+--respawn-of)→ 登记比对 → verified 删登记退出;失败回滚杀新
+    // 实例 + relisten,不留双活)。失败以 throw 上报后由 catch 落日志——旧进程继续服务。
+    onControlledShutdown: (mode) => {
+      if (mode !== 'restart') { void shutdownDaemon(); return; }
+      void controlledRestart({
+        gui,
+        server,
+        spawnDaemon: spawnDaemonDetached,
+        killTree: killPidTree,
+        listRegistrations: () => listRegistrations(),
+        removeRegistrationVerified: (pid, startedAt) => removeRegistrationVerified(pid, startedAt),
+        sleep: (ms) => new Promise((resolveSleep) => { setTimeout(resolveSleep, ms); }),
+        exit: (code) => process.exit(code),
+        // 有序 close 链收尾:logger flush 对齐 shutdownDaemon 的 close 顺序(server.close 后)
+        beforeExit: async () => { getLogger().close(); },
+      }).catch((err: unknown) => {
+        getLogger().error('daemon', `controlled restart 失败(已回滚,继续服务): ${err instanceof Error ? err.message : err}`);
+      });
+    },
   }));
 
   /** 有序退出:面板停(清登记)→ server 完整清理链 → logger flush → exit 0。

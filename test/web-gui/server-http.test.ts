@@ -738,3 +738,191 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
     }
   });
 });
+
+// ── daemon 批 B(2026-09-30): POST /api/shutdown 受控关停/重启指令通道(spec §3.7/Task 7)──
+// 无 Origin 的原生 http.request 模拟 CLI 形态(undici fetch 的 POST 恒自动带 Origin,
+// 测不到 origin===undefined 的 caller=daemon-cli 分支);带 Origin 分支用 fetch 显式注入。
+describe('POST /api/shutdown(daemon 批 B 2026-09-30)', () => {
+  let active: WebGuiServer | null = null;
+  let dir = '';
+
+  beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'web-gui-daemon-test-')); });
+  afterAll(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
+  afterEach(async () => { if (active) { await active.stop(); active = null; } });
+
+  async function startDaemonServer(hooks: Partial<Pick<WebGuiServerOptions, 'onControlledShutdown'>> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
+    const srv = new WebGuiServer({
+      getSessions: () => FAKE_SESSIONS,
+      getIndexHtml: () => FAKE_HTML,
+      portStart: 0,
+      registryDir: dir,
+      ...hooks,
+    });
+    await srv.start();
+    return { srv, base: `http://127.0.0.1:${srv.port}`, token: srv.token };
+  }
+
+  /** 原生 http POST(Origin 缺席可控——模拟 curl/CLI 形态)。无 body 契约:shutdown 端点不读 body。 */
+  function cliPost(base: string, path: string, token: string | null): Promise<{ status: number; body: string }> {
+    const u = new URL(base);
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: u.hostname, port: u.port, path, method: 'POST',
+        headers: { ...(token ? { 'x-gui-token': token } : {}) },
+      }, (res) => {
+        let data = '';
+        res.on('data', (c: Buffer) => { data += c; });
+        res.on('end', () => { resolve({ status: res.statusCode ?? 0, body: data }); });
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('无 token → 401(共用 authorized() 语义,不自造鉴权)', async () => {
+    const t = await startDaemonServer({ onControlledShutdown: () => { /* noop */ } });
+    active = t.srv;
+    expect((await cliPost(t.base, '/api/shutdown', null)).status).toBe(401);
+  });
+
+  it('有 token 无 Origin(CLI 形态)→ 200 {ok:true,mode:"stop"} + 回调收到 mode=stop', async () => {
+    const modes: string[] = [];
+    const t = await startDaemonServer({ onControlledShutdown: (m) => { modes.push(m); } });
+    active = t.srv;
+    const res = await cliPost(t.base, '/api/shutdown', t.token);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, mode: 'stop' });
+    await new Promise((r) => { setTimeout(r, 300); });   // 先响应后 150ms 异步触发(对齐 self-restart 时序先例)
+    expect(modes).toEqual(['stop']);
+  });
+
+  it('?restart=1 → 200 mode=restart + 回调收到 mode=restart', async () => {
+    const modes: string[] = [];
+    const t = await startDaemonServer({ onControlledShutdown: (m) => { modes.push(m); } });
+    active = t.srv;
+    const res = await cliPost(t.base, '/api/shutdown?restart=1', t.token);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, mode: 'restart' });
+    await new Promise((r) => { setTimeout(r, 300); });
+    expect(modes).toEqual(['restart']);
+  });
+
+  it('对 token + 跨端口 Origin → 403(M-1 Origin 闸门,先于回调不触发)', async () => {
+    let fired = false;
+    const t = await startDaemonServer({ onControlledShutdown: () => { fired = true; } });
+    active = t.srv;
+    const res = await fetch(t.base + '/api/shutdown', {
+      method: 'POST',
+      headers: { 'x-gui-token': t.token, origin: 'http://127.0.0.1:1' },
+    });
+    expect(res.status).toBe(403);
+    await new Promise((r) => { setTimeout(r, 300); });
+    expect(fired).toBe(false);
+  });
+
+  it('未注入 onControlledShutdown → 503 not configured(端点不活跃)', async () => {
+    const t = await startDaemonServer();
+    active = t.srv;
+    const res = await cliPost(t.base, '/api/shutdown', t.token);
+    expect(res.status).toBe(503);
+  });
+
+  it('审计留痕:机器级 action=shutdown caller=web-gui:daemon,details 含 mode=stop 与 caller=daemon-cli(无 Origin 判别)', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-daemon-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    try {
+      const t = await startDaemonServer({ onControlledShutdown: () => { /* noop:仅验留痕 */ } });
+      active = t.srv;
+      const res = await cliPost(t.base, '/api/shutdown', t.token);
+      expect(res.status).toBe(200);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'shutdown' && e.caller === 'web-gui:daemon');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.tool).toBe('web-gui');
+      expect(hit!.risk).toBe('process');
+      expect(hit!.ok).toBe(true);
+      const details = hit!.details as { mode?: string; caller?: string };
+      expect(details.mode).toBe('stop');
+      expect(details.caller).toBe('daemon-cli');
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  // ── N-1(批级审查 2026-09-30):shutdown 鉴权失败零留痕 → 补机器级审计 ──
+  // spec §3.9 "401 拒绝→机器级审计";形态对齐批 A /mcp 的 auditMcpReject 先例
+  // (src/daemon/mcp-endpoint.ts):details 只含 error 语义 + hasAuth 布尔,不含 token 值。
+  it('N-1: 无 token 401 → 审计行 action=shutdown-auth-reject ok:false error=unauthorized hasAuth=false', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-daemon-rej-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    try {
+      const t = await startDaemonServer({ onControlledShutdown: () => { /* noop:拒绝路径不应触达回调 */ } });
+      active = t.srv;
+      expect((await cliPost(t.base, '/api/shutdown', null)).status).toBe(401);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'shutdown-auth-reject' && e.caller === 'web-gui:daemon');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '拒绝路径机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.tool).toBe('web-gui');
+      expect(hit!.risk).toBe('process');
+      expect(hit!.ok).toBe(false);
+      const details = hit!.details as { error?: string; hasAuth?: boolean };
+      expect(details.error).toBe('unauthorized');
+      expect(details.hasAuth).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+
+  it('N-1: 对 token + 跨端口 Origin 403 → 审计行 error=origin_forbidden(403/401 分流)', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'gme-daemon-rej-home-'));
+    vi.stubEnv('HOME', fakeHome);
+    vi.stubEnv('USERPROFILE', fakeHome);
+    try {
+      const t = await startDaemonServer({ onControlledShutdown: () => { /* noop */ } });
+      active = t.srv;
+      const res = await fetch(t.base + '/api/shutdown', {
+        method: 'POST',
+        headers: { 'x-gui-token': t.token, origin: 'http://127.0.0.1:1' },
+      });
+      expect(res.status).toBe(403);
+      const machineAudit = join(fakeHome, '.godot-mcp', 'machine-audit.jsonl');
+      let hit: Record<string, unknown> | undefined;
+      for (let i = 0; i < 20 && !hit; i++) {
+        try {
+          const lines = readFileSync(machineAudit, 'utf8').trim().split('\n');
+          hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>)
+            .find((e) => e.action === 'shutdown-auth-reject' && e.caller === 'web-gui:daemon');
+        } catch { /* 尚未落盘 */ }
+        if (!hit) await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(hit, '403 拒绝路径机器级审计行应落盘(fire-and-forget 轮询)').toBeDefined();
+      expect(hit!.ok).toBe(false);
+      const details = hit!.details as { error?: string; hasAuth?: boolean };
+      expect(details.error).toBe('origin_forbidden');
+      expect(details.hasAuth).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(fakeHome, { recursive: true, force: true });
+    }
+  });
+});

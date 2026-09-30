@@ -236,7 +236,7 @@ godot-mcp-enhanced daemon restart             # 活 daemon 走 T2 受控交接(P
 
 - 全端点 127.0.0.1(N6);/mcp 强制 token(§3.5);token 0o600 + Windows icacls(既有惯例)。
 - daemon 启动序复用 dangerousBypassFlags 检查(H-08)与设置重放(F13)——抽共享启动函数防两入口漂移。
-- 生命周期事件审计:daemon start/stop/restart/respawn/401 拒绝 → 机器级 `web-gui:instances` 子系统(对齐实例管理批先例,复用 Nit-3 预留的 `'instances'` 联合值场景——涉机器级实例操作,继续直调 appendMachineAuditLine)。
+- 生命周期事件审计:daemon start/stop/restart/respawn/401 拒绝 → 机器级审计(**批 A/B 实施裁定:caller 统一 `web-gui:daemon`**——shutdown/重启非 instance 操作,复用 `web-gui:instances` 反而归因失真;对齐 ToolDispatcher 的 `web-gui:<子系统>` 通道归一惯例,/mcp 侧为 `daemon:mcp`,来源 daemon-cli/panel 落 details.caller)。
 - 日志:detached 进程 stdout/stderr 落 `~/.godot-mcp/logs/daemon-<pid>.log`(对齐 resolveLogDir 惯例),防 Windows detached 输出悬空。
 
 ### 3.10 daemon 的 env 与配置契约(第 2 轮 m-4 补设)

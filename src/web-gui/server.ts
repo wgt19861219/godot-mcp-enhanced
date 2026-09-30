@@ -79,6 +79,12 @@ export interface WebGuiServerOptions {
   /** 实例管理批(2026-09-30):重启"本实例"的有序退出回调(先响应 200 再走 close 链,
    *  登记文件随 stop() 清理);缺席兜底 process.exit(0)。构造器注入,不新增模块级 setter。 */
   onSelfRestart?: () => void;
+  /** daemon 批 B(2026-09-30 spec §3.7/Task 7):受控关停/重启回调(T2 CLI 通道,面板
+   *  亦可触发)。POST /api/shutdown(?restart=1 → mode 'restart',缺省 'stop')先 200
+   *  响应再异步 150ms 触发本回调(时序对齐 onSelfRestart 先例,防 stop 模式退出竞态
+   *  吃掉响应)。未注入时端点 503(stdio 实例不注入,端点不活跃);由 src/daemon/main.ts
+   *  接线注入。构造器注入,不新增模块级 setter。 */
+  onControlledShutdown?: (mode: 'stop' | 'restart') => void;
   /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
   isPidAlive?: (pid: number) => boolean;
   /** daemon 批 A(2026-09-30 spec §3.4/M-2):严格端口。true = 只试 portStart 一个端口,
@@ -89,6 +95,11 @@ export interface WebGuiServerOptions {
    *  面板后续按 kind 渲染)。缺省不写 kind(JSON.stringify 跳过 undefined)——旧实例
    *  语义,对齐 version 字段先例。 */
   instanceKind?: 'stdio' | 'daemon';
+  /** daemon 批 B(2026-09-30 spec §3.7):受控交接关联——新 daemon 以 --respawn-of
+   *  启动时登记写入此字段,是前端/daemon status 对旧条目显示"交接中"的标注数据源。
+   *  可选,旧登记无此字段向后兼容(parseRegistrationFile 不校验,对齐 kind 先例);
+   *  由 src/daemon/main.ts 按 --respawn-of 参数透传。 */
+  respawnOf?: number;
   /** daemon 批 A(spec §3.2 注入链):daemon 模式下 POST/GET/DELETE /mcp 三方法
    *  (Streamable HTTP transport 方法面)路由到它;缺席不挂该路由(/mcp 404)。
    *  由 src/daemon/main.ts 构造 WebGuiServer 时直接注入(两段式接线闭包,批 A 审查
@@ -206,6 +217,14 @@ export class WebGuiServer {
     return this.portValue;
   }
 
+  /** daemon 批 B(2026-09-30 spec §3.7):登记 startedAt 的同源只读暴露——受控交接
+   *  删自身登记前 removeRegistrationVerified(pid, expectedStartedAt) 的期望值必须与
+   *  登记文件逐字一致,取本值(start() 定格并写进登记文件的同一 string 引用)而非
+   *  调用方另 new Date()(时间戳不同会导致 verified 永远 false)。 */
+  get registrationStartedAt(): string {
+    return this.startedAtIso;
+  }
+
   async start(): Promise<void> {
     const start = this.opts.portStart ?? (Number(process.env.GODOT_MCP_WEB_GUI_PORT) || DEFAULT_PORT_START);
     // daemon 批 A(M-2):strictPort 只试起点一个端口,EADDRINUSE 直接 reject 到上层
@@ -230,8 +249,8 @@ export class WebGuiServer {
     const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
     this.startedAtIso = new Date().toISOString();
     // kind:instanceKind 注入时写入(缺省 undefined 被 JSON.stringify 跳过——旧实例语义,
-    // parseRegistrationFile 不校验,对齐 version 字段先例)
-    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION, kind: this.opts.instanceKind }, regOpts);
+    // parseRegistrationFile 不校验,对齐 version 字段先例);respawnOf 同款(§3.7 交接关联)
+    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION, kind: this.opts.instanceKind, respawnOf: this.opts.respawnOf }, regOpts);
     // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
     // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
     void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
@@ -260,9 +279,21 @@ export class WebGuiServer {
       srv.listen(port, '127.0.0.1', () => {
         srv.removeListener('error', reject);
         this.httpServer = srv;
+        // 附属功能不阻塞进程退出(设计 §3.1 纪律;listen 内统一挂,start/relisten
+        // 两消费方同款语义,重复 unref 无害)
+        srv.unref();
         resolve();
       });
     });
+  }
+
+  /** 关单个 HTTP server 的最小共享段(daemon 批 B 抽取):closeAllConnections 断
+   *  keep-alive/SSE 已建连接(否则 close 回调被挂住、端口迟迟不释放)+ close 等完成。
+   *  stop() 与 closeListener() 共用;与 stop 的边界:本段不动 _active/reader/定时器/
+   *  SSE 集合/登记——那些是 stop 的全量收尾职责。 */
+  private closeServer(srv: Server): Promise<void> {
+    srv.closeAllConnections?.();
+    return new Promise<void>((resolve) => { srv.close(() => resolve()); });
   }
 
   async stop(): Promise<void> {
@@ -278,10 +309,30 @@ export class WebGuiServer {
     this.sseClients.clear();
     const srv = this.httpServer;
     this.httpServer = null;
-    if (!srv) return;
-    srv.closeAllConnections?.();
-    await new Promise<void>((resolve) => { srv.close(() => resolve()); });
+    // srv 为 null = 未 start 过 或 §3.7 closeListener 已关——两种都只跳过 close 段,
+    // 登记清理不可跳(closeListener 后接 stop 的交接边界,否则登记泄漏到下次探活清扫)
+    if (srv) await this.closeServer(srv);
     await removeRegistration(process.pid, this.opts.registryDir ? { dir: this.opts.registryDir } : {});
+  }
+
+  /** daemon 批 B(2026-09-30 spec §3.7 步骤 1):只关 HTTP listener 释放端口,
+   *  进程继续活着——不清登记(旧登记保留 = 交接窗口"交接中"标注数据源)、不置
+   *  _active(模块级激活标志仍真)、不停 reader/定时器(回滚路径 relisten 后服务
+   *  原样恢复)。SSE 连接随 closeAllConnections 的 socket 销毁摘除(req 'close'
+   *  自动 delete,sendEvent 的 try/catch 吸收窗口期写入)。 */
+  async closeListener(): Promise<void> {
+    const srv = this.httpServer;
+    this.httpServer = null;
+    if (!srv) return;
+    await this.closeServer(srv);
+  }
+
+  /** closeListener 的逆操作(§3.7 步骤 4 回滚):同端口重新监听(不变式 1:端口跨
+   *  交接不漂移)。绑不上(EADDRINUSE,如新实例已占端口)时 reject——由受控交接
+   *  的回滚序列决策,本层不自作顺延(strictPort 语义同源)。幂等:已在监听则直接返回。 */
+  async relisten(): Promise<void> {
+    if (this.httpServer) return;
+    await this.listen(this.portValue);
   }
 
   // ─── 鉴权(设计 §5) ────────────────────────────────────────────────────────
@@ -355,7 +406,8 @@ export class WebGuiServer {
           || url.pathname === '/api/sessions/start' || url.pathname === '/api/projects/scan'
           || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
           || url.pathname === '/api/projects/file' || url.pathname === '/api/settings'
-          || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart') {
+          || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart'
+          || url.pathname === '/api/shutdown') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -548,6 +600,39 @@ export class WebGuiServer {
     }).catch((e: unknown) => { recordAuditWriteFailure(e); });
   }
 
+  /** daemon 生命周期操作审计(daemon 批 B 2026-09-30):恒落机器级,形态对齐
+   *  auditInstanceAction(不复用它——其 caller 绑定 instances 子系统);caller 取
+   *  'web-gui:daemon',与 'web-gui:instances'/'daemon:mcp' 同款「域:子系统」风格
+   *  (见 src/daemon/mcp-endpoint.ts 同款注释)。成功路径落痕;鉴权拒绝走
+   *  auditDaemonReject(N-1);503 未注入是配置态非安全事件,不落(对齐
+   *  files/projects 未注入不落痕现状);best-effort,失败不阻断响应。 */
+  private auditDaemonAction(details: Record<string, unknown>): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action: 'shutdown', risk: 'process',
+      ok: true, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'web-gui:daemon',
+      details,
+    }).catch((e: unknown) => { recordAuditWriteFailure(e); });
+  }
+
+  /** daemon 关停指令鉴权拒绝审计(N-1,批级审查 2026-09-30):spec §3.9 "401 拒绝→
+   *  机器级审计"。形态对齐批 A auditMcpReject(src/daemon/mcp-endpoint.ts):action
+   *  'shutdown-auth-reject'、ok:false、details 不含 token 值(仅 error 语义 + hasAuth
+   *  布尔)。403/401 分流:token 验对但 Origin 不符 → 'origin_forbidden',token 缺失
+   *  或错误 → 'unauthorized'。best-effort,失败不阻断拒绝响应。 */
+  private auditDaemonReject(error: 'unauthorized' | 'origin_forbidden', hasAuth: boolean): void {
+    if (!isAuditEnabled()) return;
+    void appendMachineAuditLine({
+      trace_id: `web-gui-${randomUUID().slice(0, 16)}`,
+      tool: 'web-gui', action: 'shutdown-auth-reject', risk: 'process',
+      ok: false, project_path: '', changed_files: [],
+      duration_ms: 0, caller: 'web-gui:daemon',
+      details: { error, hasAuth },
+    }).catch((e: unknown) => { recordAuditWriteFailure(e); });
+  }
+
   private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -555,7 +640,15 @@ export class WebGuiServer {
     };
     try {
       if (!this.authorized(req, url)) {
-        res.writeHead(this.tokenEquals(this.extractToken(req, url)) ? 403 : 401).end();
+        const presented = this.extractToken(req, url);
+        const code = this.tokenEquals(presented) ? 403 : 401;   // 对 token 错 Origin=403,错 token=401
+        // N-1(批级审查 2026-09-30):shutdown 鉴权失败落机器级审计(spec §3.9),403/401
+        // 分流见 auditDaemonReject。仅 shutdown 分支——其余 POST /api/* 的 401/403
+        // 零留痕是既有现状,不在本批扩面。hasAuth=任一通道(query/头/cookie)是否携带凭据。
+        if (url.pathname === '/api/shutdown') {
+          this.auditDaemonReject(code === 403 ? 'origin_forbidden' : 'unauthorized', presented !== null);
+        }
+        res.writeHead(code).end();
         return;
       }
 
@@ -594,6 +687,27 @@ export class WebGuiServer {
         this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
         killPidTree(pid);
         return json(200, { ok: true });
+      }
+
+      // ── POST /api/shutdown(daemon 批 B 2026-09-30,spec §3.7/Task 7)─────────
+      // daemon 受控停止/重启的指令入口(T2 CLI 通道,面板亦可触发)。无 body 契约——
+      // mode 由 query 判别:?restart=1 → 'restart',缺省 'stop'。响应时序对齐
+      // instances/restart 自重启先例:先 200 响应再 setTimeout 150ms 异步调回调
+      // (stop 模式下回调若同步退进程,竞态会吃掉响应)。caller 判别落审计 details:
+      // 无 Origin(CLI 形态)→ 'daemon-cli',有 Origin(浏览器)→ 'panel'。不受
+      // READ_ONLY 拦:运维操作,对齐 sessions/stop / instances-restart 现状。
+      if (url.pathname === '/api/shutdown') {
+        const mode: 'stop' | 'restart' = url.searchParams.get('restart') === '1' ? 'restart' : 'stop';
+        const caller = req.headers.origin === undefined ? 'daemon-cli' : 'panel';
+        const cb = this.opts.onControlledShutdown;
+        if (!cb) {
+          getLogger().info('web-gui', `action=shutdown mode=${mode} result=503_not_configured`);
+          return json(503, { error: 'not configured' });
+        }
+        getLogger().info('web-gui', `action=shutdown mode=${mode} caller=${caller} result=200`);
+        this.auditDaemonAction({ mode, caller });
+        setTimeout(() => cb(mode), 150);
+        return json(200, { ok: true, mode });
       }
 
       // ── POST /api/projects/file(spec §4:保存流,body 预检→乐观锁保存)──────

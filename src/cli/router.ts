@@ -9,7 +9,7 @@ const __cliDir = dirname(fileURLToPath(import.meta.url));
 const __rootDir = join(__cliDir, '..', '..');
 
 /** CLI 子命令清单(export 供 test/cli/router.test.ts 单一真相源引用,防硬编码漂移) */
-export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'uninstall', 'gif', 'web'] as const;
+export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'uninstall', 'gif', 'web', 'daemon'] as const;
 export type Subcommand = typeof SUBCOMMANDS[number];
 
 export function parseSubcommand(args: string[]): { subcommand: Subcommand; rest: string[] } | null {
@@ -85,6 +85,13 @@ export async function routeCommand(args: string[]): Promise<void> {
       await runWeb(parsed.rest);
       break;
     }
+    case 'daemon': {
+      // daemon 批 B(2026-09-30 spec §3.8):daemon 生命周期四命令
+      // (start/stop/status/restart),exit code 走 EXIT_CODES 注册表。
+      const { runDaemonCli } = await import('./daemon.js');
+      await runDaemonCli(parsed.rest);
+      break;
+    }
     case 'gif': {
       const { runGif } = await import('./gif.js');
       await runGif(parsed.rest);
@@ -146,6 +153,10 @@ godot-mcp-enhanced — Godot AI 开发环境
   godot-mcp-enhanced uninstall      卸载清理:客户端注册+项目 addon;--purge 连 ~/.godot-mcp/ 一并删;--dry-run 预览
   godot-mcp-enhanced gif <project>  录制 demo GIF(bridge 定频截图;--fps/--seconds/--keys/--out)
   godot-mcp-enhanced web <project>  Web 试玩闭环(导出+127.0.0.1 服务器;--port/--serve-only)
+  godot-mcp-enhanced daemon <cmd>   daemon 生命周期(start/stop/status/restart;后台常驻 MCP+面板;
+                                     --open 开面板,status --show-token 显示全量 token)。
+                                     区分:web=单项目 Web 导出试玩;dashboard=stdio server 的监控面板;
+                                     daemon=独立后台进程,面板与 /mcp 端点常驻
 
 MCP 参数:
   --profile=<name>  工具 profile (full/minimal/lite)
