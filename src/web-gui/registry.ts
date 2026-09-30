@@ -156,6 +156,21 @@ export async function removeRegistration(pid: number, opts: RegistryOpts = {}): 
 }
 
 /**
+ * daemon 批 A(spec §3.7 第 2 轮 m-7):校验内容后删登记——PID 复用场景下防误删他人登记。
+ * 交接序列步骤 3(旧进程删自身登记)的消费点:OS 回收 pid 后新进程可能撞上旧文件名
+ * `<pid>.json`,仅凭 pid 删会把别人的登记清掉。文件不存在/解析失败 → false(视为已清);
+ * pid 或 startedAt 不匹配 → false 且不删。
+ */
+export async function removeRegistrationVerified(pid: number, expectedStartedAt: string, opts: RegistryOpts = {}): Promise<boolean> {
+  const dir = opts.dir ?? webGuiRegistryDir();
+  const parsed = await parseRegistrationFile(dir, `${pid}.json`);
+  if (!parsed) return false;
+  if (parsed.pid !== pid || parsed.startedAt !== expectedStartedAt) return false;
+  await removeRegistration(pid, opts);
+  return true;
+}
+
+/**
  * 登记文件读取 + 形状校验(审查 Low,2026-09-17 批 3 抽取):listRegistrations 与
  * sweepStaleRegistrations 共用的单一校验来源。读失败/JSON 损坏/三字段判型不过/
  * token 字符集白名单(/^[A-Za-z0-9_-]+$/,无 shell 元字符即安全等价)任一不过 → null;

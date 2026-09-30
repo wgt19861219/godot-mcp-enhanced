@@ -16,10 +16,17 @@ import {
   validateHostHeader,
   localhostAllowedHostnames,
 } from '@modelcontextprotocol/server';
-import type { McpServer } from '@modelcontextprotocol/server';
+import type { Transport } from '@modelcontextprotocol/server';
+
+/** Task 5 消费驱动的接口收敛(2026-09-30):原类型为 SDK 名义类 McpServer,但 GodotServer
+ *  持有的是同包的 Server 类(Protocol 直系)——两者互不名义兼容,而本端点只消费
+ *  connect(transport)。结构最小接口让 SDK Server / McpServer / 测试 fake 三者都天然
+ *  满足(依赖倒置),免 as 断言(禁 any 纪律)。运行时语义:connect 即 Protocol 基类的
+ *  transport 接线,两类一致。 */
+export type McpConnectable = { connect(transport: Transport): Promise<void> };
 
 export interface McpEndpointDeps {
-  mcpServer: McpServer;
+  mcpServer: McpConnectable;
   token: string;
   /** 端口(constructing Web Request 的 URL 与规范化 Host 用)。 */
   port: number;

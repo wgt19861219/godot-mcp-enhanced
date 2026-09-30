@@ -58,6 +58,7 @@ import { InstanceHttpServer } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
 import { WebGuiServer } from './web-gui/server.js';
+import type { WebGuiServerOptions } from './web-gui/server.js';
 import { INDEX_HTML } from './web-gui/html.js';
 // 项目面板批(2026-09-15 spec §6):store + run 链真实函数注入(应用层 → web-gui/tools,合法方向)
 import { ProjectsStore } from './web-gui/projects-store.js';
@@ -564,6 +565,96 @@ export class GodotServer {
     await this.server.connect(transport);
   }
 
+  /** daemon 批 A(2026-09-30 Task 5):WebGuiServer 注入面工厂——run()(stdio 路径)与
+   *  src/daemon/main.ts runDaemon()(daemon 路径)共用的单一构造点(spec §3.2 N-3
+   *  透传原则:十余注入点不复制两份)。做成实例方法而非模块级导出函数:注入闭包引用
+   *  this.dispatcher / this.close(私有成员,模块级函数触达需再开访问器),方法体内
+   *  this 引用原样保留 = 从 run() 的纯搬移,注入面零变化(等价性由既有 test/web-gui/
+   *  server-http 等全套用例守护)。overrides 仅 daemon 侧使用(strictPort/portStart/
+   *  instanceKind/token/mcpHandler/onSelfRestart 特化);spread 语义下 overrides 的
+   *  undefined 值会覆盖基座,daemon 侧仅传确定值键。 */
+  buildWebGuiOptions(overrides: Partial<WebGuiServerOptions> = {}): WebGuiServerOptions {
+    return {
+      getSessions: () => ps.listRunSessionsDetailed(),
+      getIndexHtml: () => INDEX_HTML,
+      // 面板控制(2026-09-14 批准设计):stop 与 runtime.ts stop_project 核心三步一致
+      // (markSessionStopping → killProcess → releaseRunSessionBusy);killProcess 后
+      // 退出钩子自动走 markSessionExited + clearRunSession 快照挪移(分桶批已建)。
+      stopSession: async (projectPath) => {
+        const key = ps.normalizeProjectKey(projectPath);
+        const proc = ps.getRunSessionProc(key);
+        if (!proc) return { ok: false, reason: 'not_found' };
+        ps.markSessionStopping(key);
+        await ps.killProcess(proc);
+        ps.releaseRunSessionBusy(key);
+        return { ok: true };
+      },
+      removeSession: (projectPath) => ps.removeRunSession(projectPath),
+      // ── 项目面板批(2026-09-15 spec §6):store 四方法 + run/edit/isReadOnly 注入 ──
+      // store 构造注入 getSessions(listRunSessionsDetailed)满足 ProjectView.running
+      // 判定(spec §3.3;isAliveStatus 谓词复用在 store 内)。
+      projects: (() => {
+        const projectsStore = new ProjectsStore({ getSessions: () => ps.listRunSessionsDetailed() });
+        return {
+          list: () => projectsStore.listProjects(),
+          scan: (onProgress?: (found: number, scanned: number) => void) => projectsStore.scanProjects(onProgress),
+          add: (path: string) => projectsStore.addProject(path),
+          remove: (path: string) => projectsStore.removeProject(path),
+        };
+      })(),
+      // ── 资源管理工作台(spec 2026-09-15 §3.1):files 注入——纯逻辑模块, ──
+      // backupDir 缺省 ~/.godot-mcp/web-gui/backups(集中备份,三重护栏之三)
+      files: new FilesApi(),
+      runProject: async (projectPath: string) => {
+        // Task 1 getContext() 真实链路(spec §6 IMP-4):ctx.findGodot/setProjectDir/projectDir
+        // 均接真实 dispatcher 状态(合成 no-op 会断活跃指针)。
+        const ctx = this.dispatcher!.getContext();
+        const result = await executeRunProject(
+          { action: 'run_project', project_path: projectPath, preview: true },   // preview=面板拉起即看
+          ctx,
+        );
+        // 假成功防线(Task 3 review 裁决):executeRunProject 失败走 ToolResult 而非 throw,
+        // 不拦则 start 端点 200 假报成功。⚠️ 事实修正:isError 形态仅 bridge 未就绪一途
+        // (runtime.ts errorResult);其余失败(not_a_project/busy/capacity/spawn)全为
+        // textResult("Error: ...")且不带 isError(Task 1 "行为零变"抽取锁定)——防线
+        // = isError || "Error:" 前缀双判,精确覆盖全部失败路径且无误伤(成功消息以
+        // Preview mode:/Bridge ready./Running project at//[WARNING] 开头)。
+        if (result) {
+          const first = result.content[0];
+          const text = first?.type === 'text' ? first.text : '';
+          if ((result as { isError?: boolean }).isError === true || text.startsWith('Error:')) {
+            throw new Error(text.slice(0, 200) || 'run_project failed');
+          }
+        }
+        return result;
+      },
+      editProject: async (projectPath: string) => {
+        // launch_editor 链复刻(runtime.ts case 'launch_editor',spec §6:仅 6 行不抽函数;
+        // project.godot 存在性 404 已由端点层前置校验)。
+        const godot = await findGodot();
+        const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+        child.on('error', (err) => {
+          getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
+        });
+        child.unref();
+      },
+      // READ_ONLY 状态源与 index.ts:94 同源(spec v2/IMP-3:面板不得绕过 AI 侧 ReadOnlyGuard 防线)
+      isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
+      // 设置面板(2026-09-29 设置批):get/verify/save;READ_ONLY 同源注入
+      settings: new UserSettingsService({
+        isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
+      }),
+      // 实例管理批(2026-09-30):面板"重启本实例"的有序退出——close() 走完整清理链
+      // (含 stopWebGui 删登记文件)后 exit(0),对齐 index.ts gracefulShutdown 语义;
+      // close() 抛错不阻退出(catch 吞),理论悬死窗(close 永不 settle)接受——
+      // close 链各步 best-effort 有界,极端场景由 MCP 客户端杀进程兜底。
+      onSelfRestart: () => {
+        void this.close().catch(() => { /* 清理失败不阻退出 */ }).finally(() => process.exit(0));
+      },
+      ...overrides,
+    };
+  }
+
   async run(): Promise<void> {
     await this.connectTransport(new StdioServerTransport());
     log('Godot MCP Enhanced server running on stdio');
@@ -598,84 +689,10 @@ export class GodotServer {
     // env=0 关闭(与 GODOT_MCP_NO_DASHBOARD 同模式);任何异常降级禁用,绝不拖垮主流程。
     if (process.env.GODOT_MCP_WEB_GUI !== '0') {
       try {
-        this.webGuiServer = new WebGuiServer({
-          getSessions: () => ps.listRunSessionsDetailed(),
-          getIndexHtml: () => INDEX_HTML,
-          // 面板控制(2026-09-14 批准设计):stop 与 runtime.ts stop_project 核心三步一致
-          // (markSessionStopping → killProcess → releaseRunSessionBusy);killProcess 后
-          // 退出钩子自动走 markSessionExited + clearRunSession 快照挪移(分桶批已建)。
-          stopSession: async (projectPath) => {
-            const key = ps.normalizeProjectKey(projectPath);
-            const proc = ps.getRunSessionProc(key);
-            if (!proc) return { ok: false, reason: 'not_found' };
-            ps.markSessionStopping(key);
-            await ps.killProcess(proc);
-            ps.releaseRunSessionBusy(key);
-            return { ok: true };
-          },
-          removeSession: (projectPath) => ps.removeRunSession(projectPath),
-          // ── 项目面板批(2026-09-15 spec §6):store 四方法 + run/edit/isReadOnly 注入 ──
-          // store 构造注入 getSessions(listRunSessionsDetailed)满足 ProjectView.running
-          // 判定(spec §3.3;isAliveStatus 谓词复用在 store 内)。
-          projects: (() => {
-            const projectsStore = new ProjectsStore({ getSessions: () => ps.listRunSessionsDetailed() });
-            return {
-              list: () => projectsStore.listProjects(),
-              scan: (onProgress?: (found: number, scanned: number) => void) => projectsStore.scanProjects(onProgress),
-              add: (path: string) => projectsStore.addProject(path),
-              remove: (path: string) => projectsStore.removeProject(path),
-            };
-          })(),
-          // ── 资源管理工作台(spec 2026-09-15 §3.1):files 注入——纯逻辑模块, ──
-          // backupDir 缺省 ~/.godot-mcp/web-gui/backups(集中备份,三重护栏之三)
-          files: new FilesApi(),
-          runProject: async (projectPath: string) => {
-            // Task 1 getContext() 真实链路(spec §6 IMP-4):ctx.findGodot/setProjectDir/projectDir
-            // 均接真实 dispatcher 状态(合成 no-op 会断活跃指针)。
-            const ctx = this.dispatcher!.getContext();
-            const result = await executeRunProject(
-              { action: 'run_project', project_path: projectPath, preview: true },   // preview=面板拉起即看
-              ctx,
-            );
-            // 假成功防线(Task 3 review 裁决):executeRunProject 失败走 ToolResult 而非 throw,
-            // 不拦则 start 端点 200 假报成功。⚠️ 事实修正:isError 形态仅 bridge 未就绪一途
-            // (runtime.ts errorResult);其余失败(not_a_project/busy/capacity/spawn)全为
-            // textResult("Error: ...")且不带 isError(Task 1 "行为零变"抽取锁定)——防线
-            // = isError || "Error:" 前缀双判,精确覆盖全部失败路径且无误伤(成功消息以
-            // Preview mode:/Bridge ready./Running project at//[WARNING] 开头)。
-            if (result) {
-              const first = result.content[0];
-              const text = first?.type === 'text' ? first.text : '';
-              if ((result as { isError?: boolean }).isError === true || text.startsWith('Error:')) {
-                throw new Error(text.slice(0, 200) || 'run_project failed');
-              }
-            }
-            return result;
-          },
-          editProject: async (projectPath: string) => {
-            // launch_editor 链复刻(runtime.ts case 'launch_editor',spec §6:仅 6 行不抽函数;
-            // project.godot 存在性 404 已由端点层前置校验)。
-            const godot = await findGodot();
-            const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
-            child.on('error', (err) => {
-              getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
-            });
-            child.unref();
-          },
-          // READ_ONLY 状态源与 index.ts:94 同源(spec v2/IMP-3:面板不得绕过 AI 侧 ReadOnlyGuard 防线)
-          isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
-          // 设置面板(2026-09-29 设置批):get/verify/save;READ_ONLY 同源注入
-          settings: new UserSettingsService({
-            isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
-          }),
-          // 实例管理批(2026-09-30):面板"重启本实例"的有序退出——close() 走完整清理链
-          // (含 stopWebGui 删登记文件)后 exit(0),对齐 index.ts gracefulShutdown 语义;
-          // close() 抛错不阻退出(catch 吞),理论悬死窗(close 永不 settle)接受——
-          // close 链各步 best-effort 有界,极端场景由 MCP 客户端杀进程兜底。
-          onSelfRestart: () => {
-            void this.close().catch(() => { /* 清理失败不阻退出 */ }).finally(() => process.exit(0));
-          },
-        });
+        // daemon 批 A(Task 5):注入面从内联构造改为共享工厂(本类 buildWebGuiOptions)
+        // ——stdio 传空 overrides(注入面与工厂抽取前逐字段一致),daemon 侧由
+        // src/daemon/main.ts 追加 strictPort/instanceKind/mcpHandler 等特化键。
+        this.webGuiServer = new WebGuiServer(this.buildWebGuiOptions());
         await this.webGuiServer.start();
         this.webGuiActive = true;
       } catch (err) {
