@@ -4,6 +4,7 @@ import { join, dirname } from 'path';
 import { GodotServer } from './GodotServer.js';
 import { getLogger } from './core/logger.js';
 import { isAuditEnabled } from './core/audit-log.js';
+import { applyUserSettingsAtStartup } from './core/user-settings.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,6 +60,10 @@ export async function startMcpServer(args: string[]): Promise<void> {
       logger.error('security', `Security bypass flag ${flag}=${val} is ACTIVE — this disables safety checks`);
     }
   }
+
+  // 用户设置重放(2026-09-29 web-gui 设置批):~/.godot-mcp/settings.json 的 GUI 设置
+  // 优先于 AI 客户端注入的 env——必须在下方 C-08 白名单提示之前应用(否则提示按旧 env 误报)。
+  await applyUserSettingsAtStartup();
 
   // C-08: Path access is deny-by-default (restricted to cwd) when ALLOWED_PROJECT_PATHS unset — see path-utils.ts isPathInAllowedRoots
   if (!process.env.ALLOWED_PROJECT_PATHS && !process.env.GODOT_MCP_UNRESTRICTED) {
