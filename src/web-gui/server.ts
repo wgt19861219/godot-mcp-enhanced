@@ -81,6 +81,21 @@ export interface WebGuiServerOptions {
   onSelfRestart?: () => void;
   /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
   isPidAlive?: (pid: number) => boolean;
+  /** daemon 批 A(2026-09-30 spec §3.4/M-2):严格端口。true = 只试 portStart 一个端口,
+   *  EADDRINUSE 直接 reject 不吃 20 次顺延——respawn 交接的端口不漂移不变式(daemon
+   *  旧进程死后新进程必须回到同端口,客户端重连地址才不漂移;顺延成功反而是静默故障)。 */
+  strictPort?: boolean;
+  /** daemon 批 A(spec §3.4):实例类型,登记进 registry kind 字段(stdio/daemon 区分,
+   *  面板后续按 kind 渲染)。缺省不写 kind(JSON.stringify 跳过 undefined)——旧实例
+   *  语义,对齐 version 字段先例。 */
+  instanceKind?: 'stdio' | 'daemon';
+  /** daemon 批 A(spec §3.2 注入链):daemon 模式下 POST/GET/DELETE /mcp 三方法
+   *  (Streamable HTTP transport 方法面)路由到它;缺席不挂该路由(/mcp 404)。
+   *  由 src/daemon/main.ts 构造 WebGuiServer 时直接注入(两段式接线闭包,批 A 审查
+   *  N-2 后 ServerOptions 不再有同名字段——注入不走 GodotServer 透传);
+   *  web-gui 对 handler 内部零假设(鉴权/协议/响应头全归 handler)——本模块不
+   *  import MCP SDK 的分层兑现,组装在 src/daemon/mcp-endpoint.ts(Task 4)。 */
+  mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void;
 }
 
 /** /api/stats 与 SSE stats 快照形态(html.ts 契约,设计 §3.3.4)。 */
@@ -193,8 +208,11 @@ export class WebGuiServer {
 
   async start(): Promise<void> {
     const start = this.opts.portStart ?? (Number(process.env.GODOT_MCP_WEB_GUI_PORT) || DEFAULT_PORT_START);
+    // daemon 批 A(M-2):strictPort 只试起点一个端口,EADDRINUSE 直接 reject 到上层
+    // (respawn 交接端口不漂移不变式);缺省维持 20 次顺延(历史行为,stdio 实例不动)。
+    const attempts = this.opts.strictPort ? 1 : PORT_ATTEMPTS;
     let lastErr: unknown = null;
-    for (let i = 0; i < PORT_ATTEMPTS; i++) {
+    for (let i = 0; i < attempts; i++) {
       const candidate = start === 0 ? 0 : start + i;
       try {
         await this.listen(candidate);
@@ -205,13 +223,15 @@ export class WebGuiServer {
         this.httpServer = null;
       }
     }
-    if (!this.httpServer) throw new Error(`web-gui: no free port in ${start}..${start + PORT_ATTEMPTS - 1}: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
+    if (!this.httpServer) throw new Error(`web-gui: no free port in ${start}..${start + attempts - 1}: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
     // 附属功能不阻塞进程退出(设计 §3.1,对齐 orphanScanTimer 先例);已建连接由 stop 统一收
     this.httpServer.unref();
     _active = true;
     const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
     this.startedAtIso = new Date().toISOString();
-    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION }, regOpts);
+    // kind:instanceKind 注入时写入(缺省 undefined 被 JSON.stringify 跳过——旧实例语义,
+    // parseRegistrationFile 不校验,对齐 version 字段先例)
+    await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION, kind: this.opts.instanceKind }, regOpts);
     // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
     // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
     void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
@@ -311,6 +331,22 @@ export class WebGuiServer {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.portValue}`);
+      // daemon 批 A(2026-09-30 spec §3.2,Task 3):POST/GET/DELETE /mcp 三方法
+      // (Streamable HTTP transport 方法面)路由到注入的 mcpHandler。必须先于 POST
+      // 白名单分发注册——否则 POST /mcp 落未知路径 405、GET /mcp 落面板 token 鉴权,
+      // MCP 客户端两处都过不去;鉴权/协议/响应头细节全归 handler 自理(web-gui 对
+      // handler 内部零假设)。未注入 → 404(端点不活跃;不放行到面板鉴权链,避免
+      // 语义混淆的 401)。非三方法的 /mcp(如 PUT)落后续通用 405 语义。
+      if (url.pathname === '/mcp' && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
+        const handler = this.opts.mcpHandler;
+        if (handler) {
+          handler(req, res);
+          return;
+        }
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'mcp endpoint not active' }));
+        return;
+      }
       // 面板控制写路径(2026-09-14 + 项目面板批 2026-09-15):POST 先于 GET-only 拦截
       // 分发;未知 POST path → 405(原"非 GET 一律 405"语义对未知组合保持,仅放行
       // 已注册控制路径:stop/remove/start + projects scan/add/remove)。

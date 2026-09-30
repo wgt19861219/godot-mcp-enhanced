@@ -33,9 +33,9 @@
 
 > Task 1 执行后在此登记三项结论;后续任务若与结论冲突,以实测为准修订对应任务代码块再实施。
 
-- [ ] **S-1 Node↔Web wiring**:`IncomingMessage → Request`(含 body 流,duplex:'half')与 `Response → ServerResponse`(含 SSE 流式 body)的转换在本仓 Node 版本下可用(预期:Node ≥18 全局 Request/Response + `Readable.toWeb/fromWeb`)。实测:______
-- [ ] **S-2 stateful 会话语义**:`sessionIdGenerator: () => randomUUID()` 时 Initialize 响应带 `mcp-session-id` 头;无 session 的非初始化请求 400;`onsessioninitialized`/`onsessionclosed`(仅 DELETE 触发 closed)回调时序符合"中间件层拦第二 Initialize"的实现假设。实测:______
-- [ ] **S-3 SDK client 直连**:探针脚本用 `Client` + HTTP transport 对 spike server 完成 initialize → tools/list 往返。实测:______
+- [x] **S-1 Node↔Web wiring**:`IncomingMessage → Request`(含 body 流,duplex:'half')与 `Response → ServerResponse`(含 SSE 流式 body)的转换在本仓 Node 版本下可用(预期:Node ≥18 全局 Request/Response + `Readable.toWeb/fromWeb`)。实测:Node v24.14.0 下全链路可用——`Readable.toWeb(req)` + `duplex:'half'` 作 Request body,tools/call 参数无损到达(echo:hi 原样返回);`Readable.fromWeb(webRes.body).pipe(res)` 回写 SSE 长流(POST 响应 content-type: `text/event-stream`)成功读回 JSON-RPC result。**关键细节:SDK 2.0.0 的 exports 无 `/mcp.js`、`/streamablehttp.js` 子路径,`McpServer`/`WebStandardStreamableHTTPServerTransport`/`registerTool`(实例方法)/`validateHostHeader`/`localhostAllowedHostnames` 一律从主入口 `@modelcontextprotocol/server` 导入**(Task 4 代码块现写法已正确)。探针:`scripts/spike-daemon-transport.mjs`(11/11 PASS,复跑 2 次稳定)。
+- [x] **S-2 stateful 会话语义**:`sessionIdGenerator: () => randomUUID()` 时 Initialize 响应带 `mcp-session-id` 头;无 session 的非初始化请求 400;`onsessioninitialized`/`onsessionclosed`(仅 DELETE 触发 closed)回调时序符合"中间件层拦第二 Initialize"的实现假设。实测:全部符合——initialize 响应头 `mcp-session-id`(UUID,如 `54cb6f4a-…`)+ `mcp-protocol-version: 2025-11-25`;无 session 头的 tools/list POST → 400;`onsessioninitialized` 在 initialize 后恰好 1 次;`onsessionclosed` 仅 DELETE(返回 200)触发 1 次,SSE 流提前 abort 断开**不**触发 closed(批 C 单会话拦截可放心用这对计数)。notification POST(initialized)返回 202 无响应体。
+- [x] **S-3 SDK client 直连**:探针脚本用 `Client` + HTTP transport 对 spike server 完成 initialize → tools/list 往返。实测:**降级验证通过**——本仓未安装 `@modelcontextprotocol/client`(node_modules 与 package.json 均无,按 brief 预案不盲装),改用原生 fetch 手写 JSON-RPC(initialize → notifications/initialized → tools/list → tools/call → DELETE)走同一条 Node↔Web↔transport wiring,全链路往返成功(tools=[spike_echo]、echo:hi)。SDK Client 侧行为留待批 C 真机验收(真 MCP 客户端连 daemon)覆盖。
 
 ---
 
@@ -175,7 +175,7 @@ git commit -m "test(daemon): transport wiring 与会话语义 spike 探针(R1/R3
 
 **Interfaces:**
 - Produces(API 后续任务依赖,签名固定):
-  - `ServerOptions` 新增:`mode?: 'stdio' | 'daemon'`(缺省 `'stdio'`)、`mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void`
+  - `ServerOptions` 新增:`processMode?: 'stdio' | 'daemon'`(缺省 `'stdio'`;**Task 2 实施裁定:plan 初稿写 `mode`,与既有 `ServerOptions.mode` 工具档位字段 TS2717 冲突,改名 `processMode`**)、`mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void`
   - `GodotServer.connectTransport(transport: Transport): Promise<void>`——从 `run()` 拆出;`run()` 保持原签名原行为(stdio 路径内部调 `connectTransport(new StdioServerTransport())`)
   - `src/index.ts` 新导出:`runStartupSequence(opts: { dashboard: boolean; selfUpdate: boolean }): Promise<void>`——含 env 安全门(H-08)+ `applyUserSettingsAtStartup()` + C-08 白名单提示 + 审计关闭告警;不含 Dashboard TUI / self-update / stdin 钩子 / `server.run()`(这些留在 stdio 入口,daemon 入口按 opts 裁剪)
 
@@ -188,7 +188,7 @@ import { GodotServer } from '../../src/GodotServer.js';
 
 describe('GodotServer transport 参数化(daemon 批 A)', () => {
   it('connectTransport 接受外部 transport 并 connect', async () => {
-    const server = new GodotServer('res://ops.gd', { mode: 'daemon' });
+    const server = new GodotServer('res://ops.gd', { processMode: 'daemon' });
     const fake = { start: vi.fn(), send: vi.fn(), close: vi.fn() };
     await server.connectTransport(fake as unknown as Transport);
     expect(fake.start).toHaveBeenCalledOnce();
@@ -212,7 +212,7 @@ Expected: FAIL(`connectTransport is not a function`)。
 // src/GodotServer.ts — ServerOptions 加(现有 readOnly? 同区块):
   /** daemon 批(2026-09-30 spec §3.3):进程模式。stdio=缺省,行为与历史完全一致;
    *  daemon=由 src/daemon/main.ts 组装(HTTP transport + mcpHandler 透传 + 不注册 stdin 钩子)。 */
-  mode?: 'stdio' | 'daemon';
+  processMode?: 'stdio' | 'daemon';
   /** daemon 模式:/mcp HTTP 处理器,经 run() 构造 WebGuiServer 时透传挂载(§3.2 注入链)。
    *  web-gui 不 import MCP SDK——本字段类型只用 node:http,组装在 src/daemon/mcp-endpoint.ts。 */
   mcpHandler?: (req: IncomingMessage, res: ServerResponse) => void;
@@ -463,6 +463,9 @@ describe('daemon 入口(批 A)', () => {
 // src/daemon/main.ts — daemon 进程入口(spec §3.1/§3.3/§3.10)
 // 与 CLI 壳(src/cli/daemon.ts,批 B)的分工:壳薄(参数组装+spawn+轮询),本文件厚(进程内组装)。
 import { runStartupSequence } from '../index.js';
+// ⚠️ Task 2 实测:index.ts 底部是无条件入口 IIFE(import 即跑 startMcpServer)——
+// Task 5 实现时须给该 IIFE 加 process.argv[1]?.endsWith('index.js') 守卫
+// (直接跑 index.js 放行、被 import 不放行),否则 daemon import 即误起 stdio server。
 import { GodotServer } from '../GodotServer.js';
 import { WebGuiServer } from '../web-gui/server.js';
 import { createMcpEndpoint } from './mcp-endpoint.js';
@@ -485,7 +488,7 @@ export async function runDaemon(args: string[]): Promise<void> {
   }
 
   const token = getOrCreateSharedToken();
-  const server = new GodotServer('res://ops.gd', { mode: 'daemon' });
+  const server = new GodotServer('res://ops.gd', { processMode: 'daemon' });
   // /mcp 端点:端口在 WebGuiServer listen 后才知(strictPort 指定下 = portArg),
   // 故 endpoint 构造放 WebGuiServer.start() 之后、GodotServer.run() 之前由入口胶水完成。
   const gui = new WebGuiServer({
