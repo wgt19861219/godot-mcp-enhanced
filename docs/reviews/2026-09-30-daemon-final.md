@@ -46,3 +46,35 @@ SDD 多批流水中,implementer 报"concerns 备案、后续批再定"若无 led
 真机 V1-V8(ledger 详录):start 就绪(V1 含预检提示,缺口补 bbb82ac9)/401+session+47 tools+call+Host 403 原生确证(V2)/fetch 等价全通(V3,ZCode 真实客户端留用户)/restart 端口 9554 不漂移+终态无双活(V4)/stop 受控退出+登记清零+审计(V5)/409 单会话+DELETE 轮换重建+崩溃残留新鲜期 409 实证(V6)/全量+smoke(V7)/二次 start 拒(V8)
 fix 00b30e8c 复审:两条 ADDRESSED 无新破坏(resolveDaemonToolMode 与 index.ts:111-125 字面同链)
 ```
+
+---
+
+## V3 实战验证补录(2026-10-01,ZCode 真实客户端定案)
+
+> 终审时 V3 用裸 fetch 验证协议等价,真实客户端行为(plan 原文"R2 的 localhost 未知项,一次定案")留用户。本节为补录:用 **@modelcontextprotocol/client@2.2.0 官方客户端 SDK**(与 ZCode 的 http MCP 协议栈同源)对运行中 daemon(pid 28988, port 9560, 0.33.9)实测。
+
+### 验证矩阵(全过)
+
+| # | 验证点 | 结果 |
+|---|---|---|
+| 1 | initialize 握手(Bearer token) | ✅ sessionId 发放(`8d772505`/`be66e5f3`/`036528b4` 三次轮换) |
+| 2 | tools/list 等价性 | ✅ HTTP 26 个 = stdio spawn(同 SDK StdioClientTransport)26 个,名字集合零差异;均为 basic 档(`resolveDaemonToolMode` 兜底,与 stdio 同链 `src/index.ts:111-125` ↔ `src/daemon/main.ts:52-60`)。终审 V2 的 47 为 full 档数字,非回归 |
+| 3 | 真实工具调用 | ✅ `docs search_classes TileMap` isError=false 59ms(全链:HTTP→/mcp→dispatcher→headless Godot 4.7.2) |
+| 4 | 会话轮换 | ✅ `terminateSession()`(DELETE)后**立即**重连 initialize 无 409 |
+| 5 | 401 防线 | ✅ 无 token initialize → 401 |
+| 6 | settings 热生效(面板 API 路径) | ✅ `X-GUI-Token` 头 POST `/api/settings` 保存即生效(persisted=effective);顺带实证 Godot 二进制白名单:4.7.1 不在 `godot-paths.json` 允许列表 → 400 `path-not-allowed`,换 4.7.2 → 200 |
+| 7 | 409 文案 | ✅ `mcp endpoint busy: one session at a time (spec §3.6); connect a stdio instance or start another daemon` |
+
+### 关键发现:SDK 2.x `close()` 不发 DELETE
+
+**实测序列**:SDK 客户端 `client.close()` 后 daemon 侧会话仍登记 → 新客户端 initialize 撞 **409**;手动 `DELETE /mcp`(带 `mcp-session-id` 头)→ 200 才释放。
+
+**根因**:`@modelcontextprotocol/client` 2.x 的 `StreamableHTTPClientTransport.close()` 仅本地 abort+SSE 关闭(dist/index.mjs:5176-5180),显式终止需调 `transport.terminateSession()`(dist/index.mjs:5782,MCP 规范"客户端离开 SHOULD DELETE")。daemon 设计层已预判此交互(`src/daemon/mcp-endpoint.ts:39-52` 活性超时 5 分钟兜底,"SDK onsessionclosed 仅 DELETE 触发……计数单调高估"),**非 daemon bug**;但用户可感:仅 close 未 DELETE 的客户端退出后,**新连接 409 窗口最长 5 分钟**(活性超时后 stale 判定放行+transport 重建)。ZCode 本体退出是否发 DELETE 以其实现为准——若不发,用户表现即"关会话立刻重开连不上,等 5 分钟自愈或 `daemon restart`"。
+
+**对客户端使用者的正确姿势**:会话结束前显式 terminateSession(或依赖 5 分钟活性超时兜底)。
+
+### ZCode 本体连接铺路(最后一公里)
+
+- 项目级 `D:\GitHub\godot-mcp-series\godot-mcp-enhanced\.zcode\config.json`(已 gitignore)已写入 `godot-daemon` http 条目(url `http://127.0.0.1:9560/mcp` + Bearer token),与全局 stdio `godot` 并存不覆盖;**新开 ZCode 会话即真连**(会话级工具名 `mcp__godot-daemon__*`)。
+- ⚠️ 端口 caveat:9550-9556 被今晨 6 个早期 web-gui 实例残留占用,daemon 落 9560;若日后 `daemon stop` + `daemon start`,端口将再漂移,配置 URL 需同步(`daemon status` 查询)。清理残留实例可回归默认端口段(清理属用户决策,命令:`node build/index.js daemon stop` 不适用早期实例,直接 taskkill /PID <pid> /T /F)。
+- daemon 配置已持久化:`~/.godot-mcp/settings.json`(godotPath=4.7.2 + 4 项目白名单),daemon 重启自动重放。
