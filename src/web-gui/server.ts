@@ -703,6 +703,15 @@ export class WebGuiServer {
         // 杀他实例:Windows 无跨进程优雅信号(taskkill /F /T 是唯一可行),MCP 客户端
         // 检测到子进程退出后重连拉起新进程——新代码生效即此路径。正在跑的 Godot 游戏
         // 会话随目标 server 退出被清理(前端 confirm 文案如实告知)。
+        // D-2 fix(2026-10-01):daemon 实例例外——跨实例硬杀 daemon 绕过受控交接链
+        // (killPidTree 后无人 respawn、登记残留靠惰性清),破坏「至多一个活 daemon/
+        // 受控交接」不变式。此前仅前端换指引文案(html.ts inst-dim),服务端无闸;
+        // 现服务端同步拒绝,与前端指引文案一致(daemon 自身面板/CLI 操作)。
+        if (target.kind === 'daemon') {
+          getLogger().info('web-gui', `action=instance_restart pid=${pid} kind=daemon result=403_cross_instance_daemon`);
+          this.auditInstanceAction('restart', false, { pid, error: 'cross_instance_daemon' });
+          return json(403, { error: 'daemon instance must be restarted from its own panel or CLI (controlled handoff)' });
+        }
         getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} version=${target.version ?? 'legacy'} result=200`);
         this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
         killPidTree(pid);
@@ -846,11 +855,17 @@ export class WebGuiServer {
         return json(200, { ok: true, persisted: r.persisted });
       }
 
-      // ── POST /api/settings/verify(只读探测 --version,不拦 READ_ONLY;
-      //    探测结果即响应语义,恒 200 用 body.ok 区分)──────────────────────────
+      // ── POST /api/settings/verify(D-1 fix 2026-10-01:verify 会 spawn 候选路径
+      //    --version(godot-finder execFileAsync)=进程创建动作,不再豁免 READ_ONLY——
+      //    对齐 file_save/settings_save/sessions_start 的拦截惯例,面板不得绕过 AI 侧
+      //    防线。探测结果即响应语义,非只读时恒 200 用 body.ok 区分)─────────────────
       if (url.pathname === '/api/settings/verify') {
         const s = this.opts.settings;
         if (!s) return json(503, { error: 'not configured' });
+        if (this.opts.isReadOnly?.()) {
+          getLogger().info('web-gui', 'action=settings_verify result=403_readonly');
+          return json(403, { error: 'read-only mode' });
+        }
         const path = fields.path;
         if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
         return json(200, await s.verify(path));

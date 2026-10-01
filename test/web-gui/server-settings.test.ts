@@ -127,7 +127,7 @@ describe('WebGuiServer 设置端点(路由层)', () => {
     expect(await ok.json()).toEqual({ ok: true, version: '4.7.1.stable' });
   });
 
-  it('POST /api/settings/verify:注入缺席 → 503;READ_ONLY 不拦(只读探测)', async () => {
+  it('POST /api/settings/verify:注入缺席 → 503;READ_ONLY → 403 不调 verify(D-1:探测=spawn 进程,只读契约不得穿透)', async () => {
     const t0 = await start({});
     const nc = await fetch(`${t0.base}/api/settings/verify?token=${t0.token}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'D:/g.exe' }),
@@ -135,10 +135,16 @@ describe('WebGuiServer 设置端点(路由层)', () => {
     expect(nc.status).toBe(503);
     await t0.srv.stop();
     active = null;
-    const t = await start({ settings: makeSettingsApi(), isReadOnly: () => true });
+    // D-1 fix(2026-10-01 审查):verify 会 spawn 候选路径 --version(godot-finder
+    // execFileAsync)=进程创建动作——推翻设置批"只读探测不拦 READ_ONLY"的旧设计,
+    // 对齐 file_save/settings_save/sessions_start 的拦截惯例(本用例原断言 200)。
+    const verify = vi.fn(async (path: string) => ({ ok: path.length > 0, version: '4.7.1.stable' }));
+    const t = await start({ settings: makeSettingsApi({ verify }), isReadOnly: () => true });
     const res = await fetch(`${t.base}/api/settings/verify?token=${t.token}`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: 'D:/g.exe' }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'read-only mode' });
+    expect(verify).not.toHaveBeenCalled();
   });
 });

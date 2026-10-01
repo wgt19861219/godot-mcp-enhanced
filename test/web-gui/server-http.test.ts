@@ -751,6 +751,21 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  // D-2 fix(2026-10-01 审查):服务端拒绝跨实例硬杀 daemon——daemon 被 killPidTree 绕过
+  // 受控交接链(无人 respawn/登记残留),破坏「至多一个活 daemon/受控交接」不变式。
+  // 此前仅前端换指引文案,服务端无闸。403 分支先于 killPidTree return,绝不真杀。
+  it('POST restart 他实例 kind=daemon → 403(D-2:跨实例 daemon 硬杀拒绝,不动 killPidTree)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(5353); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    await writeRegistration({ pid: 5353, port: 9560, token: t.token, startedAt: '2026-10-01T01:00:00Z', kind: 'daemon' }, { dir });
+    const res = await post(t.base, '/api/instances/restart', t.token, { pid: 5353 });
+    expect(res.status).toBe(403);
+    const v = await res.json() as { error: string };
+    expect(v.error).toContain('daemon');
+    // 登记行仍在(未被当作已处理目标清理);对照:同 pid 非 daemon 登记不受此闸(上方 TEST_PID 用例)
+  });
+
   it('审计留痕:restart 落机器级 caller=web-gui:instances(实例操作无项目归属)', async () => {
     const fakeHome = await mkdtemp(join(tmpdir(), 'gme-inst-home-'));
     vi.stubEnv('HOME', fakeHome);

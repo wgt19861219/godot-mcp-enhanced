@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
-import { createMcpEndpoint } from '../../src/daemon/mcp-endpoint.js';
+import { createMcpEndpoint, MCP_MAX_BODY_BYTES } from '../../src/daemon/mcp-endpoint.js';
 import { appendMachineAuditLine } from '../../src/core/audit-log.js';
 
 // N-1(批 A 审查):401/403 落审计。appendMachineAuditLine 写死 homedir() 的机器级
@@ -645,5 +645,63 @@ describe('mcp-endpoint hasLiveSession(批 C:面板占用状态暴露,与 409 闸
     });
     expect(ep.hasLiveSession()).toBe(false);
     expect(ep.activeSessionCount()).toBe(0);
+  });
+});
+
+// ── D-4 fix(2026-10-01 审查):/mcp POST body 双上限(CL 预检 + chunked 累计)──
+// 原 for await 全量缓冲无 maxBytes,持 token 者可无界流内存 DoS;对齐面板侧双上限。
+describe('mcp-endpoint /mcp body 上限(D-4:413 不进内存,transport 不见请求)', () => {
+  /** raw socket 变体:响应一到(收到头)即解析状态码 resolve——413 预检不等 body 收完,连接可能仍悬挂。 */
+  function rawHttpStatus(port: number, payload: string): Promise<{ status: number; head: string }> {
+    return new Promise((resolve, reject) => {
+      const sock = netConnect({ host: '127.0.0.1', port }, () => sock.write(payload));
+      let buf = '';
+      sock.on('data', (d: Buffer) => {
+        buf += d.toString('utf8');
+        const m = buf.match(/^HTTP\/1\.[01] (\d{3})/);
+        if (m) { const status = Number(m[1]); sock.destroy(); resolve({ status, head: buf }); }
+      });
+      sock.on('error', () => {
+        // chunked 超限路径服务器 destroy 连接——若响应已到以状态码收货,否则视为失败
+        const m = buf.match(/^HTTP\/1\.[01] (\d{3})/);
+        if (m) resolve({ status: Number(m[1]), head: buf }); else reject(new Error('no response before destroy'));
+      });
+      sock.on('close', () => {
+        const m = buf.match(/^HTTP\/1\.[01] (\d{3})/);
+        if (m) resolve({ status: Number(m[1]), head: buf }); else if (!buf) reject(new Error('closed without response'));
+      });
+      sock.setTimeout(4000, () => { sock.destroy(); reject(new Error('raw socket timeout')); });
+    });
+  }
+
+  it('content-length > 4MB → 413(预检路径,body 不进内存,transport 不见请求)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      // 声明 4MB+1 的 CL 但只发 1 字节——预检须立即 413,不等 body 收完
+      const req = `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAuthorization: Bearer ${TOKEN}\r\ncontent-length: ${MCP_MAX_BODY_BYTES + 1}\r\ncontent-type: application/json\r\n\r\nx`;
+      const { status, head } = await rawHttpStatus(port, req);
+      expect(status).toBe(413);
+      expect(head.includes('payload too large')).toBe(true);
+      expect(fake.seen.length).toBe(0);   // 拦截在 transport 之前
+    } finally { await closeServer(srv); }
+  });
+
+  it('chunked 累计 > 4MB(无 CL,绕预检路径)→ 413(剩余 body 丢弃,transport 不见请求)', async () => {
+    const fake = makeFakeTransport();
+    const { srv, port } = await serveEmpty();
+    const ep = createMcpEndpoint({ mcpServer: { connect: async () => {} } as never, token: TOKEN, port, _transportForTest: fake.transport as never });
+    attach(srv, ep.handler);
+    try {
+      // 两块各 2.5MB(合计 5MB > 4MB):第二块累计超限 → 413 + req.resume() 丢弃剩余
+      const half = 'x'.repeat(2_500_000);
+      const frame = (s: string) => `${Buffer.byteLength(s).toString(16)}\r\n${s}\r\n`;
+      const req = `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nAuthorization: Bearer ${TOKEN}\r\ntransfer-encoding: chunked\r\ncontent-type: application/json\r\n\r\n${frame(half)}${frame(half)}`;
+      const { status } = await rawHttpStatus(port, req);
+      expect(status).toBe(413);
+      expect(fake.seen.length).toBe(0);
+    } finally { await closeServer(srv); }
   });
 });
