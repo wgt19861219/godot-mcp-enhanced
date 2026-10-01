@@ -19,6 +19,17 @@ export interface WebGuiRegistration {
   port: number;
   token: string;
   startedAt: string;
+  /** server 版本(实例管理批 2026-09-30):面板区分新旧代码实例的判据。
+   *  可选——旧版本登记文件无此字段,parseRegistrationFile 不校验它(向后兼容),
+   *  前端以在场性显示「早期实例」。 */
+  version?: string;
+  /** daemon 批 A(2026-09-30 spec §3.4):实例类型。可选——旧登记无此字段,
+   *  parseRegistrationFile 不校验(对齐 version 字段先例),前端按「早期实例」语义兼容。 */
+  kind?: 'stdio' | 'daemon';
+  /** daemon 批 B(2026-09-30 spec §3.7):受控交接关联——新 daemon 以 --respawn-of=<旧pid>
+   *  启动时写入旧 pid,前端/daemon status 对旧条目显示「交接中」的标注数据源。
+   *  可选,parseRegistrationFile 不校验(对齐 kind 字段先例,向后兼容)。 */
+  respawnOf?: number;
 }
 
 export interface RegistryOpts {
@@ -146,6 +157,21 @@ export async function writeRegistration(entry: WebGuiRegistration, opts: Registr
 export async function removeRegistration(pid: number, opts: RegistryOpts = {}): Promise<void> {
   const dir = opts.dir ?? webGuiRegistryDir();
   try { await unlink(join(dir, `${pid}.json`)); } catch { /* ENOENT 忽略——best-effort */ }
+}
+
+/**
+ * daemon 批 A(spec §3.7 第 2 轮 m-7):校验内容后删登记——PID 复用场景下防误删他人登记。
+ * 交接序列步骤 3(旧进程删自身登记)的消费点:OS 回收 pid 后新进程可能撞上旧文件名
+ * `<pid>.json`,仅凭 pid 删会把别人的登记清掉。文件不存在/解析失败 → false(视为已清);
+ * pid 或 startedAt 不匹配 → false 且不删。
+ */
+export async function removeRegistrationVerified(pid: number, expectedStartedAt: string, opts: RegistryOpts = {}): Promise<boolean> {
+  const dir = opts.dir ?? webGuiRegistryDir();
+  const parsed = await parseRegistrationFile(dir, `${pid}.json`);
+  if (!parsed) return false;
+  if (parsed.pid !== pid || parsed.startedAt !== expectedStartedAt) return false;
+  await removeRegistration(pid, opts);
+  return true;
 }
 
 /**

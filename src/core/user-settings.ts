@@ -138,3 +138,27 @@ export async function applyUserSettingsAtStartup(dir?: string): Promise<void> {
     getLogger().info('user-settings', `Applied user settings from ${getUserSettingsFile(dir)} (godotPath=${s.godotPath !== undefined ? 'set' : 'unset'}, allowedProjectPaths=${s.allowedProjectPaths !== undefined ? s.allowedProjectPaths.length : 'unset'})`);
   }
 }
+
+// ─── 首启预检判定(终验收 V1,spec §3.10 条款 3)─────────────────────────────
+
+/** env 侧判定:env 是否已配置任一 Godot 生效配置(GODOT_PATH 或 ALLOWED_PROJECT_PATHS)。
+ *  ALLOWED_PROJECT_PATHS 解析对齐 path-utils getAllowedProjectPaths 的 split(';')+
+ *  filter 语义(纯函数不引 path-utils,防依赖面扩张;语义变更须两处同步)。
+ *  空洞值(空串/纯分号)不算配置。 */
+export function hasEnvGodotConfig(env: NodeJS.ProcessEnv): boolean {
+  if ((env.GODOT_PATH ?? '').trim() !== '') return true;
+  const allowed = env.ALLOWED_PROJECT_PATHS;
+  return allowed !== undefined && allowed.split(';').some(p => p.trim() !== '');
+}
+
+/** settings.json 与 env 合并判定首启预检:两者均无有效 Godot 路径/白名单 → true
+ *  (调用方显示显著提示;daemon 照常起,不阻断)。消费方:
+ *  - cli/daemon.ts 的 start 壳(CLI 进程不经启动序重放,须 settings+env 合并读);
+ *  - web-gui/server.ts 的 hello.settingsConfigured 经 hasEnvGodotConfig(daemon/stdio
+ *    入口都经 applyUserSettingsAtStartup 重放,env 即合并生效视图,判 env 即完备)。
+ *  两消费方共用本族纯函数,防 CLI 与面板判定漂移(V1 验收发现实缺的根因之一)。 */
+export function isGodotConfigMissing(s: UserSettings, env: NodeJS.ProcessEnv): boolean {
+  const hasSettings = (s.godotPath !== undefined && s.godotPath.trim() !== '')
+    || (s.allowedProjectPaths !== undefined && s.allowedProjectPaths.length > 0);
+  return !hasSettings && !hasEnvGodotConfig(env);
+}

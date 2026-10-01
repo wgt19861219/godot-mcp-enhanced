@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readdirSync, existsSync, statSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken, rotateSharedToken, parseRegistrationFile } from '../../src/web-gui/registry.js';
+import { writeRegistration, removeRegistration, listRegistrations, sweepStaleRegistrations, getOrCreateSharedToken, rotateSharedToken, parseRegistrationFile, removeRegistrationVerified } from '../../src/web-gui/registry.js';
 import { PROJECT_ENTRY_NAME } from '../../src/web-gui/portal.js';
 
 const ALIVE = () => true;
@@ -146,5 +146,44 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     // token 字符集白名单(/^[A-Za-z0-9_-]+$/):shell 元字符/空格 → null
     writeFileSync(join(dir, 'bad5.json'), JSON.stringify({ pid: 1, port: 9550, token: 'a b;rm' }), 'utf-8');
     await expect(parseRegistrationFile(dir, 'bad5.json')).resolves.toBeNull();
+  });
+
+  // ── 实例管理批(2026-09-30):version 可选字段——面板区分新旧代码实例的判据 ──
+  it('version 可选字段:writeRegistration 落盘带 version 读回一致;无 version 旧登记照常读回(向后兼容)', async () => {
+    await writeRegistration({ pid: 5001, port: 9550, token: 'tok_v1', startedAt: 't1', version: '0.33.9' }, { dir, isPidAlive: () => true });
+    await writeRegistration({ pid: 5002, port: 9551, token: 'tok_v2', startedAt: 't2' }, { dir, isPidAlive: () => true });   // 旧形态:无 version
+    const list = await listRegistrations({ dir, isPidAlive: () => true });
+    const byPid = new Map(list.map((e) => [e.pid, e]));
+    expect(byPid.get(5001)?.version).toBe('0.33.9');
+    expect(byPid.get(5002)?.version).toBeUndefined();   // 旧登记不拒读、字段缺席
+  });
+
+  // ── daemon 批 A(2026-09-30 Task 3):kind 可选字段——stdio/daemon 实例类型登记 ──
+  it('kind 可选字段:writeRegistration 落盘带 kind 读回一致;无 kind 旧登记照常读回(向后兼容)', async () => {
+    await writeRegistration({ pid: 6001, port: 9550, token: 'tok_k1', startedAt: 't1', kind: 'daemon' }, { dir });
+    await writeRegistration({ pid: 6002, port: 9551, token: 'tok_k2', startedAt: 't2' }, { dir });   // 旧形态:无 kind
+    const list = await listRegistrations({ dir, isPidAlive: ALIVE });
+    const byPid = new Map(list.map((e) => [e.pid, e]));
+    expect(byPid.get(6001)?.kind).toBe('daemon');
+    expect(byPid.get(6002)?.kind).toBeUndefined();   // 旧登记不拒读、字段缺席
+  });
+
+  // ── daemon 批 A(2026-09-30 Task 5/spec §3.7 第 2 轮 m-7):受控登记删除——PID 复用防误删 ──
+  it('removeRegistrationVerified:pid+startedAt 均匹配 → 删文件返回 true', async () => {
+    await writeRegistration({ pid: 7001, port: 9550, token: 'tok_m7_a', startedAt: '2026-09-30T00:00:00.000Z' }, { dir });
+    const ok = await removeRegistrationVerified(7001, '2026-09-30T00:00:00.000Z', { dir });
+    expect(ok).toBe(true);
+    expect(existsSync(join(dir, '7001.json'))).toBe(false);
+  });
+
+  it('removeRegistrationVerified:startedAt 不匹配 → 不删返回 false(PID 复用防误删,m-7)', async () => {
+    await writeRegistration({ pid: 7002, port: 9550, token: 'tok_m7_b', startedAt: '2026-09-30T00:00:00.000Z' }, { dir });
+    const ok = await removeRegistrationVerified(7002, '2026-09-30T09:59:59.999Z', { dir });
+    expect(ok).toBe(false);
+    expect(existsSync(join(dir, '7002.json'))).toBe(true);   // 文件仍在,未误删
+  });
+
+  it('removeRegistrationVerified:文件不存在 → false(视为已清)不抛', async () => {
+    await expect(removeRegistrationVerified(7999, 'whenever', { dir })).resolves.toBe(false);
   });
 });

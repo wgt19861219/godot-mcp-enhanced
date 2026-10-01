@@ -94,6 +94,38 @@ describe('WebGuiServer SSE + 日志数据流(设计 §3.3)', () => {
     await b.reader.cancel();
   });
 
+  // ── hello.settingsConfigured(终验收 V1,spec §3.10 条款 3 面板信号)──────
+  // 语义:daemon/stdio 入口都经 runStartupSequence.applyUserSettingsAtStartup 把
+  // settings.json 重放进 env,env 即合并生效视图——hello 判 env 即完备。测试直构
+  // server 不走启动序,显式控制 env 驱动判定两态。
+  it('hello.settingsConfigured:env 无 GODOT_PATH/ALLOWED_PROJECT_PATHS → false;配置后重连 → true', async () => {
+    const savedG = process.env.GODOT_PATH;
+    const savedA = process.env.ALLOWED_PROJECT_PATHS;
+    const restore = (): void => {
+      if (savedG === undefined) delete process.env.GODOT_PATH; else process.env.GODOT_PATH = savedG;
+      if (savedA === undefined) delete process.env.ALLOWED_PROJECT_PATHS; else process.env.ALLOWED_PROJECT_PATHS = savedA;
+    };
+    try {
+      delete process.env.GODOT_PATH;
+      delete process.env.ALLOWED_PROJECT_PATHS;
+      srv = new WebGuiServer({ getSessions: () => [], getIndexHtml: () => '<html></html>', portStart: 0, logDir, registryDir });
+      await srv.start();
+      const a = await connectEvents(`http://127.0.0.1:${srv.port}`, srv.token);
+      const h1 = await readEvent(a.reader);
+      expect(h1.event).toBe('hello');
+      expect(h1.data.settingsConfigured).toBe(false);   // 未配置 → 前端 cfgWarn 黄条信号
+      await a.reader.cancel();
+      process.env.GODOT_PATH = 'D:/godot/godot.exe';
+      const b = await connectEvents(`http://127.0.0.1:${srv.port}`, srv.token);
+      const h2 = await readEvent(b.reader);
+      expect(h2.event).toBe('hello');
+      expect(h2.data.settingsConfigured).toBe(true);
+      await b.reader.cancel();
+    } finally {
+      restore();
+    }
+  });
+
   it('/api/stats 返回全局+per-project 快照', async () => {
     // 直接写一条完整 tool_end JSONL 行(简报原稿 appendLog(JSON.stringify(...)) 会把
     // tool_end 嵌成普通条目的 msg 字符串,外层无 type 字段,aggregator 不计 calls)。

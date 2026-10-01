@@ -22,7 +22,25 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-export async function startMcpServer(args: string[]): Promise<void> {
+/**
+ * daemon 批(spec §3.3):启动序共享段——stdio 入口(startMcpServer)与 daemon 入口
+ * (src/daemon/main.ts,Task 5)同源复用,防两个进程的安全门/提示行为漂移。含四段:
+ * ① env 安全门(H-08 危险 bypass flag 生产拒绝 + I-05 激活告警)
+ * ② applyUserSettingsAtStartup(GUI 设置重放——必须在 C-08 前应用,防按旧 env 误报)
+ * ③ C-08 白名单未设提示(deny-by-default)
+ * ④ 审计关闭告警(1E:关闭行为本身要留启动日志)
+ * 不含 Dashboard TUI / self-update / stdin 钩子 / server.run()——stdio 入口自行接
+ * (见 startMcpServer),daemon 入口按 opts 全 false 裁剪。
+ *
+ * `_opts` 体内无消费(有意,长期):dashboard/selfUpdate 的实际裁剪发生在各入口自身
+ * 的组装段——stdio 的 TUI 在 server.run() 之后弹、self-update 是异步尾部任务(两者
+ * 时序上都不能进本共享段),daemon 入口(src/daemon/main.ts,Task 5 已落地)的代码
+ * 本来就没有这两段,调 runStartupSequence({dashboard:false,selfUpdate:false}) 声明
+ * 裁剪契约。参数是 spec 第 2 轮 m-2 的签名要求,前缀 `_` 过 no-unused-vars 门禁。
+ * Task 5 已处置 import 副作用:底部入口 IIFE 已加 argv[1] 守卫(直跑 index.js 才
+ * 分流,被 import 不起 stdio server)——daemon main.ts import 本模块安全。
+ */
+export async function runStartupSequence(_opts: { dashboard: boolean; selfUpdate: boolean }): Promise<void> {
   // H-08: Reject security bypass flags in production unless explicitly acknowledged
   const dangerousBypassFlags = [
     'GODOT_MCP_DISABLE_SAFETY',
@@ -77,6 +95,10 @@ export async function startMcpServer(args: string[]): Promise<void> {
   if (!isAuditEnabled()) {
     getLogger().warn('security', 'GODOT_MCP_AUDIT is disabled — operation audit trail will NOT be recorded (non-repudiation degraded)');
   }
+}
+
+export async function startMcpServer(args: string[]): Promise<void> {
+  await runStartupSequence({ dashboard: true, selfUpdate: true });
 
   // Feature flags info
   const { getAllFeatureFlags } = await import('./core/feature-flags.js');
@@ -201,7 +223,12 @@ export async function startMcpServer(args: string[]): Promise<void> {
 // ── 入口分流 ──────────────────────────────────────────────
 const args = process.argv.slice(2);
 
-(async () => {
+// daemon 批 A(2026-09-30 Task 5,控制器裁定):import 即跑的入口守卫——src/daemon/main.ts
+// import 本模块取 runStartupSequence 时 argv[1] 是 daemon/main.js,不得在 daemon 进程里
+// 误起 stdio server;直接执行本文件(npm bin / node build/index.js,含绝对全路径)时
+// argv[1] 以 index.js 结尾,照常分流。文件名不含路径分隔符,Windows 反斜杠路径同样成立。
+if (process.argv[1]?.endsWith('index.js')) {
+  (async () => {
   const { isCliInvocation, isUnknownCommand, showHelp, showVersion, routeCommand } = await import('./cli/router.js');
 
   if (args.includes('--help') || args.includes('-h')) {
@@ -248,3 +275,4 @@ const args = process.argv.slice(2);
   console.error(err instanceof Error ? (err.stack ?? err.message) : String(err));
   process.exit(1);
 });
+}
