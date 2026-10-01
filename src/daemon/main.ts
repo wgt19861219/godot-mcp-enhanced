@@ -166,7 +166,10 @@ export async function runDaemon(args: string[]): Promise<void> {
         // 有序 close 链收尾:logger flush 对齐 shutdownDaemon 的 close 顺序(server.close 后)
         beforeExit: async () => { getLogger().close(); },
       }).catch((err: unknown) => {
-        getLogger().error('daemon', `controlled restart 失败(已回滚,继续服务): ${err instanceof Error ? err.message : err}`);
+        // D-3 fix(2026-10-01 审查):文案不再预设"已回滚"——失败阶段语义不同
+        // (close-listener 失败=交接中止未 spawn;spawn/handover 失败=已回滚;
+        // relisten 失败=回滚残留),err.message 已带阶段语义,统一补审计指引。
+        getLogger().error('daemon', `controlled restart 失败(${err instanceof Error ? err.message : err};各步结果见机器级审计 controlled-restart)`);
       });
     },
   }));
