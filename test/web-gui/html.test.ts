@@ -15,6 +15,23 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).not.toMatch(/token\s*[:=]\s*['"][0-9a-f]{16,}/i);
     expect(INDEX_HTML).not.toMatch(/(src|href)\s*=\s*["']https?:\/\//i);
   });
+  it('内嵌 SVG favicon(2026-10-01 NIT-1:显式 data: icon 阻止浏览器请求 /favicon.ico 的控制台 404)', () => {
+    expect(INDEX_HTML).toContain("<link rel=\"icon\" href=\"data:image/svg+xml,");
+  });
+  it('全部表单控件带 aria-label + <label for> 关联(2026-10-01 NIT-4:DevTools a11y 「No label associated with a form field」只认 label 元素关联,aria-label 不计)', () => {
+    // 7 个控件:项目搜索/添加路径/日志过滤/日志级别/Godot 路径/白名单/统计项目筛选
+    for (const id of ['projSearch', 'addPath', 'logFilter', 'logLevel', 'setGodotPath', 'setAllowed', 'projSel']) {
+      const m = INDEX_HTML.match(new RegExp(`<[^>]*id="${id}"[^>]*>`));
+      expect(m, `控件 #${id} 的标签应在 INDEX_HTML 中`).toBeTruthy();
+      expect(m![0], `控件 #${id} 应带 aria-label`).toContain('aria-label=');
+      expect(INDEX_HTML, `控件 #${id} 应有 <label for="${id}"> 关联`).toMatch(new RegExp(`<label[^>]*for="${id}"`));
+    }
+    // 反向(issue 详情实证:报的是孤立 <label> 非"字段无 label"):静态 HTML 中所有
+    // <label> 必须带 for;纯样式区块标题用 .set-lbl span,不再误用 label 元素
+    const labels = INDEX_HTML.match(/<label[^>]*>/g) ?? [];
+    expect(labels.length).toBeGreaterThan(0);
+    for (const l of labels) expect(l, `孤立 label 应改为 .set-lbl span:${l}`).toMatch(/for="/);
+  });
   it('会话控制按钮走 #sessions 容器事件委托(2026-09-15 修复 500ms 重绘吞点击)', () => {
     // 委托处理器存在:挂在重绘中从不被替换的 #sessions 容器上,识别 button[data-action]
     expect(INDEX_HTML).toContain("closest('button[data-action]')");

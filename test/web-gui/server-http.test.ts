@@ -69,6 +69,9 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     expect(WEB_GUI_CSP).not.toMatch(/script-src [^;]*'unsafe-inline'/);
     expect(WEB_GUI_CSP).toContain("frame-ancestors 'none'");
     expect(WEB_GUI_CSP).toContain("style-src 'unsafe-inline'");   // 样式属性面保留(非脚本执行面)
+    // img-src data:(2026-10-01 NIT-1):head 内联 SVG favicon 走 data: URI,Chromium 将其
+    // 纳入 img-src 管辖(真机实测 'self'-only 被 CSP violation 拦截);静态单处使用
+    expect(WEB_GUI_CSP).toContain("img-src 'self' data:");
     // 硬编码锚:playwright 打开真实面板实例,浏览器 console 报的期望 hash(2026-09-17 实证)
     // 易用性批5 (2026-09-19) 重锚:内联脚本 401 文案改动(「凭证已失效」→「需经 CLI 授权」)
     // 使 hash 变更;新 hash 由独立重算路径(下)与 server 实算 CSP 双向互证后锁入。

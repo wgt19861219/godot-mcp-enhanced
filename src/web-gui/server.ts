@@ -153,7 +153,10 @@ const PKG_VERSION: string = (createRequire(import.meta.url)('../../package.json'
  */
 export const WEB_GUI_CSP: string =
   `default-src 'none'; script-src 'self' 'sha256-${INDEX_SCRIPT_SHA256}'; style-src 'unsafe-inline' 'self'; `
-  + "img-src 'self'; media-src 'self'; connect-src 'self'"
+  // img-src data:(2026-10-01 NIT-1):head 内联 SVG favicon 走 data: URI,Chromium 将其纳入
+  // img-src 管辖(实测被 'self'-only 拦截)。面板动态内容一律 textContent 无 img 注入面,
+  // data: 图片仅此一处静态使用。
+  + "img-src 'self' data:; media-src 'self'; connect-src 'self'"
   + Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i)
     .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
     .join('')
