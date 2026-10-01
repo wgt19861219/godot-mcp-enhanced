@@ -5,7 +5,7 @@
  * 里可能藏着面向模型的提示注入(伪造系统指令/工具输出)。本模块把读回的不可信内容
  * 包进带随机 nonce 的信封标签,让模型能区分"工具/系统说的话"与"项目内容里的字"。
  * 与现有"输出标记防伪造"(防 GDScript 伪造 MCP 输出)正交:那层防伪造输出,这层防
- * 内容注入。来源:NPGameDev untrusted.gd(26 行 GDScript,15 读路径调用点)。
+ * 内容注入。来源:NPGameDev untrusted.gd(26 行 GDScript,15 读路径调用点)。 [上游 license:GitHub API 报 NOASSERTION 待人工核实,见 THIRD_PARTY_NOTICES.md]
  *
  * 软防御诚实边界:信封是否生效取决于客户端模型是否"尊重"标签语义——与输出标记同级,
  * 不是不可绕过的安全边界(对齐 AGENTS.md 安全体系表述)。

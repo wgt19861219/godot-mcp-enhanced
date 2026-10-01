@@ -160,7 +160,7 @@ const ACTIONS = [
   'sync_state',
 ] as const;
 
-// ─── P10: sync_state 快照存储与比对(多人状态同步,masteryee 移植) ─────────────
+// ─── P10: sync_state 快照存储与比对(多人状态同步,masteryee 移植) ───────────── [上游 Open-Godot-MCP license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
 
 interface SyncSnapshot {
   instances: Record<string, unknown>;

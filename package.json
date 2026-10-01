@@ -71,6 +71,7 @@
     "check:protocol-versions": "node scripts/check-protocol-versions.mjs",
     "check:tool-groups": "node scripts/check-tool-groups.mjs",
     "check:command-docs-drift": "node scripts/check-command-docs-drift.mjs",
+    "check:gd-duplicates": "node scripts/check-gd-duplicates.mjs",
     "check:changelog-sync": "node scripts/check-changelog-sync.mjs",
     "smoke": "vitest run test/e2e-full-tool-verification.test.ts",
     "qa": "node build/index.js qa"

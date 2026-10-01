@@ -106,6 +106,7 @@ static func parse_vec3(v: Variant) -> Vector3:
 ## 进程不挂死,但中断后落 return val → node.set(Array) 静默 no-op 假成功)。守卫后毒/缺
 ## 分量返 null,调用方(coerce_property_value / ui theme)报错或点名跳过,不再静默。
 ## 短数组行为随此对齐两副本:分量缺失返 null(旧透传原 Array → set no-op 假成功)。
+## DUPLICATE: 数学类型真转换三副本之一(editor 源版)——副本 headless: src/scripts/godot_operations.gd _coerce_math_value,副本 bridge: src/scripts/mcp_bridge.gd _coerce_math_value;三副本**有意差异**(按 prop_type 分派 vs typeof(current),见 godot_operations.gd:87 注释),改任一处须评估同步另两处。
 static func coerce_value_for_property(obj: Object, prop_name: String, val: Variant) -> Variant:
 	if val is Array:
 		var current = obj.get(prop_name)

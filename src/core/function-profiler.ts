@@ -1,6 +1,6 @@
 /**
  * Receiver for Godot's own remote-debugger profiler stream.
- * 来源:Erodenn-godot-mcp-runtime/src/utils/profiler.ts 整文件移植(2026-09-11 P2 批;
+ * 来源:Erodenn-godot-mcp-runtime/src/utils/profiler.ts 整文件移植(2026-09-11 P2 批; [上游 license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
  * 除文件头/import/logger 三处适配外逐行一致——该文件经真引擎验证,刻意不重写)。
  *
  * `run_project({ profiling: true })` binds this listener first and passes

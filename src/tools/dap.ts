@@ -7,7 +7,7 @@ import type { RiskLevel } from '../core/tool-registry.js';
 
 // ─── dap 组 — DAP 断点调试(TS 直连 editor 自带 DAP server,P9) ────────────────
 //
-// 移植自 LuoxuanLove-godot-dotnet-mcp addons/.../tools/dap/executor.gd (791 行,P2)。
+// 移植自 LuoxuanLove-godot-dotnet-mcp addons/.../tools/dap/executor.gd (791 行,P2)。 [上游 license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
 // 机制:作为 **DAP client** TCP 连 Godot editor 自带 DAP server(默认 127.0.0.1:6006)
 // ——不是自己实现 DAP server,是驱动 editor 已有的调试端点(引擎官方协议,比对标
 // 竞品的"按图标找调试器按钮"面板 hack 稳)。

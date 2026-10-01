@@ -65,6 +65,12 @@ jobs:
         # 校验 GD get_command_docs 声明的参数与 TS inputSchema 一致（防文档/代码漂移）。
         # 一期覆盖 debug + engine 工具组，其余标记一期豁免（映射表后续批次扩充）。
         run: npm run check:command-docs-drift
+      - name: Check GD duplicates（2026-10-01 审查 §11：DUPLICATE 安全函数副本对账）
+        # editor 插件(websocket_server.gd) ↔ bridge 运行时(mcp_bridge.gd)的 4 对安全
+        # 敏感函数(_generate_secret/_constant_time_compare×2/_restrict_secret_permissions)
+        # 归一化文本对账 + math 三副本 DUPLICATE 标记在场检查——此前无任何机械门禁,
+        # 副本漂移(安全函数一侧被削弱)无 CI 报警。确定性对账,无环境依赖,阻断。
+        run: npm run check:gd-duplicates
       - name: Check contract consistency（P1-6：跨工具契约一致性,参考 breakpoint contract_check）
         # 6 项校验:annotations 三 hint / danger-api+destructive 必 guarded / securityLevel-guarded 一致 /
         # offlineCapable-needsGodot 互斥 / description+inputSchema / riskDistribution 计数。
