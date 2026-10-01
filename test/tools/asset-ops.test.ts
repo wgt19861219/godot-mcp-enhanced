@@ -15,7 +15,8 @@
  * isPathInAllowedRoots 恒返 true，该分支不可达；真实越界场景留 T10 E2E。
  */
 import { describe, it, expect } from 'vitest';
-import { execSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { getToolDefinitions, handleTool } from '../../src/tools/asset/asset-ops.js';
 import { SHAPES, SHAPE_NAMES, MATERIAL_PRESETS } from '../../src/tools/asset/schema.js';
 
@@ -144,11 +145,16 @@ describe('asset 裸 as 断言计数', () => {
     // 禁的是运行时类型断言 `args.x as T`；`as const`（编译期）不算。
     // asset-ops.ts:111 `args.action as string` 是模块唯一允许的裸 as
     // （action 经 inputSchema.enum 校验，TS 无法窄化）。
-    const out = execSync(
-      'grep -rnE "args\\.[a-z_]+ as " src/tools/asset/ || true',
-      { cwd: process.cwd() },
-    ).toString();
-    const count = out.trim().split('\n').filter(Boolean).length;
+    // C-2 fix(2026-10-01 审查):原实现 execSync('grep … || true') 依赖 POSIX shell——
+    // Windows 下 execSync 走 cmd.exe 继承进程 PATH,纯 cmd/PowerShell 会话(无 Git
+    // coreutils)必失败。改 Node 读文件+正则,零 shell 依赖,任何启动环境稳定。
+    const BARE_AS_RE = /args\.[a-z_]+ as /g;
+    let count = 0;
+    for (const f of readdirSync(join(process.cwd(), 'src', 'tools', 'asset'))) {
+      if (!f.endsWith('.ts')) continue;
+      const src = readFileSync(join(process.cwd(), 'src', 'tools', 'asset', f), 'utf8');
+      count += (src.match(BARE_AS_RE) ?? []).length;
+    }
     expect(count).toBeLessThanOrEqual(1);
   });
 });
