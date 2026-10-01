@@ -27,7 +27,8 @@
     "addons",
     "scripts",
     "skills",
-    "docs/tools/**/*.md"
+    "docs/tools/**/*.md",
+    "docs/api/extension_api.json"
   ],
   "scripts": {
     "install-plugin": "node scripts/install-plugin.js",
