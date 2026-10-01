@@ -525,6 +525,9 @@ export class WebGuiServer {
       }
       res.writeHead(404).end();
     } catch {
+      // D-5 fix(2026-10-01 审查):headersSent 后再 writeHead 会二次抛且无人兜——
+      // 当前调用面不可触发(本 catch 前无流式写),补守卫防未来演化踩雷。
+      if (res.headersSent) { res.end(); return; }
       res.writeHead(500).end();
     }
   }

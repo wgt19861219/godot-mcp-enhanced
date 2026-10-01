@@ -3,7 +3,7 @@
 # 用于 Glama / MCP 目录的 introspection 验证：
 # Glama 跑此镜像 → 连 stdio → 发 initialize + tools/list → 验证响应。
 # server 启动 + 响应 introspection 不需要 Godot 引擎（Godot 仅在工具调用时才查找）。
-FROM node:18-slim
+FROM node:20-slim
 
 # 安装已发布的 npm 包（含 bin: godot-mcp-enhanced -> build/index.js）
 RUN npm install -g godot-mcp-enhanced@0.33.9

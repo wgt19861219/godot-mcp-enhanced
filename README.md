@@ -695,6 +695,13 @@ setup_project_rules(project_path="你的项目路径")
 | `GODOT_MCP_TELEMETRY` | 匿名遥测 opt-in(默认关闭,详见 [docs/telemetry.md](docs/telemetry.md)) | `false` |
 | `GODOT_MCP_INSTALL_TAG` | CLI `install` 固定版本 tag(如 `4.7.2-stable`,跳过 latest 查询;测试/复现用) | 未设(latest) |
 | `GODOT_MCP_PROFILE` | 工具 profile(basic/lite/minimal/full/bridge_dev/3d_dev 或逗号组名)。**默认 basic**(BREAKING from full;lite 9 组省 ~60% context,RCE action 经 action-gate 默认 gated)。回退全量:`GODOT_MCP_PROFILE=full` 或 `--profile=full` | `basic` |
+| `GODOT_MCP_AUDIT_CODE` | `true`=审计日志记录所执行 GDScript 的代码内容(默认不记录;开启后字符串字面量已脱敏防 secret 泄露) | `false` |
+| `GODOT_MCP_BRIDGE_REQUIRE_CR_AUTH` | `true`=强制 bridge challenge-response 握手,拒绝明文降级(别名 `GODOT_MCP_REQUIRE_CR_AUTH`;多用户/不可信环境防伪造 bridge 响应) | `false`(本地回环明文可过) |
+| `GODOT_MCP_INFLIGHT_DIR` | inflight 执行登记目录覆盖(默认 `~/.godot-mcp`;测试注入隔离目录用) | `~/.godot-mcp` |
+| `GODOT_MCP_INFLIGHT_LOG` | `0`=关闭 inflight 报丧日志(执行中断/进程死亡时的孤儿执行提示) | 开 |
+| `GODOT_MCP_OVERRIDES` | 分号分隔的 override 脚本路径(启动时注入为 MCPOVERRIDE_* autoload;与 CLI `--overrides` 等价) | 未设 |
+| `GODOT_MCP_PRETTY_JSON` | `1`=工具输出缩进 JSON(调试可读性用) | `0`(紧凑) |
+| `GODOT_MCP_UNTRUSTED_ENVELOPE` | `0`=关闭输出侧 untrusted 内容信封(默认启用:读路径返回的游戏侧内容包防注入信封,防 GDScript 伪造 MCP 输出;只包读路径,不包写确认/错误消息) | 开(信封启用) |
 
 > **⚠️ BREAKING(G7)**:默认 profile 从 `full` 改 `basic`(对齐 GoPeak compact,省 AI context window)。升级后 tools/list 只暴露 basic(lite 9 组:core/bridge/animation/audio/signal/visual/code/test/profiler)。回退全量 46 工具:`GODOT_MCP_PROFILE=full`;或 AI 运行时 `manage_tools activate <groups>` 动态扩容(无需重启)。RCE action(execute_gdscript 等)始终经 action-gate gated,需 `GODOT_MCP_PRIVILEGED_GROUPS=code-execution` 解锁。
 

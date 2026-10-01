@@ -13,7 +13,7 @@
       },
       {
         "name": "Node.js",
-        "description": "Node.js >= 18",
+        "description": "Node.js >= 20",
         "required": true
       }
     ]
