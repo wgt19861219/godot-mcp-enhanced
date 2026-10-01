@@ -47,6 +47,10 @@ export function buildMarkdown(caps: ToolCapability[]): string {
     `- securityLevel：danger-api ${byLevel['danger-api']} / guarded ${byLevel['guarded']} / safe ${byLevel['safe']}`,
     `- risk：read ${riskTotals.read} / write ${riskTotals.write} / destructive ${riskTotals.destructive} / process ${riskTotals.process}`,
     `- L2 覆盖：covered ${byL2.covered} / partial ${byL2.partial} / none ${byL2.none}`,
+    // B-6 fix(2026-10-01 审查):L2/relatedDefects 是 extract.ts 硬编码占位(全工具恒
+    // l2:'none'),未接线 CI e2e 映射——上方数字与下方缺口段不代表真实覆盖(CI 实际
+    // 跑 16 个 L2 e2e 文件)。显式标注防误读;接线提取留待后续独立批次。
+    `  - ⚠ 占位说明：L2 列为提取器占位（\`src/capability/extract.ts\` 硬编码 \`l2:'none'\`），未接线 CI e2e 映射，**不代表真实覆盖为零**（CI 实际跑 16 个 L2 e2e 文件，见 \`scripts/check-e2e-l2-coverage.mjs\`）；relatedDefects 同为占位。`,
     `- token 预算：tools/list ≈ ${totalBytes}B / ~${Math.round(totalBytes / 4)} tokens（description ${descBytesAll}B / schema ${schemaBytesAll}B，schema 占 ${schemaPct}%）`,
     `- annotations：readOnly ${annCount.readOnly} / destructive ${annCount.destructive} / idempotent ${annCount.idempotent}`,
     ...(trustedList.length > 0 ? [`> 注：标 read 但实际启进程/有副作用(项目有意信任不确认): ${trustedList.join(', ')}`] : []),
@@ -54,7 +58,7 @@ export function buildMarkdown(caps: ToolCapability[]): string {
     `## danger-api 工具（L2 安全回归优先）`,
     dangerTools || '（无）',
     ``,
-    `## 覆盖缺口（L2=none）`,
+    `## 覆盖缺口（L2=none，占位——见概览行说明，非真实覆盖）`,
     ...caps.filter(c => c.verification.l2 === 'none').slice(0, 50).map(c => `- \`${c.name}\` (${c.group})`),
     ``,
     `## 范围取舍（explicitly out of scope）`,

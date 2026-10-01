@@ -1,7 +1,7 @@
 // Web GUI per-pid 登记(设计 §3.1):每实例写自己的 ~/.godot-mcp/web-gui/<pid>.json,
 // 无并发写竞争(对齐 InstanceManager 模式);文件含 token 准入凭证,权限加固防同机他用户读取。
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -65,7 +65,11 @@ export function getOrCreateSharedToken(opts: RegistryOpts = {}): string {
   const generated = randomBytes(24).toString('hex');
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(filePath, generated, { encoding: 'utf-8', mode: 0o600 });
+    // D-5 fix(2026-10-01 审查):token 落盘改原子写(tmp+rename)——原 writeFileSync 直写
+    // 在并发首启时存在撕裂读窗口(另一实例半截读到);rename 原子替换消除该窗口。
+    const tmp = `${filePath}.${process.pid}.tmp`;
+    writeFileSync(tmp, generated, { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, filePath);
     hardenFilePermissionsWindows(filePath);
     // 写后重读:并发首启时收敛到文件终值,保证多实例一致
     const after = readFileSyncOpt(filePath);

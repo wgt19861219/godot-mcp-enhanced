@@ -141,8 +141,21 @@ export function spawnDaemonDetached(flags: string[]): { pid: number } {
       detached: true,
       stdio: ['ignore', fd, fd],
     });
+    // D-3 fix(2026-10-01 审查):异步 spawn 失败(如 ENOENT)的 'error' 事件必须监听
+    // ——未监听的 emit 会以未捕获异常打崩正在交接的旧 daemon(雪崩)。此刻 pid 已
+    // 返回无法改道,交由序列步骤 3 的登记轮询超时触发回滚兜底;此处 warn 落父进程
+    // 日志供排障。
+    child.on('error', (err: Error) => {
+      console.warn(`[daemon] respawn spawn error(将由 ready-timeout 回滚兜底): ${err.message}`);
+    });
     child.unref();
-    return { pid: child.pid ?? -1 };
+    // D-3 fix:child.pid undefined 原先 `?? -1` 静默返回(下游白等超时)——显式 throw
+    // 让调用方按 spawn 失败立即回滚。
+    const pid = child.pid;
+    if (pid === undefined || pid <= 0) {
+      throw new Error(`spawn 返回无效 pid: ${pid ?? 'undefined'}(detached 新 daemon 未建立)`);
+    }
+    return { pid };
   } finally {
     // fd 副本已由 spawn 复制给子进程,父进程关闭自己的副本防泄漏
     closeSync(fd);
@@ -183,13 +196,25 @@ async function rollback(
 ): Promise<void> {
   if (newPid !== null && newPid > 0) {
     const np = newPid;
-    deps.killTree(np);
-    await audit(true, { step: 'rollback-kill', oldPid, newPid, port, result: 'killed' });
-    const gone = await pollUntil(
-      async () => !(await deps.listRegistrations()).some(r => r.pid === np),
-      goneTimeoutMs, deps.sleep, pollMs,
-    );
-    await audit(gone, { step: 'rollback-registration-gone', oldPid, newPid, port, result: gone ? 'gone' : 'still-present-after-timeout' });
+    // D-3 fix(2026-10-01 审查):killTree 失败原先裸抛打断回滚(relisten 不执行,
+    // 端口不恢复)。如实审计后跳过"等登记消失"轮询(kill 未生效登记大概率仍在,
+    // 白等 goneTimeout)直接 relisten 尽力恢复服务;新实例残留的极端场景由 relisten
+    // EADDRINUSE 兜底呈现(rollback-relisten 失败审计)。
+    let killed = false;
+    try {
+      deps.killTree(np);
+      killed = true;
+      await audit(true, { step: 'rollback-kill', oldPid, newPid, port, result: 'killed' });
+    } catch (err) {
+      await audit(false, { step: 'rollback-kill', oldPid, newPid, port, result: 'kill-failed', error: err instanceof Error ? err.message : String(err) });
+    }
+    if (killed) {
+      const gone = await pollUntil(
+        async () => !(await deps.listRegistrations()).some(r => r.pid === np),
+        goneTimeoutMs, deps.sleep, pollMs,
+      );
+      await audit(gone, { step: 'rollback-registration-gone', oldPid, newPid, port, result: gone ? 'gone' : 'still-present-after-timeout' });
+    }
   }
   try {
     await deps.gui.relisten();
@@ -220,17 +245,37 @@ export async function controlledRestart(deps: ControlledRestartDeps): Promise<vo
   const audit = deps.audit ?? makeDefaultAudit(`web-gui-${randomUUID().slice(0, 16)}`);
 
   // ── 步骤 1:关 listener 释放端口(登记保留 = 交接窗口"交接中"标注数据源)──────
-  await deps.gui.closeListener();
-  await audit(true, { step: 'close-listener', oldPid, port, result: 'ok' });
+  // D-3 fix(2026-10-01 审查):closeListener 失败原先裸抛——端口状态不明,main.ts
+  // catch 还打"已回滚"误导文案(此时什么都没发生)。失败语义:交接中止,不 spawn
+  // 新实例;尽力 relisten 恢复服务(relisten 成功 = 旧实例原样继续);relisten 也
+  // 失败如实审计(最坏:无 listener 但进程活着,登记仍在,可再交接/人工介入)。
+  try {
+    await deps.gui.closeListener();
+    await audit(true, { step: 'close-listener', oldPid, port, result: 'ok' });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await audit(false, { step: 'close-listener', oldPid, port, result: 'close-failed', error: msg });
+    try {
+      await deps.gui.relisten();
+      await audit(true, { step: 'close-listener-recovery', oldPid, port, result: 'relistened' });
+    } catch (rerr) {
+      await audit(false, { step: 'close-listener-recovery', oldPid, port, result: 'relisten-failed', error: rerr instanceof Error ? rerr.message : String(rerr) });
+    }
+    throw new Error(`controlled restart: 交接中止(close-listener 失败,未 spawn 新实例): ${msg}`);
+  }
 
   // ── 步骤 2:spawn 新 daemon(不变式 1:--port 恒传旧端口;--respawn-of 豁免单例检测)──
   const flags = ['--port', String(port), '--respawn-of', String(oldPid)];
   let newPid: number | null = null;
   try {
     newPid = deps.spawnDaemon(flags).pid;
+    // D-3 fix(2026-10-01 审查):无效 pid(<=0,如 spawnDaemonDetached 对 child.pid
+    // undefined 的旧返回 -1)原先静默落步骤 3 白等超时——现在显式按 spawn 失败处理,
+    // 立即回滚(不等 ready-timeout)。
+    if (newPid <= 0) throw new Error(`spawn 返回无效 pid: ${newPid}(detached 新 daemon 未建立)`);
     await audit(true, { step: 'spawn', oldPid, newPid, port, result: 'ok' });
   } catch (err) {
-    await audit(false, { step: 'spawn', oldPid, port, result: 'spawn-failed', error: err instanceof Error ? err.message : String(err) });
+    await audit(false, { step: 'spawn', oldPid, newPid, port, result: 'spawn-failed', error: err instanceof Error ? err.message : String(err) });
     // newPid 而非裸 null:spawn 成功后 audit 才失败时新实例已存在,回滚同样要杀它
     await rollback(deps, audit, oldPid, newPid, port, goneTimeoutMs, pollMs);
     throw err instanceof Error ? err : new Error(String(err));

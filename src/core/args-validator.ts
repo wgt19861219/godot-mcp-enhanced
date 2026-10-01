@@ -3,7 +3,7 @@
  * 手写 JSON schema 参数验证器(spec §2)。
  * 覆盖 inputSchema 实际用的关键字:type / required / enum / items(递归) / properties(嵌套)。
  * 不覆盖(YAGNI):pattern/format/minLength/maxItems。
- * P8-2 (2026-09-11, regiellis _reject_unknown_params 移植):顶层 unknown-param 拒绝 +
+ * P8-2 (2026-09-11, regiellis _reject_unknown_params 移植):顶层 unknown-param 拒绝 + [上游 godot-mcp-go license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
  * did-you-mean(similarity>=0.4)——handler 只读认识的 key,未声明参数静默成功 = 值进黑洞
  * (regiellis 动机:三个 eval worker 踩过 scene.validate --path 这类 typo 静默成功)。
  * 只查顶层(嵌套 properties 不查——game.params 等直通 dict 的内层自由是设计);

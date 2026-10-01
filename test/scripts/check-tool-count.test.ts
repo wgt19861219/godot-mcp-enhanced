@@ -16,9 +16,9 @@ function writeAllFiles(root: string, n: number = TC, a: number = AC) {
   writeFileSync(join(root, 'README.md'),
     `工具层:${n} 个 MCP 工具(merged,共 ${a} 个 action)\n| 工具数 | **${n}** |\n> 共 ${n} 个 MCP 工具(merged tool definition,共 ${a} 个 action)\n**顶层工具数:${n}**\n**action 总数:${a}**\n协议层实测通过（${n} 工具全发现`);
   writeFileSync(join(root, 'manifest.json'),
-    `{"description":"and ${n} merged tools","long_description":"provides ${n} merged MCP tools"}`);
+    `{"description":"and ${n} merged tools (${a} actions)","long_description":"provides ${n} merged MCP tools (${a} actions)"}`);
   writeFileSync(join(root, 'README.en.md'),
-    `: ${n} MCP tools (merged\n| Tools | **${n}** |\n## Tools (${n})\n> **${n} MCP tools**`);
+    `: ${n} MCP tools (merged\n| Tools | **${n}** |\n## Tools (${n})\n> **${n} MCP tools**\n(merged tool definitions, ${a} actions)`);
   mkdirSync(join(root, 'docs', 'distribution'), { recursive: true });
   writeFileSync(join(root, 'server.json'), `{"description": "test — ${n} tools"}`);
   writeFileSync(join(root, 'docs', 'distribution', 'README.md'),

@@ -8,7 +8,7 @@
  * allocation from an attacker-shaped length field. Callers treat a decode
  * failure as "not a message I care about" and move on.
  *
- * 来源:Erodenn-godot-mcp-runtime/src/utils/godot-variant.ts 整文件移植
+ * 来源:Erodenn-godot-mcp-runtime/src/utils/godot-variant.ts 整文件移植 [上游 license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
  * (2026-09-11 P2 批,函数级 profiling 尽调;原文件零依赖,除本注释外逐行一致)。
  */
 

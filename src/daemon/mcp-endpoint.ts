@@ -31,6 +31,13 @@ import type { Transport } from '@modelcontextprotocol/server';
  *  transport 接线,两类一致。 */
 export type McpConnectable = { connect(transport: Transport): Promise<void> };
 
+/** D-4 fix(2026-10-01 审查):/mcp POST body 上限(字节)。4MB 为宽裕值——tools/call
+ *  可携带大段 GDScript 代码(execute_gdscript)或大 JSON 布局(ui_build_layout),取
+ *  远超正常调用的上限只堵无界流:原实现 for await 全量缓冲无 maxBytes,持 token 者
+ *  可持续发送无界流做内存 DoS。对齐 web-gui 面板侧双上限模式(server.ts 64KB/600KB:
+ *  content-length 预检 + chunked 累计上限,超限 413 不进内存)。导出供测试锚定。 */
+export const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
+
 export interface McpEndpointDeps {
   mcpServer: McpConnectable;
   token: string;
@@ -181,12 +188,15 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
   // 携带 Authorization 头"布尔。fire-and-forget + .catch:审计失败 best-effort 不
   // 影响拒绝响应(对齐 main.ts daemon-startup / server.ts auditInstanceAction 先例,
   // caller 命名取 'daemon:mcp' 与 'web-gui:instances' 同款 域:子系统 风格)。
-  function auditMcpReject(error: 'unauthorized' | 'host_not_allowed', hasAuth: boolean): void {
+  function auditMcpReject(error: 'unauthorized' | 'host_not_allowed' | 'payload_too_large', hasAuth: boolean): void {
     if (!isAuditEnabled()) return;
+    const action = error === 'unauthorized' ? 'mcp-auth-reject'
+      : error === 'host_not_allowed' ? 'mcp-host-reject'
+      : 'mcp-body-reject';
     void appendMachineAuditLine({
       trace_id: `daemon-mcp-${randomUUID().slice(0, 16)}`,
       tool: 'daemon',
-      action: error === 'unauthorized' ? 'mcp-auth-reject' : 'mcp-host-reject',
+      action,
       risk: 'process',
       ok: false, project_path: '', changed_files: [],
       duration_ms: 0, caller: 'daemon:mcp',
@@ -265,12 +275,36 @@ export function createMcpEndpoint(deps: McpEndpointDeps): McpEndpoint {
       let webReq: Request;
       if (hasBody) {
         // Task 11(批 C,spec §3.6):POST body 改缓冲(原 Readable.toWeb 流式)——
-        // 单会话闸需嗅探 JSON-RPC method 判 Initialize。MCP 消息有界,缓冲无内存
-        // 放大顾虑(且鉴权闸已挡未持 token 者);GET 的 SSE 响应侧保持流式不变
-        // (响应流与请求缓冲无关)。Request 重建:method/headers/URL 原样,body 换
-        // 字节副本(非流 body 无需 duplex)。
+        // 单会话闸需嗅探 JSON-RPC method 判 Initialize。D-4 fix(2026-10-01):缓冲
+        // 加双上限(content-length 预检 + chunked 累计,超限 413 destroy 不进内存——
+        // 防持 token 者无界流内存 DoS,对齐面板侧 readJsonBody 模式;见常量注释)。
+        // GET 的 SSE 响应侧保持流式不变(响应流与请求缓冲无关)。Request 重建:
+        // method/headers/URL 原样,body 换字节副本(非流 body 无需 duplex)。
+        const cl = Number(req.headers['content-length'] ?? 0);
+        if (cl > MCP_MAX_BODY_BYTES) {
+          auditMcpReject('payload_too_large', req.headers.authorization !== undefined);
+          res.writeHead(413, { 'content-type': 'application/json' })
+            .end(JSON.stringify({ error: `payload too large (max ${MCP_MAX_BODY_BYTES} bytes)` }));
+          return;
+        }
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let bodyTotal = 0;
+        let oversized = false;
+        for await (const chunk of req) {
+          bodyTotal += (chunk as Buffer).length;
+          if (bodyTotal > MCP_MAX_BODY_BYTES) {
+            oversized = true;
+            req.resume();   // 丢弃剩余 body(防连接悬挂/继续驻留内存),连接保留以回 413——对齐面板侧 readJsonBody 模式
+            break;
+          }
+          chunks.push(chunk as Buffer);
+        }
+        if (oversized) {
+          auditMcpReject('payload_too_large', req.headers.authorization !== undefined);
+          res.writeHead(413, { 'content-type': 'application/json' })
+            .end(JSON.stringify({ error: `payload too large (max ${MCP_MAX_BODY_BYTES} bytes)` }));
+          return;
+        }
         const body = new Uint8Array(Buffer.concat(chunks));
         // 闸门 3:单会话独占——仅 POST 且嗅探出 initialize:①存在新鲜(活跃)会话
         // → 409(spec m-8:明确 4xx + 可读 message,不静默排队)。②无活跃会话但当前

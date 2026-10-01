@@ -3,7 +3,7 @@
  *
  * 威胁模型:write_script/edit_script/save_scene 等文件写工具能写 enhanced 自己分发到
  * 目标项目的插件资产——被注入的 GDScript 可以先改掉 bridge/插件守卫代码再触发重载,
- * 实现持久化自毁防御(防"LLM 改写自己的守卫")。来源:NPGameDev file_guard.gd:102-115
+ * 实现持久化自毁防御(防"LLM 改写自己的守卫")。来源:NPGameDev file_guard.gd:102-115 [上游 license:GitHub API 报 NOASSERTION 待人工核实,见 THIRD_PARTY_NOTICES.md]
  * (拒插件自身目录,155 行;含"尾斜杠防误伤同前缀兄弟目录"细节)。
  *
  * 保护对象(项目内两形态):

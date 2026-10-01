@@ -36,7 +36,7 @@
 | 维度 | 规则 |
 |------|------|
 | 🌐 语言 | **简体中文回复**(代码/命令/标识符保持英文) |
-| 📁 路径 | 文件引用一律绝对路径(如 `D:\GitHub\godot-mcp-enhanced\src\index.ts`) |
+| 📁 路径 | 文件引用一律绝对路径(如 `D:\GitHub\godot-mcp-series\godot-mcp-enhanced\src\index.ts`) |
 | 🛑 红线 | 密钥 / 危险命令 / 禁编辑文件类别 / 完成前必说验证方式(见 Non-Negotiables) |
 | ✅ 完成前 | 声明"完成"前**必须说验证方式**(跑了什么命令 / 看了什么输出) |
 | 🤔 不确定 | 跨子系统改动 / 删非自己文件 / 外部 API / 连续失败 2 次 → 停下问 |
@@ -91,7 +91,7 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
 - 改动会影响多个子系统(如同时改 `src/tools/` 和 `src/core/` 和 `addons/`)
 - 要删除/覆盖非自己创建的文件
 - 命令涉及网络下载 / 外部 API / 大额付费操作
-- 路径不在 `D:\GitHub\godot-mcp-enhanced` 工作区内
+- 路径不在 `D:\GitHub\godot-mcp-series\godot-mcp-enhanced` 工作区内
 - 同一问题连续尝试 2 次失败(贴已试方法 + 报错,问用户)
 
 ---
@@ -117,7 +117,7 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
 
 ## 路径规范
 
-- **所有文档与回复中引用文件,一律使用绝对路径**(如 `D:\GitHub\godot-mcp-enhanced\src\index.ts` 或 `D:/GitHub/godot-mcp-enhanced/package.json`),禁止相对路径。
+- **所有文档与回复中引用文件,一律使用绝对路径**(如 `D:\GitHub\godot-mcp-series\godot-mcp-enhanced\src\index.ts` 或 `D:/GitHub/godot-mcp-series/godot-mcp-enhanced/package.json`),禁止相对路径。
 - 适用范围:代码定位(`绝对路径:行号`)、日志/笔记里的文件清单、提交信息、报告。
 - **例外**:
   - 代码内 `import`、`require`、资源路径等代码本身所需的相对路径照常使用。
@@ -173,12 +173,12 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
 
 - **项目类型**:开源 MCP server(TypeScript npm 包),为 AI(Claude Code、Cursor、CodeBuddy 等 MCP 客户端)提供操作 Godot 游戏引擎的工具层。
 - **License**:MIT
-- **版本**:见 `package.json`(`version` 字段,当前 0.23.0,由 `npm run version-sync` 管理)
+- **版本**:见 `package.json`(`version` 字段,由 `npm run version-sync` 管理;此处不写死具体数字防漂移,以 package.json 为准)
 - **技术栈**:
   - 语言:**TypeScript**(ES2022 / strict / Node16 模块)+ **GDScript**(Godot 4.5–4.7,运行时脚本 + addons)
-  - 框架:`@modelcontextprotocol/sdk` ^1.29.0
-  - 依赖:`ws` ^8.21.0(WebSocket,editor/bridge 通信)
-  - 测试:**Vitest** ^4.1.7 + `@vitest/coverage-v8` + `fast-check`(属性测试)
+  - 框架:MCP SDK v2(`@modelcontextprotocol/core` ^2.0.0 + `@modelcontextprotocol/server` ^2.0.0)
+  - 依赖:`ws` ^8.21.0(WebSocket,editor/bridge 通信)、`zod` ^4.2.0
+  - 测试:**Vitest** ^4.1.11 + `@vitest/coverage-v8` + `fast-check`(属性测试)
   - Lint:**ESLint** ^10.4.0 + `typescript-eslint` ^8.60.0
   - 构建:`tsc`(TypeScript 编译)+ 自定义脚本拷贝 `.gd` 文件到 `build/scripts/`
 - **仓库结构**:
@@ -192,7 +192,11 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
     - `src/tscn/` — `.tscn` 场景文件解析/生成
     - `src/dashboard/` — dashboard UI(**独立只读 CLI 进程**,非 server 前端（仅指 TUI；Web 见 src/web-gui/）;LogReader→Aggregator→render,无 HTTP/写入/editor 连接。配置开关走 env 或 `~/.godot-mcp/settings.json`,**不能**在 dashboard 加设置项影响 server 行为)
     - `src/web-gui/` — Web GUI 监控面板（**server 进程内嵌** HTTP+SSE，默认开 env `GODOT_MCP_WEB_GUI=0` 关；per-pid 登记 `~/.godot-mcp/web-gui/`；CLI `dashboard --web` 打开。注意与 dashboard TUI 区分:TUI 是独立只读 CLI 进程读日志文件、**无设置项影响 server 行为**;web-gui 是 server 内监控面 + **设置面板**——2026-09-29 设置批起支持 Godot 路径/项目白名单配置（持久化 `~/.godot-mcp/settings.json` + 保存即热生效改 env,GUI 设置优先于客户端注入 env、清除恢复启动快照;`GODOT_MCP_UNRESTRICTED` 仍 env-only 不进 GUI）,核心层 `src/core/user-settings.ts` + 逻辑层 `src/web-gui/settings-api.ts`）
-    - `src/cli/` — CLI 子系统(`clients/` 15 客户端适配器(2026-08-19 加 ZCode 计数修正 + Warp)+ `setup.ts` 一键配置 + `configure.ts` 定向配置单客户端(P0-2)+ `skills.ts` skills 分发 + `doctor.ts` 诊断 + `init.ts` + `router.ts` 子命令路由 `setup`/`configure`/`skills`/`doctor`/`init`/`dashboard`/`qa`。⚠️ 竞品研究易误判"enhanced 无客户端配置能力",实际此目录已含 Claude Desktop/Cursor/Cline/Windsurf/Zed/Claude Code CLI/Codex CLI/Cherry Studio/Antigravity/Trae/Qwen Code/Gemini CLI/OpenCode/ZCode/Warp)
+    - `src/daemon/` — 常驻 daemon 守护进程(2026-09-30 专项批:`main.ts` 进程入口 + `controlled-restart.ts` 受控交接 + `mcp-endpoint.ts` `/mcp` streamable HTTP + CLI 命令见 `src/cli/daemon.ts`)
+    - `src/telemetry/` — 遥测(opt-in,默认关)
+    - `src/game-templates/` — 游戏模板资产(打包进 `build/game-templates/`)
+    - `src/skills/` — skills 分发源(打包进 npm 包 `skills/`)
+    - `src/cli/` — CLI 子系统(`clients/` 15 客户端适配器(2026-08-19 加 ZCode 计数修正 + Warp)+ `setup.ts` 一键配置 + `configure.ts` 定向配置单客户端(P0-2)+ `skills.ts` skills 分发 + `doctor.ts` 诊断 + `init.ts` + `router.ts` 子命令路由 `setup`/`configure`/`skills`/`doctor`/`init`/`dashboard`/`qa`/`daemon`。⚠️ 竞品研究易误判"enhanced 无客户端配置能力",实际此目录已含 Claude Desktop/Cursor/Cline/Windsurf/Zed/Claude Code CLI/Codex CLI/Cherry Studio/Antigravity/Trae/Qwen Code/Gemini CLI/OpenCode/ZCode/Warp)
   - `addons/` — Godot editor 插件(MCP Bridge,分发给目标项目)
   - `scripts/` — 构建/版本/检查脚本(`install-plugin.js`、`version-sync.mjs`、`check-token-budget.mjs` 等)
   - `test/` — Vitest 测试(`.test.ts` / `.test.js`)
@@ -204,7 +208,7 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
 
 ## 开发命令
 
-> 以下命令可直接复制运行(工作目录:`D:\GitHub\godot-mcp-enhanced`):
+> 以下命令可直接复制运行(工作目录:`D:\GitHub\godot-mcp-series\godot-mcp-enhanced`):
 
 ```bash
 # 安装依赖
@@ -371,9 +375,9 @@ server 按目标进程域分工三层,自动检测互不冲突。**"层"的语�
 
 ### 分层约束与全局状态规则(2026-08-21 架构审查定规)
 
-- **core 不依赖 tools**(eslint `no-restricted-imports` 机械门禁,`src/core/**` 下禁止 import `../tools/`):组合根在 `src/module-loader.ts`(应用层,43 个工具模块 import 的唯一集中点)。
+- **core 不依赖 tools**(eslint `no-restricted-imports` 机械门禁,`src/core/**` 下禁止 import `../tools/`):组合根在 `src/module-loader.ts`(应用层,44 个工具模块 import 的唯一集中点;计数以 `npm run check:modules-sync` 为准)。
 - **CLI 子命令禁止散布 `import '../tools/...'`**:需要起游戏/bridge 的命令复用 `src/cli/bridge-session.ts` 会话链(装 bridge → run_project → teardown);底层 bridge 客户端(`sendToBridge`/`setBridgeProjectDir`)在 `src/core/bridge-client.ts`,CLI 直接 import core 版。CLI 与 server 同源的领域壳(如 `cli/qa.ts` 之于 `tools/qa/`)属合法例外,新增时须在文件头声明。
-- **禁止新增模块级 setter 注入点**(`export function setXxx(...)` 写模块级单例,现存量约 23 个:process-state/logger/progress/game-bridge 回调等):此类注入靠纪律维持,`GodotServer.close()` 需逐一手动清理,历史多次因清理遗漏致测试隔离泄漏/热重启残留(见 `GodotServer.ts` close() 注释的修复记录)。新代码的依赖一律走构造器注入(参照 `ToolDispatcher`/`EditorConnectionManager` 模式);给存量模块补功能时优先扩展既有 setter 语义而不是新增 setter。存量 23 个的清算是长期重构项,不做一次性大改。
+- **禁止新增模块级 setter 注入点**(`export function setXxx(...)` 写模块级单例,现存量 26 个:process-state/logger/progress/game-bridge 回调等):此类注入靠纪律维持,`GodotServer.close()` 需逐一手动清理,历史多次因清理遗漏致测试隔离泄漏/热重启残留(见 `GodotServer.ts` close() 注释的修复记录)。新代码的依赖一律走构造器注入(参照 `ToolDispatcher`/`EditorConnectionManager` 模式);给存量模块补功能时优先扩展既有 setter 语义而不是新增 setter。存量 26 个的清算是长期重构项,不做一次性大改。
 
 ### 分发产物与独立副本边界(改源不改产物)
 
@@ -486,3 +490,4 @@ CI 双脚本把关: `check-rules-version-bump.mjs` 在模板变更时强制要�
 | 2026-08-20 | 「发版前额外门禁」节新增例外条款:规则模板变更触发的 bump 硬门禁 ≠ 发版(照常 bump+version-sync+定版段+版本行,npm publish/tag 仍待用户)——用户裁决 N-C,解耦「版本号演进」与「发布动作」,消解与"默认不发版"的字面冲突 |
 | 2026-08-21 | 新增「分层约束与全局状态规则」:core→tools 禁止(eslint 门禁)/CLI 复用 bridge-session 会话链/禁止新增模块级 setter——源于当日全仓架构审查(C/D 组修复批) |
 | 2026-09-12 | 「架构约束」三层表述升级为"域×通道矩阵"(editor 域两通道:WS 9090 需登记 method-map / DAP TCP 6006 免登记)——源于九轮迭代架构检查 D2(报告 `docs/reviews/2026-09-12-九轮迭代架构检查.md`) |
+| 2026-10-01 | B3 校正(审查 `docs/reviews/2026-10-01-全维度项目审查.md`):版本表述去写死数字、SDK v2 依赖名、Vitest ^4.1.11、工具模块 43→44、setter 存量 23→26、工作目录改 `godot-mcp-series` 实际路径(3 处)、仓库结构补 daemon/telemetry/game-templates/skills 四子系统 |

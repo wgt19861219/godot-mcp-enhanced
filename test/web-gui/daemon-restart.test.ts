@@ -28,6 +28,12 @@ interface HarnessOpts {
   spawnRegisters?: boolean;
   /** removeRegistrationVerified 返回值(缺省 true;false = PID 复用路径)。 */
   verifiedResult?: boolean;
+  /** D-3(2026-10-01 审查):closeListener 抛错(步骤 1 失败 = 交接中止路径)。 */
+  closeListenerThrows?: boolean;
+  /** D-3:spawnDaemon 返回无效 pid(<=0;测步骤 2 显式失败立即回滚,不等超时)。 */
+  spawnPid?: number;
+  /** D-3:killTree 抛错(回滚中 kill 失败,验 relisten 仍被调)。 */
+  killTreeThrows?: boolean;
 }
 
 interface Harness {
@@ -58,23 +64,28 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     gui: {
       port: OLD_PORT,
       registrationStartedAt: STARTED_AT,
-      closeListener: async () => { calls.closeListener++; },
+      closeListener: async () => {
+        calls.closeListener++;
+        if (opts.closeListenerThrows) throw new Error('close-listener boom');
+      },
       relisten: async () => { calls.relisten++; },
     },
     server: { close: async () => { calls.serverClose++; } },
     spawnDaemon: (flags) => {
       calls.spawnFlags.push(flags);
-      if (opts.spawnRegisters !== false) {
+      const pid = opts.spawnPid ?? NEW_PID;
+      if (pid > 0 && opts.spawnRegisters !== false) {
         registrations.push({
-          pid: NEW_PID, port: opts.newDaemonPort ?? OLD_PORT,
+          pid, port: opts.newDaemonPort ?? OLD_PORT,
           token: 'tok_new_daemon_x', startedAt: '2026-09-30T08:00:05.000Z',
           kind: 'daemon', ...(opts.newDaemonPort === undefined ? { respawnOf: OLD_PID } : {}),
         });
       }
-      return { pid: NEW_PID };
+      return { pid };
     },
     killTree: (pid) => {
       calls.kills.push(pid);
+      if (opts.killTreeThrows) throw new Error('killTree boom');
       // kill 后登记消失(listRegistrations 默认探活清死条目的模拟)
       registrations = registrations.filter(r => r.pid !== pid);
     },
@@ -173,6 +184,53 @@ describe('controlledRestart(spec §3.7 受控交接,plan Task 9)', () => {
     // 如实审计:verified=false 落痕但不按失败处理(交接本身已成功)
     const reg = h.calls.audits.find(a => a.details['step'] === 'remove-registration');
     expect(reg?.details['result']).toBe('mismatch-pid-reuse-kept');
+  });
+
+  // ── D-3 fix(2026-10-01 审查):失败包容三路径(原先 closeListener 裸抛/无效 pid
+  //    静默白等超时/killTree 失败打断回滚)──────────────────────────────────────
+  it('⑤(D-3) closeListener 抛错 → 交接中止:不 spawn/不 kill,尽力 relisten 恢复服务,throw 带阶段语义', async () => {
+    const h = makeHarness({ closeListenerThrows: true });
+    await expect(controlledRestart(h.deps)).rejects.toThrow(/交接中止.*close-listener 失败/);
+
+    // 未进入交接:不 spawn 新实例、不触碰回滚 kill 面
+    expect(h.calls.spawnFlags).toEqual([]);
+    expect(h.calls.kills).toEqual([]);
+    expect(h.calls.serverClose).toBe(0);
+    expect(h.calls.exits).toEqual([]);
+    // 尽力恢复:relisten 被调(listener 可能已关,relisten 成功 = 旧实例原样继续)
+    expect(h.calls.relisten).toBe(1);
+    // 审计:close-failed + recovery 两步落痕
+    const failed = h.calls.audits.find(a => a.details['step'] === 'close-listener');
+    expect(failed?.ok).toBe(false);
+    expect(failed?.details['result']).toBe('close-failed');
+    const recovery = h.calls.audits.find(a => a.details['step'] === 'close-listener-recovery');
+    expect(recovery?.details['result']).toBe('relistened');
+  });
+
+  it('⑥(D-3) spawn 返回无效 pid(-1) → 按 spawn 失败立即回滚(不等 ready-timeout):audit spawn-failed + 直接 relisten,不 kill', async () => {
+    const h = makeHarness({ spawnPid: -1 });
+    await expect(controlledRestart(h.deps)).rejects.toThrow(/无效 pid/);
+
+    expect(h.calls.kills).toEqual([]);          // newPid<=0 → 回滚跳过 kill 直接 relisten
+    expect(h.calls.relisten).toBe(1);           // 端口恢复,旧实例继续服务
+    expect(h.calls.exits).toEqual([]);
+    const spawnAudit = h.calls.audits.find(a => a.details['step'] === 'spawn');
+    expect(spawnAudit?.ok).toBe(false);
+    expect(spawnAudit?.details['result']).toBe('spawn-failed');
+  });
+
+  it('⑦(D-3) 回滚中 killTree 抛错 → 不打断回滚:如实审计 kill-failed,relisten 仍被调(端口恢复优先)', async () => {
+    // 端口不符触发回滚 + killTree 抛错:回滚须继续走完 relisten,而非裸抛中断
+    const h = makeHarness({ newDaemonPort: OLD_PORT + 1, killTreeThrows: true });
+    await expect(controlledRestart(h.deps)).rejects.toThrow(/端口/);
+
+    expect(h.calls.kills).toEqual([NEW_PID]);   // kill 尝试发生(但抛错)
+    expect(h.calls.relisten).toBe(1);           // 关键:回滚不被打断,端口恢复
+    const killAudit = h.calls.audits.find(a => a.details['step'] === 'rollback-kill');
+    expect(killAudit?.ok).toBe(false);
+    expect(killAudit?.details['result']).toBe('kill-failed');
+    const relistenAudit = h.calls.audits.find(a => a.details['step'] === 'rollback-relisten');
+    expect(relistenAudit?.ok).toBe(true);
   });
 });
 

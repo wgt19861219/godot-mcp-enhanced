@@ -1,5 +1,5 @@
 /**
- * 手写状态机 GDScript tokenizer(2026-09-11 P6 批,整文件移植自 Erodenn-godot-mcp-runtime
+ * 手写状态机 GDScript tokenizer(2026-09-11 P6 批,整文件移植自 Erodenn-godot-mcp-runtime [上游 license:MIT,2026-10-01 GitHub API 核实,见 THIRD_PARTY_NOTICES.md]
  * src/utils/gdscript-scanner.ts,经真读验证;适配点仅头注释与尾部追加的 classifyFirstArgument)。
  *
  * 消费方:gdscript-executor.ts 的 scanGdscriptSandbox Phase 3(非字面量 load/preload 拦截)。

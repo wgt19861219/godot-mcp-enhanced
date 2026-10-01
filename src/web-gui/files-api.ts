@@ -1,7 +1,7 @@
 // src/web-gui/files-api.ts
 // 资源管理工作台纯逻辑层(spec 2026-09-15 v2 §3):列目录/读三模式/保存三重护栏。
 // 路径安全链(§3.2):isPathInAllowedRoots+project.godot 校验 → resolveWithinRoot → 隐藏降噪。
-import { readdir, stat, readFile, writeFile, mkdir, rename, open } from 'node:fs/promises';
+import { readdir, stat, readFile, writeFile, mkdir, rename, open, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, extname, basename } from 'node:path';
@@ -159,10 +159,16 @@ export class FilesApi {
     // 审查 Low(2026-09-17 批 3):.bak 含旧文件全文,Windows 无视 0o600 → icacls 收紧 ACL
     // (对齐 registry.ts 登记文件/projects-store.ts 同域持久化文件惯例,best-effort)
     hardenFilePermissionsWindows(bakPath);
-    // 原子写(§3.3-4)
+    // 原子写(§3.3-4;D-5 fix 2026-10-01 审查:tmp 加 0o600 防窗口期旁读——
+    // 目标文件落盘后同款收紧,临时文件不应弱于终态;失败时 finally 清理残留 tmp)
     const tmp = abs + '.mcp-tmp';
-    await writeFile(tmp, content, 'utf-8');
-    await rename(tmp, abs);
+    try {
+      await writeFile(tmp, content, { encoding: 'utf-8', mode: 0o600 });
+      await rename(tmp, abs);
+    } finally {
+      // rename 成功时 tmp 已不存在,unlink 仅在"写后 rename 前抛错"残留场景生效
+      await rm(tmp, { force: true }).catch(() => { /* best-effort 清理 */ });
+    }
     const after = await stat(abs);
     // 2C (2026-09-19 安全加固批2): Web GUI 旁路写接审计——files-api 不经 ToolDispatcher,
     // 此前 HTTP 文件写零留痕(可核查缺口)。批4-T8: 重构复用 audit-helper 统一出口

@@ -6,6 +6,7 @@ Copyright (c) 2026 AssetForge Contributors (https://github.com/wgt19861219/godot
 
 Acknowledgements:
 - asset 工具集（asset action）的 GDScript 资产生成逻辑源自 AssetForge，后者 fork 自 Tripo3D Godot Bridge，在此致谢。
+- 部分模块移植自下列 MIT 许可的第三方项目（详见 THIRD_PARTY_NOTICES.md）：Erodenn/godot-mcp-runtime（GDScript tokenizer / profiler 流 / variant 解析）、LuoxuanLove/godot-dotnet-mcp（DAP 协议驱动）、masteryee-labs/Open-Godot-MCP（sync_state 与弱网注入）、regiellis/godot-mcp-go（unknown-param 拒绝）。NPGameDev/godot-mcp-server 的 untrusted 信封与 file_guard 机制移植（<50 行）license 待人工确认（见 THIRD_PARTY_NOTICES.md）。
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

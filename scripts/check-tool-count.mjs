@@ -69,6 +69,10 @@ const RULES = [
       { re: /130\+\s*tools?/, negate: true, desc: 'manifest:6 不应残留 130+' },
       { re: /and\s+(\d+)\+?\s*merged tools/, expectKey: 'toolCount', asString: true, desc: 'manifest:6 顶层工具数' },
       { re: /provides\s+(\d+)\s*merged MCP tools/, expectKey: 'toolCount', asString: true, desc: 'manifest:7 long_description' },
+      // B-1 fix(2026-10-01 审查):manifest 两处 action 数曾漂移(248 vs 权威 272)长期
+      // 隐身——此前只校验工具数不校验 action 数。捕获组锚定 "(N actions)" 措辞。
+      { re: /(\d+)\s*merged tools\s*\((\d+)\s*actions\)/, expectKey: 'toolCount', asString: true, desc: 'manifest:6 顶层工具数(双口径)', expect2Key: 'actionCount', desc2: 'manifest:6 action 数' },
+      { re: /(\d+)\s*merged MCP tools\s*\((\d+)\s*actions\)/, expectKey: 'toolCount', asString: true, desc: 'manifest:7 工具数(双口径)', expect2Key: 'actionCount', desc2: 'manifest:7 action 数' },
     ],
   },
   {
@@ -78,6 +82,8 @@ const RULES = [
       { re: /\|\s*Tools\s*\|\s*\*\*(\d+)\*\*/, expectKey: 'toolCount', desc: 'README.en:20 对比表' },
       { re: /^## Tools \((\d+)\)/m, expectKey: 'toolCount', desc: 'README.en:112 章节标题' },
       { re: />\s*\*\*(\d+)\s*MCP tools\*\*/, expectKey: 'toolCount', desc: 'README.en:114' },
+      // B-1 fix(2026-10-01 审查):README.en 正文 action 数曾漂移(248 vs 权威 272)——补捕获组。
+      { re: /merged tool definitions,\s*(\d+)\s*actions/, expectKey: 'actionCount', desc: 'README.en:186 正文 action 数' },
     ],
   },
   {

@@ -232,7 +232,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 >
 > **怎么按名找到工具**:下表「工具」列绝大多数是 **action 名**(如 `read_scene`),实际调用时作为对应**顶层工具**的 `action` 参数传入——`read_scene`/`quick_scene` 走 `scene` 工具,`read_script`/`write_script` 走 `script` 工具,以此类推(顶层工具名 = 域名词:`scene`/`script`/`runtime`/`validation`/`game` 等 46 个)。action 命名存在三种历史语序(`read_scene`/`tilemap_read`/裸 `read`),不确定时让 AI 先查 `help` 工具(46 工具全覆盖 + 拼写纠错)。
 >
-> **默认 profile 可见性**:默认 `basic` profile 激活 **29/46** 个工具(实测,setActiveGroups 语义);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
+> **默认 profile 可见性**:默认 `basic` profile 的 `tools/list` 返回 **26/46** 个工具(2026-10-01 真实 stdio 冒烟实测,与 `setActiveGroups` 静态展开一致;此前文档写 29/46 系把 ALWAYS_ALLOWED 恒可调用项误计入可见数——`manage_tools`/`testing`/`csv_to_resources` 恒允许**调用**但不在默认 `tools/list` 列表,语义见 `src/core/tool-registry.ts` 的 `isToolAllowed`);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
 >
 > **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
 >
@@ -695,6 +695,13 @@ setup_project_rules(project_path="你的项目路径")
 | `GODOT_MCP_TELEMETRY` | 匿名遥测 opt-in(默认关闭,详见 [docs/telemetry.md](docs/telemetry.md)) | `false` |
 | `GODOT_MCP_INSTALL_TAG` | CLI `install` 固定版本 tag(如 `4.7.2-stable`,跳过 latest 查询;测试/复现用) | 未设(latest) |
 | `GODOT_MCP_PROFILE` | 工具 profile(basic/lite/minimal/full/bridge_dev/3d_dev 或逗号组名)。**默认 basic**(BREAKING from full;lite 9 组省 ~60% context,RCE action 经 action-gate 默认 gated)。回退全量:`GODOT_MCP_PROFILE=full` 或 `--profile=full` | `basic` |
+| `GODOT_MCP_AUDIT_CODE` | `true`=审计日志记录所执行 GDScript 的代码内容(默认不记录;开启后字符串字面量已脱敏防 secret 泄露) | `false` |
+| `GODOT_MCP_BRIDGE_REQUIRE_CR_AUTH` | `true`=强制 bridge challenge-response 握手,拒绝明文降级(别名 `GODOT_MCP_REQUIRE_CR_AUTH`;多用户/不可信环境防伪造 bridge 响应) | `false`(本地回环明文可过) |
+| `GODOT_MCP_INFLIGHT_DIR` | inflight 执行登记目录覆盖(默认 `~/.godot-mcp`;测试注入隔离目录用) | `~/.godot-mcp` |
+| `GODOT_MCP_INFLIGHT_LOG` | `0`=关闭 inflight 报丧日志(执行中断/进程死亡时的孤儿执行提示) | 开 |
+| `GODOT_MCP_OVERRIDES` | 分号分隔的 override 脚本路径(启动时注入为 MCPOVERRIDE_* autoload;与 CLI `--overrides` 等价) | 未设 |
+| `GODOT_MCP_PRETTY_JSON` | `1`=工具输出缩进 JSON(调试可读性用) | `0`(紧凑) |
+| `GODOT_MCP_UNTRUSTED_ENVELOPE` | `0`=关闭输出侧 untrusted 内容信封(默认启用:读路径返回的游戏侧内容包防注入信封,防 GDScript 伪造 MCP 输出;只包读路径,不包写确认/错误消息) | 开(信封启用) |
 
 > **⚠️ BREAKING(G7)**:默认 profile 从 `full` 改 `basic`(对齐 GoPeak compact,省 AI context window)。升级后 tools/list 只暴露 basic(lite 9 组:core/bridge/animation/audio/signal/visual/code/test/profiler)。回退全量 46 工具:`GODOT_MCP_PROFILE=full`;或 AI 运行时 `manage_tools activate <groups>` 动态扩容(无需重启)。RCE action(execute_gdscript 等)始终经 action-gate gated,需 `GODOT_MCP_PRIVILEGED_GROUPS=code-execution` 解锁。
 

@@ -7,6 +7,7 @@
 - securityLevel：danger-api 11 / guarded 24 / safe 11
 - risk：read 134 / write 112 / destructive 10 / process 16
 - L2 覆盖：covered 0 / partial 0 / none 46
+  - ⚠ 占位说明：L2 列为提取器占位（`src/capability/extract.ts` 硬编码 `l2:'none'`），未接线 CI e2e 映射，**不代表真实覆盖为零**（CI 实际跑 16 个 L2 e2e 文件，见 `scripts/check-e2e-l2-coverage.mjs`）；relatedDefects 同为占位。
 - token 预算：tools/list ≈ 113093B / ~28273 tokens（description 16287B / schema 96806B，schema 占 86%）
 - annotations：readOnly 10 / destructive 5 / idempotent 13
 > 注：标 read 但实际启进程/有副作用(项目有意信任不确认): `validation.run_and_verify`, `validation.verify_delivery`
@@ -24,7 +25,7 @@
 - `ui` (ui)
 - `validation` (core)
 
-## 覆盖缺口（L2=none）
+## 覆盖缺口（L2=none，占位——见概览行说明，非真实覆盖）
 - `analysis` (code)
 - `android` (android)
 - `animation` (animation)
