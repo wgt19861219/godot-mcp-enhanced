@@ -10,6 +10,7 @@ export const INDEX_HTML: string = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>godot-mcp-enhanced 监控面板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231a1f26'/%3E%3Ctext x='16' y='23' font-size='19' font-family='monospace' font-weight='bold' fill='%2358a6ff' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E">
 <style>
   :root { --bg:#111418; --panel:#1a1f26; --line:#2a313b; --fg:#d7dde5; --dim:#7b8694;
           --green:#3fb950; --blue:#58a6ff; --yellow:#d29922; --red:#f85149; --orange:#db6d28; --grey:#6e7681; }
@@ -46,6 +47,9 @@ export const INDEX_HTML: string = `<!doctype html>
   .ctl:hover { color: var(--fg); border-color: var(--dim); }
   .ctl.stop:hover { color: var(--red); border-color: var(--red); }
   .ctl:disabled { opacity: .4; cursor: default; }
+  /* a11y(2026-10-01 NIT-4):DevTools「No label associated with a form field」只认
+     label 元素关联(aria-label 不计),sr-only 供无自然文本标签的控件挂视觉隐藏 label */
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   /* 项目面板批(spec §7.1):左列上项目(~55%)下会话(~45%),三列外框不变
      实例管理批(2026-09-30):左列改三段——项目 42/会话 33/实例 25(原 55/45) */
   #left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -100,7 +104,9 @@ export const INDEX_HTML: string = `<!doctype html>
   /* 设置面板(2026-09-29 设置批):表单分区 + 候选点选 + 只读信息区 */
   #settingsPane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; }
   .set-section { padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  .set-section label { display: block; color: var(--dim); font-size: 12px; margin-bottom: 4px; }
+  /* 2026-10-01 NIT-4:区块标题改 .set-lbl(span)——纯样式标题误用 label 元素会触发
+     DevTools「A label isn't associated with a form field」issue;真字段标签仍用 label[for] */
+  .set-section label, .set-section .set-lbl { display: block; color: var(--dim); font-size: 12px; margin-bottom: 4px; }
   .set-row { display: flex; gap: 6px; }
   .set-row input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; font-size: 12px; }
   .set-hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
@@ -128,8 +134,8 @@ export const INDEX_HTML: string = `<!doctype html>
     <!-- 易用性批5 (2026-09-19):面板虽名「监控」,但项目/会话/文件区含写操作
          (停止/清理/增删项目/保存文件),给操作后果一行预期,防误触 -->
     <section id="projPane"><h2>项目 <span class="dim" style="font-weight:normal">增删/扫描影响 server 登记状态</span></h2>
-      <div class="log-tools"><input id="projSearch" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
-      <div class="log-tools" id="addRow"><input id="addPath" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
+      <div class="log-tools"><label class="sr-only" for="projSearch">搜索项目:名称/路径</label><input id="projSearch" aria-label="搜索项目:名称/路径" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
+      <div class="log-tools" id="addRow"><label class="sr-only" for="addPath">项目绝对路径(须在白名单内)</label><input id="addPath" aria-label="项目绝对路径(须在白名单内)" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
       <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
     <section id="sessionsPane"><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
     <!-- 实例管理批(2026-09-30):本机全部 MCP server 实例(=各 MCP 客户端会话拉起的
@@ -139,7 +145,7 @@ export const INDEX_HTML: string = `<!doctype html>
   <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
     <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button><button type="button" id="tabSettings" class="tab">设置</button></div>
     <div id="logsPane">
-      <div class="log-tools"><input id="logFilter" placeholder="过滤:工具/模块/项目"><select id="logLevel"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
+      <div class="log-tools"><label class="sr-only" for="logFilter">过滤日志:工具/模块/项目</label><input id="logFilter" aria-label="过滤日志:工具/模块/项目" placeholder="过滤:工具/模块/项目"><label class="sr-only" for="logLevel">日志级别</label><select id="logLevel" aria-label="日志级别"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
       <div class="scroll" id="logList"></div>
     </div>
     <div id="filesPane" style="display:none"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div>
@@ -147,15 +153,15 @@ export const INDEX_HTML: string = `<!doctype html>
          保存 = 完整表单语义(路径留空/白名单清空 = 清除该设置,恢复启动 env 快照) -->
     <div id="settingsPane" style="display:none">
       <div class="set-section">
-        <label>Godot 可执行路径</label>
-        <div class="set-row"><input id="setGodotPath" placeholder="D:\\godot\\Godot_v4.7.1-stable_win64.exe"><button type="button" class="ctl" id="setVerifyBtn">验证</button></div>
+        <label for="setGodotPath">Godot 可执行路径</label>
+        <div class="set-row"><input id="setGodotPath" aria-label="Godot 可执行路径" placeholder="D:\\godot\\Godot_v4.7.1-stable_win64.exe"><button type="button" class="ctl" id="setVerifyBtn">验证</button></div>
         <div class="set-result" id="setGodotResult"></div>
         <div class="set-cand" id="setCands"></div>
         <div class="set-hint">候选来自 ~/.godot-mcp/godot-paths.json(CLI install 登记),点击即填入并验证;「验证」会运行 --version 确认版本;留空 = 清除设置,恢复启动时配置。注:项目若配了 .godot/mcp-godot.json 等项目级 override,该项目仍优先用 override 的路径</div>
       </div>
       <div class="set-section">
-        <label>项目目录白名单(每行一个绝对路径)</label>
-        <textarea id="setAllowed" placeholder="D:\\GitHub\\my-game&#10;D:\\Projects\\demo"></textarea>
+        <label for="setAllowed">项目目录白名单(每行一个绝对路径)</label>
+        <textarea id="setAllowed" aria-label="项目目录白名单,每行一个绝对路径" placeholder="D:\\GitHub\\my-game&#10;D:\\Projects\\demo"></textarea>
         <div class="set-hint">即 ALLOWED_PROJECT_PATHS,影响所有工具可访问的目录范围;清空 = 恢复启动时配置(deny-by-default 收缩到工作目录)</div>
       </div>
       <div class="set-actions">
@@ -163,11 +169,11 @@ export const INDEX_HTML: string = `<!doctype html>
         <span class="set-hint" id="setSaveHint"></span>
       </div>
       <div class="set-section">
-        <label>当前生效(只读)</label>
+        <span class="set-lbl">当前生效(只读)</span>
         <div class="set-info" id="setInfo"></div>
       </div>
     </div></section>
-  <section><h2>工具统计 <select id="projSel"><option value="">全部</option></select></h2>
+  <section><h2>工具统计 <label class="sr-only" for="projSel">工具统计项目筛选</label><select id="projSel" aria-label="工具统计项目筛选"><option value="">全部</option></select></h2>
     <div class="scroll"><table id="statsTable"><thead><tr><th>tool</th><th>calls</th><th>err</th><th>avg</th><th>min</th><th>max</th></tr></thead><tbody></tbody></table></div>
     <h2 style="border-top:1px solid var(--line)">分钟时序</h2><div id="chart"><div class="empty" style="flex:1">等待数据…</div></div></section>
 </main>

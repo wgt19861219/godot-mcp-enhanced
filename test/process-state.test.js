@@ -899,6 +899,18 @@ describe('per-project sessions — 分桶核心(设计 §4.2/§7)', () => {
     setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/late'));
     markSessionExited('/late', 1);
     expect(getSession('/late').status).toBe('errored');
+    // stopping 态(主动停止)例外(2026-10-01 NIT-3):2s 外 code≠0 也归 exited——被 kill
+    // 的退出码非零(taskkill /F → 1)是请求的正常终点,面板/MCP stop 后不再误显 errored;
+    // 2s 内的 exited_early 判定同被 stopping 分支短路(主动停不算可疑自崩)
+    setRunSessionProc('/stopping', makeMockProc(), true);
+    setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/stopping'));
+    markSessionStopping('/stopping');
+    markSessionExited('/stopping', 1);
+    expect(getSession('/stopping').status).toBe('exited');
+    setRunSessionProc('/stopping-fast', makeMockProc(), true);        // processStartTime=now(<2s)
+    markSessionStopping('/stopping-fast');
+    markSessionExited('/stopping-fast', 1);
+    expect(getSession('/stopping-fast').status).toBe('exited');
     // 2s 外 code=0 → exited;code=null(无信息)→ exited
     setRunSessionProc('/ok', makeMockProc(), true);
     setProcessStartTime(Date.now() - 10_000, normalizeProjectKey('/ok'));

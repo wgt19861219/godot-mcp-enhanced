@@ -390,11 +390,19 @@ export function setSessionStatus(projectPath: string, status: RunSessionStatus):
 }
 
 /** close 判定(设计 §4.1 状态机,权威入口):2s 内退出=exited_early 优先于 code 判定;
- *  2s 外 code≠0=errored;否则 exited。不创建桶(未知桶 no-op)。 */
+ *  2s 外 code≠0=errored;否则 exited。不创建桶(未知桶 no-op)。
+ *  stopping 态例外(2026-10-01 真机验证 NIT-3):markSessionStopping 已置的会话是
+ *  用户主动停止(面板 stop / MCP stop_project / run 定时器),被 kill 的退出码非零
+ *  (Windows taskkill /F → 1)是请求的正常终点——统一归 exited,不算 errored。 */
 export function markSessionExited(projectPath: string, exitCode: number | null): void {
   const key = normalizeProjectKey(projectPath);
   const s = _sessions.get(key);
   if (!s) return;
+  if (s.status === 'stopping') {
+    s.status = 'exited';
+    markEndedAndEvict(key);
+    return;
+  }
   const early = s.processStartTime > 0 && Date.now() - s.processStartTime < 2_000;
   s.status = early ? 'exited_early' : (exitCode !== null && exitCode !== 0 ? 'errored' : 'exited');
   markEndedAndEvict(key);

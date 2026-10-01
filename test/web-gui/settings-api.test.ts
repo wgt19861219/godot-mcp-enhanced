@@ -97,6 +97,24 @@ describe('UserSettingsService(逻辑层)', () => {
     expect(r).toMatchObject({ ok: false, stage: 'version-read-failed' });
   });
 
+  // 2026-10-01 真机验证 NIT-2:cmd.exe 类非法二进制的 exec 行为非确定(间歇 exit 0 空输出
+  // vs exit 1),godot-finder 可能落 version-run-failed 或 not-godot-signature——面板层
+  // 归一为同一 stage/文案,同一输入不再漂移。
+  it('verify/save:不稳定 stage(version-run-failed/not-godot-signature)归一为 not-a-godot-binary', async () => {
+    for (const raw of ['version-run-failed', 'not-godot-signature'] as const) {
+      vi.mocked(validateGodotBinaryDetailed).mockResolvedValue({ ok: false, stage: raw });
+      const v = await svc().verify('C:/Windows/System32/cmd.exe');
+      expect(v).toEqual({
+        ok: false,
+        stage: 'not-a-godot-binary',
+        detail: '无法验证为 Godot 可执行文件(路径不存在、不可执行或 --version 输出签名不符)',
+      });
+      const s = await svc().save({ godotPath: 'C:/Windows/System32/cmd.exe' });
+      expect(s).toMatchObject({ ok: false, stage: 'not-a-godot-binary' });
+      expect((s as { error: string }).error).toContain('无法验证为 Godot 可执行文件');
+    }
+  });
+
   // ── save:校验 ──────────────────────────────────────────────────────────────
   it('save:空 patch → empty-patch', async () => {
     expect(await svc().save({})).toMatchObject({ ok: false, stage: 'empty-patch' });

@@ -15,13 +15,29 @@ import { getAllowedProjectPaths } from '../core/path-utils.js';
 import { appendMachineAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import { getLogger } from '../core/logger.js';
 
-/** 校验失败 stage → 人话错误(不含路径,PII-safe;前端直接展示)。 */
+/** 校验失败 stage → 人话错误(不含路径,PII-safe;前端直接展示)。
+ *  注:version-run-failed/not-godot-signature 两行经 normalizeGodotStage 的 UNSTABLE 集
+ *  先行归一后不可达,保留作 UNSTABLE 集未来收窄时的回落文案(审查 Nit-1)。 */
 const GODOT_STAGE_MESSAGES: Record<string, string> = {
   'path-not-allowed': '路径不在 GODOT_MCP_ALLOWED_GODOT_PATHS 白名单内(见 Godot 二进制白名单策略)',
   'is-directory': '路径是目录,须指向 Godot 可执行文件',
   'version-run-failed': '无法运行 --version(文件不存在或不可执行)',
   'not-godot-signature': '--version 输出不是有效的 Godot 版本签名',
 };
+
+/** 不稳定 stage 集(2026-10-01 真机验证 NIT-2):godot-finder 的 version-run-failed 与
+ *  not-godot-signature 对同一非法二进制可能非确定出现(实测 cmd.exe 间歇 exit 0 空输出
+ *  → not-godot-signature,复跑 exit 1 → version-run-failed)。两路均正确拒绝,但面板
+ *  对同一输入的可见 stage/文案漂移。面板层归一为单一 stage 'not-a-godot-binary' +
+ *  稳定文案;godot-finder 原始 stage 不动(其余调用方与单测锁定其语义)。 */
+const UNSTABLE_GODOT_STAGES: ReadonlySet<string> = new Set(['version-run-failed', 'not-godot-signature']);
+const NOT_A_GODOT_BINARY_MESSAGE = '无法验证为 Godot 可执行文件(路径不存在、不可执行或 --version 输出签名不符)';
+
+/** 面板层 stage 归一:不稳定集合并为 'not-a-godot-binary';其余原样映射。 */
+function normalizeGodotStage(stage: string): { stage: string; message: string } {
+  if (UNSTABLE_GODOT_STAGES.has(stage)) return { stage: 'not-a-godot-binary', message: NOT_A_GODOT_BINARY_MESSAGE };
+  return { stage, message: GODOT_STAGE_MESSAGES[stage] ?? stage };
+}
 
 export interface SettingsView {
   persisted: { godotPath: string; allowedProjectPaths: string[] };
@@ -96,7 +112,8 @@ export class UserSettingsService implements SettingsApi {
     }
     const check = await validateGodotBinaryDetailed(path);
     if (!check.ok) {
-      return { ok: false, stage: check.stage, detail: GODOT_STAGE_MESSAGES[check.stage] ?? check.stage };
+      const n = normalizeGodotStage(check.stage);
+      return { ok: false, stage: n.stage, detail: n.message };
     }
     try {
       return { ok: true, version: await detectGodotVersion(path) };
@@ -120,9 +137,9 @@ export class UserSettingsService implements SettingsApi {
         }
         const check = await validateGodotBinaryDetailed(trimmed);
         if (!check.ok) {
-          const detail = GODOT_STAGE_MESSAGES[check.stage] ?? check.stage;
-          this.auditSave(false, { error: `godotPath rejected: ${check.stage}` });
-          return { ok: false, error: `Godot 路径校验失败:${detail}`, stage: check.stage };
+          const n = normalizeGodotStage(check.stage);
+          this.auditSave(false, { error: `godotPath rejected: ${n.stage}` });
+          return { ok: false, error: `Godot 路径校验失败:${n.message}`, stage: n.stage };
         }
         godotValue = trimmed;
       }
