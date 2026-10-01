@@ -261,7 +261,8 @@ export async function controlledRestart(deps: ControlledRestartDeps): Promise<vo
     } catch (rerr) {
       await audit(false, { step: 'close-listener-recovery', oldPid, port, result: 'relisten-failed', error: rerr instanceof Error ? rerr.message : String(rerr) });
     }
-    throw new Error(`controlled restart: 交接中止(close-listener 失败,未 spawn 新实例): ${msg}`);
+    // 附 cause:保留原始堆栈(ESLint preserve-caught-error 强制;排障时 msg 只有文本无栈)
+    throw new Error(`controlled restart: 交接中止(close-listener 失败,未 spawn 新实例): ${msg}`, { cause: err });
   }
 
   // ── 步骤 2:spawn 新 daemon(不变式 1:--port 恒传旧端口;--respawn-of 豁免单例检测)──
