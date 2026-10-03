@@ -145,6 +145,16 @@ export type GodotBinaryCheck =
   | { ok: true }
   | { ok: false; stage: 'path-not-allowed' | 'is-directory' | 'version-run-failed' | 'not-godot-signature'; stdoutPreview?: string };
 
+/** B-7③ (2026-10-03): GODOT_PATH 显式配置校验失败时按 D3 stage 分层的用户可见消息。
+ *  与搜索链候选不同——显式配置是强意图信号,失败须报错而非静默换下一个;
+ *  消息不含路径值(PII-safe,完整路径见 server 日志)。 */
+const GODOT_PATH_STAGE_MESSAGES: Record<Exclude<GodotBinaryCheck, { ok: true }>['stage'], string> = {
+  'path-not-allowed': 'GODOT_PATH is rejected by the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist. Add the executable (or its parent directory) to the whitelist, or unset GODOT_PATH to fall back to auto-discovery.',
+  'is-directory': 'GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path).',
+  'version-run-failed': 'GODOT_PATH exists but failed to run --version (corrupted binary or permissions). Fix the file or unset GODOT_PATH to fall back to auto-discovery.',
+  'not-godot-signature': 'GODOT_PATH does not look like a Godot binary (--version output lacks the Godot signature). Set it to a valid Godot 4.x executable.',
+};
+
 /** Validate a candidate binary by running --version and checking for Godot signature.
  *  cwd 固定临时目录(2026-10-01 加固):候选是 cmd.exe 等外壳时,spawn `--version` 会在
  *  继承的 server CWD 留副作用目录(实证:cmd.exe 于仓库根建出 --version/ 与 .exe/ 目录)。
@@ -388,12 +398,18 @@ export async function findGodot(projectPath?: string): Promise<string> {
       // client 消息(PII-safe),完整路径见 server 日志。
       if (isDirectoryPath(process.env.GODOT_PATH)) {
         getLogger().warn('godot-finder', `GODOT_PATH is a directory, not an executable: ${process.env.GODOT_PATH}`);
-        throw new InternalError('GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path)');
+        throw new InternalError('GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path).');
       }
-      if (await validateGodotBinary(process.env.GODOT_PATH)) {
+      const check = await validateGodotBinaryDetailed(process.env.GODOT_PATH);
+      if (check.ok) {
         _pathCache.set(cacheKey, process.env.GODOT_PATH);
         return process.env.GODOT_PATH;
       }
+      // B-7③ (2026-10-03): 显式 env 配置校验失败(白名单拒/签名不符/运行失败)同样
+      // 显性报错——静默落入搜索链会拿另一个 Godot 掩盖用户的配置错误,doctor 判绿
+      // 不解释;消息带 stage 排查指引(对齐 D3 分层诊断),路径值不进消息(PII-safe)。
+      getLogger().warn('godot-finder', `GODOT_PATH rejected (stage=${check.stage}): ${process.env.GODOT_PATH}`);
+      throw new InternalError(GODOT_PATH_STAGE_MESSAGES[check.stage]);
     }
   }
 

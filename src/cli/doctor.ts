@@ -118,8 +118,13 @@ export async function runDoctor(_args: string[]): Promise<void> {
     } catch {
       console.log(warn('Godot version check skipped (--version 调用失败或路径被白名单拒)'));
     }
-  } catch {
-    console.log(status(false, 'Godot not found (set GODOT_PATH 或运行 `install` 自动安装)'));
+  } catch (err) {
+    // B-7③ (2026-10-03): findGodot 对「显式 GODOT_PATH 校验失败」带 stage 消息 throw
+    // (PII-safe 无路径)——透出具体原因,不再一律显示"没设 GODOT_PATH"误导用户。
+    const reason = err instanceof Error && err.message
+      ? err.message
+      : 'Godot not found (set GODOT_PATH 或运行 `install` 自动安装)';
+    console.log(status(false, reason));
     hasError = true;
   }
 

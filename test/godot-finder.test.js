@@ -126,15 +126,39 @@ describe('findGodot', () => {
     expect(execFileMock).not.toHaveBeenCalled();
   });
 
-  it('skips GODOT_PATH when validation fails', async () => {
+  it('B-7③: GODOT_PATH 校验失败(非 Godot 签名)→ 显性报错而非静默落入搜索链', async () => {
+    // 此前该场景静默 skip 后走 PATH/平台搜索,可能被 fallback 的另一个 Godot 掩盖
+    // 配置错误(用户以为在用配置的版本);现显性 throw 带 stage 排查指引。
     vi.stubEnv('GODOT_PATH', '/usr/bin/not-godot');
     // Only GODOT_PATH exists; all other candidates (POSIX paths, etc.) do not
     existsSyncMock.mockImplementation((p) => p === '/usr/bin/not-godot');
     // execFile returns something that is NOT a godot version
     mockExecFileSuccess('some-other-binary 1.0');
 
-    // Will fall through to PATH search (also fails due to mock) then POSIX candidates (all !existsSync)
-    await expect(findGodot()).rejects.toThrow('Godot binary not found');
+    await expect(findGodot()).rejects.toThrow(/does not look like a Godot binary/);
+  });
+
+  it('B-7③: GODOT_PATH 被白名单拒 → 显性报错(用户配置不静默 fallback)', async () => {
+    // 终审 B-7③ 本体:GODOT_MCP_ALLOWED_GODOT_PATHS 不含 GODOT_PATH 时,即使
+    // 二进制本身有效也拒绝——此前仅一行 [security] WARN 后静默落入搜索链,
+    // doctor 判绿不解释;现带 whitelist 排查指引 throw。
+    // test/setup.js:6 全局设 GODOT_MCP_UNRESTRICTED=true(否则白名单恒放行),
+    // 须显式清空才能测白名单拒——先例见 'GODOT_MCP_ALLOWED_GODOT_PATHS' describe 的 beforeEach。
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
+    vi.stubEnv('GODOT_PATH', '/usr/local/bin/godot4');
+    vi.stubEnv('GODOT_MCP_ALLOWED_GODOT_PATHS', 'C:/Program Files/Godot');
+    existsSyncMock.mockImplementation((p) => p === '/usr/local/bin/godot4');
+    mockExecFileSuccess('Godot v4.3');
+
+    await expect(findGodot()).rejects.toThrow(/GODOT_MCP_ALLOWED_GODOT_PATHS whitelist/);
+  });
+
+  it('B-7③: GODOT_PATH 运行失败(--version 不可执行)→ 显性报错带指引', async () => {
+    vi.stubEnv('GODOT_PATH', '/usr/bin/broken-godot');
+    existsSyncMock.mockImplementation((p) => p === '/usr/bin/broken-godot');
+    mockExecFileError();
+
+    await expect(findGodot()).rejects.toThrow(/failed to run --version/);
   });
 
   it('falls back to PATH godot', async () => {
