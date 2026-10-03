@@ -157,6 +157,21 @@ describe('doctor', () => {
     logSpy.mockRestore(); exitSpy.mockRestore();
   });
 
+  // B-7③ (2026-10-03): findGodot 对显式 GODOT_PATH 校验失败带 stage 消息 throw,
+  // doctor 须透出具体原因——不再一律显示"set GODOT_PATH"误导已配置的用户。
+  it('surfaces findGodot rejection reason (B-7③ stage message) instead of generic hint', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { findGodot } = await import('../../src/core/godot-finder.js');
+    vi.mocked(findGodot).mockRejectedValueOnce(new Error('GODOT_PATH is rejected by the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist. Add the executable (or its parent directory) to the whitelist, or unset GODOT_PATH to fall back to auto-discovery.'));
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    await runDoctor([]).catch(() => {});
+    const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(output).toContain('GODOT_MCP_ALLOWED_GODOT_PATHS whitelist');
+    expect(output).not.toContain('set GODOT_PATH 或运行');
+    logSpy.mockRestore(); exitSpy.mockRestore();
+  });
+
   it('warns with config example when ALLOWED_PROJECT_PATHS unset', async () => {
     const { runDoctor } = await import('../../src/cli/doctor.js');
     const orig = process.env.ALLOWED_PROJECT_PATHS;
