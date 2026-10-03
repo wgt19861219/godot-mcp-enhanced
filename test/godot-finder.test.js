@@ -143,7 +143,7 @@ describe('findGodot', () => {
     // 二进制本身有效也拒绝——此前仅一行 [security] WARN 后静默落入搜索链,
     // doctor 判绿不解释;现带 whitelist 排查指引 throw。
     // test/setup.js:6 全局设 GODOT_MCP_UNRESTRICTED=true(否则白名单恒放行),
-    // 须显式清空才能测白名单拒——先例见 isGodotPathAllowed describe 的 beforeEach。
+    // 须显式清空才能测白名单拒——先例见 'GODOT_MCP_ALLOWED_GODOT_PATHS' describe 的 beforeEach。
     vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
     vi.stubEnv('GODOT_PATH', '/usr/local/bin/godot4');
     vi.stubEnv('GODOT_MCP_ALLOWED_GODOT_PATHS', 'C:/Program Files/Godot');

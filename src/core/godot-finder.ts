@@ -398,7 +398,7 @@ export async function findGodot(projectPath?: string): Promise<string> {
       // client 消息(PII-safe),完整路径见 server 日志。
       if (isDirectoryPath(process.env.GODOT_PATH)) {
         getLogger().warn('godot-finder', `GODOT_PATH is a directory, not an executable: ${process.env.GODOT_PATH}`);
-        throw new InternalError('GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path)');
+        throw new InternalError('GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path).');
       }
       const check = await validateGodotBinaryDetailed(process.env.GODOT_PATH);
       if (check.ok) {
