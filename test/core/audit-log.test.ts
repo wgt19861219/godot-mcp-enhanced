@@ -65,6 +65,16 @@ describe('appendAuditLine', () => {
     expect(lines.length).toBe(20); // 不丢行(G3 核心修复点)
   });
 
+  // 2026-10-01:空白 projectPath 拒绝(实证教训:ToolDispatcher 测试的 '   ' project_path
+  // 曾每轮全量测试在仓库根 CWD 积出 '   /.godot' 怪名目录)——拒绝且绝不建目录/落盘。
+  it('空白/纯空格 projectPath → throw 且不建目录不落盘', async () => {
+    for (const blank of ['', '   ', '\t']) {
+      await expect(appendAuditLine(blank, makeEntry())).rejects.toThrow(/blank project_path refused/);
+    }
+    expect(existsSync(join(process.cwd(), '   ', ...AUDIT_LOG_REL))).toBe(false);
+    expect(existsSync(join(tmpDir, ...AUDIT_LOG_REL))).toBe(false); // 正常写入也未发生
+  });
+
   it('changed_files 超阈值截断 + truncated 标记(防 appendFile 超 PIPE_BUF)', async () => {
     const many = Array.from({ length: 60 }, (_, i) => `file${i}.gd`);
     await appendAuditLine(tmpDir, makeEntry({ changed_files: many }));

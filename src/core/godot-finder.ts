@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync, renameSync, mkdirSync, statSync } from 'fs';
 import { join, sep, dirname } from 'path';
-import { homedir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getLogger } from './logger.js';
@@ -145,7 +145,10 @@ export type GodotBinaryCheck =
   | { ok: true }
   | { ok: false; stage: 'path-not-allowed' | 'is-directory' | 'version-run-failed' | 'not-godot-signature'; stdoutPreview?: string };
 
-/** Validate a candidate binary by running --version and checking for Godot signature. */
+/** Validate a candidate binary by running --version and checking for Godot signature.
+ *  cwd 固定临时目录(2026-10-01 加固):候选是 cmd.exe 等外壳时,spawn `--version` 会在
+ *  继承的 server CWD 留副作用目录(实证:cmd.exe 于仓库根建出 --version/ 与 .exe/ 目录)。
+ *  --version 无相对路径文件操作,换 cwd 对真 Godot 零影响。 */
 export async function validateGodotBinaryDetailed(candidatePath: string): Promise<GodotBinaryCheck> {
   if (!isGodotPathAllowed(candidatePath)) return { ok: false, stage: 'path-not-allowed' };
   if (isDirectoryPath(candidatePath)) {
@@ -153,7 +156,7 @@ export async function validateGodotBinaryDetailed(candidatePath: string): Promis
     return { ok: false, stage: 'is-directory' };
   }
   try {
-    const { stdout } = await execFileAsync(candidatePath, ['--version'], { encoding: 'utf-8', timeout: 5000, env: buildSafeEnv() });
+    const { stdout } = await execFileAsync(candidatePath, ['--version'], { encoding: 'utf-8', timeout: 5000, env: buildSafeEnv(), cwd: tmpdir() });
     if (!isGodotVersionSignature(stdout)) {
       getLogger().warn('godot-finder', `godot candidate --version output not a Godot signature: ${JSON.stringify(stdout.trim().slice(0, 80))}`);
       return { ok: false, stage: 'not-godot-signature', stdoutPreview: stdout.trim().slice(0, 80) };
@@ -181,7 +184,7 @@ export async function detectGodotVersion(godotPath: string): Promise<string> {
   }
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync(godotPath, ['--version'], { encoding: 'utf-8', timeout: 10000, env: buildSafeEnv() }));
+    ({ stdout } = await execFileAsync(godotPath, ['--version'], { encoding: 'utf-8', timeout: 10000, env: buildSafeEnv(), cwd: tmpdir() }));
   } catch (err) {
     // PII 护栏:err.message(可能含路径)只 log 到 server 端,不进 client 响应。
     getLogger().debug('godot-finder', `detectGodotVersion --version failed: ${err instanceof Error ? err.message : err}`);

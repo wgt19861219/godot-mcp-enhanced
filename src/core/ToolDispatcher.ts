@@ -664,8 +664,11 @@ export class ToolDispatcher {
       // project_path fallback(elicitation 浅拷贝 footgun:after hook args.project_path 可能丢注入值)
       // I-2(设计 §6):fallback 链中间插活跃桶——args.project_path 缺失时审计落活跃项目而非
       // env 项目,防多桶并存下 runtime 域 risk='process' 操作(stop_project 等)审计归属漂移。
-      const projectPath = (typeof ctx.args.project_path === 'string' && ctx.args.project_path)
-        ? ctx.args.project_path : (ps.getProjectDir() || resolveProjectPath());
+      // 空白串收紧(2026-10-01):'   ' 此前过 truthy 检查直落 appendAuditLine,join 相对路径在
+      // CWD 建出 '   /.godot' 怪名目录(全量测试每轮在仓库根积一条)——空白视同缺失进 fallback。
+      const rawProjectPath = ctx.args.project_path;
+      const projectPath = (typeof rawProjectPath === 'string' && rawProjectPath.trim() !== '')
+        ? rawProjectPath : (ps.getProjectDir() || resolveProjectPath());
       if (!projectPath) return result;
       const isError = result.isError === true || this.checkJsonSuccessFalse(result);
       // 批4-T3: 提取工具上报的审计提示(structuredContent._audit.before_values)并入 details,
@@ -953,8 +956,11 @@ export class ToolDispatcher {
         unmappedDetails = unmappedDynamic ? { dynamic_unmapped: true } : { risk_unknown: true };
       }
       if (risk === 'read') return { strict: false, result: extractAuditHint(result).result }; // confirm 的都是非 read,防御;仍剥离 _audit
-      const projectPath = (typeof pending.args.project_path === 'string' && pending.args.project_path)
-        ? pending.args.project_path : resolveProjectPath();
+      // 空白串收紧(2026-10-01,同 :669 middleware 侧):空白 project_path 视同缺失进 fallback,
+      // 防相对路径在 CWD 建怪名目录落"项目级"审计。
+      const rawProjectPath = pending.args.project_path;
+      const projectPath = (typeof rawProjectPath === 'string' && rawProjectPath.trim() !== '')
+        ? rawProjectPath : resolveProjectPath();
       if (!projectPath) return { strict: false, result: extractAuditHint(result).result };
       const isError = result.isError === true || this.checkJsonSuccessFalse(result);
       const { hint: auditHint, result: cleanedResult } = extractAuditHint(result);
