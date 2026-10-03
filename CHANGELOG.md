@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-03
+
 > 2026-10-03 B-7③ 修复批（来源:2026-09-19 易用性终审登记的 open 项;不 bump 版本——未动 rule-templates/.claude/rules）。
 - **fix(godot-finder/doctor): B-7③ GODOT_PATH 显式配置校验失败不再静默 fallback——按 stage 分层报错 + doctor 透出具体原因**:①**根因**——`findGodot` 的 GODOT_PATH 分支 `validateGodotBinary` 失败后无任何处理,静默落入 godot-paths.json→PATH→registry/scoop→平台目录搜索链,拿另一个 Godot 掩盖用户的显式配置错误;被 `GODOT_MCP_ALLOWED_GODOT_PATHS` 白名单拒时仅一行 [security] WARN,doctor 判绿不解释(终审 B-7③ 原文),与同分支 G-CONF「指向目录显性报错」不对称。②**修复**——该分支改用 `validateGodotBinaryDetailed`,失败按 D3 stage(`path-not-allowed`/`not-godot-signature`/`version-run-failed`)带排查指引 throw(新增 `GODOT_PATH_STAGE_MESSAGES` 映射;路径值不进消息 PII-safe,完整路径在 server 日志);搜索链候选的静默继续语义不变(`validateGodotBinary` boolean 语义保留供候选循环)。③**doctor**——`findGodot` 的 catch 透出 `err.message`(原一律显示"set GODOT_PATH"误导已配置的用户)。行为变化:GODOT_PATH 显式设置且校验失败从「静默换一个 Godot」变为「显性报错」——版本错乱比报错更危险。已知边界(有意不动):GODOT_PATH 指向不存在的文件仍静默 skip(既有语义,B-7③ 未点名);项目级 override 校验失败仍回落全局链(doctor 有独立状态行)。测试:godot-finder 改写固化旧行为的「skips when validation fails」用例+新增白名单拒/签名失败/运行失败三条;doctor 新增透出 stage 消息断言。
 
