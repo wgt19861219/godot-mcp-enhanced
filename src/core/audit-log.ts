@@ -129,8 +129,14 @@ export function extractAuditHint<T extends { structuredContent?: unknown }>(
  * 原子追加一条 audit(appendFile O_APPEND,修复 devtool writeFile 竞态)。
  * 审计失败应由调用方 catch(默认 best-effort 不影响工具结果,对齐 G2 catch 哲学;
  * ⚠️ 1A STRICT 例外:GODOT_MCP_AUDIT_STRICT=true 时调用方将操作判失败——见 isAuditStrict)。
+ * 空白 projectPath 拒绝(2026-10-01):join 相对路径会在 CWD 建怪名目录落"项目级"审计
+ * (实证:ToolDispatcher 测试的 '   ' project_path 每轮全量测试在仓库根积 '   /.godot');
+ * 此处 throw 交调用方既有 catch(recordAuditWriteFailure 可观测),绝不静默建目录。
  */
 export async function appendAuditLine(projectPath: string, entry: AuditEntry): Promise<void> {
+  if (typeof projectPath !== 'string' || projectPath.trim() === '') {
+    throw new Error(`audit: blank project_path refused (tool=${entry.tool} action=${entry.action})`);
+  }
   const auditPath = join(projectPath, ...AUDIT_LOG_REL);
   await mkdir(dirname(auditPath), { recursive: true });
   // changed_files 超阈值截断(防 appendFile 超 PIPE_BUF 失去原子性)

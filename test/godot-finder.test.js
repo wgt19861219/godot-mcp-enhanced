@@ -14,6 +14,7 @@ vi.mock('fs', () => ({
 }));
 
 import { execFile } from 'child_process';
+import { tmpdir } from 'os';
 import { existsSync, readFileSync, statSync } from 'fs';
 import {
   clearGodotPathCache,
@@ -403,6 +404,15 @@ describe('validateGodotBinary', () => {
   it('accepts full Godot stable output', async () => {
     mockExecFileSuccess('Godot Engine v4.2.1.stable.official');
     expect(await validateGodotBinary('/real/godot.exe')).toBe(true);
+  });
+
+  // 2026-10-01 加固:spawn 固定 cwd 临时目录——候选为 cmd.exe 等外壳时,`--version`
+  // 会在继承的 server CWD 留副作用目录(实证:cmd.exe 于仓库根建 --version/ 与 .exe/)。
+  it('spawn 传 cwd=系统临时目录(不在 server CWD 留副作用)', async () => {
+    mockExecFileSuccess('Godot v4.3');
+    await validateGodotBinary('/real/godot.exe');
+    const opts = execFileMock.mock.calls.at(-1)?.[2];
+    expect(opts?.cwd).toBe(tmpdir());
   });
 
   it('accepts three-part semantic version', async () => {
