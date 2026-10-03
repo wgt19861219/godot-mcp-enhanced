@@ -62,7 +62,15 @@ test/fixtures/gdscript-check/addons/
 # I-3 (P2-4 审查): gdscript 检查项目运行时复制的 src/scripts(check-gdscript.ts 扩编译范围)
 test/fixtures/gdscript-check/src/
 # A0-3: e2e-resilience-editor 复制的 addon(同 M3c 模式,保留 project.godot 源)
-test/fixtures/real-project/addons/
+# 例外(2026-10-03 CI 修复): ui_commands.gd 入库供 scene-batch-b 锚定测试比对
+# (批次B 审查N1 的 fixture 同步曾被本规则拦截未进库,CI 首跑即红——本地拷贝存在
+# 掩盖了落空)。嵌套目录链式放行:目录本身不排除、只排内容,才能放行深层单文件。
+test/fixtures/real-project/addons/*
+!test/fixtures/real-project/addons/godot_mcp_server
+test/fixtures/real-project/addons/godot_mcp_server/*
+!test/fixtures/real-project/addons/godot_mcp_server/commands
+test/fixtures/real-project/addons/godot_mcp_server/commands/*
+!test/fixtures/real-project/addons/godot_mcp_server/commands/ui_commands.gd
 # e2e-asset-tools save 用例落盘产物(pillar.tscn,每次跑覆盖,不清理属测试设计)
 test/fixtures/real-project/GeneratedAssets/
 .tmp-qa-debug/

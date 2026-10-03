@@ -65,11 +65,14 @@ describe('UserSettingsService(逻辑层)', () => {
   // ── get ────────────────────────────────────────────────────────────────────
   it('get:persisted(空容错)+ effective(env 现值)+ candidates(mock)+ readOnly 注入', async () => {
     process.env.GODOT_PATH = 'D:/env/godot.exe';
-    process.env.ALLOWED_PROJECT_PATHS = 'D:\\p1;D:\\p2';
+    // 平台无关化(2026-10-03 CI 修复):effective.allowedProjectPaths 经 resolvePath 归一,
+    // 硬编码 Windows 路径在 Linux CI 上 resolve('D:\\p1')=cwd 相对拼接必红——改用 tmpdir 绝对路径。
+    const p1 = join(dir, 'p1'); const p2 = join(dir, 'p2');
+    process.env.ALLOWED_PROJECT_PATHS = `${p1};${p2}`;
     const v = await svc().get();
     expect(v.persisted).toEqual({ godotPath: '', allowedProjectPaths: [] });
     expect(v.effective.godotPath).toBe('D:/env/godot.exe');
-    expect(v.effective.allowedProjectPaths).toEqual(['D:\\p1', 'D:\\p2']);
+    expect(v.effective.allowedProjectPaths).toEqual([p1, p2]);
     expect(v.effective.unrestricted).toBe(false);   // setup.js 全局设了 UNRESTRICTED,beforeEach 已删
     expect(v.candidates).toEqual(['D:/cand/godot.exe']);
     expect(v.readOnly).toBe(false);
@@ -101,15 +104,18 @@ describe('UserSettingsService(逻辑层)', () => {
   // vs exit 1),godot-finder 可能落 version-run-failed 或 not-godot-signature——面板层
   // 归一为同一 stage/文案,同一输入不再漂移。
   it('verify/save:不稳定 stage(version-run-failed/not-godot-signature)归一为 not-a-godot-binary', async () => {
+    // 平台无关化(2026-10-03):save 侧 isAbsolute 判定,'C:/...' 在 Linux 非绝对路径会被
+    // not-absolute 拒(到不了 stage 归一分支)——改用 tmpdir 绝对路径。
+    const fake = join(dir, 'cmd.exe');
     for (const raw of ['version-run-failed', 'not-godot-signature'] as const) {
       vi.mocked(validateGodotBinaryDetailed).mockResolvedValue({ ok: false, stage: raw });
-      const v = await svc().verify('C:/Windows/System32/cmd.exe');
+      const v = await svc().verify(fake);
       expect(v).toEqual({
         ok: false,
         stage: 'not-a-godot-binary',
         detail: '无法验证为 Godot 可执行文件(路径不存在、不可执行或 --version 输出签名不符)',
       });
-      const s = await svc().save({ godotPath: 'C:/Windows/System32/cmd.exe' });
+      const s = await svc().save({ godotPath: fake });
       expect(s).toMatchObject({ ok: false, stage: 'not-a-godot-binary' });
       expect((s as { error: string }).error).toContain('无法验证为 Godot 可执行文件');
     }
@@ -130,7 +136,7 @@ describe('UserSettingsService(逻辑层)', () => {
 
   it('save:godotPath 二进制校验失败 → stage 透传 + 失败审计行', async () => {
     vi.mocked(validateGodotBinaryDetailed).mockResolvedValue({ ok: false, stage: 'path-not-allowed' });
-    const r = await svc().save({ godotPath: 'D:/evil.exe' });
+    const r = await svc().save({ godotPath: join(dir, 'evil.exe') });
     expect(r).toMatchObject({ ok: false, stage: 'path-not-allowed' });
     expect(h.auditLines.length).toBe(1);
     expect(h.auditLines[0]).toMatchObject({ ok: false, action: 'settings_save', caller: 'web-gui:settings' });
@@ -159,12 +165,13 @@ describe('UserSettingsService(逻辑层)', () => {
   // ── save:成功路径 + merge + 热生效 + 审计 ──────────────────────────────────
   it('save:成功 → 写盘 + env 热生效 + 成功审计行', async () => {
     await mkdir(join(dir, 'proj1'), { recursive: true });
-    const r = await svc().save({ godotPath: 'D:/godot/g.exe', allowedProjectPaths: [join(dir, 'proj1')] });
+    const gui = join(dir, 'g.exe');  // 平台无关(2026-10-03):save 的 isAbsolute 判定
+    const r = await svc().save({ godotPath: gui, allowedProjectPaths: [join(dir, 'proj1')] });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.persisted.godotPath).toBe('D:/godot/g.exe');
-    expect(await readUserSettings(dir)).toEqual({ version: 1, godotPath: 'D:/godot/g.exe', allowedProjectPaths: [join(dir, 'proj1')] });
-    expect(process.env.GODOT_PATH).toBe('D:/godot/g.exe');
+    expect(r.persisted.godotPath).toBe(gui);
+    expect(await readUserSettings(dir)).toEqual({ version: 1, godotPath: gui, allowedProjectPaths: [join(dir, 'proj1')] });
+    expect(process.env.GODOT_PATH).toBe(gui);
     expect(process.env.ALLOWED_PROJECT_PATHS).toBe(join(dir, 'proj1'));
     expect(h.auditLines.length).toBe(1);
     expect(h.auditLines[0]).toMatchObject({ ok: true, action: 'settings_save', project_path: getUserSettingsFile(dir) });
@@ -173,20 +180,23 @@ describe('UserSettingsService(逻辑层)', () => {
 
   it('save:merge 语义——单字段 patch 不清另一字段', async () => {
     await mkdir(join(dir, 'proj2'), { recursive: true });
-    await svc().save({ godotPath: 'D:/godot/g.exe' });
+    const gui = join(dir, 'g.exe');  // 平台无关(2026-10-03):同上 isAbsolute
+    await svc().save({ godotPath: gui });
     const r = await svc().save({ allowedProjectPaths: [join(dir, 'proj2')] });
     expect(r.ok).toBe(true);
-    expect(await readUserSettings(dir)).toEqual({ version: 1, godotPath: 'D:/godot/g.exe', allowedProjectPaths: [join(dir, 'proj2')] });
+    expect(await readUserSettings(dir)).toEqual({ version: 1, godotPath: gui, allowedProjectPaths: [join(dir, 'proj2')] });
   });
 
   it('save:清除语义——godotPath 空串删字段并恢复启动快照 env', async () => {
-    process.env.GODOT_PATH = 'D:/injected.exe';
+    const injected = join(dir, 'injected.exe');
+    const gui = join(dir, 'gui.exe');
+    process.env.GODOT_PATH = injected;
     resetUserSettingsSnapshotForTest();
-    await svc().save({ godotPath: 'D:/gui.exe' });
-    expect(process.env.GODOT_PATH).toBe('D:/gui.exe');
+    await svc().save({ godotPath: gui });
+    expect(process.env.GODOT_PATH).toBe(gui);
     const r = await svc().save({ godotPath: '' });
     expect(r.ok).toBe(true);
     expect(await readUserSettings(dir)).toEqual({ version: 1 });
-    expect(process.env.GODOT_PATH).toBe('D:/injected.exe');
+    expect(process.env.GODOT_PATH).toBe(injected);
   });
 });
