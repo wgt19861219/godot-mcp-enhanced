@@ -265,6 +265,233 @@ describe('game-bridge error & path validation', () => {
     }, 5000);
   });
 
+  describe('批次2/3 (2026-10-04): 幂等层 requestId + 内容指纹(方案 docs/plans/2026-10-04)', () => {
+    // 幂等测试需要干净的模块级状态(_bridgeIdentity 身份快照跨连接保留,测试间必须重置)
+    beforeEach(() => {
+      vi.clearAllMocks();
+      resetBridgeState();
+      mockExists.mockReturnValue(true);
+      mockRead.mockReturnValue('test-secret');
+      setBridgeProjectDir('/p');
+    });
+
+    /** 可配置 auth 响应的 mock socket,记录全部 write 载荷供 requestId 断言 */
+    function recordingSocket(authResult: Record<string, unknown>): { sock: EventEmitter; writes: string[] } {
+      const sock = new EventEmitter();
+      const writes: string[] = [];
+      (sock as any).write = vi.fn((data: string) => {
+        writes.push(data);
+        let req: { id?: number };
+        try { req = JSON.parse(data); } catch { return; }
+        queueMicrotask(() => {
+          const resp = req.id === 0
+            ? { id: 0, result: authResult }
+            : { id: req.id, result: { ok: true } };
+          sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+        });
+      });
+      (sock as any).destroy = vi.fn();
+      (sock as any).writable = true;
+      return { sock, writes };
+    }
+
+    function setupRecordingSocket(authResult: Record<string, unknown>): { writes: string[] } {
+      const holder: { writes: string[] } = { writes: [] };
+      mockCreate.mockImplementation((_opts: unknown, cb?: () => void) => {
+        const { sock, writes } = recordingSocket(authResult);
+        holder.writes = writes;
+        queueMicrotask(() => { if (typeof cb === 'function') cb(); });
+        return sock;
+      });
+      return holder;
+    }
+
+    it('game_write 请求自动携带 requestId(UUID 形态,端到端 write 断言)', async () => {
+      const rec = setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      const result = await handleTool('game', {
+        action: 'game_write', method: 'set_node_property',
+        params: { path: '/root/Node', property: 'position', value: { x: 1, y: 2 } },
+      }, ctx);
+      expect(result!.isError).not.toBe(true);
+      const methodWrite = rec.writes.find(w => w.includes('set_node_property'));
+      expect(methodWrite).toBeDefined();
+      const sent = JSON.parse(methodWrite!);
+      expect(sent.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    });
+
+    it('game_write 显式 request_id 参数透传(超时后重试同身份)', async () => {
+      const rec = setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', {
+        action: 'game_write', method: 'set_node_property',
+        params: { path: '/root/Node', property: 'position', value: { x: 1, y: 2 } },
+        request_id: 'retry-same-id-001',
+      }, ctx);
+      const methodWrite = rec.writes.find(w => w.includes('set_node_property'));
+      expect(JSON.parse(methodWrite!).requestId).toBe('retry-same-id-001');
+    });
+
+    it('game_query 读请求不携带 requestId(读命令天然幂等不入幂等层)', async () => {
+      const rec = setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', { action: 'game_query', method: 'get_tree', params: {} }, ctx);
+      const methodWrite = rec.writes.find(w => w.includes('get_tree'));
+      expect(JSON.parse(methodWrite!).requestId).toBeUndefined();
+    });
+
+    it('B-1(审查修复): call_method await_completion=true 不发幂等键(GD 延迟通道不入缓存,发键=假承诺)', async () => {
+      const rec = setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', {
+        action: 'game_write', method: 'call_method',
+        params: { path: '/root/Node', method: 'take_damage', args: [10], await_completion: true },
+      }, ctx);
+      const methodWrite = rec.writes.find(w => w.includes('call_method'));
+      expect(JSON.parse(methodWrite!).requestId).toBeUndefined();
+    });
+
+    it('B-1 对照组: call_method 同步模式(无 await_completion)仍发幂等键', async () => {
+      const rec = setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', {
+        action: 'game_write', method: 'call_method',
+        params: { path: '/root/Node', method: 'take_damage', args: [10] },
+      }, ctx);
+      const methodWrite = rec.writes.find(w => w.includes('call_method'));
+      expect(JSON.parse(methodWrite!).requestId).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('auth 响应携带 capabilities → getBridgeIdentity 快照(零往返能力协商)', async () => {
+      setupRecordingSocket({ authenticated: true, bridgeVersion: '0.34.1', capabilities: ['registry-heartbeat', 'idempotent-v1'] });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
+      const { getBridgeIdentity } = await import('../src/core/bridge-client.js');
+      expect(getBridgeIdentity()).toEqual({ bridgeVersion: '0.34.1', capabilities: ['registry-heartbeat', 'idempotent-v1'] });
+    });
+
+    it('auth 响应无 capabilities(旧 GD)→ 空能力快照(非 null,已确认不支持)', async () => {
+      setupRecordingSocket({ authenticated: true });
+      const ctx = { projectDir: '/p' } as any;
+      await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
+      const { getBridgeIdentity } = await import('../src/core/bridge-client.js');
+      expect(getBridgeIdentity()).toEqual({ bridgeVersion: null, capabilities: [] });
+    });
+
+    it('game_write 超时 → outcomeUnknown 结构化错误(request_id + 幂等版 retry_guidance)', async () => {
+      // auth 带 idempotent-v1 能力;method 请求不响应 → timeout
+      mockCreate.mockImplementation((_opts: unknown, cb?: () => void) => {
+        const sock = new EventEmitter();
+        (sock as any).write = vi.fn((data: string) => {
+          let req: { id?: number };
+          try { req = JSON.parse(data); } catch { return; }
+          queueMicrotask(() => {
+            if (req.id === 0) {
+              sock.emit('data', Buffer.from(JSON.stringify({
+                id: 0,
+                result: { authenticated: true, bridgeVersion: '0.34.1', capabilities: ['idempotent-v1'] },
+              }) + '\n'));
+            }
+            // id >= 1 不响应 → timeout
+          });
+        });
+        (sock as any).destroy = vi.fn();
+        (sock as any).writable = true;
+        queueMicrotask(() => { if (typeof cb === 'function') cb(); });
+        return sock;
+      });
+      const ctx = { projectDir: '/p' } as any;
+      const result = await handleTool('game', {
+        action: 'game_write', method: 'set_node_property',
+        params: { path: '/root/Node', property: 'position', value: { x: 1, y: 2 } },
+        timeout: 1000,
+      }, ctx);
+      expect(result!.isError).toBe(true);
+      const parsed = JSON.parse(result!.content[0].text);
+      expect(parsed.error_code).toBe('BRIDGE_TIMEOUT');
+      expect(parsed.outcomeUnknown).toBe(true);
+      expect(parsed.request_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(parsed.retry_guidance).toContain('同一 request_id');
+      expect(parsed.retry_guidance).toContain('去重');
+    }, 5000);
+
+    it('game_write 超时且 bridge 无幂等能力 → retry_guidance 如实降级(先核实再重试)', async () => {
+      // auth 无 capabilities(旧 GD 形态);method 不响应
+      mockCreate.mockImplementation((_opts: unknown, cb?: () => void) => {
+        const sock = new EventEmitter();
+        (sock as any).write = vi.fn((data: string) => {
+          let req: { id?: number };
+          try { req = JSON.parse(data); } catch { return; }
+          queueMicrotask(() => {
+            if (req.id === 0) {
+              sock.emit('data', Buffer.from(JSON.stringify({ id: 0, result: { authenticated: true } }) + '\n'));
+            }
+          });
+        });
+        (sock as any).destroy = vi.fn();
+        (sock as any).writable = true;
+        queueMicrotask(() => { if (typeof cb === 'function') cb(); });
+        return sock;
+      });
+      const ctx = { projectDir: '/p' } as any;
+      const result = await handleTool('game', {
+        action: 'game_write', method: 'set_node_property',
+        params: { path: '/root/Node', property: 'position', value: { x: 1, y: 2 } },
+        timeout: 1000,
+      }, ctx);
+      const parsed = JSON.parse(result!.content[0].text);
+      expect(parsed.outcomeUnknown).toBe(true);
+      expect(parsed.retry_guidance).toContain('不支持幂等去重');
+      expect(parsed.retry_guidance).toContain('核实');
+    }, 5000);
+
+    // ─── annotatePingWithVersion 内容指纹比对(纯函数直测) ───
+    it('annotatePing: 版本一致+指纹一致 → 无任何 warning', async () => {
+      const { annotatePingWithVersion } = await import('../src/tools/game-bridge.js');
+      const out = annotatePingWithVersion(
+        { bridgeVersion: '0.34.1', scriptFingerprint: 'aa' + '00'.repeat(30) },
+        '0.34.1', 'aa' + '00'.repeat(30));
+      expect(out.versionWarning).toBeUndefined();
+      expect(out.fingerprintWarning).toBeUndefined();
+      expect(out.bundledScriptFingerprint).toBe('aa' + '00'.repeat(30));
+    });
+
+    it('annotatePing: 版本一致+指纹不一致 → fingerprintWarning(手改/损坏)', async () => {
+      const { annotatePingWithVersion } = await import('../src/tools/game-bridge.js');
+      const out = annotatePingWithVersion(
+        { bridgeVersion: '0.34.1', scriptFingerprint: 'bb' + '00'.repeat(30) },
+        '0.34.1', 'aa' + '00'.repeat(30));
+      expect(out.fingerprintWarning).toContain('fingerprint mismatch');
+      expect(out.fingerprintWarning).toContain('force: true');
+    });
+
+    it('annotatePing: 版本不一致 → 仅 versionWarning(不比指纹,单报版本)', async () => {
+      const { annotatePingWithVersion } = await import('../src/tools/game-bridge.js');
+      const out = annotatePingWithVersion(
+        { bridgeVersion: '0.30.0', scriptFingerprint: 'bb' + '00'.repeat(30) },
+        '0.34.1', 'aa' + '00'.repeat(30));
+      expect(out.versionWarning).toContain('outdated copy');
+      expect(out.fingerprintWarning).toBeUndefined();
+    });
+
+    it('annotatePing: 远端无指纹(旧 GD)→ 跳过指纹比对不误报', async () => {
+      const { annotatePingWithVersion } = await import('../src/tools/game-bridge.js');
+      const out = annotatePingWithVersion({ bridgeVersion: '0.34.1' }, '0.34.1', 'aa' + '00'.repeat(30));
+      expect(out.fingerprintWarning).toBeUndefined();
+      expect(out.bundledScriptFingerprint).toBeUndefined();
+    });
+
+    it('BridgeTimeoutError: 构造携带 requestId + outcomeUnknown 常量', async () => {
+      const { BridgeTimeoutError } = await import('../src/tools/game-bridge.js');
+      const err = new BridgeTimeoutError('timed out after 1000ms', 'abc-123');
+      expect(err.outcomeUnknown).toBe(true);
+      expect(err.requestId).toBe('abc-123');
+      // message 拼 requestId 发生在 sendToBridge 超时路径(上方端到端用例已断言),构造器不重复拼
+      const plain = new BridgeTimeoutError('plain');
+      expect(plain.requestId).toBeUndefined();
+    });
+  });
+
   describe('N-1: sendToBridge once 监听器不泄漏', () => {
     it('多次成功调用后 error/close listener 不累积(只留 _doConnect 持久监听)', async () => {
       setupBridgeSocket('result');

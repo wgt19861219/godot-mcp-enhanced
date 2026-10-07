@@ -50,6 +50,27 @@ export default tseslint.config(
       }],
     },
   },
+  // 2026-10-04 批次1(stdout 纪律门禁,方案 docs/plans/2026-10-04-竞品回流验证与可靠性落地方案.md):
+  // MCP server 进程(stdio 模式)可达的模块禁 console.log——stdio 模式下 stdout 是独占
+  // JSON-RPC 通道,任何日志行污染流即 -32000 断连(yanhuifair v1.12.5 教训的机械化防线)。
+  // console.error/warn 走 stderr 不拦;CLI 子命令/构建脚本/dashboard TUI 是独立进程不拦。
+  // 文件面 = server 进程实际可达面(I-1 审查修复:初版漏 tools/**/settings-api/module-loader/
+  // gdscript-executor/tscn——module-loader import 全部工具模块,tools 层恰是最高频改动面):
+  // 入口 + GodotServer + module-loader + gdscript-executor + core + daemon + tools + tscn +
+  // web-gui server 进程内文件(server/registry/settings-api)。
+  {
+    files: [
+      'src/index.ts', 'src/GodotServer.ts', 'src/module-loader.ts', 'src/gdscript-executor.ts',
+      'src/core/**/*.ts', 'src/daemon/**/*.ts', 'src/tools/**/*.ts', 'src/tscn/**/*.ts',
+      'src/web-gui/server.ts', 'src/web-gui/registry.ts', 'src/web-gui/settings-api.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': ['error', {
+        selector: "CallExpression[callee.object.name='console'][callee.property.name='log']",
+        message: 'MCP server 进程可达模块禁用 console.log——stdio 模式下 stdout 是独占 JSON-RPC 通道,污染即 -32000 断连(批次1-1 门禁)。人类可读输出走 console.error(stderr);CLI 子命令/dashboard 等独立进程模块不受此限。',
+      }],
+    },
+  },
   {
     ignores: ['build/', 'coverage/', 'node_modules/', 'src/scripts/'],
   },

@@ -266,7 +266,10 @@ if (process.argv[1]?.endsWith('index.js')) {
   // 易用性批3 (2026-09-19):用户主动取消(install/web 的 confirm 拒绝)非错误——
   // 干净退出码 0 + 一行说明,不打 InternalError 堆栈。
   if (err instanceof Error && /cancelled by user/.test(err.message)) {
-    console.log('\n已取消,未做任何改动。');
+    // console.error 而非 log(批次1-1 2026-10-04 stdio 纪律):此路径虽仅 CLI 子命令可达,
+    // 状态提示统一走 stderr 人类通道——stdout 在 MCP stdio 模式下是独占 JSON-RPC 通道
+    // (yanhuifair v1.12.5 -32000 教训),server 可达模块零 console.log 由 ESLint 门禁机械保证。
+    console.error('\n已取消,未做任何改动。');
     // 用 exitCode + 自然退出而非 process.exit——installer 的进度句柄可能仍在活动,
     // 强杀会触发 libuv Windows 断言(UV_HANDLE_CLOSING)
     process.exitCode = 0;

@@ -1,5 +1,5 @@
 {
-  "version": "0.34.0",
+  "version": "0.34.1",
   "tools": [
     {
       "name": "analysis",
@@ -2251,6 +2251,10 @@
             "type": "number",
             "description": "game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000)"
           },
+          "request_id": {
+            "type": "string",
+            "description": "game_write/custom_command 幂等键(可选):超时(outcomeUnknown)后重试传同一值,bridge 按其去重;不传自动生成"
+          },
           "interval_ms": {
             "type": "number",
             "description": "game_wait 专用：轮询探测间隔（毫秒，默认 200，范围 50-2000）。仅 wait_for_node/wait_for_property 生效",
@@ -2368,6 +2372,7 @@
         "method",
         "params",
         "timeout",
+        "request_id",
         "interval_ms",
         "node_path",
         "properties",
@@ -2424,8 +2429,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 9004,
-        "totalBytes": 9397
+        "schemaBytes": 9178,
+        "totalBytes": 9571
       },
       "annotations": {
         "readOnlyHint": false,

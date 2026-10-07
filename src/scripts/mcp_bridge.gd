@@ -22,8 +22,27 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.34.0"
+const BRIDGE_SCRIPT_VERSION := "0.34.1"
 const INACTIVITY_TIMEOUT := 60.0
+# 批次2(2026-10-04 幂等层,对齐 unity-mcp-server queue-transport):requestId 去重表 ——
+# 客户端超时后按原 requestId 重试(而非按命令重试),命中缓存直接回首次响应,杜绝
+# "lost acknowledgement → 写操作重复执行"(Godot 卡主线程:编译/场景切换造成超时歧义)。
+# 覆盖面 = 同步响应命令(set_node_property/call_method 同步/custom.*);__DEFERRED__ 五条
+# 延迟通道(playtest.step/step_until/input_seq/await call_method/click real_event)响应
+# 推送点分散不缓存——⚠️ B-1(审查修复):call_method await_completion 承载任意业务副作用
+# 且超时概率最高,TS 侧对其**不发幂等键**(game-bridge.ts isAwaitCallMethod),超时指引走
+# "必须先核实"降级文案,防"承诺去重而实际重复执行"的假承诺。
+const IDEMPOTENCY_CACHE_MAX := 256
+const IDEMPOTENCY_TTL_MS := 120000
+# 桥能力声明 —— auth 成功响应与 ping 响应均回传,TS 侧零往返能力协商
+# (旧版 bridge 无此字段 → TS 视为不支持,自动退回现行为,滚动兼容零破坏)。
+const BRIDGE_CAPABILITIES: Array[String] = ["registry-heartbeat", "idempotent-v1"]
+
+# 批次3(2026-10-04): 自身文件内容 SHA-256 指纹(字节级,读 res:// 原始字节)——
+# 版本号指纹检测不到"项目内 mcp_bridge.gd 被手改"造成的漂移,内容指纹补位。
+var _script_fingerprint := ""
+# 批次2: requestId -> {"result": Variant, "error": Dictionary, "at_ms": int}
+var _idempotency_cache: Dictionary = {}
 
 # ─── Instance Registry (Phase 2b) ─────────────────────────────────────────
 const REGISTRY_HEARTBEAT_INTERVAL := 30.0
@@ -209,6 +228,21 @@ func _ready() -> void:
 	# 豁免:任一 GODOT_MCP_BRIDGE_* 显式注入(与 buildSafeEnv 透传域一致)=调试意图,强制开启。
 	if not OS.has_feature("editor") and OS.has_feature("release") and _no_bridge_env():
 		return
+	# 批次3(2026-10-04): 自身文件字节级 SHA-256(读 res:// 原始字节,与 TS 侧对 bundled
+	# 文件的 createHash('sha256') 同源比对;install 是字节级 copyFileSync,两边字节一致)。
+	# 读失败(打包形态异常等)留空串 —— ping 响应回传空指纹,TS 侧跳过比对不误报。
+	# API 注(2026-10-04 探针实测):PackedByteArray 无 sha256() 方法(Parse Error),
+	# 用 HashingContext(与 _crypto.hmac_digest 同族枚举);get_script().resource_path
+	# 需显式 String 标注(推断失败同为 Parse Error)——check:gdscript 的 --import 对
+	# 未被场景/autoload 引用的脚本不触发 load 期 parse,此类错误只有真跑探针能抓。
+	var script_path: String = get_script().resource_path
+	if script_path != "" and FileAccess.file_exists(script_path):
+		var script_bytes := FileAccess.get_file_as_bytes(script_path)
+		if script_bytes.size() > 0:
+			var hctx := HashingContext.new()
+			hctx.start(HashingContext.HASH_SHA256)
+			hctx.update(script_bytes)
+			_script_fingerprint = hctx.finish().hex_encode()
 	# CMP-2 (2026-08-08): 注册 runtime error 捕获(在 _start_server 前,确保任何启动错误也被捕)。
 	_error_capture = _ErrorCapture.new()
 	OS.add_logger(_error_capture)
@@ -1030,7 +1064,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 					_authenticated_peers[pid] = true
 					_auth_challenges.erase(pid)
 					_auth_fail_count.erase(pid)
-					peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n").to_utf8_buffer())
+					peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": _auth_ok_result()}) + "\n").to_utf8_buffer())
 					continue
 				else:
 					var cr_fails: int = int(_auth_fail_count.get(pid, 0)) + 1
@@ -1046,7 +1080,7 @@ func _process_buffer_bytes(peer: StreamPeerTCP, pid: int) -> bool:
 				_authenticated_peers[pid] = true
 				_auth_challenges.erase(pid)
 				_auth_fail_count.erase(pid)
-				peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": {"authenticated": true}}) + "\n").to_utf8_buffer())
+				peer.put_data((JSON.stringify({"id": parsed.get("id"), "result": _auth_ok_result()}) + "\n").to_utf8_buffer())
 				continue
 			else:
 				var fails: int = int(_auth_fail_count.get(pid, 0)) + 1
@@ -1136,6 +1170,27 @@ func _handle_message(raw: String, pid: int) -> String:
 	var params: Dictionary = {}
 	if msg.get("params") is Dictionary:
 		params = msg["params"]
+
+	# 批次2(2026-10-04 幂等层): requestId 去重 —— 客户端超时后按原身份重试(而非按命令
+	# 重试),命中缓存直接回首次响应(用当前请求的 id 组装,JSON-RPC id 每次重试会变),
+	# 杜绝写命令重复执行。命中响应标记 idempotentHit=true 供客户端区分。
+	var request_id := str(msg.get("requestId", ""))
+	if request_id != "" and _idempotency_cache.has(request_id):
+		var cached: Dictionary = _idempotency_cache[request_id]
+		if Time.get_ticks_msec() - int(cached["at_ms"]) <= IDEMPOTENCY_TTL_MS:
+			if cached["error"].is_empty():
+				var hit_result: Variant = cached["result"]
+				if hit_result is Dictionary:
+					hit_result = (hit_result as Dictionary).duplicate()
+					hit_result["idempotentHit"] = true
+				return JSON.stringify({"id": id, "result": hit_result})
+			else:
+				# N-5(审查): error 命中同样标记 idempotentHit(与 result 命中对称——TS 当前不消费,信息级)
+				var hit_error: Dictionary = (cached["error"] as Dictionary).duplicate()
+				hit_error["idempotentHit"] = true
+				return JSON.stringify({"id": id, "error": hit_error})
+		else:
+			_idempotency_cache.erase(request_id)  # 过期即弃,不回陈旧响应
 
 	var result: Variant = null
 	var error: Dictionary = {}
@@ -1264,11 +1319,37 @@ func _handle_message(raw: String, pid: int) -> String:
 		var _payload: Dictionary = result.duplicate()
 		_payload.erase("__deferred__")
 		_deferred = {"kind": str(result["__deferred__"]), "id": id, "payload": _payload}
+		# 延迟通道不入幂等缓存(响应推送点分散在 _process/协程;见常量区批次2注释)
 		return "__DEFERRED__"
+	if request_id != "":
+		_cache_idempotent_response(request_id, result, error)
 	if error.is_empty():
 		return JSON.stringify({"id": id, "result": result})
 	else:
 		return JSON.stringify({"id": id, "error": error})
+
+
+## 批次2: 写入幂等缓存(含 LRU/TTL 维护)——Dictionary 保持插入序,超上限时先清过期、
+## 仍超则按插入序逐条删最旧(最近命中不续期:保持"首次响应"语义简单可预测)。
+func _cache_idempotent_response(request_id: String, result: Variant, error: Dictionary) -> void:
+	if _idempotency_cache.size() >= IDEMPOTENCY_CACHE_MAX:
+		var now_ms := Time.get_ticks_msec()
+		for k in _idempotency_cache.keys():
+			if now_ms - int(_idempotency_cache[k]["at_ms"]) > IDEMPOTENCY_TTL_MS:
+				_idempotency_cache.erase(k)
+		while _idempotency_cache.size() >= IDEMPOTENCY_CACHE_MAX:
+			_idempotency_cache.erase(_idempotency_cache.keys()[0])
+	_idempotency_cache[request_id] = {"result": result, "error": error, "at_ms": Time.get_ticks_msec()}
+
+
+# 批次2(2026-10-04): auth 成功响应统一组装 —— 附带桥能力声明,TS 侧零往返能力协商
+# (旧 TS 只检查 result.authenticated,新字段向后兼容;旧 GD 无此字段,新 TS 视为无能力)。
+func _auth_ok_result() -> Dictionary:
+	return {
+		"authenticated": true,
+		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
+		"capabilities": BRIDGE_CAPABILITIES.duplicate(),
+	}
 
 
 # ─── Command implementations ────────────────────────────────────────────────
@@ -1283,6 +1364,8 @@ func _cmd_ping() -> Dictionary:
 		"pong": true,
 		"version": PROTOCOL_VERSION,
 		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
+		"capabilities": BRIDGE_CAPABILITIES.duplicate(),
+		"scriptFingerprint": _script_fingerprint,
 		"scene": scene_path,
 		"fps": Engine.get_frames_per_second(),
 		"pid": OS.get_process_id(),
