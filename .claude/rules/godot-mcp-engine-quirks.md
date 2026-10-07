@@ -1,5 +1,5 @@
 ---
-description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原"
+description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原 EditorInterface parse-safe singleton get_editor_interface 版本兼容 4.7"
 alwaysApply: false
 ---
 
@@ -73,3 +73,9 @@ alwaysApply: false
 - **★ ENetMultiplayerPeer.get_local_port() 在 Windows Godot 4.6.3 阻塞挂死主循环（实测）**：探针二分定位——create_server(0) 返回 OK、set_multiplayer_peer 不挂，**唯独 get_local_port() 调用后进程无响应挂死**（--script 探针与完整游戏均复现，stdout 因挂死未 flush 看似无输出）。多人 e2e fixture 与探针一律**不调 get_local_port()**；需要端口信息的场景改从 create_server 显式传端口 + 自记录。关联：test/fixtures/p3-e2e/main.gd setup_net_peer 注释、network_conditioner e2e。
 - **多人 peer 未配置时 get_multiplayer_peer() 返回 OfflineMultiplayerPeer 而非 null**：判断"多人未启用"要同时查 null 与 `is OfflineMultiplayerPeer`（bridge network.set_conditions 的空壳防护即此形态）。
 - **弱网注入只作用于出向包**：host 侧装 conditioner = 影响 host 发给所有 client 的包；双向对称弱网需两端各装。无带宽限制；raw socket 不走 MultiplayerPeer 管道（依赖 SceneMultiplayer 高阶 API）。
+
+## 版本兼容与 parse-safe（addons 开发 / EditorInterface / engine API）
+
+- **★ 缺失的 engine class 方法在 parse 期即失败，has_method 守卫救不了**：GDScript 对 `EditorInterface.get_unsaved_scenes()` 这类**直接调用**做静态查找——方法在所用 Godot 构建里不存在时**整个 .gd 文件 parse 失败**（不是运行时才报错），`if EditorInterface.has_method(...)` 守卫写在同一文件里也一起死。新增 4.6+/4.7+ 才有的 API 调用必须改 `Object.call("...")` 字符串形式（parse-safe，运行时才解析）+ `has_method` 守卫做运行时优雅降级（yanhuifair v1.12.3 教训：`EditorInterface.call("get_unsaved_scenes")`）。支持矩阵 4.5–4.7：新增 API 先确认 4.5 已存在。
+- **EditorInterface 两种获取路径语义不同**：GDScript 全局名 `EditorInterface.xxx`（类型表达式路径，4.x 全版本可用）≠ `Engine.get_singleton("EditorInterface")`（运行时查找路径，**4.7 起返回 null**——不再注册为 Engine singleton）。插件内获取一律走 `EditorPlugin.get_editor_interface()`（本项目 `_get_ei()` 模式）；两者混用是 4.7 兼容 bug 的常见根源。
+- **改 addons 后必须跑 `npm run check:gdscript`（项目级完整编译）**：`validate_scripts` 是逐文件 parse，漏结构性 bug（缩进/块体）；跨版本验证跑双端 `GODOT_PATH=<4.5.x>` 与 `GODOT_PATH=<4.7.x>` 各一次。

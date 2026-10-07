@@ -7,6 +7,7 @@
  * (GodotServer/CLI/测试)import 路径零改动。
  */
 import { readFileSync, existsSync, copyFileSync, unlinkSync, readdirSync } from 'fs';
+import { randomUUID, createHash } from 'crypto';
 import { writeFileAtomic } from '../core/fs-atomic.js';
 import { join, dirname } from 'path';
 import type { Tool } from "@modelcontextprotocol/server";
@@ -29,11 +30,13 @@ import {
   resolveBridgePort,
   bridgeSecretPathFor,
   getBridgeProjectDir,
+  getBridgeIdentity,
   invalidateBridgeSecret,
   invalidateBridgeConnection,
   registerBridgePushHandler,
   liveHeartbeatPortsFor,
   type BridgeResponse,
+  type SendOptions,
   setBridgeProjectDir,
   sendToBridge,
   _registerSubscription,
@@ -84,11 +87,25 @@ function bundledBridgeVersion(ctx: ToolContext): string | null {
   } catch { return null; }
 }
 
+/** 批次3(2026-10-04): 读 bundled mcp_bridge.gd 原始字节算 SHA-256(hex)——与 GD 侧
+ *  _script_fingerprint(HashingContext HASH_SHA256,读 res:// 字节后 hex_encode;注:
+ * PackedByteArray 无 sha256() 方法,4.6.3 探针实测 Parse Error)同源;
+ *  install 是字节级 copyFileSync,两边字节一致。缺失返回 null(比对跳过,不误报)。 */
+function bundledBridgeSha256(ctx: ToolContext): string | null {
+  try {
+    return createHash('sha256').update(readFileSync(join(dirname(ctx.opsScript), BRIDGE_SCRIPT_NAME))).digest('hex');
+  } catch { return null; }
+}
+
 /** ping 响应注解(纯函数,单测直测):附加 bundledBridgeVersion,与远端 bridgeVersion 不一致
- *  时加 versionWarning(旧版项目拷贝的可操作指引)。返回注解后的新对象,不改入参。 */
+ *  时加 versionWarning(旧版项目拷贝的可操作指引)。返回注解后的新对象,不改入参。
+ *  批次3: 第三参 bundledSha(可选)启用内容指纹比对 —— 版本号一致但字节指纹不一致 =
+ *  项目内 mcp_bridge.gd 被手工修改/损坏(版本号比对的结构性盲区,yanhuifair v1.12.4
+ *  内容哈希同步修法的检测面);远端无指纹(旧版 GD)或本地算不出(bundled 缺失)跳过。 */
 export function annotatePingWithVersion(
   result: Record<string, unknown>,
   bundled: string | null,
+  bundledSha?: string | null,
 ): Record<string, unknown> {
   if (!bundled) return result;
   const annotated: Record<string, unknown> = { ...result, bundledBridgeVersion: bundled };
@@ -99,6 +116,18 @@ export function annotatePingWithVersion(
     annotated.versionWarning =
       `bridge GD ${remote} != bundled ${bundled} — the project's mcp_bridge.gd is an outdated copy. ` +
       'Re-run game_bridge_install with force: true and restart the game to sync (new tools like send_drag/send_input_sequence live only in the bundled version).';
+    return annotated;
+  }
+  // 版本一致时才做指纹比对(版本都不一致,指纹必然不一致,单报版本即可)
+  const remoteSha = typeof result.scriptFingerprint === 'string' ? result.scriptFingerprint : '';
+  if (bundledSha && remoteSha !== '') {
+    annotated.bundledScriptFingerprint = bundledSha;
+    if (remoteSha !== bundledSha) {
+      annotated.fingerprintWarning =
+        `script fingerprint mismatch: project mcp_bridge.gd differs from bundled ${bundled} at byte level ` +
+        `(project sha256=${remoteSha.slice(0, 12)}…, bundled sha256=${bundledSha.slice(0, 12)}…) — ` +
+        'the file was hand-modified or corrupted. Run game_bridge_install with force: true and restart the game to restore the stock bridge.';
+    }
   }
   return annotated;
 }
@@ -310,6 +339,7 @@ export function getToolDefinitions(): Tool[] {
             description: '方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path="/root",max_depth=32,visible_only=false}(整树控件坐标表导出:controls/hidden 两组 {名:[x,y,w,h]} 运行态 global 坐标 roundi,重名 _2 后缀,visible_only=true 隐藏子树剪枝;配合 analysis.layout_compare 比对);get_font_report{path="/root",max_depth=32}(子树 Label 字体度量:font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量,负=偏上;跨引擎字体不居中诊断);get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。',
           },
           timeout: { type: 'number', description: 'game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000)' },
+          request_id: { type: 'string', description: 'game_write/custom_command 幂等键(可选):超时(outcomeUnknown)后重试传同一值,bridge 按其去重;不传自动生成' },
           interval_ms: { type: 'number', description: 'game_wait 专用：轮询探测间隔（毫秒，默认 200，范围 50-2000）。仅 wait_for_node/wait_for_property 生效', default: 200 },
           node_path: { type: 'string', description: 'monitor_start: 要监控的节点路径（如 /root/Player）' },
           properties: { type: 'array', items: { type: 'string' }, description: 'monitor_start: 要监控的属性名列表（如 ["position", "health"]）;被安全过滤的属性会在返回 dropped_blocked 中逐个点名' },
@@ -534,11 +564,11 @@ export function validateWaitPropertyParams(method: string, params: Record<string
 }
 
 /** Shared helper: set project dir, send to bridge, format response. */
-async function bridgeAction(method: string, params: Record<string, unknown>, ctx: ToolContext, timeout: number): Promise<ToolResult> {
+async function bridgeAction(method: string, params: Record<string, unknown>, ctx: ToolContext, timeout: number, sendOpts?: SendOptions): Promise<ToolResult> {
   ensureProjectDir(ctx, params);
   const pathErr = validateBridgePath(params, method);  // I-1(审查): 覆盖 monitor/watch/click_button 的 node_path/path;take_screenshot 的 path(文件路径)豁免
   if (pathErr) return opsErrorResult('INVALID_PATH', pathErr);
-  const resp = await sendToBridge(method, params, timeout);
+  const resp = await sendToBridge(method, params, timeout, sendOpts);
   // T-2 (2026-06-24 审查): bridge 返回 error 时(密钥失效 -32001/-32002/方法不存在等)用 errorResult
   // (isError=true),否则 MCP 客户端误判成功吞掉错误。原 textResult 默认 isError=false。
   if (resp.error) {
@@ -846,7 +876,17 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const timeout = computePlaytestTimeoutMs(method, params.wall_budget_ms, rawTimeout);
         const pathErr = validateBridgePath(params, method);  // T-1: path /root/ 前置校验(take_screenshot 的文件路径豁免)
         if (pathErr) return opsErrorResult('INVALID_PATH', pathErr);  // T-1: path /root/ 前置校验
-        const response = await sendToBridge(method, params, timeout);
+        // 批次2(2026-10-04 幂等层): 写命令生成/透传幂等键 —— 超时(outcomeUnknown)后 agent
+        // 按原身份重试(本次调用传同一 request_id),GD 侧去重表直接回首次响应,不重复执行。
+        // game_query 读命令天然幂等不参与;game_input 即时类风险低不参与(方案批次2取舍)。
+        // B-1(审查修复): call_method await_completion=true 走 GD __DEFERRED__ 延迟通道
+        // (协程完成才推送响应,不入幂等缓存)——对其发幂等键会让超时指引承诺"不会重复执行"
+        // 而实际重试必然重复执行(假承诺)。该变体不发键,超时走"必须先核实"降级文案。
+        const isAwaitCallMethod = method === 'call_method' && params.await_completion === true;
+        const idemKey = action === 'game_write' && !isAwaitCallMethod
+          ? (typeof args.request_id === 'string' && args.request_id.trim() !== '' ? args.request_id : randomUUID())
+          : undefined;
+        const response = await sendToBridge(method, params, timeout, idemKey !== undefined ? { requestId: idemKey } : undefined);
         if (response.error) {
           // Clear cached secret on auth failure so next call re-reads from disk
           // Bridge error codes: -32001 (auth required), -32002 (locked out)
@@ -859,8 +899,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // A2 (2026-09-16 跨项目验证接线修正): game_query/write/input 走本直连路径而非
         // bridgeAction(共享 helper 只服务 watch/monitor 等)——ping 版本注解必须接在这里,
         // 首版误接 bridgeAction 导致真机 ping 无 bundledBridgeVersion/versionWarning。
+        // 批次3: 同一注解顺带做内容指纹比对(版本一致但字节被手改时 fingerprintWarning)。
         if (method === 'ping' && response.result !== null && typeof response.result === 'object' && !Array.isArray(response.result)) {
-          const annotated = annotatePingWithVersion(response.result as Record<string, unknown>, bundledBridgeVersion(ctx));
+          const annotated = annotatePingWithVersion(response.result as Record<string, unknown>, bundledBridgeVersion(ctx), bundledBridgeSha256(ctx));
           return textResult(JSON.stringify(annotated, null, 2));
         }
         return textResult(JSON.stringify(response.result, null, 2));
@@ -1019,7 +1060,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const userParams = (args.params && typeof args.params === 'object' && !Array.isArray(args.params))
           ? (args.params as Record<string, unknown>)
           : {};
-        return await bridgeAction(name, userParams, ctx, clampTimeoutMs(args.timeout));
+        // 批次2: custom 命令是游戏方声明的执行面(risk=write),与 game_write 同款幂等键
+        const customIdemKey = typeof args.request_id === 'string' && args.request_id.trim() !== ''
+          ? args.request_id
+          : randomUUID();
+        return await bridgeAction(name, userParams, ctx, clampTimeoutMs(args.timeout), { requestId: customIdemKey });
       }
 
       case 'sync_state': {
@@ -1121,9 +1166,25 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       });
     }
     if (err instanceof BridgeTimeoutError) {
-      return opsErrorResult(ERROR_CODES.BRIDGE_TIMEOUT, msg, {
-        suggestion: '游戏在运行但无响应(可能被 runtime error 卡住)——这不是连接问题。检查游戏是否报错,或加大 timeout 重试',
-      });
+      // 批次2(2026-10-04 幂等层): outcomeUnknown 语义升级 —— 超时不区分"未执行"与
+      // "已执行但响应丢失"(Godot 卡主线程:编译/场景切换)。带 requestId 的写命令给出
+      // 原身份重试指引(bridge 支持 idempotent-v1 时重试命中 GD 侧去重,不重复执行;
+      // 旧版 GD 无去重,指引如实降级为"必须先核实")。读命令超时保持原文案。
+      const idemCapable = getBridgeIdentity()?.capabilities.includes('idempotent-v1') ?? false;
+      const payload: Record<string, unknown> = {
+        error_code: ERROR_CODES.BRIDGE_TIMEOUT,
+        message: msg,
+      };
+      if (err.requestId !== undefined) {
+        payload.outcomeUnknown = true;
+        payload.request_id = err.requestId;
+        payload.retry_guidance = idemCapable
+          ? '原命令可能已在游戏中执行(outcomeUnknown)。先用 game_query 核实游戏状态;确认需要重试时,本次调用传同一 request_id——bridge 侧按其去重,不会重复执行。'
+          : '原命令可能已在游戏中执行(outcomeUnknown)。当前 bridge 不支持幂等去重(旧版 GD):重试前必须先 game_query 核实状态,避免重复执行;建议 game_bridge_install force 同步 bridge。';
+        return errorResult(JSON.stringify(payload));
+      }
+      payload.suggestion = '游戏在运行但无响应(可能被 runtime error 卡住)——这不是连接问题。检查游戏是否报错,或加大 timeout 重试';
+      return errorResult(JSON.stringify(payload));
     }
     return opsErrorResult(ERROR_CODES.BRIDGE_ERROR, msg);
   }

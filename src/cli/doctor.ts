@@ -1,5 +1,6 @@
 /** doctor 命令 — 环境诊断 */
 import { existsSync, readdirSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { findGodot, detectGodotVersion } from '../core/godot-finder.js';
@@ -78,6 +79,40 @@ async function checkClientConfig(adapter: { name: string; isConfigured(projectDi
     return { ok, detail: ok ? 'configured' : 'not configured' };
   } catch {
     return { ok: false, detail: 'config parse error (file may be corrupted)' };
+  }
+}
+
+// ─── Bridge 脚本指纹检查纯函数(批次3 2026-10-04,可单测) ──────────────────────
+
+export interface BridgeScriptCheckResult {
+  /** absent=项目未装;bundled-missing=包内 bundled 不可读(dev 模式等);in-sync=字节一致;
+   *  eol-only=仅行尾差异(CRLF 转换);modified=内容真实不同(手改/损坏/旧版) */
+  status: 'absent' | 'bundled-missing' | 'in-sync' | 'eol-only' | 'modified';
+  projectSha256: string | null;
+  bundledSha256: string | null;
+}
+
+/** 对比项目根 mcp_bridge.gd 与包内 bundled 的字节级 SHA-256(与运行时 ping 指纹比对同源:
+ *  GD 侧 FileAccess 字节读 + hex_encode,TS 侧 createHash——字节级一致性就是运行时语义)。
+ *  字节不一致时回退行尾归一比对区分 eol-only/modified,给用户可操作的差异化文案。 */
+export function compareBridgeScript(projectScript: string, bundledScript: string): BridgeScriptCheckResult {
+  const sha256 = (p: string): string | null => {
+    try {
+      return createHash('sha256').update(readFileSync(p)).digest('hex');
+    } catch { return null; }
+  };
+  const projectSha256 = sha256(projectScript);
+  const bundledSha256 = sha256(bundledScript);
+  if (projectSha256 === null) return { status: 'absent', projectSha256: null, bundledSha256 };
+  if (bundledSha256 === null) return { status: 'bundled-missing', projectSha256, bundledSha256: null };
+  if (projectSha256 === bundledSha256) return { status: 'in-sync', projectSha256, bundledSha256 };
+  try {
+    const norm = (p: string) => readFileSync(p, 'utf-8').replace(/\r\n/g, '\n');
+    return norm(projectScript) === norm(bundledScript)
+      ? { status: 'eol-only', projectSha256, bundledSha256 }
+      : { status: 'modified', projectSha256, bundledSha256 };
+  } catch {
+    return { status: 'modified', projectSha256, bundledSha256 };  // 归一比对读失败按 modified 保守报
   }
 }
 
@@ -201,6 +236,25 @@ export async function runDoctor(_args: string[]): Promise<void> {
       for (const f of result.missing) console.log(`      - ${f} (missing in project)`);
       for (const f of result.differing) console.log(`      ~ ${f} (content differs from upstream)`);
     }
+  }
+
+  // 5.5 Bridge 脚本指纹(批次3 2026-10-04)——项目根 mcp_bridge.gd 与包内 bundled 的字节级
+  // 比对,与运行时 ping 的 scriptFingerprint 同源。版本号比对的盲区(手改/损坏但版本串未动)
+  // 在此可见;warn 不 fail(同 Addons sync 语义)。
+  console.log('\nBridge script:');
+  const projectBridge = join(projectDir, 'mcp_bridge.gd');
+  const bundledBridge = join(__pkgRoot, 'scripts', 'mcp_bridge.gd');
+  const bridgeCheck = compareBridgeScript(projectBridge, bundledBridge);
+  if (bridgeCheck.status === 'absent') {
+    console.log(na('mcp_bridge.gd not in project root (未装 bridge autoload,skip)'));
+  } else if (bridgeCheck.status === 'bundled-missing') {
+    console.log(na('bundled mcp_bridge.gd not accessible (dev mode without package root, skip)'));
+  } else if (bridgeCheck.status === 'in-sync') {
+    console.log(status(true, `mcp_bridge.gd byte-identical to bundled (sha256=${String(bridgeCheck.projectSha256).slice(0, 12)}…)`));
+  } else if (bridgeCheck.status === 'eol-only') {
+    console.log(warn('mcp_bridge.gd differs from bundled only by line endings (CRLF) — 解析无影响,但运行时 ping 指纹比对会报 fingerprintWarning;game_bridge_install force: true 可恢复字节一致'));
+  } else {
+    console.log(warn(`mcp_bridge.gd MODIFIED vs bundled (project sha256=${String(bridgeCheck.projectSha256).slice(0, 12)}…, bundled ${String(bridgeCheck.bundledSha256).slice(0, 12)}…) — 手改/损坏/旧版;game_bridge_install force: true + 重启游戏恢复发行版`));
   }
 
   // 易用性批4:结尾一行下一步(两出口共享,弥补此前"满屏 ✗ 却不知道怎么办")

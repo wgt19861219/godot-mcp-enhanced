@@ -41,11 +41,16 @@ export class BridgeNotConnectedError extends Error {
     this.name = 'BridgeNotConnectedError';
   }
 }
-/** Bridge 连上 + 认证成功后请求无响应(游戏被 runtime error 卡住)。agent 自愈:查游戏报错 / 加大 timeout。 */
+/** Bridge 连上 + 认证成功后请求无响应(游戏被 runtime error 卡住)。agent 自愈:查游戏报错 / 加大 timeout。
+ *  批次2(2026-10-04 幂等层):携带 requestId 时 outcomeUnknown=true —— 超时不区分"未执行"与
+ *  "已执行但响应丢失"(Godot 卡主线程:编译/场景切换),重试须传同一 requestId 命中 GD 侧去重。 */
 export class BridgeTimeoutError extends Error {
-  constructor(message: string) {
+  readonly outcomeUnknown = true;
+  readonly requestId?: string;
+  constructor(message: string, requestId?: string) {
     super(message);
     this.name = 'BridgeTimeoutError';
+    this.requestId = requestId;
   }
 }
 
@@ -257,6 +262,16 @@ let _connectionLock: Promise<Socket> | null = null;
 // (成功即复位)——缩窄"一次诱导降级 → 进程生命周期内持续明文"的窗口(N-2 残余面收敛)。
 let _bridgeLegacyAuth = false;
 let _bridgeLegacyAuthSince = 0;
+// 批次1-2/2(2026-10-04): 桥身份快照 —— 新版 GD 的 auth 成功响应附带 bridgeVersion +
+// capabilities(零往返能力协商)。null = 本连接未取得身份(旧版 GD/异构端):幂等重试提示
+// 降级为"bridge 可能不支持去重"。[] = 已确认无能力。auth 成功时刷新(_invalidateSocket 不清
+// ——重连同一 bridge 身份不变;resetBridgeState 清)。
+let _bridgeIdentity: { bridgeVersion: string | null; capabilities: string[] } | null = null;
+
+/** 桥身份快照(auth 响应协商所得;null=未知)。幂等重试提示据 capabilities 区分文案。 */
+export function getBridgeIdentity(): { bridgeVersion: string | null; capabilities: string[] } | null {
+  return _bridgeIdentity;
+}
 
 // 首次连接成功回调(由 GodotServer.run() 装配 launchDashboardOnce——2026-09-17 H-3/O2 归位;core 不依赖 dashboard)
 let _onBridgeConnected: (() => void) | null = null;
@@ -599,6 +614,27 @@ async function _openSocket(timeout: number, legacyAuth: boolean): Promise<Socket
           if (!authDone && resp.result?.authenticated) {
             authDone = true;
             clearTimeout(timer);
+            // 批次1-2/2(2026-10-04): 身份快照 —— 新版 GD auth 响应附带 bridgeVersion +
+            // capabilities(mcp_bridge.gd _auth_ok_result);旧版无此字段 → 空能力(非 null,
+            // 已确认不支持,幂等重试提示如实降级)。CR-auth 路径本身即密码学身份校验
+            // (secret 只有真 bridge 知道),此处身份字段仅作能力协商与可见化,不拒连——
+            // 严拒会破坏对自家旧版 GD(≤0.33.x 无 capabilities)的滚动兼容。
+            const authed = resp.result as { bridgeVersion?: unknown; capabilities?: unknown };
+            _bridgeIdentity = {
+              bridgeVersion: typeof authed.bridgeVersion === 'string' ? authed.bridgeVersion : null,
+              capabilities: Array.isArray(authed.capabilities) ? authed.capabilities.filter((c): c is string => typeof c === 'string') : [],
+            };
+            // 批次1-2 可见化(方案"ping 身份校验"的落地调整): 明文降级连接上 auth 响应又无
+            // 桥身份指纹 = 对端无法证实是 enhanced bridge(secret 已明文送出,这是已知残余面
+            // 批4-T2 用 TTL 收敛)。此处 warn 一次使不可见 fallback 可见(Smalldy 迁移可见化原则),
+            // 不拒连(拒连把旧版 GD 全部打死,收益为负)。CR 路径不 warn(密码学已验证)。
+            if (legacyAuth && _bridgeIdentity.bridgeVersion === null) {
+              getLogger().warn('bridge',
+                'legacy plaintext auth succeeded but endpoint carries no bridge identity fingerprint ' +
+                '(bridgeVersion/capabilities absent) — cannot verify it is an enhanced bridge. ' +
+                'Old GD (<=0.33.x) matches this shape; a foreign listener would too. ' +
+                'Upgrade the project mcp_bridge.gd to enable challenge-response + identity.');
+            }
             _socket = sock;
             _socketAuthenticated = true;
             // Detach per-auth handlers — response handling moves to sendToBridge
@@ -757,7 +793,14 @@ export function setBridgeProjectDir(projectDir: string | null): void {
   _invalidateSocket();
 }
 
-export function sendToBridge(method: string, params: Record<string, unknown> = {}, timeout = DEFAULT_TIMEOUT): Promise<BridgeResponse> {
+/** 批次2(2026-10-04 幂等层): 请求级选项。requestId = 写命令幂等键 —— GD 侧按其去重
+ *  (重复请求直接回首次响应),超时错误携带它供 agent 原身份重试(对齐 unity-mcp-server
+ *  "按身份重试而非按命令重试")。旧版 GD 忽略未知字段,透传无害。 */
+export interface SendOptions {
+  requestId?: string;
+}
+
+export function sendToBridge(method: string, params: Record<string, unknown> = {}, timeout = DEFAULT_TIMEOUT, opts?: SendOptions): Promise<BridgeResponse> {
   // Serialize requests so only one uses the shared socket at a time.
   // Each call chains onto _sendLock, preventing concurrent data handlers.
   const run = () => {
@@ -776,7 +819,12 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
 
         const timer = setTimeout(() => {
           if (_socket === sock) _invalidateSocket();  // P1-8: 只在 sock 仍是当前 socket 时 invalidate
-          doReject(new BridgeTimeoutError(`Bridge request timed out after ${timeout}ms`));
+          doReject(new BridgeTimeoutError(
+            opts?.requestId !== undefined
+              ? `Bridge request timed out after ${timeout}ms (requestId=${opts.requestId}). The command may have executed — inspect the game state before retrying; retry with the SAME requestId to hit bridge-side dedup.`
+              : `Bridge request timed out after ${timeout}ms`,
+            opts?.requestId,
+          ));
         }, timeout);
 
         const onData = (data: Buffer) => {
@@ -827,7 +875,7 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
         sock.once('error', onError);
         sock.once('close', onClose);
 
-        sock.write(JSON.stringify({ id, method, params }) + '\n');
+        sock.write(JSON.stringify({ id, method, params, ...(opts?.requestId !== undefined ? { requestId: opts.requestId } : {}) }) + '\n');
       });
     }).catch(err => {
       // 子类(BridgeNotConnectedError / BridgeTimeoutError)从 _doConnect / sendToBridge 穿透,原样抛
@@ -868,6 +916,8 @@ export function resetBridgeState(): void {
   _stopKeepalive();
   // A3: 失败端口记忆一并清(测试隔离/服务重启语义:进程重启后旧失败无意义)
   _failedPorts.clear();
+  // 批次2: 桥身份快照一并清(重连后重新经 auth 协商)
+  _bridgeIdentity = null;
 }
 
 // ─── Bridge readiness probe (M4) ────────────────────────────────────────────
