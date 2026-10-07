@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
+import { realpathSync } from 'fs';
 import { GodotServer } from './GodotServer.js';
 import { getLogger } from './core/logger.js';
 import { isAuditEnabled } from './core/audit-log.js';
@@ -227,7 +228,24 @@ const args = process.argv.slice(2);
 // import 本模块取 runStartupSequence 时 argv[1] 是 daemon/main.js,不得在 daemon 进程里
 // 误起 stdio server;直接执行本文件(npm bin / node build/index.js,含绝对全路径)时
 // argv[1] 以 index.js 结尾,照常分流。文件名不含路径分隔符,Windows 反斜杠路径同样成立。
-if (process.argv[1]?.endsWith('index.js')) {
+//
+// issue #71(2026-10-07,0.34.0 线上回归):Linux/macOS npm 安装的 bin 是 symlink
+// (/usr/local/bin/godot-mcp-enhanced 或 node_modules/.bin/godot-mcp-enhanced),argv[1]
+// 是 symlink 路径、不以 index.js 结尾——endsWith 判 false 静默跳过整个 CLI 分流,
+// --help/-v/doctor/setup 等全部子命令零输出退出(exit 0)。补第二条判定:
+// realpath(argv[1]) 解析 symlink 后与 __filename(ESM import.meta.url 同为解析后
+// 真实路径)比对;daemon/main.js 经 realpath 后是自身路径≠本文件,仍正确不分流。
+function isMainModule(): boolean {
+  const argv1 = process.argv[1];
+  if (!argv1) return false;
+  if (argv1.endsWith('index.js')) return true;
+  try {
+    return realpathSync(argv1) === __filename;
+  } catch {
+    return false;
+  }
+}
+if (isMainModule()) {
   (async () => {
   const { isCliInvocation, isUnknownCommand, showHelp, showVersion, routeCommand } = await import('./cli/router.js');
 

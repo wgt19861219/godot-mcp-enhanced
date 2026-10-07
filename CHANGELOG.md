@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **fix(cli): issue #71——npm bin symlink 启动时全部 CLI 子命令零输出静默退出(0.34.0 线上回归,Linux/macOS)**:①**根因**——daemon 批 A(2026-09-30 `70b167c1`)给 `src/index.ts` 底部入口 IIFE 加的守卫 `process.argv[1]?.endsWith('index.js')`(防 `daemon/main.ts` import 本模块取 `runStartupSequence` 时误起 stdio server)在 Linux/macOS 上必然误判:npm 安装(全局 `/usr/local/bin/godot-mcp-enhanced` 或本地 `node_modules/.bin/`)的 bin 是 **symlink**,`argv[1]` 是 symlink 路径、不以 `index.js` 结尾 → 守卫判 false 跳过整个 CLI 分流 → `--help`/`-v`/`doctor`/`setup` 等全部子命令**零输出、exit 0 静默退出**(进程加载完顶层 import 后事件循环排空即退)。Windows 不受影响(npm 用 `.cmd` shim,`argv[1]` 是真实 index.js 全路径,`endsWith` 成立)——复现矩阵:Windows 直跑两版均正常/Windows symlink 0.34.0 静默 0.33.1 正常/WSL 真实 npm `.bin` symlink 0.34.0 输出 0 行 exit 0。②**修复**——守卫抽为 `isMainModule()`,补第二条判定 `realpathSync(argv[1]) === __filename`(ESM `import.meta.url` 与 realpath 输出同为解析后真实路径,可比;symlink 经 realpath 解析回本文件 → 照常分流;`daemon/main.js` 经 realpath 是自身路径 ≠ 本文件 → 仍正确不分流,import 链真机验证干净加载)。③**测试**——新增 `test/cli/main-entry-symlink.test.ts` 7 用例(symlink 场景 `--help`/`--version`/`doctor` 有输出且 exit 0 / 直跑路径保底 / 动态 import 不触发 CLI 输出不挂起 / daemon main 产物在场;Windows 无符号链接权限时 symlink 组 skip,Linux/macOS CI 必跑)。验证:lint 绿 + build 绿 + 全量 7158 用例复跑全绿 + WSL 真机 npm install 本地包经 `.bin` symlink `--help` 28 行/`doctor` 34 行输出。
+
 ## [0.34.1] - 2026-10-04
 
 > 2026-10-04 竞品回流落地批(来源:2026-10-03 竞品深挖三报告的回流评估,方案 `docs/plans/2026-10-04-竞品回流验证与可靠性落地方案.md`;**bump 由规则模板硬门禁触发**——批次1-4 改 `rule-templates.ts` + `.claude/rules/godot-mcp-engine-quirks.md`,按「门禁触发 bump ≠ 发版」定规走版本链,npm publish/tag 待用户指令)。
