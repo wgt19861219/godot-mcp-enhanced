@@ -94,13 +94,16 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // hello.settingsConfigured + updateCfgWarn 函数 + loadSettings 按 effective 刷新)
     // 使脚本内容变更 → hash 轮换;同款双通道互证后锁入(build 产物导入实算
     // INDEX_SCRIPT_SHA256 与本测试独立重算一致)。
-    expect(WEB_GUI_CSP).toContain("'sha256-BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac='");
+    // 资源重导入批 (2026-10-08) 八次重锚:项目行新增 ⟳ 重导入按钮(禁用态双条件)+
+    // reimportProject POST 函数 + SSE import 事件订阅,脚本内容变更 → hash 轮换;
+    // 同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-JmarQqoSp/8bTCzlwgFG1duecaYgi5WGoCbIi5LH+e8='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('BFbdCfBxkGAiXLfthwcF5sSVN5Xcwlx/JrGcU72Y0Ac=');   // 独立重算与锚互证
+    expect(hash).toBe('JmarQqoSp/8bTCzlwgFG1duecaYgi5WGoCbIi5LH+e8=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
@@ -236,11 +239,17 @@ describe('POST 会话控制端点(面板控制第一版:stop + remove)', () => {
     return { srv, base: `http://127.0.0.1:${srv.port}`, token: srv.token };
   }
 
+  it('根治批(2026-10-08 审查 NIT-1):start() 落盘的 portal.html 内嵌自身端口(透传行为锚)', async () => {
+    const t = await startCtrlServer({}); active = t.srv;
+    const html = readFileSync(join(registryDir, 'portal.html'), 'utf-8');
+    // 随机端口路径(portStart:0)一并锁定:address().port 即实际端口,内嵌进 PREFERRED
+    expect(html).toContain(`var PREFERRED = ${t.srv.port};`);
+  });
+
   function post(base: string, path: string, token: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<Response> {
     return fetch(base + path, {
       method: 'POST',
-      headers: { 'x-gui-token': token, 'content-type': 'application/json', ...extraHeaders },
-      body: typeof body === 'string' ? body : JSON.stringify(body),
+      headers: { 'x-gui-token': token, 'content-type': 'application/json', ...extraHeaders },      body: typeof body === 'string' ? body : JSON.stringify(body),
     });
   }
 

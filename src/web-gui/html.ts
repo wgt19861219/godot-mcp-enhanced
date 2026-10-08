@@ -390,7 +390,7 @@ export const INDEX_HTML: string = `<!doctype html>
 
   // ── 项目面板(spec §7.2/§7.3,2026-09-15)────────────────────────────────────
   // ProjectView 契约(Task 3):{path,name,addedAt,source,mtime,missing,running,sessionId}
-  // 行按钮零监听器、只带 data-action(run|edit|remove)+data-path,点击由 #projPane
+  // 行按钮零监听器、只带 data-action(reimport|run|edit|files|remove)+data-path,点击由 #projPane
   // 容器一次性委托接管(同 #sessions 2026-09-15 修复模式:容器本体在重绘中不被替换)。
   function fmtAgo(ms) {
     if (ms == null) return '-';
@@ -430,13 +430,18 @@ export const INDEX_HTML: string = `<!doctype html>
     var frag = document.createDocumentFragment();
     rows.forEach(function (p) {
       var row = document.createElement('div'); row.className = 'proj-row';
+      // ⟳ 重导入(资源重导入批 2026-10-08):引擎级扫描+重导入(--headless --import),
+      // 异步起、完成经 SSE import 事件接管 statusBar。
+      var imp = document.createElement('button'); imp.className = 'ctl'; imp.textContent = '⟳'; imp.title = '重新导入资源';
+      imp.setAttribute('data-action', 'reimport'); imp.setAttribute('data-path', p.path);
       var run = document.createElement('button'); run.className = 'ctl'; run.textContent = '▶'; run.title = '运行';
       run.setAttribute('data-action', 'run'); run.setAttribute('data-path', p.path);
       var edit = document.createElement('button'); edit.className = 'ctl'; edit.textContent = '✎'; edit.title = '编辑';
       edit.setAttribute('data-action', 'edit'); edit.setAttribute('data-path', p.path);
       var files = document.createElement('button'); files.className = 'ctl'; files.textContent = '文件'; files.title = '浏览文件';
       files.setAttribute('data-action', 'files'); files.setAttribute('data-path', p.path);
-      if (p.missing) { run.disabled = true; edit.disabled = true; files.disabled = true; run.title = '路径不存在'; edit.title = '路径不存在'; files.title = '路径不存在'; }
+      if (p.missing) { run.disabled = true; edit.disabled = true; files.disabled = true; imp.disabled = true; run.title = '路径不存在'; edit.title = '路径不存在'; files.title = '路径不存在'; imp.title = '路径不存在'; }
+      else if (p.running) { imp.disabled = true; imp.title = '运行中，请先停止再重导入'; }   // 409 前移为 UX(用户裁决 2026-10-08)
       var name = document.createElement('span'); name.className = 'proj-name';
       name.textContent = p.name || (p.path || '').split(/[\\\\/]/).pop() || p.path; name.title = p.path;   // title=完整路径
       var time = document.createElement('span'); time.className = 'proj-time'; time.textContent = fmtAgo(p.mtime);
@@ -445,7 +450,7 @@ export const INDEX_HTML: string = `<!doctype html>
       else if (p.running) { badge.className = 'dot run'; badge.textContent = '●'; badge.title = '运行中'; }
       var rm = document.createElement('button'); rm.className = 'ctl stop'; rm.textContent = '×'; rm.title = '从列表移除';
       rm.setAttribute('data-action', 'remove'); rm.setAttribute('data-path', p.path);
-      row.append(run, edit, files, name, time, badge, rm); frag.appendChild(row);
+      row.append(imp, run, edit, files, name, time, badge, rm); frag.appendChild(row);
     });
     host.appendChild(frag);
   }
@@ -472,6 +477,33 @@ export const INDEX_HTML: string = `<!doctype html>
       }
       $('statusBar').textContent = mode === 'run' ? '启动指令已发出,等待会话出现' : '编辑器已拉起';
     }).catch(function () { $('statusBar').textContent = '网络异常,启动请求未送达'; });
+  }
+
+  // ⟳ 重导入(资源重导入批 2026-10-08):POST /api/projects/reimport 异步起,
+  // 完成经 SSE import 事件接管 statusBar(--import 无进度回调,只能报进行中/完成)。
+  function reimportProject(path) {
+    $('statusBar').textContent = '导入中(引擎扫描+重导入,可能需要数十秒)… ' + path;
+    fetch('/api/projects/reimport', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ projectPath: path }),
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.text().then(function (t) {
+          var msg;
+          if (r.status === 403 && t.indexOf('read-only') !== -1) { state.readOnly = true; msg = '只读模式，重导入已禁用'; }
+          else if (r.status === 403) msg = '路径在白名单之外';
+          else if (r.status === 404) msg = '不是 Godot 项目';
+          else if (r.status === 409) msg = '项目运行中，请先停止再重导入';
+          else msg = t.slice(0, 80);
+          $('statusBar').textContent = '重导入失败: ' + msg;
+        });
+      }
+      return r.json().then(function (j) {
+        if (j && j.started === false) { $('statusBar').textContent = '该项目已在导入中,请等待完成'; return; }
+        $('statusBar').textContent = '导入指令已发出,等待完成';
+      });
+    }).catch(function () { $('statusBar').textContent = '网络异常,重导入请求未送达'; });
   }
 
   // 移除仅出清单不删文件;原生 confirm(CSP 不受限)
@@ -1146,6 +1178,7 @@ export const INDEX_HTML: string = `<!doctype html>
     if (action === 'add') { toggleAddRow(); return; }
     if (action === 'add-confirm') { submitAdd(); return; }
     if (action === 'run' || action === 'edit') { startSession(path, action); return; }
+    if (action === 'reimport') { reimportProject(path); return; }
     if (action === 'files') { openFiles(path); return; }
     if (action === 'remove') { removeProject(path); }
   });
@@ -1334,6 +1367,20 @@ export const INDEX_HTML: string = `<!doctype html>
     if (p && Array.isArray(p.projects)) { state.projects = p.projects; renderProjects(); }
     if (p && p.scanning === true) { $('statusBar').textContent = '扫描中 已发现 ' + (p.found || 0) + ' / 已扫描 ' + (p.scanned || 0); return; }
     if (p && p.scanning === false) { $('statusBar').textContent = p.failed ? '扫描失败,可重试;详情见 server 日志' : '扫描完成 新增 ' + (p.added || 0) + ' 个项目'; }
+  });
+  // 资源重导入批(2026-10-08):{type:'done', projectPath, ok, report|error}。
+  // report.gutted 非空 = .import 疑似被 --import 重写损坏(TMXYH5 教训),显式警示。
+  es.addEventListener('import', function (ev) {
+    var d = JSON.parse(ev.data);
+    if (!d || d.type !== 'done') return;
+    if (d.ok) {
+      var gutted = d.report && Array.isArray(d.report.gutted) ? d.report.gutted.length : 0;
+      $('statusBar').textContent = gutted > 0
+        ? '导入完成,但有 ' + gutted + ' 个 .import 疑似被重写,建议在编辑器中检查: ' + (d.projectPath || '')
+        : '资源导入完成: ' + (d.projectPath || '');
+    } else {
+      $('statusBar').textContent = '导入失败: ' + String(d.error || '').slice(0, 120);
+    }
   });
   es.onerror = function () {
     $('statusBar').textContent = '连接中断,重连中…';

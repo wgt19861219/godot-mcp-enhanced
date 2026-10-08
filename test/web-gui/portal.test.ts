@@ -20,9 +20,30 @@ describe('file:// 入口页 portal.html(2026-09-16 入口简化批)', () => {
     expect(html).toContain('9550');                                  // 扫描段起点
     expect(html).toContain('9569');                                  // 扫描段终点
     expect(html).toContain("mode: 'no-cors'");                       // 兼容新旧 build 的探测方式
-    expect(html).toContain('location.replace');                      // 自动进入第一个活实例
+    expect(html).toContain('location.replace');                      // 自动进入挑选的实例
     expect(html).toContain('dashboard --web');                       // 全死指引命令
     expect(html).toContain('当前没有运行中的面板服务');                 // 全死文案
+  });
+
+  // ─── 根治批(2026-10-08):preferredPort 挑选策略 ─────────────────────────────
+  it('preferredPort 内嵌:入口页优先跳写入实例(最近启动),CLI 版无偏好回退最大端口', () => {
+    const withPref = buildPortalHtml(undefined, 9552);
+    expect(withPref).toContain('var PREFERRED = 9552;');
+    // 挑选逻辑:preferred 活着优先;否则回退最大端口(不再挑 found[0] 被 9550 旧实例截胡)
+    expect(withPref).toContain("var target = (PREFERRED && found.indexOf(PREFERRED) !== -1) ? PREFERRED : found[found.length - 1];");
+    expect(withPref).not.toContain("found[0] + '/'");                // 旧的"第一个活实例"跳转已移除
+    expect(withPref).toContain("'★ '");                             // 跳转目标按钮 ★ 标注(源码 \u2605 运行时即 ★)
+    const noPref = buildPortalHtml();
+    expect(noPref).toContain('var PREFERRED = 0;');                  // CLI/registry 层重写 → 无偏好回退
+    // 落盘链:server 侧 ensureXxx 透传端口
+    expect(readFileSync(ensurePortalPage(dir, 9553), 'utf-8')).toContain('var PREFERRED = 9553;');
+    expect(readFileSync(ensurePackageRootEntry(dir, 'a'.repeat(32), 9554), 'utf-8')).toContain('var PREFERRED = 9554;');
+  });
+
+  it('preferredPort 非法值防御:非整数/越界一律退化为无偏好(0)', () => {
+    for (const bad of [0, -1, 70000, 1.5, Number.NaN] as const) {
+      expect(buildPortalHtml(undefined, bad)).toContain('var PREFERRED = 0;');
+    }
   });
 
   it('与 registry 目录共存(不干扰 pid.json/projects.json/token.txt)', async () => {
@@ -69,7 +90,7 @@ describe('项目目录入口页 面板入口.html(2026-09-16 项目入口批)', 
     expect(p).toBe(join(dir, '面板入口.html'));
     const html = readFileSync(p, 'utf-8');
     expect(html).toContain(tok);                       // token 内嵌
-    expect(html).toContain("withToken('http://127.0.0.1:' + found[0] + '/')");   // 跳转带 token
+    expect(html).toContain("withToken('http://127.0.0.1:' + target + '/')");   // 跳转带 token(根治批:target 挑选)
     if (process.platform !== 'win32') {
       const mode = (statSync(p).mode & 0o777).toString(8);
       expect(mode).toBe('600');                        // registry 同款文件权限(POSIX)

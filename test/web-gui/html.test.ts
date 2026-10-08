@@ -52,14 +52,24 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('项目功能未配置');                     // hello projects:null 空态
   });
   it('项目面板 data-action 值集与端点接线', () => {
-    // 委托覆盖的 action 值:run|edit|remove|scan|add(+ 内联添加行确认)
-    ["'run'", "'edit'", "'remove'", "'scan'", "'add'"].forEach(a => expect(INDEX_HTML).toContain(a));
+    // 委托覆盖的 action 值:reimport|run|edit|remove|scan|add(+ 内联添加行确认)
+    ["'reimport'", "'run'", "'edit'", "'remove'", "'scan'", "'add'"].forEach(a => expect(INDEX_HTML).toContain(a));
     expect(INDEX_HTML).toContain('/api/projects/scan');
     expect(INDEX_HTML).toContain('/api/projects/add');
     expect(INDEX_HTML).toContain('/api/projects/remove');
+    expect(INDEX_HTML).toContain('/api/projects/reimport');
     expect(INDEX_HTML).toContain('/api/sessions/start');
     expect(INDEX_HTML).toContain("es.addEventListener('projects'");    // SSE projects 事件
     expect(INDEX_HTML).toContain('payload.projects');                  // hello 分支 projects 字段消费
+  });
+  // ── 资源重导入批(2026-10-08)──────────────────────────────────────────────
+  it('资源重导入:⟳ 按钮委托 + SSE import 事件 + 409/损坏警示文案', () => {
+    expect(INDEX_HTML).toContain("action === 'reimport'");          // 委托分支
+    expect(INDEX_HTML).toContain('重新导入资源');                     // ⟳ 按钮 title
+    expect(INDEX_HTML).toContain("es.addEventListener('import'");   // SSE import 事件订阅
+    expect(INDEX_HTML).toContain('运行中，请先停止再重导入');          // 409 前移为 disabled UX
+    expect(INDEX_HTML).toContain('疑似被重写');                       // gutted 非空警示文案(TMXYH5)
+    expect(INDEX_HTML).toContain('该项目已在导入中');                  // 互斥 started:false 文案
   });
   it('项目面板 Missing 态/相对时间/零 innerHTML', () => {
     expect(INDEX_HTML).toContain('路径不存在');      // missing 行 Run/Edit disabled 的 title
