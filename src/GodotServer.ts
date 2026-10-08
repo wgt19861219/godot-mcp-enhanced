@@ -65,6 +65,8 @@ import { ProjectsStore } from './web-gui/projects-store.js';
 import { FilesApi } from './web-gui/files-api.js';
 import { UserSettingsService } from './web-gui/settings-api.js';
 import { executeRunProject } from './tools/runtime.js';
+import { needsImport, runImport } from './tools/import-check.js';
+import { acquireImportLock, releaseImportLock } from './web-gui/import-mutex.js';
 import { buildSafeEnv } from './core/godot-finder.js';
 import { getLogger, setLoggerServer, setLoggerClientReady } from './core/logger.js';
 import { setProgressSender, setProgressClientReady } from './core/progress.js';
@@ -597,6 +599,39 @@ export class GodotServer {
         // Task 1 getContext() 真实链路(spec §6 IMP-4):ctx.findGodot/setProjectDir/projectDir
         // 均接真实 dispatcher 状态(合成 no-op 会断活跃指针)。
         const ctx = this.dispatcher!.getContext();
+        // 运行前自动按需导入(资源重导入批 2026-10-08,用户裁决):needsImport mtime 快检
+        // (毫秒级;GODOT_MCP_AUTO_IMPORT=false 时恒 false)命中才跑 --import——面板运行读的
+        // 是 .godot/imported 缓存,编辑器外改的纹理/音频等不重导入则游戏看到旧资源。
+        // ① 先杀同项目旧进程(stopSession 变体:releaseBusy 提前于 kill,且多显式
+        //    clearRunSession——import 前必须收敛干净;executeRunProject 内部的杀进程发生在
+        //    import 之后,故此处须先行。跨项目不受影响(getRunSessionProc 按桶查)。
+        // ② runImport 失败不阻断启动(gdscript-executor warmup 同款语义)——注入层无
+        //    WebGuiServer 引用推不了 SSE,仅 logger.warn 留痕(诚实边界)。手动「⟳」按钮兜底。
+        // ③ 共享互斥(2026-10-08 审查 I-1 修复):与面板「⟳」端点共用模块级 import-mutex
+        //    锁——手动导入进行中则 acquire 排队等待(而非并发再起一个 --import),轮到后
+        //    **双检** needsImport:他人导入成功已更新 mtime 缓存 → false → 跳过重复导入
+        //    零浪费。锁释放走 finally;同进程内有效(跨进程并发由 runImport 报错兜底)。
+        if (needsImport(projectPath)) {
+          const old = ps.getRunSessionProc(projectPath);
+          if (old) {
+            ps.markSessionStopping(projectPath);
+            ps.releaseRunSessionBusy(projectPath);
+            await ps.killProcess(old);
+            ps.clearRunSession(projectPath);
+          }
+          const lockKey = ps.normalizeProjectKey(projectPath);
+          await acquireImportLock(lockKey);
+          try {
+            // 双检:等待期间他人导入成功已更新 mtime 缓存 → false → 跳过重复导入(零浪费)
+            if (needsImport(projectPath)) {
+              await runImport(projectPath, await ctx.findGodot(projectPath), 120_000);
+            }
+          } catch (err) {
+            getLogger().warn('web-gui', `auto import before run failed for ${projectPath}: ${err instanceof Error ? err.message : err}`);
+          } finally {
+            releaseImportLock(lockKey);
+          }
+        }
         const result = await executeRunProject(
           { action: 'run_project', project_path: projectPath, preview: true },   // preview=面板拉起即看
           ctx,
@@ -625,6 +660,14 @@ export class GodotServer {
           getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
         });
         child.unref();
+      },
+      // 资源重导入批(2026-10-08):面板「⟳」按钮 → POST /api/projects/reimport →
+      // godot --headless --import 引擎级扫描+重导入变更资源。120s 超时对齐 check:gdscript
+      // 先例(runImport 默认 60s 偏短,大项目首导可能超分钟)。端点 fire-and-forget,
+      // 失败经 SSE import 事件反馈(ctx.findGodot 带项目级 override 解析)。
+      reimportProject: async (projectPath: string) => {
+        const ctx = this.dispatcher!.getContext();
+        return runImport(projectPath, await ctx.findGodot(projectPath), 120_000);
       },
       // READ_ONLY 状态源与 index.ts:94 同源(spec v2/IMP-3:面板不得绕过 AI 侧 ReadOnlyGuard 防线)
       isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',

@@ -13,6 +13,13 @@ import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest
 import { WebGuiServer, type WebGuiServerOptions, type ProjectsApi } from '../../src/web-gui/server.js';
 import type { ProjectView } from '../../src/web-gui/projects-store.js';
 import { PathError } from '../../src/core/tool-errors.js';
+import { normalizeProjectKey } from '../../src/core/process-state.js';
+import { tryAcquireImportLock, releaseImportLock, resetImportLocks } from '../../src/web-gui/import-mutex.js';
+
+// N-3 断言用:auditWebGui 整 mock 为 spy(现有用例不断言审计落盘,spy no-op 无副作用;
+// auditWebGui 本体行为由 audit-helper.test.ts 独立锁定)。
+const { mockAuditWebGui } = vi.hoisted(() => ({ mockAuditWebGui: vi.fn() }));
+vi.mock('../../src/web-gui/audit-helper.js', () => ({ auditWebGui: mockAuditWebGui }));
 
 const DEMO_VIEW: ProjectView = {
   path: 'D:/demo', name: 'demo', addedAt: '2026-09-15T00:00:00.000Z', source: 'scan',
@@ -100,7 +107,10 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
       if (d) await rm(d, { recursive: true, force: true });
     }
   });
-  afterEach(async () => { if (active) { await active.stop(); active = null; } });
+  afterEach(async () => {
+    if (active) { await active.stop(); active = null; }
+    resetImportLocks();   // 共享互斥模块级状态隔离(2026-10-08 I-1 修复批)
+  });
 
   async function startSrv(hooks: Partial<WebGuiServerOptions> = {}): Promise<{ srv: WebGuiServer; base: string; token: string }> {
     const srv = new WebGuiServer({
@@ -428,6 +438,153 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
     expect(evilScan.status).toBe(403);
     const evilStart = await post(t.base, '/api/sessions/start', t.token, { projectPath: projDir }, { origin: 'http://evil.example' });
     expect(evilStart.status).toBe(403);
+  });
+
+  // ─── POST /api/projects/reimport(资源重导入批 2026-10-08)──────────────────
+  // 校验链对齐 sessions/start:503 → readOnly 403 → 白名单 403 → project.godot
+  // 404 → 运行中 409 → 互斥 → fire 200;完成经 SSE import 事件推送(scan 异步先例)。
+
+  /** SSE 读到指定事件名(跳过定时 sessions/stats 帧;上限防挂死)。 */
+  async function nextNamed(ev: Awaited<ReturnType<typeof connectEvents>>, name: string, max = 10): Promise<{ event: string; data: any }> {
+    for (let i = 0; i < max; i++) {
+      const e = await ev.next();
+      if (e.event === name) return e;
+    }
+    throw new Error(`SSE event ${name} not seen within ${max} frames`);
+  }
+
+  it('reimport:注入缺席 → 503 {error:"not configured"}', async () => {
+    const t = await startSrv(); active = t.srv;   // reimportProject 缺席
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'not configured' });
+  });
+
+  it('reimport:readOnly → 403 且不调回调(导入写 .godot/imported,属写路径)', async () => {
+    const fn = vi.fn(async () => undefined);
+    const t = await startSrv({ reimportProject: fn, isReadOnly: () => true }); active = t.srv;
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'read-only mode' });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('reimport:白名单外 → 403 且不调回调', async () => {
+    const restore = restrictAllowedRoots(workDir);
+    try {
+      const fn = vi.fn(async () => undefined);
+      const t = await startSrv({ reimportProject: fn }); active = t.srv;
+      const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: join(outsideDir, 'evil') });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'path outside allowed roots' });
+      expect(fn).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('reimport:非 Godot 项目 → 404', async () => {
+    const fn = vi.fn(async () => undefined);
+    const t = await startSrv({ reimportProject: fn }); active = t.srv;
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: outsideDir });
+    expect(res.status).toBe(404);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('reimport:项目运行中(alive 会话)→ 409(用户裁决:并发写 .godot/imported 撞文件锁)', async () => {
+    const fn = vi.fn(async () => undefined);
+    const t = await startSrv({
+      reimportProject: fn,
+      getSessions: () => [{
+        projectPath: projDir, displayPath: projDir, status: 'running' as const,
+        pid: 123, processStartTime: 0, busy: false, busyOwner: null, busySince: null, outputLines: 0,
+      }],
+    }); active = t.srv;
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'project is running; stop it first' });
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('reimport:ended 会话不算运行中 → 放行(409 仅拦 alive)', async () => {
+    const fn = vi.fn(async () => undefined);
+    const t = await startSrv({
+      reimportProject: fn,
+      getSessions: () => [{
+        projectPath: projDir, displayPath: projDir, status: 'exited' as const,
+        pid: null, processStartTime: 0, busy: false, busyOwner: null, busySince: null, outputLines: 3,
+      }],
+    }); active = t.srv;
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(res.status).toBe(200);
+    expect(fn).toHaveBeenCalledWith(projDir);
+  });
+
+  it('reimport:成功 → 200 {started:true} 立即返回 + SSE import 事件 {ok:true, report};互斥期内二次请求 → {started:false}', async () => {
+    let release!: (v: unknown) => void;
+    const fn = vi.fn(() => new Promise(r => { release = r; }));
+    const t = await startSrv({ reimportProject: fn }); active = t.srv;
+    const ev = await connectEvents(t.base, t.token);
+    try {
+      await ev.next();   // 丢 hello
+      const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ started: true });
+      // fire-and-forget:响应先于完成(回调仍 pending)
+      expect(fn).toHaveBeenCalledTimes(1);
+      const dup = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+      expect(await dup.json()).toEqual({ started: false, reason: 'importing' });
+      expect(fn).toHaveBeenCalledTimes(1);   // 互斥期内不重入
+      release({ scanned: 3, gutted: [], gitModified: null });
+      const frame = await nextNamed(ev, 'import');
+      expect(frame.data).toEqual({ type: 'done', projectPath: projDir, ok: true, report: { scanned: 3, gutted: [], gitModified: null } });
+      // 完成后互斥集已摘除 → 可再次发起
+      fn.mockImplementationOnce(() => Promise.resolve({}));
+      const again = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+      expect(await again.json()).toEqual({ started: true });
+    } finally {
+      await ev.close();
+    }
+  });
+
+  it('reimport:回调失败 → 200 已启动 + SSE import 事件 {ok:false, error}', async () => {
+    const t = await startSrv({
+      reimportProject: async () => { throw new Error('Import warmup timed out after 120000ms'); },
+    }); active = t.srv;
+    const ev = await connectEvents(t.base, t.token);
+    try {
+      await ev.next();
+      mockAuditWebGui.mockClear();
+      const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ started: true });
+      const frame = await nextNamed(ev, 'import');
+      expect(frame.data.ok).toBe(false);
+      expect(String(frame.data.error)).toContain('timed out');
+      expect(frame.data.projectPath).toBe(projDir);
+      // N-3(2026-10-08 审查修复):异步失败补 auditWebGui 留痕(ok:false + error 摘要)
+      expect(mockAuditWebGui).toHaveBeenCalledWith('projects', 'reimport', 'process', projDir,
+        expect.objectContaining({ ok: false, error: expect.stringContaining('timed out') }));
+    } finally {
+      await ev.close();
+    }
+  });
+
+  it('reimport:锁被 runProject 自动导入持有(共享互斥 I-1)→ {started:false};释放后可发起', async () => {
+    const fn = vi.fn(async () => undefined);
+    const key = normalizeProjectKey(projDir);
+    const t = await startSrv({ reimportProject: fn }); active = t.srv;
+    // 模拟 GodotServer.runProject 自动按需导入持有同一把模块级锁(2026-10-08 I-1 修复:
+    // 端点与自动导入共享 import-mutex,跨入口并发被拦)
+    expect(tryAcquireImportLock(key)).toBe(true);
+    const blocked = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(await blocked.json()).toEqual({ started: false, reason: 'importing' });
+    expect(fn).not.toHaveBeenCalled();
+    releaseImportLock(key);
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ started: true });
+    expect(fn).toHaveBeenCalledWith(projDir);
   });
 });
 

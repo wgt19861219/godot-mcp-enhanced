@@ -15,9 +15,14 @@ import { join } from 'node:path';
 import { webGuiRegistryDir, hardenFilePermissionsWindows, SHARED_TOKEN_RE } from './registry.js';
 
 /** 构建入口页 HTML。token 非空时内嵌(跳转 URL 带 #token=,面板读 hash 握手 cookie 后清 URL,
- *  首次即过鉴权;token 不进 query/服务器日志);形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。 */
-export function buildPortalHtml(token?: string): string {
+ *  首次即过鉴权;token 不进 query/服务器日志);形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。
+ *  preferredPort(根治批 2026-10-08):写入方(server 实例)内嵌自身端口——新实例启动必重写
+ *  入口页,start() 即写,故 preferred = 最近启动的实例;打开时探测活着优先跳它,死了或未内嵌
+ *  (CLI/registry 层重写,无实例上下文)回退挑最大端口(顺延语义下后占高位的多为新实例)。
+ *  修复前挑 found[0](第一个活实例):9550 旧实例常驻时新实例永远轮不到(真机验收发现)。 */
+export function buildPortalHtml(token?: string, preferredPort?: number): string {
   const safeToken = token && SHARED_TOKEN_RE.test(token) ? token : '';
+  const safePort = Number.isInteger(preferredPort) && preferredPort! > 0 && preferredPort! < 65536 ? preferredPort! : 0;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -47,6 +52,7 @@ a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 16px;background:#2d6
 </div>
 <script>
 var TOKEN = ${JSON.stringify(safeToken)};
+var PREFERRED = ${JSON.stringify(safePort)};
 // 2B (2026-09-19 安全加固批2): token 经 hash(#token=)传递而非 query——hash 不发给服务器
 // (访问日志/Referer 不含 token),面板侧读 hash 握手 cookie 后 replaceState 连 hash 清除,
 // session/history 最终为干净 URL。query 通道由 CLI 打开旧链保留,portal 不再使用。
@@ -71,17 +77,21 @@ Promise.all(probes).then(function (alive) {
     st.textContent = '扫描完成:9550-9569 无响应。';
     return;
   }
-  st.textContent = '发现 ' + found.length + ' 个实例,正在进入最新的一个…';
+  // 挑选(根治批 2026-10-08):preferred 活着优先(写入入口页的最近启动实例);
+  // 否则回退最大端口。探测为 no-cors opaque(读不到版本,给 health 开 CORS 会推翻
+  // M-4 收紧决策),故 preferred 是零安全代价下最准的"最新实例"判据。
+  var target = (PREFERRED && found.indexOf(PREFERRED) !== -1) ? PREFERRED : found[found.length - 1];
+  st.textContent = '发现 ' + found.length + ' 个实例,正在进入面板服务(:' + target + ')…';
   for (var i = 0; i < found.length; i++) {
     var a = document.createElement('a');
     a.className = 'btn';
     a.href = withToken('http://127.0.0.1:' + found[i] + '/');
-    a.textContent = '实例 :' + found[i];
+    a.textContent = (found[i] === target ? '\u2605 ' : '') + '实例 :' + found[i];
     list.appendChild(a);
   }
-  // 自动进入第一个活实例(探测序即端口序;点击上方按钮可选其他实例);
-  // 内嵌 token 时 URL 带 ?token= → 首次即过鉴权,前端握手种 cookie 后长期免带。
-  location.replace(withToken('http://127.0.0.1:' + found[0] + '/'));
+  // 自动进入 target(★ 标注;点击上方按钮可选其他实例);
+  // 内嵌 token 时 URL 带 #token= → 首次即过鉴权,前端握手种 cookie 后长期免带。
+  location.replace(withToken('http://127.0.0.1:' + target + '/'));
 });
 </script>
 </body>
@@ -89,12 +99,13 @@ Promise.all(probes).then(function (alive) {
 `;
 }
 
-/** 幂等写入口页到 registry 目录,返回绝对路径(dashboard --web 与 server.start 共用)。 */
-export function ensurePortalPage(dir?: string): string {
+/** 幂等写入口页到 registry 目录,返回绝对路径(dashboard --web 与 server.start 共用)。
+ *  preferredPort 由 server 侧传入(自身端口);CLI 调用方无实例上下文,缺省不内嵌(回退最大端口)。 */
+export function ensurePortalPage(dir?: string, preferredPort?: number): string {
   const d = dir ?? webGuiRegistryDir();
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const filePath = join(d, 'portal.html');
-  writeFileSync(filePath, buildPortalHtml(), { encoding: 'utf-8' });
+  writeFileSync(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
   return filePath;
 }
 
@@ -105,10 +116,10 @@ export const PROJECT_ENTRY_NAME = '面板入口.html';
  * 动机:registry 深路径(~/.godot-mcp/web-gui/portal.html)真机反馈难找——入口直接放
  * 项目文件夹,资源管理器双击即用。护栏:dir/project.godot 存在才写,非 Godot 目录
  * 返回 null 不留文件;内容与 portal.html 同源(同一模板)。 */
-export function ensureProjectPortalEntry(dir: string): string | null {
+export function ensureProjectPortalEntry(dir: string, preferredPort?: number): string | null {
   if (!existsSync(join(dir, 'project.godot'))) return null;
   const filePath = join(dir, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, buildPortalHtml(), { encoding: 'utf-8' });
+  writeFileSync(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
   return filePath;
 }
 
@@ -116,9 +127,9 @@ export function ensureProjectPortalEntry(dir: string): string | null {
  * 双击即带 ?token= 跳转——首次访问即过鉴权并种 cookie,免 CLI/bat 首授权。
  * 开发模式即本仓库根(已 gitignore),npm 模式为 node_modules 内(不入用户 git)。
  * token 落盘按 registry 同款收紧:0o600 + Windows icacls(同机多用户防读)。 */
-export function ensurePackageRootEntry(root: string, token: string): string {
+export function ensurePackageRootEntry(root: string, token: string, preferredPort?: number): string {
   const filePath = join(root, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, buildPortalHtml(token), { encoding: 'utf-8', mode: 0o600 });
+  writeFileSync(filePath, buildPortalHtml(token, preferredPort), { encoding: 'utf-8', mode: 0o600 });
   hardenFilePermissionsWindows(filePath);
   return filePath;
 }

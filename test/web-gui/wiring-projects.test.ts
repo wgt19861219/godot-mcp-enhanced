@@ -27,6 +27,17 @@ vi.mock('../../src/tools/runtime.js', async (importOriginal) => {
   return { ...actual, executeRunProject: mockExecuteRunProject };
 });
 
+// ─── 定向 mock:import-check(资源重导入批 2026-10-08:runProject 自动按需导入 +
+//     reimportProject 注入链的控制在;真实 runImport 会 spawn godot,测试不可跑)───
+const { mockNeedsImport, mockRunImport } = vi.hoisted(() => ({
+  mockNeedsImport: vi.fn().mockReturnValue(false),
+  mockRunImport: vi.fn().mockResolvedValue({ scanned: 0, gutted: [], gitModified: null }),
+}));
+vi.mock('../../src/tools/import-check.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, needsImport: mockNeedsImport, runImport: mockRunImport };
+});
+
 // ─── 定向 mock:ProjectsStore(防真实 ~/.godot-mcp 文件 IO;四方法 spy 断言委托)───
 const { mockListProjects, mockScanProjects, mockAddProject, mockRemoveProject } = vi.hoisted(() => ({
   mockListProjects: vi.fn().mockResolvedValue([]),
@@ -121,6 +132,14 @@ vi.mock('../../src/core/EditorToolExecutor.js', () => ({
 }));
 
 // ─── Mock process-state(部分覆盖——stub close() 清理链所需,其余透传真实模块)───
+// 自动按需导入的杀旧进程四步(getRunSessionProc 默认 null = 分支跳过,单用例覆写)。
+const { mockGetRunSessionProc, mockMarkSessionStopping, mockReleaseRunSessionBusy, mockClearRunSession, mockKillProcess } = vi.hoisted(() => ({
+  mockGetRunSessionProc: vi.fn().mockReturnValue(null),
+  mockMarkSessionStopping: vi.fn(),
+  mockReleaseRunSessionBusy: vi.fn(),
+  mockClearRunSession: vi.fn(),
+  mockKillProcess: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../src/core/process-state.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -134,12 +153,16 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
     setProcessStartTime: vi.fn(),
     getProjectDir: vi.fn().mockReturnValue(''),
     setProjectDir: vi.fn(),
-    killProcess: vi.fn().mockResolvedValue(undefined),
+    killProcess: mockKillProcess,
     getSpawnedGodotPids: vi.fn().mockReturnValue([]),
     killPidTree: vi.fn(),
     unregisterSpawnedGodotPid: vi.fn(),
     killOrphanGodotProcesses: vi.fn().mockResolvedValue(0),
     killAllRunSessions: vi.fn().mockResolvedValue(undefined),
+    getRunSessionProc: mockGetRunSessionProc,
+    markSessionStopping: mockMarkSessionStopping,
+    releaseRunSessionBusy: mockReleaseRunSessionBusy,
+    clearRunSession: mockClearRunSession,
   };
 });
 
@@ -148,6 +171,8 @@ import { GodotServer } from '../../src/GodotServer.js';
 import { WebGuiServer } from '../../src/web-gui/server.js';
 import { ProjectsStore } from '../../src/web-gui/projects-store.js';
 import { executeRunProject } from '../../src/tools/runtime.js';
+import { tryAcquireImportLock, releaseImportLock, isImportLocked, resetImportLocks } from '../../src/web-gui/import-mutex.js';
+import { normalizeProjectKey } from '../../src/core/process-state.js';
 
 /** run() 一次(env='1')并返回 WebGuiServer 构造参数(断言目标);实例登记待 afterEach close。 */
 const pendingServers: Array<{ close: () => Promise<void> }> = [];
@@ -174,6 +199,7 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     process.env.GODOT_MCP_READ_ONLY = prevReadOnly;
     process.env.READ_ONLY_MODE = prevReadOnlyMode;
     vi.clearAllMocks();
+    resetImportLocks();   // 共享互斥模块级状态隔离(2026-10-08 I-1 修复批)
   });
 
   it("env 非 '0':构造参数含 projects/runProject/editProject/isReadOnly 四键;ProjectsStore 构造注入 getSessions", async () => {
@@ -279,6 +305,106 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     expect(spawnOpts.detached).toBe(true);
     expect(spawnOpts.stdio).toBe('ignore');
     expect(typeof spawnOpts.env).toBe('object');   // buildSafeEnv()(helpers.ts)产物
+  });
+
+  // ─── 资源重导入批(2026-10-08):reimportProject 注入 + runProject 自动按需导入 ───
+
+  it('reimportProject 注入:runImport 收 (path, findGodot, 120_000) 并透传 integrity 报告', async () => {
+    mockRunImport.mockResolvedValueOnce({ scanned: 3, gutted: ['a.png.import'], gitModified: null });
+    const opts = await runAndGetOpts();
+    expect(opts.reimportProject, '缺少注入键 reimportProject').toBeDefined();
+    const report = await (opts.reimportProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    expect(mockRunImport).toHaveBeenCalledTimes(1);
+    expect(mockRunImport).toHaveBeenCalledWith('D:/fake/proj', 'C:/fake/godot.exe', 120_000);
+    expect(report).toEqual({ scanned: 3, gutted: ['a.png.import'], gitModified: null });
+  });
+
+  it('runProject 自动按需导入:needsImport=false → runImport 不调,直奔 executeRunProject', async () => {
+    mockNeedsImport.mockReturnValue(false);
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    expect(mockNeedsImport).toHaveBeenCalledWith('D:/fake/proj');
+    expect(mockRunImport).not.toHaveBeenCalled();
+    expect(mockExecuteRunProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('runProject 自动按需导入:needsImport=true → 先 runImport 后 executeRunProject(顺序断言)', async () => {
+    mockNeedsImport.mockReturnValue(true);
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    expect(mockRunImport).toHaveBeenCalledWith('D:/fake/proj', 'C:/fake/godot.exe', 120_000);
+    // 顺序:import 必须先于 spawn(importer 重写缓存不得与游戏进程并发)
+    expect(mockRunImport.mock.invocationCallOrder[0]).toBeLessThan(mockExecuteRunProject.mock.invocationCallOrder[0]);
+  });
+
+  it('runProject 自动按需导入:旧进程在跑 → 杀进程四步先于 runImport(stopSession 同款)', async () => {
+    mockNeedsImport.mockReturnValue(true);
+    mockGetRunSessionProc.mockReturnValueOnce({ pid: 4321 } as never);
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    expect(mockMarkSessionStopping).toHaveBeenCalledWith('D:/fake/proj');
+    expect(mockReleaseRunSessionBusy).toHaveBeenCalledWith('D:/fake/proj');
+    expect(mockClearRunSession).toHaveBeenCalledWith('D:/fake/proj');
+    // 杀进程完成先于 import(killProcess await 后才 runImport)
+    expect(mockKillProcess.mock.invocationCallOrder[0]).toBeLessThan(mockRunImport.mock.invocationCallOrder[0]);
+  });
+
+  it('runProject 自动按需导入:runImport 失败 → 不阻断启动(warn 语义,executeRunProject 仍执行)', async () => {
+    mockNeedsImport.mockReturnValue(true);
+    mockRunImport.mockRejectedValueOnce(new Error('Import warmup timed out after 120000ms'));
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    const r = await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    expect(mockExecuteRunProject).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ content: [{ type: 'text', text: 'Preview mode: ok' }] });   // 启动结果原样返回
+  });
+
+  // ─── I-1 修复(2026-10-08 审查):自动导入与面板 ⟳ 端点共享 import-mutex ───
+
+  it('I-1 反向:⟳ 持锁时 runProject 排队等待(不并发起 import),锁释放后继续', async () => {
+    mockNeedsImport.mockReturnValue(true);
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    const key = normalizeProjectKey('D:/fake/proj');
+    expect(tryAcquireImportLock(key)).toBe(true);   // 模拟手动 ⟳ 端点先持有共享锁
+    const pending = (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    await new Promise(r => setTimeout(r, 20));
+    expect(mockRunImport).not.toHaveBeenCalled();    // 排队中——不再并发起第二个 --import
+    expect(mockExecuteRunProject).not.toHaveBeenCalled();
+    releaseImportLock(key);                          // 手动导入完成
+    await pending;
+    expect(mockRunImport).toHaveBeenCalledTimes(1);  // 轮到后才导入(双检仍 true)
+    expect(mockExecuteRunProject).toHaveBeenCalledTimes(1);
+  });
+
+  it('I-1 双检:等待期间他人导入完成(needsImport 二次 false)→ 跳过重复导入但照常启动', async () => {
+    mockNeedsImport.mockReset().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockExecuteRunProject.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    const key = normalizeProjectKey('D:/fake/proj');
+    tryAcquireImportLock(key);
+    const pending = (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');
+    await new Promise(r => setTimeout(r, 20));
+    releaseImportLock(key);
+    await pending;
+    expect(mockNeedsImport).toHaveBeenCalledTimes(2);            // 段首 + 锁内双检
+    expect(mockRunImport).not.toHaveBeenCalled();                // 他人已导入 → 不重复
+    expect(mockExecuteRunProject).toHaveBeenCalledTimes(1);      // 启动不受影响
+  });
+
+  it('I-1 锁释放:自动导入成功/失败路径结束后锁均释放(finally)', async () => {
+    const key = normalizeProjectKey('D:/fake/proj');
+    mockNeedsImport.mockReturnValue(true);
+    mockExecuteRunProject.mockResolvedValue({ content: [{ type: 'text', text: 'Preview mode: ok' }] });
+    const opts = await runAndGetOpts();
+    await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');   // 成功路径
+    expect(isImportLocked(key)).toBe(false);
+    mockRunImport.mockRejectedValueOnce(new Error('boom'));
+    await (opts.runProject as (p: string) => Promise<unknown>)('D:/fake/proj');  // 失败路径
+    expect(isImportLocked(key)).toBe(false);
   });
 
   it('isReadOnly 状态源与 index.ts 同源:GODOT_MCP_READ_ONLY / READ_ONLY_MODE', async () => {

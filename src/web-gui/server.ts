@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { killPidTree, type RunSessionDetailed } from '../core/process-state.js';
+import { killPidTree, normalizeProjectKey, isAliveStatus, type RunSessionDetailed } from '../core/process-state.js';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
@@ -31,6 +31,7 @@ import { isPathInAllowedRoots } from '../core/path-utils.js';
 import { hasEnvGodotConfig } from '../core/user-settings.js';
 import { PathError } from '../core/tool-errors.js';
 import { FilesError, type FilesApi, type FilesErrorCode } from './files-api.js';
+import { tryAcquireImportLock, releaseImportLock } from './import-mutex.js';
 import type { ProjectView } from './projects-store.js';
 import type { SettingsApi } from './settings-api.js';
 
@@ -73,6 +74,10 @@ export interface WebGuiServerOptions {
   runProject?: (projectPath: string) => Promise<unknown>;
   /** POST /api/sessions/start(mode=edit)回调;缺席 → 503。 */
   editProject?: (projectPath: string) => Promise<unknown>;
+  /** POST /api/projects/reimport(资源重导入批 2026-10-08)回调:跑 godot --headless
+   *  --import 引擎级扫描+重导入。端点 fire-and-forget,完成经 SSE import 事件推送;
+   *  缺席 → 503。 */
+  reimportProject?: (projectPath: string) => Promise<unknown>;
   /** READ_ONLY 判定(spec v2/IMP-3,接线层取 GODOT_MCP_READ_ONLY 同源状态);缺席视为非只读。 */
   isReadOnly?: () => boolean;
   /** 设置面板(2026-09-29 设置批):get/verify/save 三方法注入;缺席 → 设置端点 503。 */
@@ -266,7 +271,8 @@ export class WebGuiServer {
     void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
     // file:// 入口页幂等落盘(2026-09-16):server 启动即确保 portal.html 存在,
     // 用户的 file:/// 书签永远有一个能响应的本地入口(扫描跳转活实例)。
-    try { ensurePortalPage(this.opts.registryDir); } catch { /* 入口页失败不影响服务 */ }
+    // 根治批(2026-10-08):内嵌自身端口——新实例启动必写,入口页 preferred 即最近实例。
+    try { ensurePortalPage(this.opts.registryDir, this.portValue); } catch { /* 入口页失败不影响服务 */ }
     // 项目目录入口页(2026-09-16 项目入口批):登记项目 + CWD(若为 Godot 项目)各放一份
     // 「面板入口.html」——registry 深路径难找的真机反馈,入口放用户天天开的项目文件夹。
     this.refreshProjectEntries();
@@ -417,7 +423,7 @@ export class WebGuiServer {
           || url.pathname === '/api/projects/add' || url.pathname === '/api/projects/remove'
           || url.pathname === '/api/projects/file' || url.pathname === '/api/settings'
           || url.pathname === '/api/settings/verify' || url.pathname === '/api/instances/restart'
-          || url.pathname === '/api/shutdown') {
+          || url.pathname === '/api/projects/reimport' || url.pathname === '/api/shutdown') {
           void this.handleApiPost(req, res, url);
           return;
         }
@@ -988,6 +994,53 @@ export class WebGuiServer {
       if (typeof projectPath !== 'string' || projectPath.length === 0) {
         return json(400, { error: 'projectPath required' });
       }
+      // ── POST /api/projects/reimport(资源重导入批 2026-10-08:503 → readOnly 403 →
+      //    白名单 403 → project.godot 404 → 运行中 409 → 互斥 → fire 200)─────────
+      if (url.pathname === '/api/projects/reimport') {
+        const fn = this.opts.reimportProject;
+        if (!fn) return json(503, { error: 'not configured' });
+        if (this.opts.isReadOnly?.()) {   // 导入写 .godot/imported,属写路径(对齐 start 拦截)
+          getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=403_readonly`);
+          auditWebGui('projects', 'reimport', 'process', projectPath, { ok: false, error: 'read-only mode' });
+          return json(403, { error: 'read-only mode' });
+        }
+        if (!isPathInAllowedRoots(projectPath)) {
+          getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=403`);
+          auditWebGui('projects', 'reimport', 'process', projectPath, { ok: false, error: 'path outside allowed roots' });
+          return json(403, { error: 'path outside allowed roots' });
+        }
+        if (!existsSync(join(projectPath, 'project.godot'))) {
+          getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=404`);
+          return json(404, { error: 'not a godot project' });
+        }
+        // 运行中拒绝(用户裁决 2026-10-08):importer 重写 .godot/imported 与运行中游戏
+        // 并发访问会在 Windows 撞文件锁——先拒绝并提示停止。isAliveStatus/normalizeProjectKey
+        // 与 server 侧会话语义同源(process-state);毫秒级竞态窗由 runImport 自身报错兜底。
+        const key = normalizeProjectKey(projectPath);
+        const running = this.opts.getSessions().some(
+          (s) => normalizeProjectKey(s.projectPath) === key && isAliveStatus(s.status),
+        );
+        if (running) {
+          getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=409`);
+          return json(409, { error: 'project is running; stop it first' });
+        }
+        // 共享互斥(2026-10-08 审查 I-1 修复):tryAcquire 非阻塞——占用即 {started:false}
+        // (占用方可能是本端点先前的 fire,也可能是 runProject 自动按需导入,两者共用
+        // 模块级 import-mutex 锁;排队等待仅自动导入路径使用,端点恒非阻塞)。
+        if (!tryAcquireImportLock(key)) {
+          getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=200_duplicate`);
+          return json(200, { started: false, reason: 'importing' });
+        }
+        // 异步起、立即返回(scan 先例):--import 可能耗时数十秒,同步等会挂起 fetch;
+        // 完成/失败经 SSE import 事件推送(pushImportDone 释放锁)。
+        void Promise.resolve(fn(projectPath)).then(
+          (r) => this.pushImportDone(projectPath, key, true, r),
+          (err: unknown) => this.pushImportDone(projectPath, key, false, err),
+        );
+        getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=200`);
+        auditWebGui('projects', 'reimport', 'process', projectPath);
+        return json(200, { started: true });
+      }
       // ── POST /api/sessions/stop(面板控制第一版既有语义)─────────────────────
       if (url.pathname === '/api/sessions/stop') {
         const fn = this.opts.stopSession;
@@ -1277,13 +1330,13 @@ export class WebGuiServer {
     // 出口);registry 目录 portal.html(start() 的 ensurePortalPage)不受本开关管辖,仍写。
     if (this.opts.isReadOnly?.()) return;
     if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
-    try { ensurePackageRootEntry(this.packageRoot, this.token); } catch { /* 包根写失败不影响其余 */ }
+    try { ensurePackageRootEntry(this.packageRoot, this.token, this.portValue); } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {
       if (list) for (const p of list) dirs.add(p.path);
       let written = 0;
       for (const dir of dirs) {
-        try { if (ensureProjectPortalEntry(dir)) written++; } catch { /* 单目录失败不影响其余 */ }
+        try { if (ensureProjectPortalEntry(dir, this.portValue)) written++; } catch { /* 单目录失败不影响其余 */ }
       }
       if (written > 0) getLogger().info('web-gui', `project portal entries refreshed: ${written}`);
     }).catch(() => { /* 刷新失败不影响服务 */ });
@@ -1292,5 +1345,28 @@ export class WebGuiServer {
   private broadcastProjectsEvent(data: unknown): void {
     if (this.sseClients.size === 0) return;
     for (const res of this.sseClients) this.sendEvent(res, 'projects', data);
+  }
+
+  // ─── 资源重导入 SSE(资源重导入批 2026-10-08)────────────────────────────────
+  /** 导入完成/失败 → 释放共享锁 + `import` 事件广播。payload 契约(html.ts 消费):
+   *  成功 {type:'done', projectPath, ok:true, report}——report 为回调返回的 integrity
+   *  报告(gutted 非空 = .import 疑似被重写损坏,前端须显式警示);
+   *  失败 {type:'done', projectPath, ok:false, error}。事件名 'import' 与既有五事件
+   *  (hello/log/sessions/stats/projects)并列,前端 addEventListener('import')。
+   *  N-3(2026-10-08 审查修复):异步失败补 auditWebGui 留痕——发起时的成功留痕
+   *  不足以还原"导入实际失败",补 ok:false + error(对齐 sessions/start 失败留痕面;
+   *  scan 无单一 projectPath,不适用本函数语义,维持现状)。 */
+  private pushImportDone(projectPath: string, key: string, ok: boolean, payload: unknown): void {
+    releaseImportLock(key);
+    if (!ok) {
+      const msg = payload instanceof Error ? payload.message : String(payload);
+      getLogger().warn('web-gui', `projects reimport failed for ${projectPath}: ${msg}`);
+      auditWebGui('projects', 'reimport', 'process', projectPath, { ok: false, error: msg.slice(0, 200) });
+    }
+    if (this.sseClients.size === 0) return;
+    const data = ok
+      ? { type: 'done', projectPath, ok: true, report: payload }
+      : { type: 'done', projectPath, ok: false, error: payload instanceof Error ? payload.message : String(payload) };
+    for (const res of this.sseClients) this.sendEvent(res, 'import', data);
   }
 }
