@@ -97,13 +97,17 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 资源重导入批 (2026-10-08) 八次重锚:项目行新增 ⟳ 重导入按钮(禁用态双条件)+
     // reimportProject POST 函数 + SSE import 事件订阅,脚本内容变更 → hash 轮换;
     // 同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-JmarQqoSp/8bTCzlwgFG1duecaYgi5WGoCbIi5LH+e8='");
+    // 独立窗口批 merge (2026-10-13) 九次重锚:分支 safeBody() 六处收口合入 + master
+    // 分叉后新增五处 fetch(loadInstances/reimport 成功路径/loadSettings/verifySettings/
+    // saveSettings)统一接入 safeBody(401 空体误报根治延伸),脚本内容变更 → hash
+    // 轮换;同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-UYk8Ce7dbWN62xkjzMLqlai9x6KVgwNigM9Jp3oiW6Q='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('JmarQqoSp/8bTCzlwgFG1duecaYgi5WGoCbIi5LH+e8=');   // 独立重算与锚互证
+    expect(hash).toBe('UYk8Ce7dbWN62xkjzMLqlai9x6KVgwNigM9Jp3oiW6Q=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });

@@ -17,6 +17,7 @@ import { killPidTree, normalizeProjectKey, isAliveStatus, type RunSessionDetaile
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
+import { ensurePackageRootAppLauncher } from './app-window.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
 // 批4-T8(五维评估 P2 抗抵赖): 写端点统一审计出口——sessions/process、projects/write
@@ -1322,7 +1323,9 @@ export class WebGuiServer {
 
   /** 为包根、CWD 与全部登记项目目录刷新「面板入口.html」(项目入口批 2026-09-16)。
    *  fire-and-forget:start/add/scan 完成后调用,不阻塞响应;单目录写失败跳过其余继续。
-   *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。 */
+   *  包根版内嵌 token(零门槛授权,双击直达);CWD/登记项目走 project.godot 护栏不内嵌。
+   *  包根另落双击件「面板独立窗口.bat」(独立窗口批 2026-09-16):App 模式直达入口页,
+   *  bat 自身零敏感信息(token 由入口页内嵌),非 win32 平台内部自动跳过。 */
   private refreshProjectEntries(): void {
     // M-3(2026-09-17 审查):READ_ONLY 语义不得在"向用户项目目录写文件"维度被穿透
     // (start/scan 完成/add 成功三时点共用本方法,头部短路全覆盖);
@@ -1330,7 +1333,10 @@ export class WebGuiServer {
     // 出口);registry 目录 portal.html(start() 的 ensurePortalPage)不受本开关管辖,仍写。
     if (this.opts.isReadOnly?.()) return;
     if (process.env.GODOT_MCP_WEB_GUI_ENTRY === '0') return;
-    try { ensurePackageRootEntry(this.packageRoot, this.token, this.portValue); } catch { /* 包根写失败不影响其余 */ }
+    try {
+      ensurePackageRootEntry(this.packageRoot, this.token, this.portValue);
+      ensurePackageRootAppLauncher(this.packageRoot);
+    } catch { /* 包根写失败不影响其余 */ }
     const dirs = new Set<string>([process.cwd()]);
     void this.safeProjectsList().then((list) => {
       if (list) for (const p of list) dirs.add(p.path);

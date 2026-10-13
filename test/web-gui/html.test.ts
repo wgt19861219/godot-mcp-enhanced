@@ -167,10 +167,24 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('renderHex');                     // 渲染函数
     expect(INDEX_HTML).toContain('仅前 4KB');                       // 截断提示
     expect(INDEX_HTML).toContain('toString(16)');                   // 偏移 hex 化
-    expect(INDEX_HTML).toContain('!r.ok && r.status === 401');    // 401 哨兵对象行为码(fix 复审 round 2:锁先判状态的分支结构,非旧代码已有的字面量)
+    expect(INDEX_HTML).toContain('.then(safeBody)');                // 401/403 空体防线统一 safeBody(旧哨兵只挡 401,2026-09-16 误报修复批升级)
   });
   it('二进制路由:openFileEntry 其余分支走 hex', () => {
     expect(INDEX_HTML).toContain("openPreview(rel, 'hex')");       // 等价拼接形态:rel=sub+name(hex 端点契约 path 相对项目根),同 img/audio 分支
+  });
+
+  // ── 网络异常误报修复批(2026-09-16,真机反馈:扫描 401 显示「网络异常,扫描请求未送达」)──
+  it('safeBody:响应体安全解析——空体/非 JSON 不再 reject 落 catch 伪装网络异常', () => {
+    expect(INDEX_HTML).toContain('function safeBody');              // 帮助函数定义
+    expect(INDEX_HTML).toContain('try { j = t ? JSON.parse(t) : null; }');   // 空体→null,非 JSON→null(catch 吞)
+    expect(INDEX_HTML).not.toContain('r.json().then');              // 六处 fetch 全部替换干净(代码级,注释除外——本断言匹配不到注释因写法不同)
+  });
+  it('401 准确文案:scan/add/loadDir/loadFile/save 各失败分支按 status 提示鉴权失效', () => {
+    // 指引闭环(2026-09-16 误报修复批):刷新不解决 token 缺失(qs 已被 replaceState 清、
+    // sessionStorage per-origin 迁移即丢),回入口页(带 token 跳转)才闭环
+    const hits = INDEX_HTML.match(/鉴权失效,请从 面板入口\.html 重新进入/g) ?? [];
+    expect(hits.length).toBeGreaterThanOrEqual(5);                  // scan/add/loadDir/loadFile/save/hex 至少 5 处
+    expect(INDEX_HTML).toContain("r.status === 401 ? '扫描失败: 鉴权失效");   // 触发用户反馈的 scan 路径
   });
 
   // ── 入口简化+自愈批(2026-09-16,用户确认):断线自动找活实例 + 友好死页 ──────

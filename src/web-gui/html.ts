@@ -292,13 +292,12 @@ export const INDEX_HTML: string = `<!doctype html>
   // 只带 data-action + data-pid,#instPane 容器一次性委托(同 #sessions 模式);列表
   // 低频变化,15s 静默轮询 + 重启后定向确认。
   function loadInstances() {
-    authFetch('/api/instances').then(function (r) {
-      if (!r.ok) return;
-      return r.json().then(function (v) {
-        state.mePid = v.me || 0;
-        state.instances = Array.isArray(v.instances) ? v.instances : [];
-        renderInstances();
-      });
+    authFetch('/api/instances').then(safeBody).then(function (r) {
+      if (!r.ok || !r.body) return;
+      var v = r.body;
+      state.mePid = v.me || 0;
+      state.instances = Array.isArray(v.instances) ? v.instances : [];
+      renderInstances();
     }).catch(function () { /* 静默轮询,失败下轮再试 */ });
   }
 
@@ -487,22 +486,21 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ projectPath: path }),
-    }).then(function (r) {
+    }).then(safeBody).then(function (r) {   // safeBody 统一(2026-10-13 merge 适配):旧 !r.ok 分支手工 r.text 先行、成功路径 r.json() 空体仍 reject;401 原落 else 显示空文案
+      var ts = r.body === null ? '' : JSON.stringify(r.body);
       if (!r.ok) {
-        return r.text().then(function (t) {
-          var msg;
-          if (r.status === 403 && t.indexOf('read-only') !== -1) { state.readOnly = true; msg = '只读模式，重导入已禁用'; }
-          else if (r.status === 403) msg = '路径在白名单之外';
-          else if (r.status === 404) msg = '不是 Godot 项目';
-          else if (r.status === 409) msg = '项目运行中，请先停止再重导入';
-          else msg = t.slice(0, 80);
-          $('statusBar').textContent = '重导入失败: ' + msg;
-        });
+        var msg;
+        if (r.status === 401) msg = '鉴权失效,请从 面板入口.html 重新进入';
+        else if (r.status === 403 && ts.indexOf('read-only') !== -1) { state.readOnly = true; msg = '只读模式，重导入已禁用'; }
+        else if (r.status === 403) msg = '路径在白名单之外';
+        else if (r.status === 404) msg = '不是 Godot 项目';
+        else if (r.status === 409) msg = '项目运行中，请先停止再重导入';
+        else msg = ts.slice(0, 80);
+        $('statusBar').textContent = '重导入失败: ' + msg;
+        return;
       }
-      return r.json().then(function (j) {
-        if (j && j.started === false) { $('statusBar').textContent = '该项目已在导入中,请等待完成'; return; }
-        $('statusBar').textContent = '导入指令已发出,等待完成';
-      });
+      if (r.body && r.body.started === false) { $('statusBar').textContent = '该项目已在导入中,请等待完成'; return; }
+      $('statusBar').textContent = '导入指令已发出,等待完成';
     }).catch(function () { $('statusBar').textContent = '网络异常,重导入请求未送达'; });
   }
 
@@ -521,13 +519,30 @@ export const INDEX_HTML: string = `<!doctype html>
     }).catch(function () { $('statusBar').textContent = '网络异常,移除请求未送达'; });
   }
 
+  // 响应体安全解析(2026-09-16 网络异常误报修复):server 鉴权失败只写状态码无响应体
+  // (writeHead(401/403).end()),先 r.json() 必 parse('') reject 落 catch,把「鉴权失效」
+  // 伪装成「网络异常,XX请求未送达」(真机反馈:扫描按钮 401 显示网络异常)。统一 text
+  // 先行:空体/非 JSON → body:null,控制流落第二层 !r.ok 分支按 status 给准确文案;
+  // 只有真网络层失败(连接拒绝/中断)才落 catch 的「网络异常」。
+  function safeBody(r) {
+    return r.text().then(function (t) {
+      var j = null;
+      try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
+      return { ok: r.ok, status: r.status, body: j };
+    });
+  }
+
   // 扫描:异步起,立即返回;进度与结果由 SSE projects 事件接管(spec §4/§5)
   function startScan() {
     $('statusBar').textContent = '扫描中…';
     fetch('/api/projects/scan', { method: 'POST', headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
-        if (!r.ok) { $('statusBar').textContent = '扫描失败: ' + JSON.stringify(r.body).slice(0, 80); return; }
+        if (!r.ok) {
+          $('statusBar').textContent = r.status === 401 ? '扫描失败: 鉴权失效,请从 面板入口.html 重新进入'
+            : '扫描失败: ' + JSON.stringify(r.body).slice(0, 80);
+          return;
+        }
         if (r.body && r.body.started === false) { $('statusBar').textContent = '扫描已在进行中,进度见状态栏'; return; }   // §3.1.1 互斥
         $('statusBar').textContent = '扫描中…';   // SSE 接管进度显示
       })
@@ -568,7 +583,7 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ path: p }),
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+    }).then(safeBody)   // safeBody 携带 status——旧打包漏 status,下面 403/404 分支从不命中
       .then(function (r) {
         var body = r.body || {};
         if (r.ok && body.ok === false) {   // 200 + {ok:false,reason}(Task 3 契约:duplicate|full)
@@ -576,8 +591,9 @@ export const INDEX_HTML: string = `<!doctype html>
           return;
         }
         if (!r.ok) {
-          $('statusBar').textContent = r.status === 403 ? '路径在白名单之外'
-            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)' : '添加失败: ' + JSON.stringify(body).slice(0, 80));
+          $('statusBar').textContent = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 403 ? '路径在白名单之外'
+            : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)' : '添加失败: ' + JSON.stringify(body).slice(0, 80)));
           return;
         }
         $('statusBar').textContent = '已添加';
@@ -611,20 +627,20 @@ export const INDEX_HTML: string = `<!doctype html>
   // POST /api/settings/verify {path} → {ok, version} | {ok:false, stage, detail}。
   // 表单填充用 persisted(用户上次的显式设置),生效值另列只读信息区。
   function loadSettings() {
-    authFetch('/api/settings').then(function (r) {
+    authFetch('/api/settings').then(safeBody).then(function (r) {
       if (r.status === 401 || r.status === 403) { $('setSaveHint').textContent = '设置读取失败(无权限)'; return; }
-      return r.json().then(function (v) {
-        $('setGodotPath').value = (v.persisted && v.persisted.godotPath) || '';
-        $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\\n') : '';   // 反斜杠n须双写:模板字符串内单写会被求值成真实换行,炸掉浏览器脚本语法(2026-09-30 面板死锁根因)
-        renderSettingsCands(v.candidates || []);
-        renderSettingsInfo(v);
-        $('setGodotResult').textContent = '';
-        $('setSaveHint').textContent = '';
-        if (v.readOnly) { $('setSave').disabled = true; $('setSaveHint').textContent = '只读模式,保存已禁用'; }
-        // 首启预检黄条随保存刷新(终验收 V1):effective 反映热生效后 env(保存成功
-        // 回调重拉本视图);hello 重连前提示状态由此保持最新。
-        updateCfgWarn(!!(v.effective && (v.effective.godotPath !== '' || (v.effective.allowedProjectPaths && v.effective.allowedProjectPaths.length > 0))));
-      });
+      if (!r.ok || !r.body) return;
+      var v = r.body;
+      $('setGodotPath').value = (v.persisted && v.persisted.godotPath) || '';
+      $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\\n') : '';   // 反斜杠n须双写:模板字符串内单写会被求值成真实换行,炸掉浏览器脚本语法(2026-09-30 面板死锁根因)
+      renderSettingsCands(v.candidates || []);
+      renderSettingsInfo(v);
+      $('setGodotResult').textContent = '';
+      $('setSaveHint').textContent = '';
+      if (v.readOnly) { $('setSave').disabled = true; $('setSaveHint').textContent = '只读模式,保存已禁用'; }
+      // 首启预检黄条随保存刷新(终验收 V1):effective 反映热生效后 env(保存成功
+      // 回调重拉本视图);hello 重连前提示状态由此保持最新。
+      updateCfgWarn(!!(v.effective && (v.effective.godotPath !== '' || (v.effective.allowedProjectPaths && v.effective.allowedProjectPaths.length > 0))));
     }).catch(function () { $('setSaveHint').textContent = '网络异常,设置读取失败'; });
   }
 
@@ -663,7 +679,9 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ path: p }),
-    }).then(function (r) { return r.json(); }).then(function (v) {
+    }).then(safeBody).then(function (r) {
+      if (!r.ok) { out.className = 'set-result err'; out.textContent = r.status === 401 ? '✗ 鉴权失效,请从 面板入口.html 重新进入' : '✗ 校验失败'; return; }
+      var v = r.body;
       if (v && v.ok) { out.className = 'set-result ok'; out.textContent = '✓ ' + v.version; }
       else { out.className = 'set-result err'; out.textContent = '✗ ' + ((v && (v.detail || v.stage)) || '校验失败'); }
     }).catch(function () { out.className = 'set-result err'; out.textContent = '网络异常,验证请求未送达'; });
@@ -678,11 +696,12 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ godotPath: godot, allowedProjectPaths: allowed }),
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+    }).then(safeBody)
       .then(function (r) {
         if (r.ok) { $('setSaveHint').textContent = '已保存并立即生效(重启后仍生效)'; loadSettings(); return; }
         btn.disabled = false;
-        if (r.status === 403 && JSON.stringify(r.body).indexOf('read-only') !== -1) {   // 对齐 startSession/saveEditor I-2 判定
+        if (r.status === 401) { $('setSaveHint').textContent = '保存失败: 鉴权失效,请从 面板入口.html 重新进入'; return; }
+        if (r.status === 403 && JSON.stringify(r.body).indexOf('read-only') !== -1) {   // 对齐 startSession/saveEditor I-2 判定;body 可能 null(JSON.stringify('null') 不含 read-only,安全)
           state.readOnly = true;
           $('setSaveHint').textContent = '只读模式,保存已禁用';
           return;
@@ -704,12 +723,13 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '读取目录中…';
     fetch('/api/projects/files?project=' + encodeURIComponent(filesState.project) + '&sub=' + encodeURIComponent(filesState.sub),
       { headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
         if (!r.ok) {
-          var msg = r.status === 403 ? '路径在白名单之外'
+          var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 403 ? '路径在白名单之外'
             : (r.status === 404 ? '不是 Godot 项目(缺 project.godot)'
-            : (r.status === 503 ? '文件功能未配置' : JSON.stringify(r.body).slice(0, 80)));
+            : (r.status === 503 ? '文件功能未配置' : JSON.stringify(r.body).slice(0, 80))));
           $('statusBar').textContent = '目录读取失败: ' + msg;
           return;
         }
@@ -849,18 +869,10 @@ export const INDEX_HTML: string = `<!doctype html>
       box.appendChild(ph); host.appendChild(box);
       fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=hex',
         { headers: { 'x-gui-token': token } })
-        .then(function (r) {
-          // 401 空体防线(审查 I-1 / 复审 round 2):server 鉴权 401 只写状态码、无响应
-          // 体(server.ts 写头即 end),先 r.json() 必 parse('') reject 落 catch。此处返回
-          // 哨兵对象(非裸 return——undefined 穿透会让下一层 !r.ok 访问 undefined.ok 抛
-          // TypeError 再落 catch 覆盖文案),控制流落进第二层既有 !r.ok → 401 三元文案;
-          // body:null 对第二层安全(401/403/404 三元支均不读 body)。
-          if (!r.ok && r.status === 401) { return { ok: r.ok, status: r.status, body: null }; }
-          return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
-        })
+        .then(safeBody)   // 401/403 空体防线(审查 I-1 → 2026-09-16 统一 safeBody,旧哨兵只挡 401)
         .then(function (r) {
           if (!r.ok) {
-            var msg = r.status === 401 ? '鉴权失效,请刷新页面'
+            var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
               : (r.status === 403 ? '路径在白名单之外'
               : (r.status === 404 ? '文件不存在' : JSON.stringify(r.body).slice(0, 80)));
             ph.textContent = '十六进制读取失败: ' + msg;
@@ -961,13 +973,14 @@ export const INDEX_HTML: string = `<!doctype html>
     $('statusBar').textContent = '读取文件中… ' + rel;
     fetch('/api/projects/file?project=' + encodeURIComponent(filesState.project) + '&path=' + encodeURIComponent(rel) + '&mode=text',
       { headers: { 'x-gui-token': token } })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+      .then(safeBody)
       .then(function (r) {
         if (!r.ok) {
-          var msg = r.status === 400 ? '不支持的扩展名(非文本类)'
+          var msg = r.status === 401 ? '鉴权失效,请从 面板入口.html 重新进入'
+            : (r.status === 400 ? '不支持的扩展名(非文本类)'
             : (r.status === 403 ? '路径在白名单之外'
             : (r.status === 404 ? '文件不存在'
-            : (r.status === 413 ? '文件超限' : JSON.stringify(r.body).slice(0, 80))));
+            : (r.status === 413 ? '文件超限' : JSON.stringify(r.body).slice(0, 80)))));
           $('statusBar').textContent = '文件读取失败: ' + msg;
           return;
         }
@@ -1044,7 +1057,7 @@ export const INDEX_HTML: string = `<!doctype html>
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
       body: JSON.stringify({ project: filesState.project, path: editorState.rel, content: content, baseMtime: editorState.baseMtime }),
-    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); })
+    }).then(safeBody)
       .then(function (r) {
         if (btn) btn.disabled = false;
         if (r.ok) {
@@ -1054,6 +1067,7 @@ export const INDEX_HTML: string = `<!doctype html>
           return;
         }
         if (r.status === 409) { showConflict(r.body && r.body.latest); return; }
+        if (r.status === 401) { setEdStatus('保存失败: 鉴权失效,请从 面板入口.html 重新进入'); return; }
         if (r.status === 403) {   // 双源区分(对齐 startSession I-2 判定)
           if (JSON.stringify(r.body).indexOf('read-only') !== -1) { enterReadOnly(); return; }
           setEdStatus('保存失败: 路径在白名单之外');

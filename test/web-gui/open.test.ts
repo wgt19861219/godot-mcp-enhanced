@@ -80,6 +80,19 @@ describe('dashboard --web(设计 §6)', () => {
       spy.mockRestore();
     }
   });
+
+  // ─── App 窗口模式(2026-09-16 独立窗口批):appWindow 透传给 opener ───────────
+  // (merge 适配 2026-10-13:URL 断言从分支旧 query 通道改为 master hash 通道 #token=)
+
+  it('appWindow=true:opener 第二参为 true(单实例场景);缺省为 false 保持标签页行为', async () => {
+    await writeRegistration({ pid: process.pid, port: 9550, token: 'tok1', startedAt: 't' }, { dir });
+    const seen: Array<{ url: string; app: boolean }> = [];
+    const opener = (url: string, app?: boolean) => seen.push({ url, app: app === true });
+    await openWebDashboard({ opener, registryDir: dir, isPidAlive: ALIVE, appWindow: true });
+    expect(seen).toEqual([{ url: 'http://127.0.0.1:9550/#token=tok1', app: true }]);
+    await openWebDashboard({ opener, registryDir: dir, isPidAlive: ALIVE });
+    expect(seen[1]).toEqual({ url: 'http://127.0.0.1:9550/#token=tok1', app: false });
+  });
 });
 
 // ─── Task 9 review 交接:webGuiActive 三态传播正式断言(真实实例驱动) ──────────
