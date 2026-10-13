@@ -40,12 +40,13 @@ function normalizeGodotStage(stage: string): { stage: string; message: string } 
 }
 
 export interface SettingsView {
-  persisted: { godotPath: string; allowedProjectPaths: string[] };
+  persisted: { godotPath: string; allowedProjectPaths: string[]; vaultPath: string };
   effective: {
     godotPath: string;
     allowedProjectPaths: string[];
     unrestricted: boolean;
     godotAllowedList: string;
+    vaultPath: string;
   };
   /** godot-paths.json 已登记候选(CLI install 写入;只读点选,本批不做增删)。 */
   candidates: string[];
@@ -57,6 +58,8 @@ export interface SettingsSavePatch {
   godotPath?: string;
   /** 项目白名单根数组;[] = 清除;undefined = 不改。 */
   allowedProjectPaths?: string[];
+  /** Obsidian vault 根目录;'' = 清除;undefined = 不改。(2026-10-08 知识库联动批) */
+  vaultPath?: string;
 }
 
 export type SettingsSaveResult =
@@ -92,12 +95,17 @@ export class UserSettingsService implements SettingsApi {
   async get(): Promise<SettingsView> {
     const s = await readUserSettings(this.settingsDir);
     return {
-      persisted: { godotPath: s.godotPath ?? '', allowedProjectPaths: s.allowedProjectPaths ?? [] },
+      persisted: {
+        godotPath: s.godotPath ?? '',
+        allowedProjectPaths: s.allowedProjectPaths ?? [],
+        vaultPath: s.vaultPath ?? '',
+      },
       effective: {
         godotPath: process.env.GODOT_PATH ?? '',
         allowedProjectPaths: getAllowedProjectPaths(),
         unrestricted: process.env.GODOT_MCP_UNRESTRICTED === 'true',
         godotAllowedList: process.env.GODOT_MCP_ALLOWED_GODOT_PATHS ?? '',
+        vaultPath: process.env.GODOT_MCP_VAULT_PATH ?? '',
       },
       candidates: readGodotPathsConfig(),
       readOnly: this.readOnlyFn?.() ?? false,
@@ -184,7 +192,33 @@ export class UserSettingsService implements SettingsApi {
         allowedValue = cleaned;
       }
     }
-    if (patchGodot === undefined && patchAllowed === undefined) {
+    // ── 校验(vaultPath:绝对路径且为存在目录;知识库联动批 2026-10-08)────────────
+    // 对齐 allowedProjectPaths 单条目的格式+存在性预检(不 spawn,vault 是目录非可执行);
+    // 校验失败同属安全事件,机器级留痕(allowed 侧同款)。
+    const patchVault = patch.vaultPath;
+    let vaultValue: string | undefined;   // undefined = 保持现值
+    if (patchVault !== undefined) {
+      const trimmedVault = patchVault.trim();
+      if (trimmedVault === '') {
+        vaultValue = undefined;           // '' = 清除字段
+      } else {
+        if (!isAbsolute(trimmedVault)) {
+          this.auditSave(false, { error: 'vaultPath rejected: not-absolute' });
+          return { ok: false, error: 'vault 路径必须是绝对路径', stage: 'not-absolute' };
+        }
+        try {
+          if (!(await stat(trimmedVault)).isDirectory()) {
+            this.auditSave(false, { error: 'vaultPath rejected: not-a-directory' });
+            return { ok: false, error: `vault 路径不是目录:${trimmedVault}`, stage: 'not-a-directory' };
+          }
+        } catch {
+          this.auditSave(false, { error: 'vaultPath rejected: not-found' });
+          return { ok: false, error: `vault 路径不存在:${trimmedVault}`, stage: 'not-found' };
+        }
+        vaultValue = trimmedVault;
+      }
+    }
+    if (patchGodot === undefined && patchAllowed === undefined && patchVault === undefined) {
       return { ok: false, error: '没有要保存的设置字段', stage: 'empty-patch' };
     }
     // ── merge(undefined = 沿用现值)→ 写盘 → 热生效 → 审计 ─────────────────────
@@ -192,18 +226,25 @@ export class UserSettingsService implements SettingsApi {
     const next: UserSettings = { version: 1 };
     const finalGodot = patchGodot !== undefined ? godotValue : current.godotPath;
     const finalAllowed = patchAllowed !== undefined ? allowedValue : current.allowedProjectPaths;
+    const finalVault = patchVault !== undefined ? vaultValue : current.vaultPath;
     if (finalGodot !== undefined) next.godotPath = finalGodot;
     if (finalAllowed !== undefined && finalAllowed.length > 0) next.allowedProjectPaths = finalAllowed;
+    if (finalVault !== undefined) next.vaultPath = finalVault;
     await writeUserSettings(next, this.settingsDir);
     applyUserSettings(next);
-    const persisted = { godotPath: next.godotPath ?? '', allowedProjectPaths: next.allowedProjectPaths ?? [] };
+    const persisted = {
+      godotPath: next.godotPath ?? '',
+      allowedProjectPaths: next.allowedProjectPaths ?? [],
+      vaultPath: next.vaultPath ?? '',
+    };
     this.auditSave(true, {
       details: {
         godotPath: persisted.godotPath || '(cleared)',
         allowedProjectPaths: persisted.allowedProjectPaths.length > 0 ? persisted.allowedProjectPaths.join(';') : '(cleared)',
+        vaultPath: persisted.vaultPath || '(cleared)',
       },
     });
-    getLogger().info('web-gui', `action=settings_save godotPath=${persisted.godotPath ? 'set' : 'cleared'} allowed=${persisted.allowedProjectPaths.length} result=200`);
+    getLogger().info('web-gui', `action=settings_save godotPath=${persisted.godotPath ? 'set' : 'cleared'} allowed=${persisted.allowedProjectPaths.length} vaultPath=${persisted.vaultPath ? 'set' : 'cleared'} result=200`);
     return { ok: true, persisted };
   }
 

@@ -64,6 +64,7 @@ import { ProjectsStore } from './web-gui/projects-store.js';
 // 资源工作台批(2026-09-15 spec §3.1):FilesApi 实例注入(纯逻辑模块,web-gui 内部互引合法)
 import { FilesApi } from './web-gui/files-api.js';
 import { UserSettingsService } from './web-gui/settings-api.js';
+import { KbApi } from './web-gui/kb-api.js';
 import { executeRunProject } from './tools/runtime.js';
 import { needsImport, runImport } from './tools/import-check.js';
 import { acquireImportLock, releaseImportLock } from './web-gui/import-mutex.js';
@@ -567,6 +568,9 @@ export class GodotServer {
     return {
       getSessions: () => ps.listRunSessionsDetailed(),
       getIndexHtml: () => INDEX_HTML,
+      // 实例类型登记(2026-10-08 实例分类批):stdio 侧此前从不写 kind → 面板把所有
+      // stdio 实例(含最新代码)误显示「早期实例」。daemon 侧 overrides 传 'daemon' 覆盖。
+      instanceKind: 'stdio',
       // 面板控制(2026-09-14 批准设计):stop 与 runtime.ts stop_project 核心三步一致
       // (markSessionStopping → killProcess → releaseRunSessionBusy);killProcess 后
       // 退出钩子自动走 markSessionExited + clearRunSession 快照挪移(分桶批已建)。
@@ -580,6 +584,15 @@ export class GodotServer {
         return { ok: true };
       },
       removeSession: (projectPath) => ps.removeRunSession(projectPath),
+      // 会话进程输出查看(2026-10-08 输出查看批):面板日志流只含 server 工具调用日志,
+      // 游戏进程 stdout/stderr 在内存桶——两态取数:运行中 outputBuffer(实时),
+      // 已结束 lastFinishedRunOutput(崩溃后回查);桶不存在 null(→404)
+      getSessionOutput: (projectPath) => {
+        const s = ps.getSession(projectPath);
+        if (!s) return null;
+        const running = ps.isAliveStatus(s.status);
+        return { status: s.status, running, lines: [...(running ? s.outputBuffer : s.lastFinishedRunOutput)] };
+      },
       // ── 项目面板批(2026-09-15 spec §6):store 四方法 + run/edit/isReadOnly 注入 ──
       // store 构造注入 getSessions(listRunSessionsDetailed)满足 ProjectView.running
       // 判定(spec §3.3;isAliveStatus 谓词复用在 store 内)。
@@ -675,6 +688,9 @@ export class GodotServer {
       settings: new UserSettingsService({
         isReadOnly: () => process.env.GODOT_MCP_READ_ONLY === 'true' || process.env.READ_ONLY_MODE === 'true',
       }),
+      // 知识库联动(2026-10-08 批):只读三方法;vault 根现读 env(设置面板保存即热生效),
+      // 无项目归属纯读,不需 READ_ONLY 注入。
+      kb: new KbApi(),
       // 实例管理批(2026-09-30):面板"重启本实例"的有序退出——close() 走完整清理链
       // (含 stopWebGui 删登记文件)后 exit(0),对齐 index.ts gracefulShutdown 语义;
       // close() 抛错不阻退出(catch 吞),理论悬死窗(close 永不 settle)接受——

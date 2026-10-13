@@ -35,7 +35,7 @@ import { UserSettingsService } from '../../src/web-gui/settings-api.js';
 import { readUserSettings, getUserSettingsFile, resetUserSettingsSnapshotForTest } from '../../src/core/user-settings.js';
 import { validateGodotBinaryDetailed, detectGodotVersion } from '../../src/core/godot-finder.js';
 
-const ENV_KEYS = ['GODOT_PATH', 'ALLOWED_PROJECT_PATHS', 'GODOT_MCP_UNRESTRICTED'] as const;
+const ENV_KEYS = ['GODOT_PATH', 'ALLOWED_PROJECT_PATHS', 'GODOT_MCP_UNRESTRICTED', 'GODOT_MCP_VAULT_PATH'] as const;
 
 describe('UserSettingsService(逻辑层)', () => {
   let dir = '';
@@ -70,7 +70,7 @@ describe('UserSettingsService(逻辑层)', () => {
     const p1 = join(dir, 'p1'); const p2 = join(dir, 'p2');
     process.env.ALLOWED_PROJECT_PATHS = `${p1};${p2}`;
     const v = await svc().get();
-    expect(v.persisted).toEqual({ godotPath: '', allowedProjectPaths: [] });
+    expect(v.persisted).toEqual({ godotPath: '', allowedProjectPaths: [], vaultPath: '' });
     expect(v.effective.godotPath).toBe('D:/env/godot.exe');
     expect(v.effective.allowedProjectPaths).toEqual([p1, p2]);
     expect(v.effective.unrestricted).toBe(false);   // setup.js 全局设了 UNRESTRICTED,beforeEach 已删
@@ -198,5 +198,41 @@ describe('UserSettingsService(逻辑层)', () => {
     expect(r.ok).toBe(true);
     expect(await readUserSettings(dir)).toEqual({ version: 1 });
     expect(process.env.GODOT_PATH).toBe(injected);
+  });
+
+  // ── save:vaultPath(2026-10-08 知识库联动批)─────────────────────────────────
+  it('save:vaultPath 相对路径/不存在/非目录逐一拒绝 + 失败审计留痕', async () => {
+    await mkdir(join(dir, 'vault-dir'), { recursive: true });
+    await writeFile(join(dir, 'vault-file.txt'), 'x', 'utf8');
+    expect(await svc().save({ vaultPath: 'relative/vault' })).toMatchObject({ ok: false, stage: 'not-absolute' });
+    expect(await svc().save({ vaultPath: join(dir, 'missing-vault') })).toMatchObject({ ok: false, stage: 'not-found' });
+    expect(await svc().save({ vaultPath: join(dir, 'vault-file.txt') })).toMatchObject({ ok: false, stage: 'not-a-directory' });
+    expect(h.auditLines.length).toBe(3);
+    for (const line of h.auditLines) expect(line).toMatchObject({ ok: false, action: 'settings_save', caller: 'web-gui:settings' });
+  });
+
+  it('save:vaultPath 成功 → 写盘 + env 热生效 + 审计 details;单字段 merge 不动其余字段', async () => {
+    await mkdir(join(dir, 'myvault'), { recursive: true });
+    const r = await svc().save({ vaultPath: join(dir, 'myvault') });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.persisted.vaultPath).toBe(join(dir, 'myvault'));
+    expect(await readUserSettings(dir)).toEqual({ version: 1, vaultPath: join(dir, 'myvault') });
+    expect(process.env.GODOT_MCP_VAULT_PATH).toBe(join(dir, 'myvault'));   // 热生效(kb-api 现读 env)
+    expect(h.auditLines[0]).toMatchObject({ ok: true });
+    expect(h.auditLines[0]!.details).toMatchObject({ vaultPath: join(dir, 'myvault') });
+  });
+
+  it('save:vaultPath 空串清除 → 删字段并恢复启动快照 env', async () => {
+    await mkdir(join(dir, 'v2'), { recursive: true });
+    const injected = join(dir, 'injected-vault');
+    process.env.GODOT_MCP_VAULT_PATH = injected;
+    resetUserSettingsSnapshotForTest();
+    await svc().save({ vaultPath: join(dir, 'v2') });
+    expect(process.env.GODOT_MCP_VAULT_PATH).toBe(join(dir, 'v2'));
+    const r = await svc().save({ vaultPath: '' });
+    expect(r.ok).toBe(true);
+    expect(await readUserSettings(dir)).toEqual({ version: 1 });
+    expect(process.env.GODOT_MCP_VAULT_PATH).toBe(injected);   // 恢复快照
   });
 });

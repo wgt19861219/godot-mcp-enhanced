@@ -172,7 +172,7 @@ import { WebGuiServer } from '../../src/web-gui/server.js';
 import { ProjectsStore } from '../../src/web-gui/projects-store.js';
 import { executeRunProject } from '../../src/tools/runtime.js';
 import { tryAcquireImportLock, releaseImportLock, isImportLocked, resetImportLocks } from '../../src/web-gui/import-mutex.js';
-import { normalizeProjectKey } from '../../src/core/process-state.js';
+import { normalizeProjectKey, setSessionStatus, appendOutput, setRunSessionProc, removeRunSession } from '../../src/core/process-state.js';
 
 /** run() 一次(env='1')并返回 WebGuiServer 构造参数(断言目标);实例登记待 afterEach close。 */
 const pendingServers: Array<{ close: () => Promise<void> }> = [];
@@ -190,6 +190,7 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
   const prevGui = process.env.GODOT_MCP_WEB_GUI;
   const prevReadOnly = process.env.GODOT_MCP_READ_ONLY;
   const prevReadOnlyMode = process.env.READ_ONLY_MODE;
+  const prevVault = process.env.GODOT_MCP_VAULT_PATH;
 
   afterEach(async () => {
     while (pendingServers.length > 0) {
@@ -198,6 +199,11 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     process.env.GODOT_MCP_WEB_GUI = prevGui;
     process.env.GODOT_MCP_READ_ONLY = prevReadOnly;
     process.env.READ_ONLY_MODE = prevReadOnlyMode;
+    // 审查 Major-T1(2026-10-13):VAULT 键并入统一恢复集——此前 kb 用例内自行恢复无
+    // try/finally,断言失败时「vault env 被 delete」泄漏到同 worker 后续文件。
+    // undefined 走 delete(直接赋 undefined 会落成字符串 'undefined',process.env 经典坑)。
+    if (prevVault === undefined) delete process.env.GODOT_MCP_VAULT_PATH;
+    else process.env.GODOT_MCP_VAULT_PATH = prevVault;
     vi.clearAllMocks();
     resetImportLocks();   // 共享互斥模块级状态隔离(2026-10-08 I-1 修复批)
   });
@@ -207,10 +213,35 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     for (const key of ['projects', 'runProject', 'editProject', 'isReadOnly']) {
       expect(opts[key], `缺少注入键 ${key}`).toBeDefined();
     }
+    // stdio 类型登记(2026-10-08 实例分类批):此前 stdio 侧从不写 kind → 面板把所有
+    // stdio 实例(含最新代码)误显示「早期实例」;daemon 侧 overrides 'daemon' 覆盖本值
+    expect(opts.instanceKind).toBe('stdio');
     // getSessions 注入满足 running 判定(spec §3.3:对照 listRunSessionsDetailed)
     const storeArgs = vi.mocked(ProjectsStore).mock.calls.at(-1)![0] as { getSessions?: () => unknown };
     expect(typeof storeArgs.getSessions).toBe('function');
     expect(Array.isArray(storeArgs.getSessions!())).toBe(true);
+  });
+
+  it('getSessionOutput 注入(2026-10-08 输出查看批):两态取数(运行中 outputBuffer/已结束 lastFinishedRunOutput)+ 桶不存在 null;finally 清桶防泄漏', async () => {
+    const opts = await runAndGetOpts();
+    const fn = opts.getSessionOutput as (p: string) => { status: string; running: boolean; lines: string[] } | null;
+    expect(fn, '缺少注入键 getSessionOutput').toBeDefined();
+    // 桶不存在 → null(端点 404 语义)
+    expect(fn('D:/never/ran/project-x')).toBeNull();
+    const key = normalizeProjectKey('D:/out-view/wiring-test');
+    try {
+      // 运行态:outputBuffer 实时读
+      setSessionStatus(key, 'running');
+      appendOutput(['live-line-1', 'ERROR: boom'], key);
+      expect(fn('D:/out-view/wiring-test')).toEqual({ status: 'running', running: true, lines: ['live-line-1', 'ERROR: boom'] });
+      // 结束态:setRunSessionProc(null) 触发 stash → lastFinishedRunOutput(崩溃后回查场景)
+      setRunSessionProc(key, null);
+      setSessionStatus(key, 'exited');
+      expect(fn('D:/out-view/wiring-test')).toEqual({ status: 'exited', running: false, lines: ['live-line-1', 'ERROR: boom'] });
+    } finally {
+      removeRunSession(key);   // exited 态桶允许移除,模块级状态不泄漏给后续用例
+    }
+    expect(fn('D:/out-view/wiring-test')).toBeNull();
   });
 
   it('settings 注入(2026-09-29 设置批,审查 Nit-1):UserSettingsService 实例三方法 + isReadOnly 同源透传', async () => {
@@ -228,6 +259,22 @@ describe('GodotServer 项目面板接线(spec 2026-09-15 §6)', () => {
     expect((await settings!.get()).readOnly).toBe(true);
     process.env.GODOT_MCP_READ_ONLY = 'false';
     expect((await settings!.get()).readOnly).toBe(false);
+  });
+
+  it('kb 注入(2026-10-08 知识库联动批):KbApi 实例三方法;未配置 vault 时 overview 返回引导态而非报错', async () => {
+    const opts = await runAndGetOpts();
+    const kb = opts.kb as
+      | { overview: () => Promise<{ configured: boolean }>; projectDetail: (n: string) => Promise<unknown>; readFile: (n: string, r: string) => Promise<unknown> }
+      | undefined;
+    expect(kb, '缺少注入键 kb').toBeDefined();
+    expect(typeof kb!.overview).toBe('function');
+    expect(typeof kb!.projectDetail).toBe('function');
+    expect(typeof kb!.readFile).toBe('function');
+    // 测试环境未配 GODOT_MCP_VAULT_PATH(settings.json 亦无)→ 引导态(真机配置验证由
+    // 面板人工验收覆盖);env 恢复由本文件 afterEach 统一处理(审查 Major-T1 修复)。
+    delete process.env.GODOT_MCP_VAULT_PATH;
+    const ov = await kb!.overview();
+    expect(ov.configured).toBe(false);
   });
 
   it('projects 四方法委托 ProjectsStore 实例四方法(scan 回调透传)', async () => {
