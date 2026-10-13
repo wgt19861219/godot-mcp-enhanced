@@ -205,6 +205,8 @@ func handle_animation_keyframe(params: Dictionary, request_id: int = 0) -> Dicti
 			# P1-2: value 按 track type coerce（TYPE_POSITION_3D 等需 Vector3，JSON Array 表达需转换）
 			if value != null:
 				value = _coerce_key_value(anim, ti, value)
+				if value == null:
+					return {"error": {"code": -32004, "message": "value for 3D tracks needs 3 components [x, y, z] (short arrays rejected, not zero-filled)"}}
 
 			if _undo_manager != null:
 				# Issue 2: 使用 _find_key_at_time 检查是否已存在关键帧
@@ -274,6 +276,8 @@ func handle_animation_keyframe(params: Dictionary, request_id: int = 0) -> Dicti
 				if value != null:
 					# P1-2: value 按 track type coerce（同 add 分支）
 					value = _coerce_key_value(anim, ti, value)
+					if value == null:
+						return {"error": {"code": -32004, "message": "value for 3D tracks needs 3 components [x, y, z] (short arrays rejected, not zero-filled)"}}
 					do_ops.append({"type": "method", "target": anim, "method": "track_set_key_value", "args": [ti, ki, value]})
 					undo_ops.append({"type": "method", "target": anim, "method": "track_set_key_value", "args": [ti, ki, old_val]})
 				var transition = params.get("transition")
@@ -291,6 +295,8 @@ func handle_animation_keyframe(params: Dictionary, request_id: int = 0) -> Dicti
 				if value != null:
 					# P1-2: value 按 track type coerce（同 undo 分支）
 					value = _coerce_key_value(anim, ti, value)
+					if value == null:
+						return {"error": {"code": -32004, "message": "value for 3D tracks needs 3 components [x, y, z] (short arrays rejected, not zero-filled)"}}
 					anim.track_set_key_value(ti, ki, value)
 				var transition = params.get("transition")
 				if transition != null:
@@ -407,6 +413,10 @@ func handle_animation_blend(params: Dictionary, request_id: int = 0) -> Dictiona
 ## TYPE_POSITION_3D/ROTATION_3D/SCALE_3D → Vector3（Array/PackedFloat64Array/Vector3 互转）；
 ## TYPE_BEZIER → float；TYPE_VALUE/其他 → 原样透传（目标属性未知，让 Godot 处理）。
 ## 深挖#7 教训：GDScript 无安全类型转换，track_set_key_value 收到 Array[0,1,0] 对 Vector3 track silent fail。
+## 审查 Nit-GD1(2026-10-13):短数组(<3 分量)返回 null 由调用方报错——不再静默补
+## Vector3.ZERO 假成功,对齐 command_helpers.gd coerce_value_for_property 的三副本
+## 「分量缺失返 null 报错」契约(H-1 fix round 1;本函数是 Animation 专用第四处,
+## 此前不在该契约内形成新旧两种语义并存)。
 func _coerce_key_value(anim: Animation, track_index: int, value: Variant) -> Variant:
 	var track_type: int = anim.track_get_type(track_index)
 	match track_type:
@@ -415,10 +425,14 @@ func _coerce_key_value(anim: Animation, track_index: int, value: Variant) -> Var
 				return value
 			if value is Array:
 				var a: Array = value as Array
-				return Vector3(float(a[0]), float(a[1]), float(a[2])) if a.size() >= 3 else Vector3.ZERO
+				if a.size() < 3:
+					return null
+				return Vector3(float(a[0]), float(a[1]), float(a[2]))
 			if value is PackedFloat64Array:
 				var p: PackedFloat64Array = value as PackedFloat64Array
-				return Vector3(p[0], p[1], p[2]) if p.size() >= 3 else Vector3.ZERO
+				if p.size() < 3:
+					return null
+				return Vector3(p[0], p[1], p[2])
 			# 非数组/Vector3（如数字）无法表达 3 分量，透传让 Godot 报错而非静默零
 			return value
 		Animation.TYPE_BEZIER:

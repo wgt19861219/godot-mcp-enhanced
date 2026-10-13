@@ -97,17 +97,43 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 资源重导入批 (2026-10-08) 八次重锚:项目行新增 ⟳ 重导入按钮(禁用态双条件)+
     // reimportProject POST 函数 + SSE import 事件订阅,脚本内容变更 → hash 轮换;
     // 同款双通道互证后锁入。
-    // 独立窗口批 merge (2026-10-13) 九次重锚:分支 safeBody() 六处收口合入 + master
-    // 分叉后新增五处 fetch(loadInstances/reimport 成功路径/loadSettings/verifySettings/
-    // saveSettings)统一接入 safeBody(401 空体误报根治延伸),脚本内容变更 → hash
-    // 轮换;同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-UYk8Ce7dbWN62xkjzMLqlai9x6KVgwNigM9Jp3oiW6Q='");
+    // 知识库联动批 (2026-10-08) 九次重锚:中列新增「知识库」第四 tab(kbPane 三态渲染/
+    // obsidianUri/委托)+ 设置面板 vault 输入框 + 左列项目行 📚 徽标(findKbByPath)+
+    // 启动静默预取,脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    // 知识库批 Nits 修复 (2026-10-08) 十次重锚:徽标第四态(N-6,· 无日志 中性分支),
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    // 知识库批真机反馈修复 (2026-10-08) 十一次重锚:vault 保存与 Godot 表单解耦
+    // (saveVaultSettings 独立按钮/单字段 patch,修"Godot 校验失败整体 400 吞掉 vault 落盘"),
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    // 布局优化批 (2026-10-08) 十二次重锚:tab 顺序重排+设置靠右/logCount 跨 tab 显隐/
+    // 会话+实例表格改行式(renderSessions·renderInstances 重写)/右列空态占位/
+    // kb meta 日期提亮,脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    // 输出查看批 (2026-10-08) 十三次重锚:会话行 📋 按钮(sess-output 委托分支)+
+    // #outPane 浮层(showOutput/loadSessionOutput/renderOut 三函数+工具条静态绑定),
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入(含报错行高亮正则 \s 双写修复
+    // ——模板字符串内单写 \s 求值成 s,ESLint no-useless-escape 揪出后二次轮换)。
+    // 实例分类批 (2026-10-08) 十四次重锚:renderInstances 分组渲染(类型徽标上移为
+    // inst-group 组标题/instRow 提取/四组 match 链),脚本内容变更 → hash 轮换;
+    // 同款双通道互证后锁入。
+    // 中列分割批 (2026-10-08) 十五次重锚:日志流移出 tab 常驻上半(#midPane 上下分割,
+    // tabLogs 删除/showTab 三态化/showOutput·closeOutput 改 class 切换/logCount 恒显),
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    // 独立窗口批 merge (2026-10-13) 十七次重锚(最终态):分支 safeBody() 六处收口 + master 分叉后
+    // 新增五处 fetch 统一 + kb-linkage 批次五处(output/vault/kb×3)统一,脚本内容变更;原十六次
+    // 中间锚被 kb 侧 5 处统一二次轮换取代。原注:master 分叉
+    // 后新增五处 fetch(loadInstances/reimport 成功路径/loadSettings/verifySettings/
+    // saveSettings)统一接入 + kb setVaultPath 行叠加,脚本内容变更 → hash 轮换;
+    // 同款双通道互证后锁入。
+    // 全维度审查批 (2026-10-13) 十八次重锚:Nit-K3——renderKbLog 的 obsidianUri
+    // 拼接补 d null 守卫(与同行文案守卫对齐),脚本内容一行变更 → hash 轮换;
+    // 同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-GX/B5iWNtpB59iCkSqLOr0CQx/w0IeJMX8gT3v2zM6o='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('UYk8Ce7dbWN62xkjzMLqlai9x6KVgwNigM9Jp3oiW6Q=');   // 独立重算与锚互证
+    expect(hash).toBe('GX/B5iWNtpB59iCkSqLOr0CQx/w0IeJMX8gT3v2zM6o=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
@@ -127,6 +153,44 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     const list = await ok.json() as RunSessionDetailed[];
     expect(list[0]!.pid).toBe(42);
     expect(list[0]).not.toHaveProperty('proc');
+  });
+
+  // ── 会话输出端点(2026-10-08 输出查看批)────────────────────────────────────
+  // 五象限:无 token 401 / 注入缺席 503 / 缺 project 400 / 桶不存在 404 / 200 尾部截断。
+  // 截断由 server 层统一保证(handleSessionOutput slice),注入实现给全量 buffer。
+  it('GET /api/sessions/output:401/503/400/404/200(尾部 500 行截断 + total/truncated)', async () => {
+    // 公共 startTestServer 未注入 getSessionOutput → 503;顺带无 token 401
+    const t0 = await startTestServer(); active = t0.srv;
+    const r401 = await fetch(`${t0.base}/api/sessions/output?project=x`);
+    expect(r401.status).toBe(401);
+    const r503 = await fetch(`${t0.base}/api/sessions/output?project=x`, { headers: { 'x-gui-token': t0.token } });
+    expect(r503.status).toBe(503);
+    await t0.srv.stop(); active = null;
+
+    const srv = new WebGuiServer({
+      getSessions: () => FAKE_SESSIONS,
+      getIndexHtml: () => FAKE_HTML,
+      portStart: 0,
+      registryDir,
+      token: 'out-test-token',
+      getSessionOutput: (p) => p === 'missing' ? null
+        : { status: 'running', running: true, lines: Array.from({ length: 600 }, (_, i) => 'l' + i) },
+    });
+    await srv.start(); active = srv;
+    const base = `http://127.0.0.1:${srv.port}`;
+    const hdr = { 'x-gui-token': 'out-test-token' };
+    const r400 = await fetch(`${base}/api/sessions/output`, { headers: hdr });
+    expect(r400.status).toBe(400);
+    const r404 = await fetch(`${base}/api/sessions/output?project=missing`, { headers: hdr });
+    expect(r404.status).toBe(404);
+    const r200 = await fetch(`${base}/api/sessions/output?project=ok`, { headers: hdr });
+    expect(r200.status).toBe(200);
+    const body = await r200.json() as { status: string; running: boolean; lines: string[]; total: number; truncated: boolean };
+    expect(body.lines).toHaveLength(500);          // 尾部截断(SESSION_OUTPUT_TAIL_LINES)
+    expect(body.total).toBe(600);
+    expect(body.truncated).toBe(true);
+    expect(body.lines[499]).toBe('l599');          // 保留的是尾部而非头部
+    expect(body.running).toBe(true);
   });
 
   it('X-GUI-Token 头鉴权 + 伪造 Origin 403', async () => {

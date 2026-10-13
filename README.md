@@ -128,12 +128,12 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 ```json
 { "env": { "ALLOWED_PROJECT_PATHS": "D:/proj/game-a;D:/proj/game-b" } }
 ```
-- **Godot 二进制白名单** — `GODOT_MCP_ALLOWED_GODOT_PATHS`（分号分隔,realpath 归一）在 `godot --version` 签名校验之上加硬隔离,防 AI 可控的 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。空 env = back-compat 放行(本地信任场景,签名校验仍兜底);多用户/不可信环境显式列可信路径
+- **Godot 二进制白名单** — `GODOT_MCP_ALLOWED_GODOT_PATHS`（分号分隔,realpath 归一）在 `godot --version` 签名校验之上加硬隔离,防 AI 可控的 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。空 env = back-compat 放行(本地信任场景,签名校验仍兜底);**例外(2026-10-13 安全收紧,审查 M-2)**:AI 可控的工具参数 `godot_path` override 在白名单未配置时一律拒绝——防"cwd 内写伪造 `--version` 签名的二进制再经参数指向它"的执行链(GODOT_PATH env、godot-paths.json 与自动发现链不受影响);多用户/不可信环境显式列可信路径
 - **GDScript 注入防御** — 危险 API 模式扫描 + 字符串拼接绕过检测
 - **危险操作确认令牌** — 删节点等操作需显式确认
 - **输出标记防伪造** — 每次执行随机标记,防 GDScript 伪造 MCP 输出
 - **本地运行** — 无远程暴露,无第三方数据上传(注:启动时 update-checker 会查 npm registry,详见下方「匿名遥测」段)
-- **Web GUI 监控面板（server 进程内嵌）** — 默认启动（`GODOT_MCP_WEB_GUI=0` 关闭）,仅监听 `127.0.0.1`（无远程暴露）;per-pid 登记于 `~/.godot-mcp/web-gui/`（含共享 `token.txt`,首实例生成后续复用）,浏览器访问凭 token;泄露止损出口 `dashboard --rotate-token` 一键轮换（已运行实例需重启收敛新值）;files API 复用 `ALLOWED_PROJECT_PATHS` 白名单（deny-by-default,路径越界即 forbidden）。**设置面板**（「设置」tab）:配置 Godot 可执行路径（`--version` 验证并显示版本,godot-paths.json 候选点选）与项目白名单 `ALLOWED_PROJECT_PATHS`——保存即热生效并持久化 `~/.godot-mcp/settings.json`（重启自动重放,GUI 设置优先于客户端注入 env;清除 = 恢复启动时 env 快照;写端点受 READ_ONLY 403 + 机器级审计约束,`GODOT_MCP_UNRESTRICTED` 不提供 GUI 开关）。**资源重导入**（项目行「⟳」按钮,2026-10-08）:对项目跑 `godot --headless --import` 引擎级扫描+重导入变更资源（纹理/音频/字体等导入型缓存）,项目运行中时按钮禁用（API 层 409 兜底）,完成/失败经 SSE 推送;面板「▶ 运行」前另有 mtime 快检按需自动导入（`GODOT_MCP_AUTO_IMPORT=false` 可关,快检只扫 assets/scenes/scripts 顶层、其他目录变更用「⟳」兜底）。纵深细节见 `src/web-gui/server.ts`（token 恒定时间比较/Origin 白名单/CSP sha256）
+- **Web GUI 监控面板（server 进程内嵌）** — 默认启动（`GODOT_MCP_WEB_GUI=0` 关闭）,仅监听 `127.0.0.1`（无远程暴露）;per-pid 登记于 `~/.godot-mcp/web-gui/`（含共享 `token.txt`,首实例生成后续复用）,浏览器访问凭 token;泄露止损出口 `dashboard --rotate-token` 一键轮换（已运行实例需重启收敛新值）;files API 复用 `ALLOWED_PROJECT_PATHS` 白名单（deny-by-default,路径越界即 forbidden）。**设置面板**（「设置」tab）:配置 Godot 可执行路径（`--version` 验证并显示版本,godot-paths.json 候选点选）、项目白名单 `ALLOWED_PROJECT_PATHS` 与知识库 vault 根目录 `GODOT_MCP_VAULT_PATH`——保存即热生效并持久化 `~/.godot-mcp/settings.json`（重启自动重放,GUI 设置优先于客户端注入 env;清除 = 恢复启动时 env 快照;写端点受 READ_ONLY 403 + 机器级审计约束,`GODOT_MCP_UNRESTRICTED` 不提供 GUI 开关）。**资源重导入**（项目行「⟳」按钮,2026-10-08）:对项目跑 `godot --headless --import` 引擎级扫描+重导入变更资源（纹理/音频/字体等导入型缓存）,项目运行中时按钮禁用（API 层 409 兜底）,完成/失败经 SSE 推送;面板「▶ 运行」前另有 mtime 快检按需自动导入（`GODOT_MCP_AUTO_IMPORT=false` 可关,快检只扫 assets/scenes/scripts 顶层、其他目录变更用「⟳」兜底）。**知识库联动**（「知识库」tab,2026-10-08,只读）:配置 Obsidian vault 根目录后,总览各项目知识库目录的活跃看板进度（`任务看板.md`/`项目待办.md` frontmatter 计数优先、复选框计数兜底）与最近开发日志,面板内浏览日志正文与看板分节摘要,并提供 `obsidian://` 一键跳转;**断流检测**——解析 vault 根 `CLAUDE.md`「项目目录映射」表关联本地仓库,git 最近 commit 距今 90 天观察窗内晚于最近开发日志超 3 天（或有提交无日志）显示 🔴 停滞警示,定位"代码在动而知识库停滞"的项目。纵深细节见 `src/web-gui/server.ts`（token 恒定时间比较/Origin 白名单/CSP sha256）与 `src/web-gui/kb-api.ts`（只读契约/防穿越）
 
 <details>
 <summary><b>⚠️ 诚实的边界(展开必读)</b></summary>
@@ -144,6 +144,7 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 - 需真正隔离:容器 / VM + `GODOT_MCP_ALLOW_UNSAFE=false`
 - 关闭扫描:`GODOT_MCP_SANDBOX=disabled`(仅开发)
 - 本工具**仅限本地可信环境**,不提供远程认证或加密
+- **Web GUI 面板 token 的防护等级 = 防"他用户/远程",不防同用户进程**——`~/.godot-mcp/web-gui/token.txt` 同 UID 进程可读,凭 token 可经设置面板热改项目白名单等安全边界(审查 M-3 披露,2026-10-13)。同用户进程不可信的场景用 `GODOT_MCP_WEB_GUI=0` 关闭面板(默认开启)
 
 </details>
 

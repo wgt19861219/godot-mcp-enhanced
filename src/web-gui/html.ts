@@ -12,7 +12,7 @@ export const INDEX_HTML: string = `<!doctype html>
 <title>godot-mcp-enhanced 监控面板</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231a1f26'/%3E%3Ctext x='16' y='23' font-size='19' font-family='monospace' font-weight='bold' fill='%2358a6ff' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E">
 <style>
-  :root { --bg:#111418; --panel:#1a1f26; --line:#2a313b; --fg:#d7dde5; --dim:#7b8694;
+  :root { --bg:#111418; --panel:#1a1f26; --line:#2a313b; --fg:#d7dde5; --dim:#8b949e;
           --green:#3fb950; --blue:#58a6ff; --yellow:#d29922; --red:#f85149; --orange:#db6d28; --grey:#6e7681; }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
@@ -20,7 +20,7 @@ export const INDEX_HTML: string = `<!doctype html>
   header h1 { font-size: 14px; font-weight: 600; }
   header .dim { color: var(--dim); font-size: 12px; }
   #warn, #cfgWarn { display: none; background: #3d2e00; color: var(--yellow); padding: 4px 12px; font-size: 12px; }
-  main { flex: 1; display: grid; grid-template-columns: 340px 1fr 420px; gap: 8px; padding: 8px; min-height: 0; }
+  main { flex: 1; display: grid; grid-template-columns: 340px minmax(0,1fr) 420px; gap: 8px; padding: 8px; min-height: 0; }   /* minmax(0,1fr):grid 版 min-width:auto 陷阱修复(2026-10-08)——1fr 的 auto 最小值会被中列内容 min-content 撑死(窄视口实测 465px),整页横向溢出 */
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; min-height: 0; }
   section h2 { font-size: 12px; color: var(--dim); padding: 6px 10px; border-bottom: 1px solid var(--line); font-weight: 600; display:flex; justify-content:space-between; align-items:center; }
   .scroll { overflow-y: auto; flex: 1; }
@@ -58,6 +58,19 @@ export const INDEX_HTML: string = `<!doctype html>
   #instPane { flex: 25 1 0; }
   /* daemon 前端批(2026-09-30):实例类型列的弱化文本(daemon 空闲态/跨实例指引文案) */
   .inst-dim { color: var(--dim); font-size: 11px; }
+  /* 布局优化批(2026-10-08):会话/实例由 6/5 列 nowrap 表格改紧凑行式——340px 窄列
+     塞不下表格 min-content(实测横向溢出滚动条,操作按钮滚出视口);行式 flex+ellipsis
+     天然自适应,操作按钮(停止/清理/重启)恒可见 */
+  .sess-row, .inst-row { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  /* 实例分类批(2026-10-08):分组标题行(本实例/daemon/stdio/早期实例),hover 出类型说明 */
+  .inst-group { padding: 5px 10px 3px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); cursor: help; }
+  .sess-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess-pid { color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .sess-busy { color: var(--yellow); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 96px; }
+  .inst-id { font-family: Consolas, monospace; font-size: 11px; white-space: nowrap; }
+  .inst-id.dim2 { color: var(--dim); }
+  .inst-badges { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; flex: 1; }
+  .inst-act { color: var(--dim); font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .proj-row { display: flex; align-items: center; gap: 5px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
   .proj-row .ctl { padding: 1px 6px; }
   .proj-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -66,12 +79,21 @@ export const INDEX_HTML: string = `<!doctype html>
   .dot.run { color: var(--green); }
   .dot.missing { color: var(--red); }
   #addRow { display: none; }   /* 内联添加行,+添加按钮显隐切换(JS 置 style.display='flex') */
-  /* 资源管理批(spec §6.1,2026-09-15):中列 tab 条 + 文件浏览视图 */
+  /* 资源管理批(spec §6.1,2026-09-15):中列 tab 条 + 文件浏览视图
+     布局优化批(2026-10-08):tab 命中区加大(padding 4px→6px)+ hover 背景态;
+     「设置」低频配置 tab 推最右(margin-left:auto),与查看型 tab(日志/文件/知识库)视觉分组 */
   .tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); }
   .tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--dim);
-         font: 12px "Segoe UI", system-ui, sans-serif; padding: 4px 10px; cursor: pointer; }
+         font: 12px "Segoe UI", system-ui, sans-serif; padding: 6px 12px; cursor: pointer; border-radius: 4px 4px 0 0; }
+  .tab:hover { color: var(--fg); background: rgba(88,166,255,.08); }
   .tab.on { color: var(--fg); border-bottom-color: var(--blue); }
-  #logsPane, #filesPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .tab.on:hover { background: none; }
+  #tabSettings { margin-left: auto; }
+  /* 中列分割批(2026-10-08,用户反馈)+对调批:上半日志流常驻(52%)/下半工具统计·分钟
+     时序(48%,原右列位移来——6 列统计表在宽中列舒展免横滚);文件/知识库/设置移右列 */
+  #logsPane { flex: 52 1 0; min-height: 0; display: flex; flex-direction: column; }
+  #bottomPane { flex: 48 1 0; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+  #filesPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   #filesPane { overflow: hidden; }   /* 面包屑固定 + 列表区(.scroll)自滚 */
   .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
   .crumb { color: var(--blue); cursor: pointer; }
@@ -117,6 +139,45 @@ export const INDEX_HTML: string = `<!doctype html>
   .set-info { color: var(--dim); font-size: 11px; line-height: 1.7; word-break: break-all; }
   .set-actions { padding: 8px 10px; display: flex; gap: 8px; align-items: center; }
   .set-actions .ctl { color: var(--fg); }
+  /* 知识库联动批(2026-10-08):总览卡片 + 详情分节摘要 + 日志行 + 正文 pre */
+  #kbPane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .kb-card { padding: 8px 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .kb-card:hover { background: var(--bg); }
+  .kb-head { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
+  .kb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* count 可收缩+省略号(视觉验收 2026-10-08:nowrap 无 min-width:0 时 flex 项 min-width:auto
+     撑破卡片 → 整列横向溢出丢字);stall/fresh 徽标固定不收缩 */
+  .kb-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 11px; }
+  .kb-stall { flex-shrink: 0; color: var(--red); font-size: 11px; white-space: nowrap; }
+  .kb-fresh { flex-shrink: 0; color: var(--green); font-size: 11px; }
+  .kb-none { flex-shrink: 0; color: var(--dim); font-size: 11px; }
+  .kb-meta { color: var(--dim); font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 布局优化批(2026-10-08):「最近日志」行承载日期+标题两个关键信息却整行 dim(视觉
+     验收:扫读成本高);日期提亮一档作锚点,标题维持 dim */
+  .kb-meta-date { color: #aab4c0; }
+  .kb-sub { padding: 6px 10px; color: var(--dim); font-size: 11px; border-bottom: 1px solid var(--line); }
+  .kb-section { padding: 2px 10px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb-log-row { display: flex; gap: 8px; padding: 3px 10px; border-bottom: 1px solid var(--line); font-size: 12px; cursor: pointer; }
+  .kb-log-row:hover { background: var(--bg); }
+  .kb-log-date { flex-shrink: 0; color: var(--dim); white-space: nowrap; }
+  .kb-log-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kb-log-status { flex-shrink: 0; color: var(--dim); font-size: 11px; white-space: nowrap; }
+  .kb-log-body { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 8px 10px; font: 12px/1.6 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+  /* 会话输出视图(2026-10-08 输出查看批):非 tab 浮层视图,会话行 📋 触发——游戏进程
+     stdout/stderr 只存 process-state 内存桶(面板日志流仅含 server 工具调用日志),
+     本视图是查看进程报错的唯一面板入口 */
+  #outPane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* 输出浮层打开态:隐藏上半日志(h2+logsPane)与下半切换区,outPane 独占中列 */
+  #midPane.out-open > h2, #midPane.out-open > #logsPane, #midPane.out-open > #bottomPane { display: none; }
+  #outRefresh { margin-left: auto; }
+  .out-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 0; font: 12px/1.5 Consolas, monospace; }
+  .out-line { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
+  /* Godot 报错行高亮:ERROR:/SCRIPT ERROR: 红、WARNING: 黄(与日志流 .log-line 同语义) */
+  .out-line.err { color: var(--red); }
+  .out-line.warn { color: var(--yellow); }
+  /* 窄视口存量溢出修复(2026-10-08 知识库批验证时观测):右列 stats 表 th/td 全 nowrap,
+     min-content 超过 420px 固定列时撑破 grid → 整页横向滚动;表格容器自己横滚,页面不破 */
+  #statsScroller { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -132,23 +193,44 @@ export const INDEX_HTML: string = `<!doctype html>
 <main>
   <div id="left">
     <!-- 易用性批5 (2026-09-19):面板虽名「监控」,但项目/会话/文件区含写操作
-         (停止/清理/增删项目/保存文件),给操作后果一行预期,防误触 -->
-    <section id="projPane"><h2>项目 <span class="dim" style="font-weight:normal">增删/扫描影响 server 登记状态</span></h2>
+         (停止/清理/增删项目/保存文件),给操作后果一行预期,防误触
+         布局优化批(2026-10-08):后果说明从 h2 行内文本挪 title(hover 显示)——
+         长文案挤压 340px 窄列标题(实测「实例」标题被压竖排换行) -->
+    <section id="projPane"><h2 title="增删/扫描影响 server 登记状态">项目</h2>
       <div class="log-tools"><label class="sr-only" for="projSearch">搜索项目:名称/路径</label><input id="projSearch" aria-label="搜索项目:名称/路径" placeholder="搜索:名称/路径"><button class="ctl" data-action="scan">扫描</button><button class="ctl" data-action="add">+添加</button></div>
       <div class="log-tools" id="addRow"><label class="sr-only" for="addPath">项目绝对路径(须在白名单内)</label><input id="addPath" aria-label="项目绝对路径(须在白名单内)" placeholder="项目绝对路径(须在白名单内)"><button class="ctl" data-action="add-confirm">确定</button></div>
       <div class="scroll" id="projList"><div class="empty">加载中…</div></div></section>
-    <section id="sessionsPane"><h2>运行会话 <span class="dim" style="font-weight:normal">「停止/清理」影响运行中的游戏进程</span></h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
+    <section id="sessionsPane"><h2 title="「停止/清理」影响运行中的游戏进程">运行会话</h2><div class="scroll" id="sessions"><div class="empty">暂无会话</div></div></section>
     <!-- 实例管理批(2026-09-30):本机全部 MCP server 实例(=各 MCP 客户端会话拉起的
          godot-mcp-enhanced 进程),面板自身的宿主也在其中;「重启」用于让实例吃到新 build -->
-    <section id="instPane"><h2>实例 <span class="dim" style="font-weight:normal">「重启」中断该实例的 MCP 会话,客户端重连拉起新进程</span></h2><div class="scroll" id="instList"><div class="empty">加载中…</div></div></section>
+    <section id="instPane"><h2 title="「重启」中断该实例的 MCP 会话,客户端重连拉起新进程">实例</h2><div class="scroll" id="instList"><div class="empty">加载中…</div></div></section>
   </div>
-  <section><h2><span id="midTitle">日志流</span> <span class="dim" id="logCount"></span></h2>
-    <div class="tabs"><button type="button" id="tabLogs" class="tab on">日志</button><button type="button" id="tabFiles" class="tab">文件</button><button type="button" id="tabSettings" class="tab">设置</button></div>
+  <!-- 中列分割批(2026-10-08,用户反馈):日志流是监控面板核心,不该与文件/知识库
+       挤同一 tab 互抢——改为上下分割:上半日志流常驻(约 52%),下半放工具统计·分钟
+       时序;文件/知识库/设置移右列(对调批:用户反馈"和工具统计换一个位置"——统计表
+       6 列在宽中列舒展免横滚,查看型窄列表适合 420px 右列)。outPane 仍整体覆盖。 -->
+  <section id="midPane"><h2>日志流 <span class="dim" id="logCount"></span></h2>
     <div id="logsPane">
       <div class="log-tools"><label class="sr-only" for="logFilter">过滤日志:工具/模块/项目</label><input id="logFilter" aria-label="过滤日志:工具/模块/项目" placeholder="过滤:工具/模块/项目"><label class="sr-only" for="logLevel">日志级别</label><select id="logLevel" aria-label="日志级别"><option>ALL</option><option>INFO</option><option>WARN</option><option>ERROR</option></select></div>
       <div class="scroll" id="logList"></div>
     </div>
-    <div id="filesPane" style="display:none"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div>
+    <div id="bottomPane">
+      <h2>工具统计 <label class="sr-only" for="projSel">工具统计项目筛选</label><select id="projSel" aria-label="工具统计项目筛选"><option value="">全部</option></select></h2>
+      <div class="scroll" id="statsScroller"><table id="statsTable"><thead><tr><th>tool</th><th>calls</th><th>err</th><th>avg</th><th>min</th><th>max</th></tr></thead><tbody></tbody></table></div>
+      <h2 style="border-top:1px solid var(--line)">分钟时序</h2><div id="chart"><div class="empty" style="flex:1">等待数据…</div></div>
+    </div>
+    <!-- 会话输出视图(2026-10-08 输出查看批):非 tab 浮层,左列会话行 📋 触发 showOutput,
+         打开时经 .out-open 隐藏上半日志+下半统计(整体覆盖中列);工具条按钮为静态 DOM
+         直接绑定,返回走 closeOutput() 恢复分割布局 -->
+    <div id="outPane" style="display:none">
+      <div class="log-tools"><button type="button" class="ctl" id="outBack">← 返回</button><span class="dim" id="outTitle"></span><button type="button" class="ctl" id="outRefresh">⟳ 刷新</button></div>
+      <div class="out-body" id="outBody"><div class="empty">加载中…</div></div>
+    </div></section>
+  <!-- 右列(对调批 2026-10-08):原工具统计位移中列下半,本列改查看型切换区
+       (文件/知识库/设置);tab 条即列头,查看型聚左配置靠右 -->
+  <section id="rightPane">
+    <div class="tabs"><button type="button" id="tabFiles" class="tab on">文件</button><button type="button" id="tabKb" class="tab">知识库</button><button type="button" id="tabSettings" class="tab">设置</button></div>
+    <div id="filesPane"><div class="empty">点击左侧项目行的「文件」按钮浏览项目目录</div></div>
     <!-- 设置面板(2026-09-29 设置批):静态 DOM,进 tab 时 GET /api/settings 填充;
          保存 = 完整表单语义(路径留空/白名单清空 = 清除该设置,恢复启动 env 快照) -->
     <div id="settingsPane" style="display:none">
@@ -164,6 +246,15 @@ export const INDEX_HTML: string = `<!doctype html>
         <textarea id="setAllowed" aria-label="项目目录白名单,每行一个绝对路径" placeholder="D:\\GitHub\\my-game&#10;D:\\Projects\\demo"></textarea>
         <div class="set-hint">即 ALLOWED_PROJECT_PATHS,影响所有工具可访问的目录范围;清空 = 恢复启动时配置(deny-by-default 收缩到工作目录)</div>
       </div>
+      <!-- 知识库联动批(2026-10-08):vault 根配置;独立保存(真机反馈修复:原与 Godot 表单
+           共用「保存设置」——godotPath 校验失败(如白名单拒)会整体 400 把 vault 一起拖死
+           不落盘,用户"设置了却没数据";解耦后互不拖累,留空 = 清除) -->
+      <div class="set-section">
+        <label for="setVaultPath">知识库 vault 根目录(Obsidian)</label>
+        <div class="set-row"><input id="setVaultPath" aria-label="知识库 vault 根目录" placeholder="D:\\workspace\\Obsidian"><button type="button" class="ctl" id="setVaultSave">保存</button></div>
+        <div class="set-result" id="setVaultResult"></div>
+        <div class="set-hint">即 GODOT_MCP_VAULT_PATH,「知识库」tab 据此展示各项目的待办进度/开发日志/断流检测;留空 = 清除设置。只读联动,面板不写 vault;独立于上方 Godot 设置单独保存</div>
+      </div>
       <div class="set-actions">
         <button type="button" class="ctl" id="setSave">保存设置</button>
         <span class="set-hint" id="setSaveHint"></span>
@@ -172,10 +263,12 @@ export const INDEX_HTML: string = `<!doctype html>
         <span class="set-lbl">当前生效(只读)</span>
         <div class="set-info" id="setInfo"></div>
       </div>
-    </div></section>
-  <section><h2>工具统计 <label class="sr-only" for="projSel">工具统计项目筛选</label><select id="projSel" aria-label="工具统计项目筛选"><option value="">全部</option></select></h2>
-    <div class="scroll"><table id="statsTable"><thead><tr><th>tool</th><th>calls</th><th>err</th><th>avg</th><th>min</th><th>max</th></tr></thead><tbody></tbody></table></div>
-    <h2 style="border-top:1px solid var(--line)">分钟时序</h2><div id="chart"><div class="empty" style="flex:1">等待数据…</div></div></section>
+    </div>
+    <!-- 知识库联动批(2026-10-08):三态视图(总览卡片/项目详情/日志正文)全部由 JS 渲染进
+         本容器,工具行按钮零监听器、只带 data-action,由 #kbPane 容器一次性委托接管
+         对调批(2026-10-08):随文件/设置同列右列切换区,默认隐藏(files 默认 on) -->
+    <div id="kbPane" style="display:none"><div class="empty">加载中…</div></div>
+  </section>
 </main>
 <script>
 (function () {
@@ -205,6 +298,9 @@ export const INDEX_HTML: string = `<!doctype html>
   // 预览视图状态(Plan B Task 1+2,spec §6.4):当前预览文件与类型
   // ('img'|'audio'|'hex');预览无脏标,无拦截语义,仅供状态记录。
   var previewState = { rel: null, kind: null };
+  // 知识库联动状态(2026-10-08 批):overview 缓存(左列 📚 徽标复用,启动后台预取一次);
+  // view 三态 list/detail/log;detail/log 为当前打开的 API 响应。
+  var kbState = { loaded: false, view: 'list', overview: null, detail: null, log: null, logFile: '' };
 
   function authFetch(path) { return fetch(path, { headers: { 'X-GUI-Token': token } }); }
 
@@ -263,24 +359,79 @@ export const INDEX_HTML: string = `<!doctype html>
   function renderSessions() {
     var host = $('sessions'); host.textContent = '';
     if (!state.sessions.length) { var d = document.createElement('div'); d.className = 'empty'; d.textContent = '暂无会话'; host.appendChild(d); return; }
-    var tbl = document.createElement('table');
-    var thead = document.createElement('thead');
-    thead.textContent = '';
-    var htr = document.createElement('tr');
-    ['项目', '状态', 'pid', 'busy', '输出行', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
-    thead.appendChild(htr);
-    var tbody = document.createElement('tbody');
+    // 布局优化批(2026-10-08):6 列 nowrap 表格 → 紧凑行式(flex+ellipsis)——340px 窄列
+    // 塞不下表格 min-content(操作列滚出视口);次要信息(pid/busy/输出行数)全路径进 title。
+    // 按钮零监听器/委托模式不变(见上方注释)。
+    var frag = document.createDocumentFragment();
     state.sessions.forEach(function (s) {
-      var tr = document.createElement('tr');
-      var td1 = document.createElement('td'); td1.textContent = (s.displayPath || s.projectPath || '').split(/[\\\\/]/).pop() || s.projectPath; td1.title = s.displayPath;
-      var td2 = document.createElement('td'); var b = document.createElement('span'); b.className = 'badge st-' + s.status; b.textContent = s.status; td2.appendChild(b);
-      var td3 = document.createElement('td'); td3.textContent = String(s.pid == null ? '-' : s.pid);
-      var td4 = document.createElement('td'); td4.textContent = s.busy ? '🔒 ' + s.busyOwner : '';
-      var td5 = document.createElement('td'); td5.textContent = String(s.outputLines);
-      var td6 = document.createElement('td'); td6.appendChild(sessionControl(s));
-      tr.append(td1, td2, td3, td4, td5, td6); tbody.appendChild(tr);
+      var row = document.createElement('div'); row.className = 'sess-row';
+      row.title = (s.displayPath || s.projectPath || '') + ' · pid ' + s.pid + ' · 输出 ' + s.outputLines + ' 行' + (s.busy ? ' · busy ' + s.busyOwner : '');
+      var name = document.createElement('span'); name.className = 'sess-name';
+      name.textContent = (s.displayPath || s.projectPath || '').split(/[\\\\/]/).pop() || s.projectPath;
+      var badge = document.createElement('span'); badge.className = 'badge st-' + s.status; badge.textContent = s.status;
+      var pid = document.createElement('span'); pid.className = 'sess-pid'; pid.textContent = 'pid ' + s.pid;
+      // 输出查看(2026-10-08 输出查看批):📋 打开 #outPane——运行中实时输出/已结束回查
+      // 报错,读操作零监听器走 #sessions 委托 sess-output 分支
+      var ob = document.createElement('button'); ob.className = 'ctl'; ob.type = 'button'; ob.textContent = '📋';
+      ob.title = '查看进程输出(运行中实时/已结束回查)';
+      ob.setAttribute('data-action', 'sess-output'); ob.setAttribute('data-project', s.projectPath);
+      row.append(name, badge, pid);
+      if (s.busy) { var busy = document.createElement('span'); busy.className = 'sess-busy'; busy.textContent = '🔒 ' + s.busyOwner; busy.title = 'busy: ' + s.busyOwner; row.appendChild(busy); }
+      row.append(ob, sessionControl(s));
+      frag.appendChild(row);
     });
-    tbl.append(thead, tbody); host.appendChild(tbl);
+    host.appendChild(frag);
+  }
+
+  // ── 会话输出视图(2026-10-08 输出查看批)────────────────────────────────────
+  // 契约:GET /api/sessions/output?project= → {status,running,lines[],total,truncated};
+  // 404=桶不存在(从未运行/已清理)。ERROR:/SCRIPT ERROR: 行红色、WARNING: 行黄色
+  // (Godot 报错格式,与日志流 .log-line 同语义)。运行为实时快照(⟳ 手动刷新拉最新)。
+  var outState = { project: '' };
+
+  function showOutput(project) {
+    outState.project = project;
+    // 中列分割批(2026-10-08):浮层经 .out-open 隐藏上半日志+下半切换区(CSS 一处管)
+    document.getElementById('midPane').classList.add('out-open');
+    $('outPane').style.display = 'flex';
+    loadSessionOutput();
+  }
+
+  // 输出浮层收起:恢复分割布局(上半日志+下半当前 tab 原样,不动 tab 状态)
+  function closeOutput() {
+    document.getElementById('midPane').classList.remove('out-open');
+    $('outPane').style.display = 'none';
+  }
+
+  function loadSessionOutput() {
+    renderOutEmpty('加载中…');
+    authFetch('/api/sessions/output?project=' + encodeURIComponent(outState.project)).then(safeBody).then(function (r) {
+      if (r.status === 404) { renderOutEmpty('该会话无输出记录(可能已被清理或从未运行)'); return; }
+      if (!r.ok) { renderOutEmpty('读取失败(HTTP ' + r.status + ')'); return; }
+      if (r.body) renderOutLines(r.body);
+    }).catch(function () { renderOutEmpty('网络异常,读取未送达'); });
+  }
+
+  function renderOutEmpty(msg) {
+    var b = $('outBody'); b.textContent = '';
+    var e = document.createElement('div'); e.className = 'empty'; e.textContent = msg;
+    b.appendChild(e);
+  }
+
+  function renderOutLines(v) {
+    $('outTitle').textContent = (v.running ? '运行中' : '已结束') + ' · ' + v.status + ' · ' + v.lines.length + ' 行' + (v.truncated ? '(尾部 ' + v.lines.length + '/' + v.total + ')' : '');
+    var b = $('outBody'); b.textContent = '';
+    if (!v.lines.length) {
+      renderOutEmpty(v.running ? '暂无输出——进程尚未打印任何内容' : '上次运行无输出留存');
+      return;
+    }
+    var frag = document.createDocumentFragment();
+    v.lines.forEach(function (l) {
+      var d = document.createElement('div');
+      d.className = 'out-line' + (/^\\s*(SCRIPT ERROR|ERROR)/.test(l) ? ' err' : (/^\\s*WARNING/.test(l) ? ' warn' : ''));
+      d.textContent = l; frag.appendChild(d);
+    });
+    b.appendChild(frag); b.scrollTop = b.scrollHeight;
   }
 
   // ── 实例管理(2026-09-30)────────────────────────────────────────────────────
@@ -307,67 +458,72 @@ export const INDEX_HTML: string = `<!doctype html>
       var d = document.createElement('div'); d.className = 'empty'; d.textContent = '没有运行中的实例';
       host.appendChild(d); return;
     }
-    var tbl = document.createElement('table');
-    var thead = document.createElement('thead');
-    var htr = document.createElement('tr');
-    ['pid', '端口', '类型', '版本', '操作'].forEach(function (h) { var th = document.createElement('th'); th.textContent = h; htr.appendChild(th); });
-    thead.appendChild(htr);
-    var tbody = document.createElement('tbody');
-    state.instances.forEach(function (e) {
-      // 交接中判定(批 B 审查关键输入):respawnOf 交接完成后永久残留(仍指向已死
-      // pid),只有其指向的旧 pid 登记仍在 instances 数组在场才显示「交接中」;旧登记
-      // 消失(受控交接完成/被清扫)后 respawnOf 只是历史痕迹,不显示。数据源即本数组
-      // 自身,无需额外接口。
-      var handingOver = e.respawnOf != null && state.instances.some(function (o) { return o.pid === e.respawnOf; });
-      var tr = document.createElement('tr');
-      var td1 = document.createElement('td');
-      td1.textContent = e.current ? e.pid + ' ·本实例' : String(e.pid);
-      tr.title = 'started ' + (e.startedAt || '-');
-      var td2 = document.createElement('td'); td2.textContent = String(e.port);
-      // 类型列:kind 徽标三态(daemon/stdio/早期实例=登记无 kind 字段,对齐 version
-      // 先例)+ daemon 专属状态标注。交接中优先于占用显示(交接窗口的会话占用意义有限)。
-      var td3 = document.createElement('td');
-      var kb = document.createElement('span');
-      kb.className = 'badge ' + (e.kind === 'daemon' ? 'st-starting' : 'st-exited');
-      kb.textContent = e.kind === 'daemon' ? 'daemon' : (e.kind === 'stdio' ? 'stdio' : '早期实例');
-      td3.appendChild(kb);
+    // 实例分类批(2026-10-08):按类型分组渲染(本实例 → daemon → stdio → 早期实例)——
+    // 用户反馈"都是早期实例分不清";类型徽标上移为组标题,行内保留 daemon 状态徽标
+    // (占用中/交接中/空闲)+版本。根因同批修复:stdio 侧此前不写 kind 字段,新代码
+    // 实例也被误标「早期实例」(GodotServer 现登记 kind='stdio')。
+    // 按钮零监听器/委托模式不变(见上方注释);startedAt/交接中判定进 title。
+    var handingOverOf = function (e) {
+      return e.respawnOf != null && state.instances.some(function (o) { return o.pid === e.respawnOf; });
+    };
+    function instRow(e) {
+      var handingOver = handingOverOf(e);
+      var row = document.createElement('div'); row.className = 'inst-row';
+      row.title = 'started ' + (e.startedAt || '-') + (handingOver ? ' · 交接中(旧 pid ' + e.respawnOf + ' 登记仍在场)' : '');
+      var id = document.createElement('span'); id.className = 'inst-id';
+      id.textContent = (e.current ? e.pid + ' ·本实例' : String(e.pid)) + ' ';
+      var port = document.createElement('span'); port.className = 'inst-id dim2'; port.textContent = ':' + e.port;
+      var badges = document.createElement('span'); badges.className = 'inst-badges';
+      // daemon 专属状态标注(类型已由组标题承载):交接中优先于占用显示(交接窗口的
+      // 会话占用意义有限)。sessionActive undefined(数据不可得)不显示。
       if (e.kind === 'daemon') {
         if (handingOver) {
           var hb = document.createElement('span'); hb.className = 'badge st-stopping'; hb.textContent = '交接中';
           hb.title = 'respawnOf=' + e.respawnOf + ' 的旧登记仍在场,受控交接进行中';
-          td3.appendChild(hb);
+          badges.appendChild(hb);
         } else if (e.sessionActive === true) {
           var ab = document.createElement('span'); ab.className = 'badge st-running'; ab.textContent = '占用中';
           ab.title = '有活跃 MCP 会话(/mcp 单会话独占中)';
-          td3.appendChild(ab);
+          badges.appendChild(ab);
         } else if (e.sessionActive === false) {
           var fb = document.createElement('span'); fb.className = 'inst-dim'; fb.textContent = '空闲';
-          td3.appendChild(fb);
+          badges.appendChild(fb);
         }
-        // sessionActive undefined(注入缺席的 stdio 面板/他实例行):数据不可得,不显示
       }
-      var td4 = document.createElement('td');
-      // 「早期」语义已由类型列徽标承载,版本缺显示 '-'(避免同行两遍「早期实例」)
       var ver = e.version ? 'v' + e.version : '-';
-      if (e.current) { var b = document.createElement('span'); b.className = 'badge st-running'; b.textContent = ver; td4.appendChild(b); }
-      else td4.textContent = ver;
-      var td5 = document.createElement('td');
+      if (e.current) { var vb = document.createElement('span'); vb.className = 'badge st-running'; vb.textContent = ver; badges.appendChild(vb); }
+      else { var vd = document.createElement('span'); vd.className = 'inst-dim'; vd.textContent = ver; badges.appendChild(vd); }
       // 跨实例指引(M-1,daemon 前端批 C):他实例视角对 daemon 的重启按钮换指引——
       // 跨实例 kill 会绕过受控关停链(误伤交接对端/丢登记);自身实例保留按钮(T1 通道)。
       if (e.kind === 'daemon' && !e.current) {
-        td5.className = 'inst-dim';
-        td5.textContent = '在 daemon 面板或 CLI';
-        td5.title = '跨实例重启已禁用:请在 daemon 自身面板点「重启」,或 CLI 运行 npx godot-mcp-enhanced daemon restart';
+        var guide = document.createElement('span'); guide.className = 'inst-act';
+        guide.textContent = '在 daemon 面板或 CLI 重启';
+        guide.title = '跨实例重启已禁用:请在 daemon 自身面板点「重启」,或 CLI 运行 npx godot-mcp-enhanced daemon restart';
+        row.append(id, port, badges, guide);
       } else {
         var btn = document.createElement('button');
         btn.className = 'ctl'; btn.textContent = '重启';
         btn.setAttribute('data-action', 'inst-restart');
         btn.setAttribute('data-pid', String(e.pid));
-        td5.appendChild(btn);
+        row.append(id, port, badges, btn);
       }
-      tr.append(td1, td2, td3, td4, td5); tbody.appendChild(tr);
+      return row;
+    }
+    var frag = document.createDocumentFragment();
+    [
+      { title: '本实例', tip: '面板自身的宿主进程', match: function (e) { return !!e.current; } },
+      { title: 'daemon', tip: '常驻守护进程(HTTP /mcp 端点)', match: function (e) { return e.kind === 'daemon' && !e.current; } },
+      { title: 'stdio', tip: 'MCP 客户端(Claude Code/Cursor/ZCode 等)拉起的 stdio server', match: function (e) { return e.kind === 'stdio' && !e.current; } },
+      { title: '早期实例', tip: '登记无类型字段——kind 字段 2026-09-30 才加入登记,此前 build 启动的实例无法判断类型;重启后新实例会正确归类', match: function (e) { return e.kind !== 'daemon' && e.kind !== 'stdio' && !e.current; } },
+    ].forEach(function (g) {
+      var rows = state.instances.filter(g.match);
+      if (!rows.length) return;
+      var head = document.createElement('div'); head.className = 'inst-group'; head.textContent = g.title;
+      head.title = g.tip;
+      frag.appendChild(head);
+      rows.forEach(function (e) { frag.appendChild(instRow(e)); });
     });
-    tbl.append(thead, tbody); host.appendChild(tbl);
+    host.appendChild(frag);
   }
 
   // 重启后定向确认:2s×5 轮询目标 pid 是否退出(客户端重连拉起新进程是另一 pid,
@@ -449,7 +605,17 @@ export const INDEX_HTML: string = `<!doctype html>
       else if (p.running) { badge.className = 'dot run'; badge.textContent = '●'; badge.title = '运行中'; }
       var rm = document.createElement('button'); rm.className = 'ctl stop'; rm.textContent = '×'; rm.title = '从列表移除';
       rm.setAttribute('data-action', 'remove'); rm.setAttribute('data-path', p.path);
-      row.append(imp, run, edit, files, name, time, badge, rm); frag.appendChild(row);
+      // 知识库徽标(2026-10-08 批):repoPath 精确匹配(大小写不敏感)→ 📚,点击进知识库详情
+      var kbc = findKbByPath(p.path);
+      if (kbc) {
+        var kbBtn = document.createElement('button'); kbBtn.className = 'ctl'; kbBtn.type = 'button'; kbBtn.textContent = '📚';
+        kbBtn.title = '知识库:' + (kbc.lastLogDate ? '最近日志 ' + kbc.lastLogDate : '无日志') + (kbc.stall ? '(🔴 疑似断流!)' : '');
+        kbBtn.setAttribute('data-action', 'kb'); kbBtn.setAttribute('data-kbname', kbc.name);
+        row.append(imp, run, edit, files, kbBtn, name, time, badge, rm);
+      } else {
+        row.append(imp, run, edit, files, name, time, badge, rm);
+      }
+      frag.appendChild(row);
     });
     host.appendChild(frag);
   }
@@ -605,20 +771,21 @@ export const INDEX_HTML: string = `<!doctype html>
   // ── 文件浏览(spec §6.1/§6.2,2026-09-15 资源管理批)────────────────────────
   // 契约(Task 2):GET /api/projects/files?project=&sub= → {entries:[{name,isDir,size,mtime}]};
   // 目录先排序与隐藏目录(.godot/.git 等)降噪均由 server 侧完成(files-api.ts),前端不重复。
-  // 中列 tab 切换:切 display + tab 按钮高亮 + 列标题同步(Task 4 审查 Minor 2:文件
-  // tab 激活时中列头不再误显「日志流」);Task 5 补脏标防误切——编辑器有未保存修改时
-  // 切回日志 tab 需 confirm(spec §6.3;切「文件」不拦,编辑视图仍保留可切回)。
+  // 下半切换区 tab(中列分割批 2026-10-08):日志流已常驻上半,本函数只切下半三态
+  // (files/kb/settings);脏标防误切——编辑器有未保存修改时离开「文件」需 confirm
+  // (spec §6.3 语义随日志 tab 移除改为"离开文件 tab"拦截)。
   function showTab(name) {
-    var logs = name === 'logs';
-    if (logs && dirtyBlock()) return;
-    $('tabLogs').className = 'tab' + (logs ? ' on' : '');
+    if (name !== 'files' && dirtyBlock()) return;
+    // 输出浮层收起(输出查看批):任何 tab 切换退出 out-open 覆盖态
+    closeOutput();
     $('tabFiles').className = 'tab' + (name === 'files' ? ' on' : '');
     $('tabSettings').className = 'tab' + (name === 'settings' ? ' on' : '');
-    $('midTitle').textContent = logs ? '日志流' : (name === 'files' ? '文件' : '设置');
-    $('logsPane').style.display = logs ? 'flex' : 'none';
+    $('tabKb').className = 'tab' + (name === 'kb' ? ' on' : '');
     $('filesPane').style.display = name === 'files' ? 'flex' : 'none';
     $('settingsPane').style.display = name === 'settings' ? 'flex' : 'none';
+    $('kbPane').style.display = name === 'kb' ? 'flex' : 'none';
     if (name === 'settings') loadSettings();
+    if (name === 'kb' && !kbState.loaded) loadKbOverview();
   }
 
   // ── 设置面板(2026-09-29 设置批)────────────────────────────────────────────
@@ -633,6 +800,7 @@ export const INDEX_HTML: string = `<!doctype html>
       var v = r.body;
       $('setGodotPath').value = (v.persisted && v.persisted.godotPath) || '';
       $('setAllowed').value = v.persisted && v.persisted.allowedProjectPaths ? v.persisted.allowedProjectPaths.join('\\n') : '';   // 反斜杠n须双写:模板字符串内单写会被求值成真实换行,炸掉浏览器脚本语法(2026-09-30 面板死锁根因)
+      $('setVaultPath').value = (v.persisted && v.persisted.vaultPath) || '';
       renderSettingsCands(v.candidates || []);
       renderSettingsInfo(v);
       $('setGodotResult').textContent = '';
@@ -664,6 +832,7 @@ export const INDEX_HTML: string = `<!doctype html>
       '当前白名单: ' + (eff.allowedProjectPaths && eff.allowedProjectPaths.length ? eff.allowedProjectPaths.join(' ; ') : '(未设置,收缩到工作目录)'),
       'UNRESTRICTED: ' + (eff.unrestricted ? 'true(所有限制旁路)' : 'false'),
       'Godot 二进制白名单: ' + (eff.godotAllowedList || '(未配置)'),
+      '当前知识库 vault: ' + (eff.vaultPath || '(未设置,「知识库」tab 显示配置引导)'),
     ];
     if (v.readOnly) lines.push('READ_ONLY: true');
     var host = $('setInfo'); host.textContent = '';
@@ -692,6 +861,8 @@ export const INDEX_HTML: string = `<!doctype html>
     var allowed = $('setAllowed').value.split('\\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });   // \\n:同上,模板字符串内双转义
     var btn = $('setSave'); btn.disabled = true;
     $('setSaveHint').textContent = '保存中…(含二进制校验,可能数秒)';
+    // vaultPath 不在此表单(真机反馈修复):独立保存按钮 saveVaultSettings——Godot 校验
+    // 失败不再连带吞掉 vault 的保存。
     fetch('/api/settings', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gui-token': token },
@@ -709,6 +880,238 @@ export const INDEX_HTML: string = `<!doctype html>
         $('setSaveHint').textContent = '保存失败: ' + ((r.body && r.body.error) ? r.body.error : JSON.stringify(r.body).slice(0, 100));
       })
       .catch(function () { btn.disabled = false; $('setSaveHint').textContent = '网络异常,保存请求未送达'; });
+  }
+
+  // 知识库 vault 独立保存(2026-10-08 真机反馈修复):单字段 patch,与 Godot 表单互不拖累;
+  // 成功后静默重拉知识库总览(vault 可能刚配/刚清)。
+  function saveVaultSettings() {
+    var vault = $('setVaultPath').value.trim();
+    var btn = $('setVaultSave'); var out = $('setVaultResult'); btn.disabled = true;
+    out.className = 'set-result'; out.textContent = '保存中…';
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-gui-token': token },
+      body: JSON.stringify({ vaultPath: vault }),
+    }).then(safeBody)
+      .then(function (r) {
+        btn.disabled = false;
+        if (r.ok) {
+          out.className = 'set-result ok'; out.textContent = vault ? '✓ 已保存并立即生效,「知识库」tab 可用' : '✓ 已清除(恢复启动时配置)';
+          kbState.loaded = false; loadKbOverview(true);
+          return;
+        }
+        if (r.status === 403 && JSON.stringify(r.body).indexOf('read-only') !== -1) {
+          state.readOnly = true;
+          out.className = 'set-result err'; out.textContent = '只读模式,保存已禁用';
+          return;
+        }
+        out.className = 'set-result err';
+        out.textContent = '✗ ' + ((r.body && r.body.error) ? r.body.error : JSON.stringify(r.body).slice(0, 100));
+      })
+      .catch(function () { btn.disabled = false; out.className = 'set-result err'; out.textContent = '网络异常,保存请求未送达'; });
+  }
+
+  // ── 知识库联动(2026-10-08 批)──────────────────────────────────────────────
+  // 契约:GET /api/kb/overview → {configured, vaultExists, vaultName, projects[]};
+  // GET /api/kb/project?name= → {name, board|null, logs[]};GET /api/kb/file?name=&path= → {content,size}。
+  // 渲染铁律同全面板:动态内容一律 DOM API + textContent;重绘容器内按钮零监听器、
+  // 只带 data-action,由 #kbPane 容器一次性委托接管。
+  // obsidian:// 跳转用 <a href>(外部协议导航,非 fetch——不受 CSP connect-src 管辖)。
+  function obsidianUri(vaultName, rel) {
+    return 'obsidian://open?vault=' + encodeURIComponent(vaultName) + '&file=' + encodeURIComponent(rel.replace(/\\.md$/, ''));   // \\. 双写:模板串内单写求值后退化为通配符 .(2026-09-30 死锁根因同族)
+  }
+
+  // 左列徽标匹配:面板项目路径与总览 repoPath 精确相等(大小写不敏感,Windows 路径)。
+  function findKbByPath(path) {
+    if (!kbState.overview || !kbState.overview.projects) return null;
+    var lower = (path || '').toLowerCase();
+    for (var i = 0; i < kbState.overview.projects.length; i++) {
+      var p = kbState.overview.projects[i];
+      if (p.repoPath && p.repoPath.toLowerCase() === lower) return p;
+    }
+    return null;
+  }
+
+  function loadKbOverview(silent) {
+    authFetch('/api/kb/overview').then(safeBody)
+      .then(function (r) {
+        kbState.loaded = true;
+        if (!r.ok || !r.body) {
+          if (!silent) $('statusBar').textContent = '知识库总览读取失败( HTTP ' + r.status + ')';
+          return;
+        }
+        kbState.overview = r.body;
+        kbState.view = 'list';
+        renderKb();
+        renderProjects();   // 📚 徽标数据就绪,重绘左列
+      })
+      .catch(function () { if (!silent) $('statusBar').textContent = '网络异常,知识库请求未送达'; });
+  }
+
+  function renderKb() {
+    var host = $('kbPane'); host.textContent = '';
+    if (kbState.view === 'log' && kbState.log) { renderKbLog(host); return; }
+    if (kbState.view === 'detail' && kbState.detail) { renderKbDetail(host); return; }
+    renderKbList(host);
+  }
+
+  function kbTools(host, actions) {
+    // actions: [{t:'按钮文案', a:'data-action 值', primary}] + 可选 {link:{t,href,tint}}
+    // 布局优化批(2026-10-08):Obsidian 链接推到工具条最右(margin-left:auto)+ ↗ 前缀
+    // ——原样与按钮同权重混排在左侧,视觉上像输入框占位文字(视觉验收反馈)
+    var bar = document.createElement('div'); bar.className = 'log-tools';
+    actions.forEach(function (it) {
+      if (it.link) {
+        var a = document.createElement('a'); a.className = 'ctl'; a.textContent = '↗ ' + it.link.t; a.href = it.link.href; a.title = '在 Obsidian 中打开';
+        a.style.marginLeft = 'auto';
+        bar.appendChild(a); return;
+      }
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'ctl' + (it.primary ? '' : '');
+      b.textContent = it.t; b.setAttribute('data-action', it.a);
+      bar.appendChild(b);
+    });
+    host.appendChild(bar);
+  }
+
+  function renderKbList(host) {
+    var ov = kbState.overview;
+    if (!ov || !ov.configured) {
+      kbTools(host, [
+        { t: '⟳ 刷新', a: 'kb-refresh' },
+        { t: '去设置 vault 路径', a: 'kb-goto-settings', primary: true },
+      ]);
+      var e = document.createElement('div'); e.className = 'empty';
+      e.textContent = '未配置知识库 vault——到「设置」tab 填 Obsidian vault 根目录(如 D:\\workspace\\Obsidian)即可在此查看各项目待办进度与开发日志';
+      host.appendChild(e);
+      return;
+    }
+    if (!ov.vaultExists) {
+      kbTools(host, [{ t: '⟳ 刷新', a: 'kb-refresh' }, { t: '去设置', a: 'kb-goto-settings' }]);
+      var e2 = document.createElement('div'); e2.className = 'empty';
+      e2.textContent = '配置的 vault 目录不存在,请到「设置」检查路径';
+      host.appendChild(e2);
+      return;
+    }
+    kbTools(host, [
+      { t: '⟳ 刷新', a: 'kb-refresh' },
+      { link: { t: 'Obsidian 首页', href: obsidianUri(ov.vaultName, 'Dashboard') } },
+    ]);
+    var list = document.createElement('div'); list.className = 'scroll';
+    if (!ov.projects.length) {
+      var empty = document.createElement('div'); empty.className = 'empty';
+      empty.textContent = 'vault 内未发现项目知识库目录(判定:含 开发日志/ 或 任务看板.md 或 项目待办.md 或「* 首页.md」)';
+      list.appendChild(empty);
+    }
+    ov.projects.forEach(function (p) {
+      var card = document.createElement('div'); card.className = 'kb-card';
+      card.setAttribute('data-action', 'kb-project'); card.setAttribute('data-name', p.name);
+      var head = document.createElement('div'); head.className = 'kb-head';
+      var name = document.createElement('span'); name.className = 'kb-name'; name.textContent = p.name;
+      if (p.repoPath) name.title = p.repoPath;
+      var count = document.createElement('span'); count.className = 'kb-count';
+      count.textContent = (p.total !== null && p.total !== undefined && p.total > 0)
+        ? ('✔ ' + p.done + '/' + p.total + (p.boardFile ? ' · ' + p.boardFile : ''))
+        : (p.boardFile ? p.boardFile + '(无任务条目)' : '无活跃看板');
+      var badge = document.createElement('span');
+      if (p.stall) { badge.className = 'kb-stall'; badge.textContent = '🔴 断流' + (p.stallDays !== null && p.stallDays !== undefined ? ' ' + p.stallDays + '天' : '(近期提交无日志)'); }
+      else if (p.lastCommitDate && p.lastLogDate) { badge.className = 'kb-fresh'; badge.textContent = '🟢 同步'; badge.title = '最近提交 ' + p.lastCommitDate.slice(0, 10); }
+      else if (p.lastCommitDate) { badge.className = 'kb-none'; badge.textContent = '· 无日志'; badge.title = '最近提交 ' + p.lastCommitDate.slice(0, 10) + '(死项目或未开始记录,不算断流)'; }
+      else { badge.className = 'kb-none'; badge.textContent = p.repoPath ? '· 仓库不可读' : '· 未映射仓库'; }
+      head.append(name, count, badge);
+      var meta = document.createElement('div'); meta.className = 'kb-meta';
+      // 布局优化批(2026-10-08):日期独立 span 提亮(.kb-meta-date)——整行 dim 时
+      // 「最近日志」行的关键锚点(哪天)扫读不出
+      if (p.lastLogDate) {
+        var ld = document.createElement('span'); ld.className = 'kb-meta-date'; ld.textContent = p.lastLogDate;
+        meta.appendChild(ld); meta.appendChild(document.createTextNode(' ' + (p.lastLogTitle || '')));
+      } else { meta.textContent = '无开发日志'; }
+      card.append(head, meta);
+      list.appendChild(card);
+    });
+    host.appendChild(list);
+  }
+
+  function renderKbDetail(host) {
+    var d = kbState.detail;
+    var ov = kbState.overview || {};
+    kbTools(host, [
+      { t: '← 返回总览', a: 'kb-back-list' },
+      { link: { t: 'Obsidian 打开', href: obsidianUri(ov.vaultName || '', d.name + '/' + (d.board ? d.board.file : '')) } },
+    ]);
+    var list = document.createElement('div'); list.className = 'scroll';
+    var bSub = document.createElement('div'); bSub.className = 'kb-sub';
+    bSub.textContent = d.board
+      ? ('看板:' + d.board.file + '  ✔ ' + (d.board.done !== null && d.board.done !== undefined ? d.board.done : '-') + '/' + (d.board.total !== null && d.board.total !== undefined ? d.board.total : '-'))
+      : '无活跃看板(项目待办/任务看板均归档或缺席)';
+    list.appendChild(bSub);
+    if (d.board && d.board.sections && d.board.sections.length) {
+      d.board.sections.forEach(function (s) {
+        var line = document.createElement('div'); line.className = 'kb-section';
+        line.textContent = '· ' + s.text; line.title = s.text;
+        list.appendChild(line);
+      });
+    }
+    var lSub = document.createElement('div'); lSub.className = 'kb-sub';
+    lSub.textContent = '开发日志(最近 ' + d.logs.length + ' 篇,点击查看正文)';
+    list.appendChild(lSub);
+    if (!d.logs.length) {
+      var empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '无开发日志';
+      list.appendChild(empty);
+    }
+    d.logs.forEach(function (lg) {
+      var row = document.createElement('div'); row.className = 'kb-log-row';
+      row.setAttribute('data-action', 'kb-log'); row.setAttribute('data-file', lg.file);
+      var date = document.createElement('span'); date.className = 'kb-log-date'; date.textContent = lg.date;
+      var title = document.createElement('span'); title.className = 'kb-log-title'; title.textContent = lg.title; title.title = lg.file;
+      var st = document.createElement('span'); st.className = 'kb-log-status'; st.textContent = lg.status || '';
+      row.append(date, title, st);
+      list.appendChild(row);
+    });
+    host.appendChild(list);
+  }
+
+  function renderKbLog(host) {
+    var d = kbState.detail;
+    var ov = kbState.overview || {};
+    kbTools(host, [
+      { t: '← 返回 ' + (d ? d.name : '项目'), a: 'kb-back-detail' },
+      { link: { t: 'Obsidian 打开', href: obsidianUri(ov.vaultName || '', (d ? d.name + '/' : '') + '开发日志/' + kbState.logFile) } },
+    ]);
+    var pre = document.createElement('pre'); pre.className = 'kb-log-body';
+    pre.textContent = kbState.log ? kbState.log.content : '(空文件)';
+    host.appendChild(pre);
+  }
+
+  function openKbProject(name) {
+    $('statusBar').textContent = '知识库详情读取中… ' + name;
+    authFetch('/api/kb/project?name=' + encodeURIComponent(name))
+      .then(safeBody)
+      .then(function (r) {
+        if (!r.ok) {
+          $('statusBar').textContent = '项目详情读取失败: ' + (r.status === 404 ? '目录不存在' : (r.body && r.body.error ? r.body.error : 'HTTP ' + r.status));
+          return;
+        }
+        kbState.detail = r.body; kbState.view = 'detail'; kbState.log = null;
+        renderKb();
+        $('statusBar').textContent = '已加载 ' + name;
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,详情请求未送达'; });
+  }
+
+  function openKbLog(name, file) {
+    $('statusBar').textContent = '日志正文读取中… ' + file;
+    authFetch('/api/kb/file?name=' + encodeURIComponent(name) + '&path=' + encodeURIComponent(file))
+      .then(safeBody)
+      .then(function (r) {
+        if (!r.ok) {
+          $('statusBar').textContent = '日志读取失败: ' + (r.body && r.body.error ? r.body.error : 'HTTP ' + r.status);
+          return;
+        }
+        kbState.log = r.body; kbState.logFile = file; kbState.view = 'log';
+        renderKb();
+        $('statusBar').textContent = '已加载 ' + file;
+      })
+      .catch(function () { $('statusBar').textContent = '网络异常,日志请求未送达'; });
   }
 
   function openFiles(projectPath) {
@@ -1149,6 +1552,15 @@ export const INDEX_HTML: string = `<!doctype html>
     var view = cur && s.projects && s.projects[cur] ? s.projects[cur] : s;
     var rows = (view.toolStats || []).slice().sort(function (a, b) { return b.calls - a.calls; });
     var tbody = $('statsTable').querySelector('tbody'); tbody.textContent = '';
+    // 布局优化批(2026-10-08):零调用(server 刚启动)空表体给占位——原样六列空壳
+    // 在 420px 全高右列渲染成"半成品";toolStats 非空但被 projSel 过滤到空时同占位
+    if (!rows.length) {
+      var tr0 = document.createElement('tr');
+      var td0 = document.createElement('td'); td0.colSpan = 6;
+      var ph = document.createElement('div'); ph.className = 'empty';
+      ph.textContent = '暂无工具调用——server 收到调用后出现';
+      td0.appendChild(ph); tr0.appendChild(td0); tbody.appendChild(tr0);
+    }
     rows.forEach(function (t) {
       var tr = document.createElement('tr');
       [t.tool, t.calls, t.errors, Math.round(t.totalDurationMs / Math.max(1, t.calls)), t.minDurationMs, t.maxDurationMs].forEach(function (v) {
@@ -1163,10 +1575,16 @@ export const INDEX_HTML: string = `<!doctype html>
     var optAll = document.createElement('option'); optAll.value = ''; optAll.textContent = '全部'; sel.appendChild(optAll);
     keys.forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = k.split(/[\\\\/]/).pop() || k; o.title = k; sel.appendChild(o); });
     sel.value = cur;
-    // 时序柱状图(纯 CSS)
+    // 时序柱状图(纯 CSS);空序列给占位(布局优化批 2026-10-08:收到 stats 但
+    // timeSeries 空(如刚启动首帧)时原样清空成纯空白,右列下半区像未实现)
     var chart = $('chart'); chart.textContent = '';
     var ts = view.timeSeries || []; var max = 1;
     ts.forEach(function (b) { max = Math.max(max, b.calls); });
+    if (!ts.length) {
+      var ph = document.createElement('div'); ph.className = 'empty'; ph.style.flex = '1';
+      ph.textContent = '暂无分钟时序数据';
+      chart.appendChild(ph); return;
+    }
     ts.forEach(function (b) {
       var bar = document.createElement('div'); bar.className = 'bar'; bar.title = b.minute + ' calls=' + b.calls + ' errors=' + b.errors;
       var c = document.createElement('div'); c.className = 'calls'; c.style.height = Math.round(b.calls / max * 70) + 'px';
@@ -1194,6 +1612,11 @@ export const INDEX_HTML: string = `<!doctype html>
     if (action === 'run' || action === 'edit') { startSession(path, action); return; }
     if (action === 'reimport') { reimportProject(path); return; }
     if (action === 'files') { openFiles(path); return; }
+    if (action === 'kb') {   // 📚 徽标(2026-10-08 批):切知识库 tab 并直达该项目详情
+      showTab('kb');
+      openKbProject(btn.getAttribute('data-kbname') || '');
+      return;
+    }
     if (action === 'remove') { removeProject(path); }
   });
 
@@ -1205,6 +1628,8 @@ export const INDEX_HTML: string = `<!doctype html>
     if (!btn) return;
     var action = btn.getAttribute('data-action');
     var project = btn.getAttribute('data-project') || '';
+    // 输出查看(2026-10-08 输出查看批):读操作,不走下方 POST 分支(disable/状态栏流程)
+    if (action === 'sess-output') { showOutput(project); return; }
     $('statusBar').textContent = action === 'stop' ? '停止中… ' + project : '清理中… ' + project;
     btn.disabled = true;
     fetch(action === 'stop' ? '/api/sessions/stop' : '/api/sessions/remove', {
@@ -1264,13 +1689,37 @@ export const INDEX_HTML: string = `<!doctype html>
 
   // 中列 tab 切换(资源管理批 spec §6.1):tab 按钮为静态 DOM、从不重绘,直接绑定
   // (与 logFilter/projSearch 静态控件同模式;重绘容器内的按钮才须走 data-action 委托)。
-  $('tabLogs').addEventListener('click', function () { showTab('logs'); });
+  // 下半切换区 tab(中列分割批):静态 DOM 直接绑定;「日志」tab 已移除(日志流常驻上半)
   $('tabFiles').addEventListener('click', function () { showTab('files'); });
   $('tabSettings').addEventListener('click', function () { showTab('settings'); });
+  $('tabKb').addEventListener('click', function () { showTab('kb'); });
+  // 输出视图工具条(2026-10-08 输出查看批):静态 DOM 直接绑定(同 tab 按钮模式);
+  // 返回走 closeOutput() 恢复分割布局(上半日志+下半当前 tab 原样)
+  $('outBack').addEventListener('click', closeOutput);
+  $('outRefresh').addEventListener('click', function () { if (outState.project) loadSessionOutput(); });
+  // 知识库总览后台预取(2026-10-08 批):左列 📚 徽标数据源;静默失败(未配置/网络异常
+  // 均不惊扰——进知识库 tab 时 loadKbOverview 有带 statusBar 反馈的重试)。
+  loadKbOverview(true);
+  // #kbPane 容器一次性事件委托(2026-10-08 批,同 #filesPane 模式):工具行/卡片/日志行
+  // 按钮与可点行全部零监听器、只带 data-action(+data-name/data-file),重绘只清容器
+  // 内部,委托永续;obsidian:// 跳转是原生 <a href> 导航,不经本委托。
+  $('kbPane').addEventListener('click', function (ev) {
+    if (!ev.target || !ev.target.closest) return;
+    var el = ev.target.closest('[data-action]');
+    if (!el || !($('kbPane').contains(el))) return;
+    var action = el.getAttribute('data-action');
+    if (action === 'kb-refresh') { loadKbOverview(); return; }
+    if (action === 'kb-goto-settings') { showTab('settings'); return; }
+    if (action === 'kb-back-list') { kbState.view = 'list'; kbState.log = null; renderKb(); return; }
+    if (action === 'kb-back-detail') { kbState.view = 'detail'; kbState.log = null; renderKb(); return; }
+    if (action === 'kb-project') { openKbProject(el.getAttribute('data-name') || ''); return; }
+    if (action === 'kb-log' && kbState.detail) { openKbLog(kbState.detail.name, el.getAttribute('data-file') || ''); }
+  });
   // 设置面板静态控件直接绑定(tab/输入/按钮均为静态 DOM,从不重绘);候选列表是唯一
   // 动态区,容器一次性委托(data-cand 点选即填入并验证)。
   $('setVerifyBtn').addEventListener('click', verifyGodot);
   $('setSave').addEventListener('click', saveSettings);
+  $('setVaultSave').addEventListener('click', saveVaultSettings);   // vault 独立保存(真机反馈修复)
   $('setCands').addEventListener('click', function (ev) {
     var b = ev.target && ev.target.closest ? ev.target.closest('button[data-cand]') : null;
     if (!b) return;

@@ -97,6 +97,33 @@ describe('isGodotPathAllowed 优先级链(env → config → back-compat 放行)
   });
 });
 
+// ─── M-2 (2026-10-13 全维度审查):origin 分级——AI 可控 override 面无白名单时 fail-closed ───
+describe('isGodotPathAllowed origin 分级(审查 M-2)', () => {
+  beforeEach(() => {
+    rmSync(join(FAKE_HOME, '.godot-mcp', 'godot-paths.json'), { force: true });
+  });
+
+  it('白名单未配置:origin=auto 保持 back-compat 放行(自动发现链/env 不受影响)', () => {
+    expect(isGodotPathAllowed('C:/anywhere/Godot.exe')).toBe(true);
+  });
+
+  it('白名单未配置:origin=override 拒绝(工具参数 godot_path 面 fail-closed)', () => {
+    expect(isGodotPathAllowed('C:/anywhere/Godot.exe', 'override')).toBe(false);
+  });
+
+  it('白名单已配置:override 与 auto 同语义(白名单内均放行,外均拒绝)', () => {
+    vi.stubEnv('GODOT_MCP_ALLOWED_GODOT_PATHS', 'C:/g');
+    expect(isGodotPathAllowed('C:/g/Godot.exe', 'override')).toBe(true);
+    expect(isGodotPathAllowed('C:/g/Godot.exe')).toBe(true);
+    expect(isGodotPathAllowed('C:/evil/fake.exe', 'override')).toBe(false);
+  });
+
+  it('UNRESTRICTED=true 旁路对 override 同样生效(开发者总开关)', () => {
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', 'true');
+    expect(isGodotPathAllowed('C:/anywhere/Godot.exe', 'override')).toBe(true);
+  });
+});
+
 describe('findGodot 搜索链接入 config 候选', () => {
   it('config 中不存在/无效的路径被跳过,不抛出(容错护栏)', async () => {
     writeGodotPathsConfig([join(FAKE_HOME, 'nonexistent', 'Godot_v4.7.2.exe')]);

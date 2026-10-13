@@ -196,7 +196,7 @@ agent 不得直接编辑(需改时改源文件并说明同步方式):
     - `src/telemetry/` — 遥测(opt-in,默认关)
     - `src/game-templates/` — 游戏模板资产(打包进 `build/game-templates/`)
     - `src/skills/` — skills 分发源(打包进 npm 包 `skills/`)
-    - `src/cli/` — CLI 子系统(`clients/` 15 客户端适配器(2026-08-19 加 ZCode 计数修正 + Warp)+ `setup.ts` 一键配置 + `configure.ts` 定向配置单客户端(P0-2)+ `skills.ts` skills 分发 + `doctor.ts` 诊断 + `init.ts` + `router.ts` 子命令路由 `setup`/`configure`/`skills`/`doctor`/`init`/`dashboard`/`qa`/`daemon`。⚠️ 竞品研究易误判"enhanced 无客户端配置能力",实际此目录已含 Claude Desktop/Cursor/Cline/Windsurf/Zed/Claude Code CLI/Codex CLI/Cherry Studio/Antigravity/Trae/Qwen Code/Gemini CLI/OpenCode/ZCode/Warp)
+    - `src/cli/` — CLI 子系统(`clients/` 15 客户端适配器(2026-08-19 加 ZCode 计数修正 + Warp)+ `setup.ts` 一键配置 + `configure.ts` 定向配置单客户端(P0-2)+ `skills.ts` skills 分发 + `doctor.ts` 诊断 + `init.ts` + `router.ts` 子命令路由 `setup`/`configure`/`skills`/`doctor`/`init`/`dashboard`/`qa`/`web`/`daemon`/`gif`/`install`/`uninstall`(12 个,2026-10-13 全维度审查 Nit-D2 校正)。⚠️ 竞品研究易误判"enhanced 无客户端配置能力",实际此目录已含 Claude Desktop/Cursor/Cline/Windsurf/Zed/Claude Code CLI/Codex CLI/Cherry Studio/Antigravity/Trae/Qwen Code/Gemini CLI/OpenCode/ZCode/Warp)
   - `addons/` — Godot editor 插件(MCP Bridge,分发给目标项目)
   - `scripts/` — 构建/版本/检查脚本(`install-plugin.js`、`version-sync.mjs`、`check-token-budget.mjs` 等)
   - `test/` — Vitest 测试(`.test.ts` / `.test.js`)

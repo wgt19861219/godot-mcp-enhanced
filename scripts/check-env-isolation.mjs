@@ -37,7 +37,6 @@ const DANGEROUS_DIRECT_ASSIGN = /process\.env\.(GODOT_MCP_UNRESTRICTED|GODOT_MCP
 const ALLOWLIST = new Set([
   'test/setup.js',                    // 全局 UNRESTRICTED=true 是有意，afterEach 不依赖此清
   'test/helpers/path-isolation.ts',   // asUnrestrictedPath 用 stubEnv 正确，本文件是封装入口
-  'test/regression/check-env-isolation.test.ts',  // 本守护的自测（守卫守护）
 ]);
 
 // 收集 test/ 下所有 .ts/.js 文件

@@ -22,12 +22,18 @@ export interface UserSettings {
   godotPath?: string;
   /** 项目白名单根(绝对路径数组;空/缺席 = 用启动时 env 快照) */
   allowedProjectPaths?: string[];
+  /** Obsidian 知识库 vault 根目录(绝对路径;空/缺席 = 用启动时 env 快照)。
+   *  2026-10-08 知识库联动批:web-gui 知识库 tab 的 vault 定位;env 名
+   *  GODOT_MCP_VAULT_PATH。非 Godot 生效配置——不参与 hasEnvGodotConfig/
+   *  isGodotConfigMissing 首启判定(那边只管 Godot 路径/白名单)。 */
+  vaultPath?: string;
 }
 
 /** 启动时 env 快照:字段清除(恢复)语义的回退源。 */
 interface StartupEnvSnapshot {
   godotPath: string | undefined;
   allowed: string | undefined;
+  vaultPath: string | undefined;
 }
 
 let _startupSnapshot: StartupEnvSnapshot | null = null;
@@ -38,6 +44,7 @@ function ensureStartupSnapshot(): StartupEnvSnapshot {
     _startupSnapshot = {
       godotPath: process.env.GODOT_PATH,
       allowed: process.env.ALLOWED_PROJECT_PATHS,
+      vaultPath: process.env.GODOT_MCP_VAULT_PATH,
     };
   }
   return _startupSnapshot;
@@ -61,7 +68,13 @@ export async function readUserSettings(dir?: string): Promise<UserSettings> {
     const allowedProjectPaths = Array.isArray(raw.allowedProjectPaths)
       ? raw.allowedProjectPaths.filter((p): p is string => typeof p === 'string' && p.length > 0)
       : undefined;
-    return { version: 1, ...(godotPath ? { godotPath } : {}), ...(allowedProjectPaths && allowedProjectPaths.length > 0 ? { allowedProjectPaths } : {}) };
+    const vaultPath = typeof raw.vaultPath === 'string' && raw.vaultPath.length > 0 ? raw.vaultPath : undefined;
+    return {
+      version: 1,
+      ...(godotPath ? { godotPath } : {}),
+      ...(allowedProjectPaths && allowedProjectPaths.length > 0 ? { allowedProjectPaths } : {}),
+      ...(vaultPath ? { vaultPath } : {}),
+    };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
       getLogger().warn('user-settings', `settings.json unreadable, treating as empty: ${err instanceof Error ? err.message : err}`);
@@ -122,6 +135,15 @@ export function applyUserSettings(s: UserSettings): void {
   } else {
     delete process.env.ALLOWED_PROJECT_PATHS;
   }
+  // vaultPath(2026-10-08 知识库联动批):kb-api 现读 env 无缓存,赋值即生效;
+  // clearGodotPathCache 与 vault 无关,尾部统一调用不动。
+  if (typeof s.vaultPath === 'string' && s.vaultPath.length > 0) {
+    process.env.GODOT_MCP_VAULT_PATH = s.vaultPath;
+  } else if (snap.vaultPath !== undefined) {
+    process.env.GODOT_MCP_VAULT_PATH = snap.vaultPath;
+  } else {
+    delete process.env.GODOT_MCP_VAULT_PATH;
+  }
   clearGodotPathCache();
 }
 
@@ -133,9 +155,9 @@ export function applyUserSettings(s: UserSettings): void {
 export async function applyUserSettingsAtStartup(dir?: string): Promise<void> {
   ensureStartupSnapshot();
   const s = await readUserSettings(dir);
-  if (s.godotPath !== undefined || s.allowedProjectPaths !== undefined) {
+  if (s.godotPath !== undefined || s.allowedProjectPaths !== undefined || s.vaultPath !== undefined) {
     applyUserSettings(s);
-    getLogger().info('user-settings', `Applied user settings from ${getUserSettingsFile(dir)} (godotPath=${s.godotPath !== undefined ? 'set' : 'unset'}, allowedProjectPaths=${s.allowedProjectPaths !== undefined ? s.allowedProjectPaths.length : 'unset'})`);
+    getLogger().info('user-settings', `Applied user settings from ${getUserSettingsFile(dir)} (godotPath=${s.godotPath !== undefined ? 'set' : 'unset'}, allowedProjectPaths=${s.allowedProjectPaths !== undefined ? s.allowedProjectPaths.length : 'unset'}, vaultPath=${s.vaultPath !== undefined ? 'set' : 'unset'})`);
   }
 }
 

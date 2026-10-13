@@ -1,5 +1,6 @@
 // src/core/ToolDispatcher.ts
 import type { ToolResult, HandlerResult, ToolContext, DispatchContext, Middleware, ToolCallDelegate } from '../types.js';
+import { format } from 'node:util';
 import type { ChildProcess } from 'child_process';
 import type { ReadOnlyGuard } from './ReadOnlyGuard.js';
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
@@ -69,8 +70,10 @@ function getToolDeadlineMs(): number {
 }
 
 const DEBUG = process.env.DEBUG === 'true';
+// util.format:printf 风格格式化(2026-10-08 面板验收 6-1 修复)——本地 log() 此前只
+// join(' '),三处 %s/%d 调用(MINIMAL/PROFILE/activeGroups)原样输出占位符到面板日志流
 function log(...args: unknown[]): void {
-  if (DEBUG) getLogger().debug('dispatcher', args.map(a => String(a)).join(' '));
+  if (DEBUG) getLogger().debug('dispatcher', format(...args));
 }
 
 export interface DispatcherOptions {
@@ -860,11 +863,13 @@ export class ToolDispatcher {
       // (校验器做了什么/为何判非法)——此前单句 "not a valid Godot binary" 对合法
       // 4.7.2 console exe 被拒场景不给任何排查方向,被迫手动 spawn 绕过(>5min)。
       const { validateGodotBinaryDetailed } = await import('../core/godot-finder.js');
-      const check = await validateGodotBinaryDetailed(godotOverride);
+      // M-2 (2026-10-13 全维度审查):工具参数 godot_path 是 AI 可控面,origin='override'
+      // ——白名单未配置时 fail-closed(env/GODOT_PATH 与自动发现链不受影响)。
+      const check = await validateGodotBinaryDetailed(godotOverride, 'override');
       if (!check.ok) {
         // stage 是结构化枚举;stdoutPreview 是 --version 输出(版本串,非路径,无 PII)
         const why = check.stage === 'path-not-allowed'
-          ? 'path is outside the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist (env or ~/.godot-mcp/godot-paths.json). Fix: add the binary directory to the whitelist, or unset/clear the stale whitelist.'
+          ? 'path is outside the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist, or no whitelist is configured (per-call godot_path overrides are rejected by default without one — 2026-10-13 security hardening). Fix: set GODOT_MCP_ALLOWED_GODOT_PATHS (env or the web GUI settings panel), or rely on GODOT_PATH env / auto-discovery instead of per-call godot_path.'
           : check.stage === 'is-directory'
             ? 'path is a directory, not the Godot executable. Fix: point at the binary file itself (e.g. Godot_v4.7.2-stable_win64.exe).'
             : check.stage === 'version-run-failed'

@@ -23,9 +23,14 @@ import { getLogger } from './logger.js';
 //     NOT a security boundary. The following bypass patterns are NOT detected:
 //
 //     1. Variable indirection:  var cmd = "OS"; cmd += ".execute"
-//     2. Expression.eval with computed strings: var e = Expression.new(); e.execute(["OS.execute"])
-//     3. call()/callv() with non-literal first arg: obj.call(variable)
-//     4. ClassDB.class_call() / ClassDB.class_set_property() via reflection
+//     2. call()/callv() with non-literal first arg: obj.call(variable) — 字面量首参
+//        已拦(:78-79);变量首参有意放行(合法 Callable.call(variable) 模式,
+//        physics-ops 等内部工具在用,拦了全误报)
+//
+//     2026-10-13 注释对账(审查 L-2):此前列的 "Expression.eval with computed
+//     strings" 与 "ClassDB.class_call() via reflection" 两条已被后续规则覆盖
+//     (Expression[\s\S]{0,500}?.execute 跨行模式 / \bClassDB\b 整词),从
+//     LIMITATIONS 移除,防安全评估时按过时清单误判覆盖面。
 //
 //     For multi-user / untrusted input scenarios, use container/VM isolation
 //     and set GODOT_MCP_ALLOW_UNSAFE=false.

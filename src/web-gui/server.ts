@@ -35,6 +35,7 @@ import { FilesError, type FilesApi, type FilesErrorCode } from './files-api.js';
 import { tryAcquireImportLock, releaseImportLock } from './import-mutex.js';
 import type { ProjectView } from './projects-store.js';
 import type { SettingsApi } from './settings-api.js';
+import { KbError, type KbApi } from './kb-api.js';
 
 /** 项目面板 store 注入面(spec 2026-09-15 §4;Task 5 接线传 ProjectsStore 四方法)。
  *  缺席 → 涉清单的项目端点 503,hello 的 projects 字段为 null(v2/M6)。 */
@@ -69,6 +70,11 @@ export interface WebGuiServerOptions {
   stopSession?: (projectPath: string) => Promise<{ ok: boolean; reason?: string }>;
   /** 面板控制:POST /api/sessions/remove 回调(移除 ended 态桶);未注入时端点 503。 */
   removeSession?: (projectPath: string) => { ok: boolean; reason?: 'alive' | 'not_found' };
+  /** 会话进程输出查看(2026-10-08 输出查看批):GET /api/sessions/output 数据源——
+   *  运行中桶读 outputBuffer、已结束桶读 lastFinishedRunOutput(崩溃后回查场景);
+   *  桶不存在返回 null(→404);未注入 → 503。尾部截断由 server 侧统一保证,注入
+   *  实现给全量 buffer 即可。 */
+  getSessionOutput?: (projectPath: string) => { status: string; running: boolean; lines: string[] } | null;
   /** 项目面板(spec 2026-09-15 §4):清单四方法注入;缺席 → 项目端点 503 + hello projects=null。 */
   projects?: ProjectsApi;
   /** POST /api/sessions/start(mode=run)回调;缺席 → 503。 */
@@ -83,6 +89,9 @@ export interface WebGuiServerOptions {
   isReadOnly?: () => boolean;
   /** 设置面板(2026-09-29 设置批):get/verify/save 三方法注入;缺席 → 设置端点 503。 */
   settings?: SettingsApi;
+  /** 知识库联动(2026-10-08 批):overview/projectDetail/readFile 只读三方法注入;
+   *  缺席 → kb 端点 503。 */
+  kb?: KbApi;
   /** 实例管理批(2026-09-30):重启"本实例"的有序退出回调(先响应 200 再走 close 链,
    *  登记文件随 stop() 清理);缺席兜底 process.exit(0)。构造器注入,不新增模块级 setter。 */
   onSelfRestart?: () => void;
@@ -189,6 +198,10 @@ const FILE_ERR_STATUS: Record<FilesErrorCode, number> = {
 /** 通用 JSON body 上限(审查 Low,2026-09-17 批 3):除 file save(600KB 语义,I-6 独立
  *  预检)外的 POST body 统一 64KB——projectPath/path 等合法字段远小于此,超限即恶意/失控。 */
 const JSON_BODY_MAX_BYTES = 64 * 1024;
+
+/** 会话输出端点尾部行数上限(2026-10-08 输出查看批):内存桶上限 5000 行
+ *  (process-state MAX_OUTPUT_BUFFER_SIZE),面板查看取尾部 500 行足够定位报错。 */
+const SESSION_OUTPUT_TAIL_LINES = 500;
 
 // 模块级激活标志:只读查询导出(launcher guard 消费),由本类 start/stop 驱动——
 // 非依赖注入 setter,不违反 AGENTS.md 模块级 setter 红线(设计 §3.1)。
@@ -502,6 +515,12 @@ export class WebGuiServer {
         res.end(JSON.stringify(this.opts.getSessions()));
         return;
       }
+      // 会话进程输出(2026-10-08 输出查看批):面板日志流只含 server 工具调用日志,
+      // 游戏进程 stdout/stderr 在 process-state 内存桶——本端点是面板查看它的唯一通道
+      if (url.pathname === '/api/sessions/output') {
+        void this.handleSessionOutput(url, res);
+        return;
+      }
       // 设置面板读路径(2026-09-29 设置批):get() 异步 → 独立 async handler(鉴权已在上方过)
       if (url.pathname === '/api/settings') {
         void this.handleSettingsGet(res);
@@ -525,6 +544,19 @@ export class WebGuiServer {
       }
       if (url.pathname === '/api/projects/file') {
         void this.handleFileGet(url, res);
+        return;
+      }
+      // 知识库联动读路径(2026-10-08 批):总览/项目详情/日志正文,均异步 fs + 可能 spawn git
+      if (url.pathname === '/api/kb/overview') {
+        void this.handleKbOverview(res);
+        return;
+      }
+      if (url.pathname === '/api/kb/project') {
+        void this.handleKbProject(url, res);
+        return;
+      }
+      if (url.pathname === '/api/kb/file') {
+        void this.handleKbFile(url, res);
         return;
       }
       // 静态资产(spec §4/I-2):同步读 + 固定清单白名单;与 GET / 的无 token 不同,
@@ -851,15 +883,20 @@ export class WebGuiServer {
         }
         const godotPath = fields.godotPath;
         const allowed = fields.allowedProjectPaths;
+        const vaultPath = fields.vaultPath;
         if (godotPath !== undefined && typeof godotPath !== 'string') {
           return json(400, { error: 'godotPath must be a string' });
         }
         if (allowed !== undefined && (!Array.isArray(allowed) || allowed.some(p => typeof p !== 'string'))) {
           return json(400, { error: 'allowedProjectPaths must be a string array' });
         }
-        const patch: { godotPath?: string; allowedProjectPaths?: string[] } = {};
+        if (vaultPath !== undefined && typeof vaultPath !== 'string') {
+          return json(400, { error: 'vaultPath must be a string' });
+        }
+        const patch: { godotPath?: string; allowedProjectPaths?: string[]; vaultPath?: string } = {};
         if (godotPath !== undefined) patch.godotPath = godotPath;
         if (allowed !== undefined) patch.allowedProjectPaths = allowed as string[];
+        if (vaultPath !== undefined) patch.vaultPath = vaultPath;
         const r = await s.save(patch);
         if (!r.ok) {
           getLogger().info('web-gui', `action=settings_save result=400 stage=${r.stage ?? 'unknown'}`);
@@ -1077,6 +1114,24 @@ export class WebGuiServer {
 
   // ─── 项目面板读路径(spec §4)───────────────────────────────────────────────
 
+  /** GET /api/sessions/output?project=...(2026-10-08 输出查看批):读路径,不审计。
+   *  注入缺席 503 / 缺 project 400 / 桶不存在 404 / 正常 200 {status,running,lines,total}。
+   *  尾部截断(OUTPUT_TAIL_LINES)由本层统一保证——注入实现给全量 buffer。鉴权已在 handle() 过。 */
+  private async handleSessionOutput(url: URL, res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(body));
+    };
+    const fn = this.opts.getSessionOutput;
+    if (!fn) return json(503, { error: 'not configured' });
+    const project = url.searchParams.get('project') ?? '';
+    if (project === '') return json(400, { error: 'project query required' });
+    const out = fn(project);
+    if (!out) return json(404, { error: 'not found' });
+    const lines = out.lines.slice(-SESSION_OUTPUT_TAIL_LINES);
+    return json(200, { status: out.status, running: out.running, lines, total: out.lines.length, truncated: out.lines.length > lines.length });
+  }
+
   /** GET /api/projects:list() 异步快照;注入缺席 503。鉴权已在 handle() 过。 */
   private async handleProjectsList(res: ServerResponse): Promise<void> {
     try {
@@ -1108,6 +1163,80 @@ export class WebGuiServer {
       res.end(JSON.stringify(view));
     } catch {
       if (!res.headersSent) res.writeHead(500).end();
+    }
+  }
+
+  // ─── 知识库联动(2026-10-08 批,只读三端点)──────────────────────────────────
+  // KbError → HTTP 映射(filesErr 同模式);未知异常 → 500。name 参数在 kb-api
+  // safeProjectName 内校验(单段/非 ..),bad_request → 400。
+  private static readonly KB_ERR_STATUS: Record<KbError['code'], number> = {
+    bad_request: 400,
+    not_found: 404,
+    forbidden: 403,
+    too_large: 413,
+    not_configured: 503,
+  };
+
+  private kbErr(e: unknown, json: (code: number, body: unknown) => void): void {
+    if (e instanceof KbError) {
+      json(WebGuiServer.KB_ERR_STATUS[e.code], { error: e.message, code: e.code });
+      return;
+    }
+    // 审查 N-3:未知异常(fs EPERM/EBUSY 等)的 message 常含本地绝对路径——响应归一固定
+    // 文本(PII-safe),详情进 server 日志(本机文件,非响应面)。
+    getLogger().warn('web-gui', `action=kb_internal_error detail=${e instanceof Error ? e.message : String(e)}`);
+    json(500, { error: 'internal error' });
+  }
+
+  /** GET /api/kb/overview:vault 项目总览 + 断流检测(未配置时 configured:false,非报错)。 */
+  private async handleKbOverview(res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      const kb = this.opts.kb;
+      if (!kb) return json(503, { error: 'not configured' });
+      const view = await kb.overview();
+      getLogger().info('web-gui', `action=kb_overview projects=${view.projects.length} stall=${view.projects.filter(p => p.stall).length}`);
+      json(200, view);
+    } catch (e) {
+      this.kbErr(e, json);
+    }
+  }
+
+  /** GET /api/kb/project?name=:项目详情(日志列表 + 看板分节摘要)。 */
+  private async handleKbProject(url: URL, res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      const kb = this.opts.kb;
+      if (!kb) return json(503, { error: 'not configured' });
+      const name = url.searchParams.get('name') ?? '';
+      if (name === '') return json(400, { error: 'name required' });
+      json(200, await kb.projectDetail(name));
+    } catch (e) {
+      this.kbErr(e, json);
+    }
+  }
+
+  /** GET /api/kb/file?name=&path=:开发日志正文(只读,防穿越在 kb-api resolveWithinRoot 链)。 */
+  private async handleKbFile(url: URL, res: ServerResponse): Promise<void> {
+    const json = (code: number, body: unknown): void => {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      const kb = this.opts.kb;
+      if (!kb) return json(503, { error: 'not configured' });
+      const name = url.searchParams.get('name') ?? '';
+      const path = url.searchParams.get('path') ?? '';
+      if (name === '' || path === '') return json(400, { error: 'name and path required' });
+      json(200, await kb.readFile(name, path));
+    } catch (e) {
+      this.kbErr(e, json);
     }
   }
 

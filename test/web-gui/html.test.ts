@@ -19,8 +19,8 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain("<link rel=\"icon\" href=\"data:image/svg+xml,");
   });
   it('全部表单控件带 aria-label + <label for> 关联(2026-10-01 NIT-4:DevTools a11y 「No label associated with a form field」只认 label 元素关联,aria-label 不计)', () => {
-    // 7 个控件:项目搜索/添加路径/日志过滤/日志级别/Godot 路径/白名单/统计项目筛选
-    for (const id of ['projSearch', 'addPath', 'logFilter', 'logLevel', 'setGodotPath', 'setAllowed', 'projSel']) {
+    // 8 个控件:项目搜索/添加路径/日志过滤/日志级别/Godot 路径/白名单/vault 路径/统计项目筛选
+    for (const id of ['projSearch', 'addPath', 'logFilter', 'logLevel', 'setGodotPath', 'setAllowed', 'setVaultPath', 'projSel']) {
       const m = INDEX_HTML.match(new RegExp(`<[^>]*id="${id}"[^>]*>`));
       expect(m, `控件 #${id} 的标签应在 INDEX_HTML 中`).toBeTruthy();
       expect(m![0], `控件 #${id} 应带 aria-label`).toContain('aria-label=');
@@ -255,10 +255,12 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   });
 
   // ── daemon 前端批(2026-09-30 批 C):kind 徽标/会话占用/交接中/跨实例指引 ──────
-  it('实例区:kind 徽标三态渲染(daemon/stdio/早期实例)+ 新「类型」列', () => {
-    expect(INDEX_HTML).toContain("'类型'");   // 表头新列(kind + daemon 状态的承载列)
-    // 三态链(锁行为码):daemon / stdio / 登记无 kind 字段的早期实例(对齐 version 先例)
-    expect(INDEX_HTML).toContain("e.kind === 'daemon' ? 'daemon' : (e.kind === 'stdio' ? 'stdio' : '早期实例')");
+  it('实例区:类型分组渲染(实例分类批 2026-10-08)——本实例/daemon/stdio/早期实例四组标题', () => {
+    expect(INDEX_HTML).toContain('inst-group');   // 分组标题样式(类型徽标上移为组标题)
+    ['本实例', 'daemon', 'stdio', '早期实例'].forEach(t =>
+      expect(INDEX_HTML).toContain("'" + t + "'"));   // 四组标题文案(分组 match 链)
+    // 「早期实例」组标题带 hover 解释(kind 字段 2026-09-30 才加入登记)
+    expect(INDEX_HTML).toContain('kind 字段 2026-09-30 才加入登记');
   });
   it('实例区:daemon 会话占用状态(sessionActive 三值:占用中/空闲/数据不可得不显示)', () => {
     expect(INDEX_HTML).toContain('e.sessionActive === true');    // 仅 true/false 显式判定,undefined(注入缺席/他实例)不显示
@@ -276,6 +278,107 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain("e.kind === 'daemon' && !e.current");   // 他实例 + daemon 双条件
     expect(INDEX_HTML).toContain('在 daemon 面板或 CLI');                 // 指引文案
     expect(INDEX_HTML).toContain('daemon restart');                       // title 内完整 CLI 指引命令
+  });
+
+  // ── 知识库联动批(2026-10-08):第四 tab + 三态视图 + 左列徽标 ────────────────
+  // 断言风格(审查 N-7 自查):只锁 DOM id / API 路径 / data-action 值 / 用户可见文案等
+  // 契约锚,不锁具体 JS 语句串(重构 showTab/变量名不应假红)。
+  it('知识库:tab 按钮 + pane 容器 + 进 tab 懒加载入口', () => {
+    expect(INDEX_HTML).toContain('id="tabKb"');                     // tab 按钮(静态 DOM)
+    expect(INDEX_HTML).toContain("showTab('kb')");                  // tab 点击切换入口
+    expect(INDEX_HTML).toContain('id="kbPane"');                    // 三态视图共用容器
+    expect(INDEX_HTML).toContain('function loadKbOverview');        // 懒加载/刷新数据源
+  });
+  it('知识库:三端点接线 + 三态渲染函数 + 容器委托(重绘防吞点击)', () => {
+    expect(INDEX_HTML).toContain("authFetch('/api/kb/overview')");
+    expect(INDEX_HTML).toContain("'/api/kb/project?name='");
+    expect(INDEX_HTML).toContain("'/api/kb/file?name='");
+    expect(INDEX_HTML).toContain('function renderKbList');          // 总览卡片(断流在前排序由 server 出)
+    expect(INDEX_HTML).toContain('function renderKbDetail');        // 日志列表 + 看板分节摘要
+    expect(INDEX_HTML).toContain('function renderKbLog');           // 正文 pre 只读
+    expect(INDEX_HTML).toContain("$('kbPane').addEventListener");   // 容器一次性委托
+    ["'kb-refresh'", "'kb-goto-settings'", "'kb-back-list'", "'kb-back-detail'", "'kb-project'", "'kb-log'"].forEach(a =>
+      expect(INDEX_HTML).toContain(a));                            // 委托覆盖的 action 值集
+  });
+  it('知识库:断流/同步/无日志三态徽标文案 + obsidian:// 协议导航(非 https 外链)', () => {
+    expect(INDEX_HTML).toContain('🔴 断流');                         // stall 徽标
+    expect(INDEX_HTML).toContain('🟢 同步');                         // commit 与日志同步节奏
+    expect(INDEX_HTML).toContain('· 无日志');                        // N-6 第四态:有 commit 无日志且非断流(中性)
+    expect(INDEX_HTML).toContain('未映射仓库');                       // CLAUDE.md 映射表无此项目
+    expect(INDEX_HTML).toContain('function obsidianUri');           // URI 拼接(encodeURIComponent)
+    expect(INDEX_HTML).toContain("obsidian://open?vault=");         // 外部协议跳转
+    expect(INDEX_HTML).not.toMatch(/href\s*=\s*["']obsidian:/);     // 静态 HTML 无硬编码 obsidian 链接(全部动态 a.href)
+  });
+  it('知识库:未配置/目录不存在引导态 + 设置面板 vault 独立保存(真机反馈修复:不被 Godot 表单校验拖累)', () => {
+    expect(INDEX_HTML).toContain('未配置知识库 vault');              // configured:false 引导
+    expect(INDEX_HTML).toContain('配置的 vault 目录不存在');           // vaultExists:false 引导
+    expect(INDEX_HTML).toContain('GODOT_MCP_VAULT_PATH');           // 设置提示文案
+    expect(INDEX_HTML).toContain('function saveVaultSettings');     // 独立保存函数
+    expect(INDEX_HTML).toContain("body: JSON.stringify({ vaultPath: vault })");   // 单字段 patch(与 Godot 表单解耦)
+    expect(INDEX_HTML).toContain("body: JSON.stringify({ godotPath: godot, allowedProjectPaths: allowed })");   // 主表单不再带 vaultPath
+    expect(INDEX_HTML).toContain('setVaultSave');                   // 独立保存按钮
+    // 静默预取与保存后重拉:loadKbOverview(true) 出现 ≥2 次(启动预取 + vault 保存成功重拉)
+    expect((INDEX_HTML.match(/loadKbOverview\(true\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+  it('知识库:左列 📚 徽标(repoPath 精确匹配)+ 点击直达详情', () => {
+    expect(INDEX_HTML).toContain('function findKbByPath');          // repoPath 小写精确匹配
+    expect(INDEX_HTML).toContain("'data-action', 'kb'");            // 徽标按钮零监听器
+    expect(INDEX_HTML).toContain("'data-kbname'");                  // 直达详情的数据属性
+  });
+
+  // ── 布局优化批(2026-10-08):功能排序分布 + 显示效果(视觉验收驱动的重构) ──────
+  // 断言风格沿用 N-7:只锁 DOM id / CSS 类 / 用户可见文案等契约锚。
+  // 中列分割批(2026-10-08)改注:日志流移出 tab 常驻上半,tab 断言随之下调为下半三态。
+  it('布局:下半 tab 顺序——查看型(文件/知识库)聚左,「设置」推最右;「日志」tab 已移除(常驻上半)', () => {
+    expect(INDEX_HTML).not.toContain('id="tabLogs"');   // 日志不再是 tab(中列分割批)
+    expect(INDEX_HTML).toContain('id="bottomPane"');    // 下半切换区容器
+    const tabsPos = {
+      files: INDEX_HTML.indexOf('id="tabFiles"'),
+      kb: INDEX_HTML.indexOf('id="tabKb"'),
+      settings: INDEX_HTML.indexOf('id="tabSettings"'),
+    };
+    expect(tabsPos.files).toBeLessThan(tabsPos.kb);
+    expect(tabsPos.kb).toBeLessThan(tabsPos.settings);
+    expect(INDEX_HTML).toContain('#tabSettings { margin-left: auto; }');   // 配置 tab 靠右的视觉分组
+  });
+  it('布局:中列上下分割——日志流常驻上半(52%),统计·时序在下半(48%);文件/知识库/设置移右列(对调批)', () => {
+    expect(INDEX_HTML).toContain('id="midPane"');
+    expect(INDEX_HTML).toContain('#logsPane { flex: 52 1 0;');    // 上半日志占比
+    expect(INDEX_HTML).toContain('#bottomPane { flex: 48 1 0;');  // 下半统计区占比
+    // 对调批(2026-10-08):工具统计+分钟时序随 bottomPane 移中列下半(6 列表在宽中列免横滚),
+    // 文件/知识库/设置移右列 #rightPane(tab 条即列头)
+    expect(INDEX_HTML).toContain('id="rightPane"');
+    expect(INDEX_HTML.indexOf('id="statsScroller"')).toBeGreaterThan(INDEX_HTML.indexOf('id="bottomPane"'));
+    expect(INDEX_HTML.indexOf('id="bottomPane"')).toBeLessThan(INDEX_HTML.indexOf('id="rightPane"'));
+    // 输出浮层覆盖态:out-open class 一处管(CSS 隐藏上半+下半)
+    expect(INDEX_HTML).toContain('#midPane.out-open > h2, #midPane.out-open > #logsPane, #midPane.out-open > #bottomPane { display: none; }');
+    expect(INDEX_HTML).toContain('function closeOutput');          // 返回恢复分割布局(不切 tab)
+  });
+  it('布局:会话区行式渲染(原 6 列 nowrap 表格在 340px 窄列操作按钮滚出视口)', () => {
+    expect(INDEX_HTML).toContain('sess-row');                       // 行式容器类
+    expect(INDEX_HTML).toContain('sess-name');                      // 项目名 ellipsis 收缩
+    expect(INDEX_HTML).toContain('function sessionControl');        // 停止/清理按钮构造不变(委托模式保留)
+  });
+  it('布局:右列空态兜底——零调用 stats 表体与时序图给占位(原样空白像未实现)', () => {
+    expect(INDEX_HTML).toContain('暂无工具调用——server 收到调用后出现');   // stats 空表体占位
+    expect(INDEX_HTML).toContain('暂无分钟时序数据');                       // timeSeries 空占位
+  });
+  it('布局:左列面板标题长文案挪 title(hover 显示)——修 340px 窄列标题挤压换行', () => {
+    expect(INDEX_HTML).toContain('<h2 title="增删/扫描影响 server 登记状态">项目</h2>');
+    expect(INDEX_HTML).toContain('<h2 title="「停止/清理」影响运行中的游戏进程">运行会话</h2>');
+    expect(INDEX_HTML).toContain('<h2 title="「重启」中断该实例的 MCP 会话,客户端重连拉起新进程">实例</h2>');
+  });
+
+  // ── 会话输出视图(2026-10-08 输出查看批):游戏进程 stdout/stderr 的面板查看入口 ──
+  it('输出视图:📋 会话行按钮(#sessions 委托 sess-output 分支)+ #outPane 浮层 + 端点接线 + 报错行高亮', () => {
+    expect(INDEX_HTML).toContain('id="outPane"');                     // 非 tab 浮层容器
+    expect(INDEX_HTML).toContain("'sess-output'");                    // 会话行按钮 data-action(委托分支)
+    expect(INDEX_HTML).toContain("'/api/sessions/output?project='");  // 端点路径(encodeURIComponent)
+    expect(INDEX_HTML).toContain('function showOutput');              // 浮层切换 + 拉取入口
+    expect(INDEX_HTML).toContain('outBack');                          // 返回按钮(closeOutput 恢复分割布局)
+    expect(INDEX_HTML).toContain('outRefresh');                       // 手动刷新(运行中实时快照)
+    expect(INDEX_HTML).toContain('SCRIPT ERROR');                     // Godot 报错行高亮正则(err 类)
+    expect(INDEX_HTML).toContain('该会话无输出记录');                   // 404 引导文案
   });
 });
 

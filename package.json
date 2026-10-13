@@ -67,6 +67,7 @@
     "check:contract": "node scripts/check-contract.mjs",
     "check:test-quality": "node scripts/check-test-quality.mjs",
     "check:env-isolation": "node scripts/check-env-isolation.mjs",
+    "check:path-coverage": "node scripts/check-path-param-coverage.mjs --strict",
     "check:rules-sync": "node scripts/check-rules-content-sync.mjs",
     "check:protocol-versions": "node scripts/check-protocol-versions.mjs",
     "check:tool-groups": "node scripts/check-tool-groups.mjs",
