@@ -108,14 +108,30 @@ export function writeGodotPathsConfig(paths: string[]): void {
  * 批 2 优先级链:UNRESTRICTED 旁路 → env 设了即用(显式用户意图)→
  * 机器级 godot-paths.json(CLI install 登记的路径视为可信)→ 两者皆无
  * back-compat 放行(签名校验仍兜底)。
+ *
+ * M-2 (2026-10-13 全维度审查): origin='override'(AI 可控面——工具参数 godot_path)在
+ * 白名单未配置时 fail-closed。威胁链:cwd 默认在项目白名单内可写 → AI 写一个伪造
+ * --version 签名输出的可执行文件(签名可伪造,isGodotVersionSignature 注释自认)→
+ * godot_path 参数指向它被 spawn = 任意代码执行。env 显式值/GODOT_PATH、godot-paths.json、
+ * PATH/registry/scoop 自动发现链保留 back-compat 放行——直接全局收紧会砍断新装用户的
+ * 自动发现链(开箱即坏),且这些来源属用户环境而非 AI 可控写盘面。
  */
-export function isGodotPathAllowed(candidatePath: string): boolean {
+export type GodotPathOrigin = 'auto' | 'override';
+
+export function isGodotPathAllowed(candidatePath: string, origin: GodotPathOrigin = 'auto'): boolean {
   if (process.env.GODOT_MCP_UNRESTRICTED === 'true') return true;
   const raw = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
   const allowed = raw && raw.trim() !== ''
     ? raw.split(/[;]+/).map(s => s.trim()).filter(Boolean)
     : readGodotPathsConfig();
-  if (allowed.length === 0) return true;  // env 与 config 皆无 = back-compat 放行
+  if (allowed.length === 0) {
+    if (origin === 'override') {
+      // M-2: 无白名单时 override 面 fail-closed;安全事件用 'security' 域留痕。
+      getLogger().warn('security', `godot_path override rejected without whitelist configured (fail-closed for AI-controlled override surface since 2026-10-13 hardening)`);
+      return false;
+    }
+    return true;  // env 与 config 皆无 = back-compat 放行(非 override 面)
+  }
   let realCandidate: string;
   try { realCandidate = safeRealPath(candidatePath); } catch { realCandidate = candidatePath; }
   const isAllowed = allowed.some(a => {
@@ -159,8 +175,8 @@ const GODOT_PATH_STAGE_MESSAGES: Record<Exclude<GodotBinaryCheck, { ok: true }>[
  *  cwd 固定临时目录(2026-10-01 加固):候选是 cmd.exe 等外壳时,spawn `--version` 会在
  *  继承的 server CWD 留副作用目录(实证:cmd.exe 于仓库根建出 --version/ 与 .exe/ 目录)。
  *  --version 无相对路径文件操作,换 cwd 对真 Godot 零影响。 */
-export async function validateGodotBinaryDetailed(candidatePath: string): Promise<GodotBinaryCheck> {
-  if (!isGodotPathAllowed(candidatePath)) return { ok: false, stage: 'path-not-allowed' };
+export async function validateGodotBinaryDetailed(candidatePath: string, origin: GodotPathOrigin = 'auto'): Promise<GodotBinaryCheck> {
+  if (!isGodotPathAllowed(candidatePath, origin)) return { ok: false, stage: 'path-not-allowed' };
   if (isDirectoryPath(candidatePath)) {
     getLogger().warn('godot-finder', `godot candidate is a directory, not an executable: ${candidatePath}`);
     return { ok: false, stage: 'is-directory' };
@@ -178,8 +194,8 @@ export async function validateGodotBinaryDetailed(candidatePath: string): Promis
   }
 }
 
-export async function validateGodotBinary(candidatePath: string): Promise<boolean> {
-  return (await validateGodotBinaryDetailed(candidatePath)).ok;
+export async function validateGodotBinary(candidatePath: string, origin: GodotPathOrigin = 'auto'): Promise<boolean> {
+  return (await validateGodotBinaryDetailed(candidatePath, origin)).ok;
 }
 
 /**

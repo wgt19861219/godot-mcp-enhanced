@@ -4,8 +4,9 @@
  * Centralizes all tool module imports and registration in one place.
  * GodotServer.ts only needs to call registerAllModules().
  *
- * 2026-08-21 架构审查 D-2:从 src/core/ 移到 src/ 根——本文件是应用层组合根(43 个
- * tools import),放 core/ 使「core 不依赖 tools」声明名不副实;移出后 eslint 分层门禁
+ * 2026-08-21 架构审查 D-2:从 src/core/ 移到 src/ 根——本文件是应用层组合根(44 个
+ * tools import,2026-10-01 B-3 校正;计数以 `npm run check:modules-sync` 为准),放 core/ 使
+ * 「core 不依赖 tools」声明名不副实;移出后 eslint 分层门禁
  * (core→tools 禁止)不再需要豁免条目。
  *
  * CMP-13 (2026-08-09): ALL_MODULES 数组由 scripts/generate-all-modules.mjs

@@ -305,11 +305,21 @@ describe('ToolDispatcher.getFilteredTools', () => {
 // ── setConnectionMode ───────────────────────────────────────────────────────
 
 describe('ToolDispatcher.setConnectionMode', () => {
-  // [T24] 模式切换
-  it('switches connection mode', () => {
+  // [T24] 模式切换——审查 Major-T2(2026-10-13):替换原 expect(true) 空断言,验证
+  // C-01 延迟应用语义:setConnectionMode 只登记 pending(防 editor 断连回调中途切模式
+  // 竞态),下一次 handleCall 入口(:229 _applyPendingModeSwitch)才真正生效。
+  it('switches connection mode: pending 延迟登记 + 下次 handleCall 入口生效', async () => {
     const dispatcher = new ToolDispatcher(createOptions({ connectionMode: 'editor' }));
+    const internal = dispatcher as unknown as { connectionMode: string; _pendingModeSwitch: { mode: string } | null };
     dispatcher.setConnectionMode('headless');
-    expect(true).toBe(true);
+    // 延迟语义:登记后(未触发 handleCall)当前模式不变,pending 已记录目标模式
+    expect(internal.connectionMode).toBe('editor');
+    expect(internal._pendingModeSwitch?.mode).toBe('headless');
+    // 下一次 handleCall 入口应用(scene 走完管道或早退都不影响——模式切换在入口,
+    // 早于 executeToolCall 的任何 return 路径)
+    await dispatcher.handleCall({ params: { name: 'scene', arguments: { action: 'read_scene' } } });
+    expect(internal.connectionMode).toBe('headless');
+    expect(internal._pendingModeSwitch).toBeNull();
   });
 });
 

@@ -26,8 +26,12 @@ describe('delivery integration tests', () => {
     expect(wf.inputSchema.properties.acceptance).toBeTruthy();
   });
 
-  it('all new test files have no syntax errors', () => {
-    // This test passes if the file itself loaded without error
-    expect(true).toBeTruthy();
+  it('delivery tool modules import without errors', async () => {
+    // 审查 Nit-T3(2026-10-13):原名「all new test files have no syntax errors」名不副实
+    // (本用例不检查任何外部文件)。实际行为 = 动态 import 三个交付相关模块可加载且导出非空。
+    for (const p of ['../src/tools/delivery.js', '../src/tools/shared.js', '../src/tools/workflow.js']) {
+      const mod = await import(p);
+      expect(Object.keys(mod).length).toBeGreaterThan(0);
+    }
   });
 });
