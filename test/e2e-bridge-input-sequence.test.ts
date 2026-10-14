@@ -160,32 +160,37 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('H1 send_input_sequence e2e (L
     if (_initError) return ctx.skip(_initError);
     const freeze = await callTool({ action: 'game_playtest', method: 'playtest.freeze', params: {} });
     expect(freeze.isError).toBe(false);
+    // 2026-10-14 CI flake 教训:中途断言失败时 freeze 泄漏,级联炸掉后续两个用例的
+    // refrozen=false / isError=false 断言(3 连红误导排障方向)。断言体包 try/finally
+    // best-effort 解冻,flake 爆炸半径从 3 用例收敛到 1。
+    try {
+      const base = await probeState();
+      expect(base.first_seen_frame).toBe(-1); // 基线:从未读到 jump
 
-    const base = await probeState();
-    expect(base.first_seen_frame).toBe(-1); // 基线:从未读到 jump
+      const { r, isError } = await sendSeq({
+        timeline: [
+          { at_frame: 5, type: 'action', name: 'jump', pressed: true },
+          { at_frame: 10, type: 'action', name: 'jump', pressed: false },
+        ],
+        settle_frames: 5,
+      });
+      expect(isError).toBe(false);
+      expect(r.success).toBe(true);
+      expect(r.applied_count).toBe(2);
+      expect(r.total_events).toBe(2);
+      expect(r.wall_timeout).toBe(false);
+      expect(r.refrozen).toBe(true); // frozen 状态发起 → 完成 refreeze
 
-    const { r, isError } = await sendSeq({
-      timeline: [
-        { at_frame: 5, type: 'action', name: 'jump', pressed: true },
-        { at_frame: 10, type: 'action', name: 'jump', pressed: false },
-      ],
-      settle_frames: 5,
-    });
-    expect(isError).toBe(false);
-    expect(r.success).toBe(true);
-    expect(r.applied_count).toBe(2);
-    expect(r.total_events).toBe(2);
-    expect(r.wall_timeout).toBe(false);
-    expect(r.refrozen).toBe(true); // frozen 状态发起 → 完成 refreeze
-
-    const after = await probeState();
-    expect(Number(after.first_seen_frame)).toBeGreaterThan(-1); // press 被读到
-    expect(after.first_seen_action).toBe('jump');
-    expect(after.action_pressed).toBe(false); // at_frame=10 release 生效(refreeze 冻结下 Input 状态可查)
-    expect(Number(after.frames_run)).toBeGreaterThan(Number(base.frames_run)); // 开窗期间游戏推进了帧
-
-    const unfreeze = await callTool({ action: 'game_playtest', method: 'playtest.unfreeze', params: {} });
-    expect(unfreeze.isError).toBe(false);
+      const after = await probeState();
+      expect(Number(after.first_seen_frame)).toBeGreaterThan(-1); // press 被读到
+      expect(after.first_seen_action).toBe('jump');
+      expect(after.action_pressed).toBe(false); // at_frame=10 release 生效(refreeze 冻结下 Input 状态可查)
+      expect(Number(after.frames_run)).toBeGreaterThan(Number(base.frames_run)); // 开窗期间游戏推进了帧
+    } finally {
+      // best-effort 静默解冻(不在 finally 里 expect——与原断言叠加失败会互相掩盖;
+      // 解冻失败在健康路径下会由下一用例 refrozen=false 基线暴露)
+      await callTool({ action: 'game_playtest', method: 'playtest.unfreeze', params: {} }).catch(() => undefined);
+    }
   });
 
   it('非 frozen 直播时间线(不要求 freeze,refrozen=false)', async (ctx) => {
