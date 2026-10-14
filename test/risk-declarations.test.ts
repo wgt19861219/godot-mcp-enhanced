@@ -178,8 +178,9 @@ describe('workflow actionRisks', () => {
 
 describe('validation actionRisks', () => {
   const cases = {
-    run_and_verify:'read', analyze_error:'read', validate_project:'read', validate_scripts:'read', import_resources:'read',
+    run_and_verify:'read', analyze_error:'read', validate_project:'read', validate_scripts:'read',
     export_list_presets:'read', export_get_preset:'read', validate_gdd:'read', chain_verify:'read', verify_delivery:'read',
+    import_resources:'write', // 2026-10-14 审查修复 R1-tools:批量落盘不再零确认
     export_build:'process', assert:'process', stress:'process',
   } as const;
   for (const [a, r] of Object.entries(cases)) it(`validation.${a}→${r}`, () => expect(getActionRisk('validation', a)).toBe(r));

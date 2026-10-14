@@ -317,7 +317,11 @@ export class WebGuiServer {
     // 附属功能不阻塞进程退出(设计 §3.1,对齐 orphanScanTimer 先例);已建连接由 stop 统一收
     this.httpServer.unref();
     _active = true;
-    const regOpts = this.opts.registryDir ? { dir: this.opts.registryDir } : {};
+    // registry 调用参数统一走 regOpts()(注入优先)——start() 原先自拼字面量漏带
+    // isPidAlive 注入,测试伪造 pid 的登记会被 fire-and-forget 清扫按真实探活误删
+    // (2026-10-14 CI 事故:M1 用例 Windows 碰巧清扫先跑、Linux 慢 IO 下后跑 → 404 竞态)。
+    // 生产环境 opts.isPidAlive 恒 undefined → 行为与原先完全一致(defaultIsPidAlive)。
+    const regOpts = this.regOpts();
     this.startedAtIso = new Date().toISOString();
     // kind:instanceKind 注入时写入(缺省 undefined 被 JSON.stringify 跳过——旧实例语义,
     // parseRegistrationFile 不校验,对齐 version 字段先例);respawnOf 同款(§3.7 交接关联)

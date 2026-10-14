@@ -62,12 +62,16 @@ describe('readJsonConfigWithBackup JSONC 支持 (Tier2-3)', () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mcp-jsonc-')); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it('含行注释的 JSONC 解析成功,不触发 backup', () => {
+  it('含行注释的 JSONC 解析成功,M3 落 .jsonc 备份保住注释可找回', () => {
     const configPath = join(dir, 'settings.json');
     writeFileSync(configPath, '{\n  // Zed theme\n  "theme": "One Dark",\n  "mcpServers": {}\n}\n');
     const result = readJsonConfigWithBackup(configPath);
     expect(result.theme).toBe('One Dark');
-    expect(readdirSync(dir).some(f => f.endsWith('.bak'))).toBe(false);  // 无 backup
+    // M3(2026-10-14 审查): 剥离检测(stripJsonc 前后长度)命中 → 落 .jsonc.<uuid>.bak
+    // 备份——重写纯 JSON 会丢注释,备份是可找回副本(设计即如此,非损坏路径的 .corrupt.)
+    const bak = readdirSync(dir).find(f => f.includes('.jsonc.') && f.endsWith('.bak'));
+    expect(bak).toBeTruthy();
+    expect(readFileSync(join(dir, bak!), 'utf-8')).toContain('// Zed theme');
   });
 
   it('含块注释的 JSONC 解析成功', () => {

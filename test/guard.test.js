@@ -311,13 +311,14 @@ describe('workflow/validation/manage_tools 守卫', () => {
     expect(requiresConfirmation('workflow', { action: 'batch_validate' })).toBe(false);
     expect(requiresConfirmation('workflow', { action: 'diff_scenes' })).toBe(false);
   });
-  it('validation: assert/stress/export_build guarded; read not', () => {
+  it('validation: assert/stress/export_build/import_resources guarded; read not', () => {
     expect(requiresConfirmation('validation', { action: 'assert' })).toBe(true);
     expect(requiresConfirmation('validation', { action: 'stress' })).toBe(true);
     expect(requiresConfirmation('validation', { action: 'export_build' })).toBe(true);
     expect(requiresConfirmation('validation', { action: 'validate_scripts' })).toBe(false);
     expect(requiresConfirmation('validation', { action: 'analyze_error' })).toBe(false);
-    expect(requiresConfirmation('validation', { action: 'import_resources' })).toBe(false);
+    // 2026-10-14 审查修复 R1-tools:import_resources 批量落盘,risk read→write
+    expect(requiresConfirmation('validation', { action: 'import_resources' })).toBe(true);
   });
   it('manage_tools: activate/deactivate guarded; read/migrate not', () => {
     expect(requiresConfirmation('manage_tools', { action: 'activate' })).toBe(true);
