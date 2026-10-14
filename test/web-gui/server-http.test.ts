@@ -127,13 +127,19 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // 全维度审查批 (2026-10-13) 十八次重锚:Nit-K3——renderKbLog 的 obsidianUri
     // 拼接补 d null 守卫(与同行文案守卫对齐),脚本内容一行变更 → hash 轮换;
     // 同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-GX/B5iWNtpB59iCkSqLOr0CQx/w0IeJMX8gT3v2zM6o='");
+    // i18n 批 (2026-10-13) 十九次重锚:内联脚本头部注入 I18N 字典 + t()/LANG/
+    // applyStaticI18n 基础设施 + langBtn 绑定,动态文案全面换 t() 调用,脚本内容
+    // 大幅变更 → hash 轮换;同款双通道互证后锁入。
+    // i18n 审查批 (2026-10-13) 二十次重锚:B-1 修复(renderStats ts→ts2 改名引用
+    // 残留,时序图渲染 ReferenceError)+ Nit-1(fetch 统一注入 accept-language=LANG),
+    // 脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-wq1vHgXWUK+CFDxuVk8IvO4LS9C34jZWXLJ8Efs3cc4='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('GX/B5iWNtpB59iCkSqLOr0CQx/w0IeJMX8gT3v2zM6o=');   // 独立重算与锚互证
+    expect(hash).toBe('wq1vHgXWUK+CFDxuVk8IvO4LS9C34jZWXLJ8Efs3cc4=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });

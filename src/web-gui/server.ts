@@ -17,6 +17,7 @@ import { killPidTree, normalizeProjectKey, isAliveStatus, type RunSessionDetaile
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
+import { pickGuiLang } from './i18n.js';
 import { ensurePackageRootAppLauncher } from './app-window.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
@@ -816,7 +817,7 @@ export class WebGuiServer {
           return json(400, { error: 'project/path/content/baseMtime required' });
         }
         try {
-          const r = await f.saveText(project, path, content, baseMtime);
+          const r = await f.saveText(project, path, content, baseMtime, pickGuiLang(req.headers['accept-language']));
           getLogger().info('web-gui', `action=file_save project=${project} path=${path} result=200`);
           return json(200, { mtime: r.mtime });
         } catch (err) {
@@ -897,7 +898,7 @@ export class WebGuiServer {
         if (godotPath !== undefined) patch.godotPath = godotPath;
         if (allowed !== undefined) patch.allowedProjectPaths = allowed as string[];
         if (vaultPath !== undefined) patch.vaultPath = vaultPath;
-        const r = await s.save(patch);
+        const r = await s.save(patch, pickGuiLang(req.headers['accept-language']));
         if (!r.ok) {
           getLogger().info('web-gui', `action=settings_save result=400 stage=${r.stage ?? 'unknown'}`);
           return json(400, { error: r.error, ...(r.stage !== undefined ? { stage: r.stage } : {}) });
@@ -918,7 +919,7 @@ export class WebGuiServer {
         }
         const path = fields.path;
         if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
-        return json(200, await s.verify(path));
+        return json(200, await s.verify(path, pickGuiLang(req.headers['accept-language'])));
       }
 
       // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────

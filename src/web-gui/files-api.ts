@@ -8,6 +8,7 @@ import { join, extname, basename } from 'node:path';
 import { isPathInAllowedRoots, resolveWithinRoot } from '../core/path-utils.js';
 import { hardenFilePermissionsWindows } from './registry.js';
 import { auditWebGui } from './audit-helper.js';
+import { guiText } from './i18n.js';
 // 批4-T6(五维评估 P2): saveText 写 .gd 接全仓沙箱扫描——此前是"全仓写 .gd 必扫描"
 // (script/shared.ts scanScriptSandboxOrThrow 声明)之外的第 4 个入口(web-gui 默认开启)。
 import { scanGdscriptSandbox } from '../gdscript-executor.js';
@@ -123,7 +124,8 @@ export class FilesApi {
     }
   }
 
-  async saveText(projectPath: string, rel: string, content: string, baseMtime: number): Promise<{ mtime: number }> {
+  /** lang(2026-10-13 i18n 批):沙箱拒绝消息的括号说明按请求语言双语;缺省 zh。 */
+  async saveText(projectPath: string, rel: string, content: string, baseMtime: number, lang: 'zh' | 'en' = 'zh'): Promise<{ mtime: number }> {
     const started = new Date();
     const abs = resolveInProject(projectPath, rel);
     const fileExt = ext(basename(abs));
@@ -136,7 +138,7 @@ export class FilesApi {
       if (violations.length > 0) {
         throw new FilesError('bad_request',
           `content blocked by gdscript sandbox scanner: ${violations[0]}`
-          + ' (含危险模式的 .gd 请经 MCP 通道写入,那里有 out-of-band 确认门)');
+          + guiText(lang, 'files.save.gdSandboxNote'));
       }
     }
     let st; try { st = await stat(abs); } catch { throw new FilesError('not_found', 'file not found (creation not supported)'); }

@@ -14,15 +14,17 @@ import { validateGodotBinaryDetailed, detectGodotVersion, readGodotPathsConfig }
 import { getAllowedProjectPaths } from '../core/path-utils.js';
 import { appendMachineAuditLine, isAuditEnabled, recordAuditWriteFailure } from '../core/audit-log.js';
 import { getLogger } from '../core/logger.js';
+import { guiText, type GuiLang } from './i18n.js';
 
-/** 校验失败 stage → 人话错误(不含路径,PII-safe;前端直接展示)。
+/** 校验失败 stage → 人话错误键(不含路径,PII-safe;前端直接展示)。
  *  注:version-run-failed/not-godot-signature 两行经 normalizeGodotStage 的 UNSTABLE 集
- *  先行归一后不可达,保留作 UNSTABLE 集未来收窄时的回落文案(审查 Nit-1)。 */
-const GODOT_STAGE_MESSAGES: Record<string, string> = {
-  'path-not-allowed': '路径不在 GODOT_MCP_ALLOWED_GODOT_PATHS 白名单内(见 Godot 二进制白名单策略)',
-  'is-directory': '路径是目录,须指向 Godot 可执行文件',
-  'version-run-failed': '无法运行 --version(文件不存在或不可执行)',
-  'not-godot-signature': '--version 输出不是有效的 Godot 版本签名',
+ *  先行归一后不可达,保留作 UNSTABLE 集未来收窄时的回落文案(审查 Nit-1)。
+ *  i18n 批(2026-10-13):值从内联中文改为 i18n.ts 字典键,按 lang 取双语。 */
+const GODOT_STAGE_MESSAGE_KEYS: Record<string, string> = {
+  'path-not-allowed': 'set.stage.path-not-allowed',
+  'is-directory': 'set.stage.is-directory',
+  'version-run-failed': 'set.stage.version-run-failed',
+  'not-godot-signature': 'set.stage.not-godot-signature',
 };
 
 /** 不稳定 stage 集(2026-10-01 真机验证 NIT-2):godot-finder 的 version-run-failed 与
@@ -31,12 +33,13 @@ const GODOT_STAGE_MESSAGES: Record<string, string> = {
  *  对同一输入的可见 stage/文案漂移。面板层归一为单一 stage 'not-a-godot-binary' +
  *  稳定文案;godot-finder 原始 stage 不动(其余调用方与单测锁定其语义)。 */
 const UNSTABLE_GODOT_STAGES: ReadonlySet<string> = new Set(['version-run-failed', 'not-godot-signature']);
-const NOT_A_GODOT_BINARY_MESSAGE = '无法验证为 Godot 可执行文件(路径不存在、不可执行或 --version 输出签名不符)';
+const NOT_A_GODOT_BINARY_KEY = 'set.stage.not-a-godot-binary';
 
 /** 面板层 stage 归一:不稳定集合并为 'not-a-godot-binary';其余原样映射。 */
-function normalizeGodotStage(stage: string): { stage: string; message: string } {
-  if (UNSTABLE_GODOT_STAGES.has(stage)) return { stage: 'not-a-godot-binary', message: NOT_A_GODOT_BINARY_MESSAGE };
-  return { stage, message: GODOT_STAGE_MESSAGES[stage] ?? stage };
+function normalizeGodotStage(stage: string, lang: GuiLang): { stage: string; message: string } {
+  if (UNSTABLE_GODOT_STAGES.has(stage)) return { stage: 'not-a-godot-binary', message: guiText(lang, NOT_A_GODOT_BINARY_KEY) };
+  const key = GODOT_STAGE_MESSAGE_KEYS[stage];
+  return { stage, message: key ? guiText(lang, key) : stage };
 }
 
 export interface SettingsView {
@@ -72,8 +75,11 @@ export type SettingsVerifyResult =
 
 export interface SettingsApi {
   get(): Promise<SettingsView>;
-  verify(path: string): Promise<SettingsVerifyResult>;
-  save(patch: SettingsSavePatch): Promise<SettingsSaveResult>;
+  /** lang(2026-10-13 i18n 批):错误 detail 的展示语言,缺省 zh;接线层按请求
+   *  Accept-Language 传入——service 是每 server 一个,语言是每请求一个,故走方法
+   *  参数而非构造器注入。 */
+  verify(path: string, lang?: GuiLang): Promise<SettingsVerifyResult>;
+  save(patch: SettingsSavePatch, lang?: GuiLang): Promise<SettingsSaveResult>;
 }
 
 export interface UserSettingsServiceOpts {
@@ -114,23 +120,23 @@ export class UserSettingsService implements SettingsApi {
 
   /** 验证候选二进制:validateGodotBinaryDetailed 拿结构化 stage,ok 后 detectGodotVersion
    *  拿版本串(两次 spawn 仅发生在用户显式点「验证」,非热路径)。 */
-  async verify(path: string): Promise<SettingsVerifyResult> {
+  async verify(path: string, lang: GuiLang = 'zh'): Promise<SettingsVerifyResult> {
     if (typeof path !== 'string' || path.trim() === '') {
-      return { ok: false, stage: 'bad-request', detail: '路径不能为空' };
+      return { ok: false, stage: 'bad-request', detail: guiText(lang, 'set.verify.emptyPath') };
     }
     const check = await validateGodotBinaryDetailed(path);
     if (!check.ok) {
-      const n = normalizeGodotStage(check.stage);
+      const n = normalizeGodotStage(check.stage, lang);
       return { ok: false, stage: n.stage, detail: n.message };
     }
     try {
       return { ok: true, version: await detectGodotVersion(path) };
     } catch {
-      return { ok: false, stage: 'version-read-failed', detail: '二进制校验通过,但读取版本串失败' };
+      return { ok: false, stage: 'version-read-failed', detail: guiText(lang, 'set.verify.versionReadFailed') };
     }
   }
 
-  async save(patch: SettingsSavePatch): Promise<SettingsSaveResult> {
+  async save(patch: SettingsSavePatch, lang: GuiLang = 'zh'): Promise<SettingsSaveResult> {
     // ── 校验(godotPath:绝对路径 + validateGodotBinaryDetailed 全链含白名单)────────
     const patchGodot = patch.godotPath;
     let godotValue: string | undefined;   // undefined = 保持现值
@@ -141,13 +147,13 @@ export class UserSettingsService implements SettingsApi {
       } else {
         if (!isAbsolute(trimmed)) {
           this.auditSave(false, { error: 'godotPath rejected: not-absolute' });   // 二轮 Nit-B: 与 allowed 侧同层格式预检留痕对称
-          return { ok: false, error: 'Godot 路径必须是绝对路径', stage: 'not-absolute' };
+          return { ok: false, error: guiText(lang, 'set.save.godotNotAbsolute'), stage: 'not-absolute' };
         }
         const check = await validateGodotBinaryDetailed(trimmed);
         if (!check.ok) {
-          const n = normalizeGodotStage(check.stage);
+          const n = normalizeGodotStage(check.stage, lang);
           this.auditSave(false, { error: `godotPath rejected: ${n.stage}` });
-          return { ok: false, error: `Godot 路径校验失败:${n.message}`, stage: n.stage };
+          return { ok: false, error: guiText(lang, 'set.save.godotVerifyFailed', { msg: n.message }), stage: n.stage };
         }
         godotValue = trimmed;
       }
@@ -167,25 +173,25 @@ export class UserSettingsService implements SettingsApi {
         for (const p of patchAllowed) {
           if (typeof p !== 'string' || p.trim() === '') {
             this.auditSave(false, { error: 'allowedProjectPaths rejected: bad-entry' });
-            return { ok: false, error: '白名单条目不能为空', stage: 'bad-entry' };
+            return { ok: false, error: guiText(lang, 'set.save.badEntry'), stage: 'bad-entry' };
           }
           const t = p.trim();
           if (t.includes(';')) {
             this.auditSave(false, { error: 'allowedProjectPaths rejected: contains-semicolon' });
-            return { ok: false, error: `白名单条目不能含分号(env 以分号分隔,会被撕裂):${t}`, stage: 'contains-semicolon' };
+            return { ok: false, error: guiText(lang, 'set.save.semicolon', { path: t }), stage: 'contains-semicolon' };
           }
           if (!isAbsolute(t)) {
             this.auditSave(false, { error: 'allowedProjectPaths rejected: not-absolute' });
-            return { ok: false, error: `白名单条目必须是绝对路径:${t}`, stage: 'not-absolute' };
+            return { ok: false, error: guiText(lang, 'set.save.allowedNotAbsolute', { path: t }), stage: 'not-absolute' };
           }
           try {
             if (!(await stat(t)).isDirectory()) {
               this.auditSave(false, { error: 'allowedProjectPaths rejected: not-a-directory' });
-              return { ok: false, error: `白名单条目不是目录:${t}`, stage: 'not-a-directory' };
+              return { ok: false, error: guiText(lang, 'set.save.notADirectory', { path: t }), stage: 'not-a-directory' };
             }
           } catch {
             this.auditSave(false, { error: 'allowedProjectPaths rejected: not-found' });
-            return { ok: false, error: `白名单条目不存在:${t}`, stage: 'not-found' };
+            return { ok: false, error: guiText(lang, 'set.save.notFound', { path: t }), stage: 'not-found' };
           }
           cleaned.push(t);
         }
@@ -204,22 +210,22 @@ export class UserSettingsService implements SettingsApi {
       } else {
         if (!isAbsolute(trimmedVault)) {
           this.auditSave(false, { error: 'vaultPath rejected: not-absolute' });
-          return { ok: false, error: 'vault 路径必须是绝对路径', stage: 'not-absolute' };
+          return { ok: false, error: guiText(lang, 'set.save.vaultNotAbsolute'), stage: 'not-absolute' };
         }
         try {
           if (!(await stat(trimmedVault)).isDirectory()) {
             this.auditSave(false, { error: 'vaultPath rejected: not-a-directory' });
-            return { ok: false, error: `vault 路径不是目录:${trimmedVault}`, stage: 'not-a-directory' };
+            return { ok: false, error: guiText(lang, 'set.save.vaultNotADirectory', { path: trimmedVault }), stage: 'not-a-directory' };
           }
         } catch {
           this.auditSave(false, { error: 'vaultPath rejected: not-found' });
-          return { ok: false, error: `vault 路径不存在:${trimmedVault}`, stage: 'not-found' };
+          return { ok: false, error: guiText(lang, 'set.save.vaultNotFound', { path: trimmedVault }), stage: 'not-found' };
         }
         vaultValue = trimmedVault;
       }
     }
     if (patchGodot === undefined && patchAllowed === undefined && patchVault === undefined) {
-      return { ok: false, error: '没有要保存的设置字段', stage: 'empty-patch' };
+      return { ok: false, error: guiText(lang, 'set.save.emptyPatch'), stage: 'empty-patch' };
     }
     // ── merge(undefined = 沿用现值)→ 写盘 → 热生效 → 审计 ─────────────────────
     const current = await readUserSettings(this.settingsDir);
