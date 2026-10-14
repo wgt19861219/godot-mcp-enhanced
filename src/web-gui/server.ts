@@ -328,7 +328,12 @@ export class WebGuiServer {
     await writeRegistration({ pid: process.pid, port: this.portValue, token: this.token, startedAt: this.startedAtIso, version: PKG_VERSION, kind: this.opts.instanceKind, respawnOf: this.opts.respawnOf }, regOpts);
     // 陈旧登记清扫(2026-09-15 独立批):自己登记已写且活着不会被删;fire-and-forget 不阻塞启动。
     // 动机:Windows 强杀不走 exit-hook,listRegistrations 顺手清仅 dashboard CLI 路径触达 → server 侧主动清。
-    void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
+    // 仅在未注入 isPidAlive 时执行(生产路径恒如此):注入是测试的读路径语义(伪造 pid 探活),
+    // 拿注入探活做启动清扫会产生跨用例竞态——前用例(如 401 用例注入 ()=>false)的清扫
+    // 晚于邻用例写自己登记才执行时,会把对方 <pid>.json 删掉(2026-10-14 CI 二轮事故)。
+    if (!this.opts.isPidAlive) {
+      void sweepStaleRegistrations(regOpts).catch(() => { /* 清扫失败不影响服务 */ });
+    }
     // file:// 入口页幂等落盘(2026-09-16):server 启动即确保 portal.html 存在,
     // 用户的 file:/// 书签永远有一个能响应的本地入口(扫描跳转活实例)。
     // 根治批(2026-10-08):内嵌自身端口——新实例启动必写,入口页 preferred 即最近实例。
