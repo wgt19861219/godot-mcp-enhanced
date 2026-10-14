@@ -108,7 +108,6 @@ function writeVersionToFile(filepath, logicalName, version) {
       break;
     case 'serverJson': {
       // server.json 有两处 version:顶层 version + packages[0].version,全替换
-      const before = content;
       let next = content.replace(/"version"\s*:\s*"[^"\r]*"/g, `"version": "${version}"`);
       updated = next;
       break;

@@ -22,7 +22,6 @@ const ROOT = join(__dirname, '..');
 const MATRIX_PATH = join(ROOT, 'docs', 'capability-matrix.json');
 const ALLOWLIST_PATH = join(ROOT, 'scripts', 'ssot-allowlist.json');
 const SRC_TOOLS = join(ROOT, 'src', 'tools');
-const SRC_CORE = join(ROOT, 'src');
 
 // ─── 工具名 → handler 源文件归属(文件自证) ──────────────────────────────────
 // module-loader 是 namespace import + 对象传参,工具名不在 loader 文本里——
@@ -98,6 +97,24 @@ function extractArgKeys(filePath) {
   return keys;
 }
 
+// ─── 跨文件委托追踪(C1 2026-10-14) ─────────────────────────────────────────
+// handler 的 args 读取可发生在被委托文件(如 workflow 的 batch 三 action 委托
+// batch-tools.ts handleBatchAction——schema 在 workflow 声明,读取在 batch-tools)。
+// 源文件内显式标记 `// SSOT-DELEGATE: src/tools/xxx.ts` 即把目标文件的 handler
+// 键池并入本文件对账范围:防"schema 声明在此、读取在彼"形态静默逃过审计;反向,
+// 若 schema 再删被委托参数,委托键池立刻触发漂移报警。
+function extractDelegates(filePath) {
+  if (!existsSync(filePath)) return [];
+  const src = readFileSync(filePath, 'utf-8');
+  const out = [];
+  let m;
+  const re = /\/\/\s*SSOT-DELEGATE:\s*((?:src|test|scripts)\/[\w./-]+\.(?:ts|js))/g;
+  while ((m = re.exec(src)) !== null) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
 // ─── 主流程 ─────────────────────────────────────────────────────────────────
 const matrix = JSON.parse(readFileSync(MATRIX_PATH, 'utf-8'));
 const tools = matrix.tools ?? matrix;
@@ -136,6 +153,10 @@ for (const [file, agg] of fileAgg) {
   agg.declared.add('godot_path');
   if (!agg.hasSchemaProps) continue; // 全文件无 properties(自由 dict 工具)= P8-2 不查,审计同语义跳过
   const keys = extractArgKeys(join(ROOT, file));
+  // C1: 并入 SSOT-DELEGATE 标记的被委托文件键池(schema 声明在此、读取在彼)
+  for (const dep of extractDelegates(join(ROOT, file))) {
+    for (const k of extractArgKeys(join(ROOT, dep))) keys.add(k);
+  }
   for (const k of keys) {
     if (agg.declared.has(k)) continue;
     if (fixMode) {

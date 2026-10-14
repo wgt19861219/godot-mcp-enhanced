@@ -29,7 +29,8 @@ import type { WebGuiRegistration } from '../web-gui/registry.js';
 
 /** 端口起点缺省值(server.ts portStart 同款默认)。 */
 const DEFAULT_PORT_BASE = 9550;
-/** 端口占用递增候选上限(9550~9569 = 面板自愈扫描端口段,对齐 server.ts M-4 注释)。 */
+/** 端口占用递增候选上限(base..base+19 共 20 个,M6 后与面板自愈扫描段同宽——
+ *  自定义 GODOT_MCP_WEB_GUI_PORT 起点时候选段随 base 推导,非固定 9550~9569)。 */
 const PORT_PROBE_LIMIT = 20;
 /** 单端口 net.connect 探测超时(保守:超时视为占用,防误选)。 */
 const PORT_PROBE_TIMEOUT_MS = 400;
@@ -150,8 +151,21 @@ function defaultSpawnDaemon(opts: DaemonSpawnOptions): DaemonSpawnResult {
       // stdin ignore(daemon 无交互面);stdout/stderr 落日志文件 fd(append)
       stdio: ['ignore', fd, fd],
     });
+    // M2(2026-10-14 审查,对齐 daemon/controlled-restart.ts D-3 fix): 异步 spawn 失败
+    // (如 ENOENT)的 'error' 事件必须监听——未监听的 emit 以未捕获异常直接打崩 CLI
+    // 进程。此为两份 spawn 尾板的独立副本漂移:controlled-restart 侧 2026-10-01 已修,
+    // CLI 侧未同步。error 由后续就绪轮询超时报错兜底;此处 warn 落日志供排障。
+    child.on('error', (err: Error) => {
+      console.warn(`[daemon] spawn error(将由就绪轮询超时兜底): ${err.message}`);
+    });
     child.unref();
-    return { pid: child.pid ?? -1, logFile };
+    // M2(D-3 对齐): pid 无效原先 `?? -1` 静默返回,下游白等 10s 后报误导性错误——
+    // 显式 throw 让调用方按 spawn 失败立即处理。
+    const pid = child.pid;
+    if (pid === undefined || pid <= 0) {
+      throw new Error(`spawn 返回无效 pid: ${pid ?? 'undefined'}(daemon 未建立)`);
+    }
+    return { pid, logFile };
   } finally {
     // fd 副本已由 spawn 复制给子进程,父进程关闭自己的副本防泄漏
     closeSync(fd);

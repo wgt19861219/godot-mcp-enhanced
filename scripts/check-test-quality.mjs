@@ -10,7 +10,7 @@
 // 用法：node scripts/check-test-quality.mjs
 // 退出码：0=全过，1=有检测器 fail
 
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname, basename, resolve, extname } from 'node:path';
 
 // ─── 共用工具 ───────────────────────────────────────────────────────────────

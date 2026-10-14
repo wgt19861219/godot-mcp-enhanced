@@ -4,7 +4,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { opsErrorResult, validateTimeout } from './shared.js';
 import { requireProjectPath } from '../core/args-validation.js';
-import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
+import { resolveWithinRoot, normalizeUserProjectPath, relPathOf } from '../core/path-utils.js';
 import { ensureDir } from '../core/fs-atomic.js';
 import { analyzeOutput } from '../error-analyzer.js';
 import { batchValidateScripts } from './validation.js';
@@ -14,6 +14,46 @@ import { spawnGodot } from './spawn-helper.js';
 import { scanScriptSandboxOrThrow } from './script/shared.js';
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
+
+/**
+ * C1(2026-10-14 全维度审查): batch 三个 action(create_files/run_verify/diff_scenes)的
+ * 专属参数 schema 片段——单源导出,workflow.ts inputSchema 展开合并。
+ * v0.18 吸收时只搬了 handler 委托(workflow.ts handleBatchAction),没搬 schema 声明,
+ * 导致 P8-2 顶层未知参数拒绝把 files/scene_a 等全拒("未知参数: files")——真实 MCP
+ * 调用 100% 失败。此导出是两处声明的唯一来源,改动须同步消费方(workflow.ts)语义。
+ * 注意: timeout/project_path/action 不在此列——workflow schema 已有同名参数(dev_loop
+ * 与 run_verify 的 timeout 范围不同由各自 handler validateTimeout 校验,schema 层同型)。
+ */
+export const BATCH_ACTION_PARAMS = {
+  files: {
+    type: 'array',
+    description: 'create_files: Array of files to create',
+    items: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Relative path (e.g. res://scripts/player.gd)' },
+        content: { type: 'string', description: 'File content' },
+        overwrite: { type: 'boolean', description: 'Overwrite if exists (default: false)', default: false },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  validate: { type: 'boolean', description: 'create_files: Validate .gd files after creation (default: true)', default: true },
+  scenes: {
+    type: 'array',
+    description: 'run_verify: Array of scene paths relative to project',
+    items: { type: 'string' },
+  },
+  capture_tree: { type: 'boolean', description: 'run_verify: Capture scene tree snapshot (default: false)', default: false },
+  scene_a: { type: 'string', description: 'diff_scenes: First scene path relative to project' },
+  scene_b: { type: 'string', description: 'diff_scenes: Second scene path relative to project' },
+  ignore_properties: {
+    type: 'array',
+    description: 'diff_scenes: Property names to ignore in diff (default: metadata/_edit_lock)',
+    items: { type: 'string' },
+    default: ['metadata/_edit_lock'],
+  },
+};
 
 export function getToolDefinitions(): Tool[] {
   console.warn(`[DEPRECATED] batch-tools module is absorbed into workflow. Do not register directly.`);
@@ -30,35 +70,8 @@ export function getToolDefinitions(): Tool[] {
             enum: [...ACTIONS],
             description: '操作类型',
           },
-          files: {
-            type: 'array',
-            description: 'create_files: Array of files to create',
-            items: {
-              type: 'object',
-              properties: {
-                path: { type: 'string', description: 'Relative path (e.g. res://scripts/player.gd)' },
-                content: { type: 'string', description: 'File content' },
-                overwrite: { type: 'boolean', description: 'Overwrite if exists (default: false)', default: false },
-              },
-              required: ['path', 'content'],
-            },
-          },
-          validate: { type: 'boolean', description: 'create_files: Validate .gd files after creation (default: true)', default: true },
-          scenes: {
-            type: 'array',
-            description: 'run_verify: Array of scene paths relative to project',
-            items: { type: 'string' },
-          },
           timeout: { type: 'number', description: 'run_verify: Timeout per scene in seconds (default: 10)', default: 10 },
-          capture_tree: { type: 'boolean', description: 'run_verify: Capture scene tree snapshot (default: false)', default: false },
-          scene_a: { type: 'string', description: 'diff_scenes: First scene path relative to project' },
-          scene_b: { type: 'string', description: 'diff_scenes: Second scene path relative to project' },
-          ignore_properties: {
-            type: 'array',
-            description: 'diff_scenes: Property names to ignore in diff (default: metadata/_edit_lock)',
-            items: { type: 'string' },
-            default: ['metadata/_edit_lock'],
-          },
+          ...BATCH_ACTION_PARAMS,
         },
         required: ['action'],
       },
@@ -157,8 +170,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const validationErrors: Record<string, string[]> = {};
         for (const r of batchResults) {
           if (r.errors.length > 0) {
-            const pathSep = process.platform === 'win32' ? '\\' : '/';
-            const rel = r.file.replace(projectPath + pathSep, '');
+            // R3-tools: relPathOf 公共实现(归一分隔符/盘符,防正斜杠形态失配)
+            const rel = relPathOf(r.file, projectPath);
             validationErrors[rel] = r.errors;
           }
         }

@@ -38,9 +38,6 @@ export function readMatrix(root) {
   return JSON.parse(readFileSync(matrixPath, 'utf8'));
 }
 
-/** 安全等级排名:值越大越危险。用于 C3 一致性校验。 */
-const LEVEL_RANK = { safe: 0, guarded: 1, 'danger-api': 2 };
-
 /**
  * P1-6 首版 6 项核心校验。每项 check(tool) 返回违规消息(null=通过)。
  * @type {Check[]} */

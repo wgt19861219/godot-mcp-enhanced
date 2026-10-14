@@ -10,7 +10,7 @@ import { textResult } from '../types.js';
 import { opsErrorResult, validateTimeout } from './shared.js';
 import { runDotnetBuild } from './shared/validation.js';
 import { requireProjectPath } from '../core/args-validation.js';
-import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
+import { resolveWithinRoot, normalizeUserProjectPath, relPathOf } from '../core/path-utils.js';
 import { parseMcpScriptOutput } from '../core/config-parser.js';
 import { checkVersionMismatch } from '../core/godot-finder.js';
 import { scanFiles } from '../core/file-scanner.js';
@@ -695,7 +695,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (checkScenes) {
         const sceneFiles = collectProjectFiles(['.tscn']);
         for (const sceneFile of sceneFiles) {
-          const rel = sceneFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+          const rel = relPathOf(sceneFile, p);
           try {
             const content = readFileSync(sceneFile, 'utf-8');
             const extResRegex = /\[ext_resource[^[]*path="([^"]+)"/g;
@@ -758,7 +758,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (checkScripts) {
         const scriptFiles = collectProjectFiles(['.gd']);
         for (const scriptFile of scriptFiles) {
-          const rel = scriptFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+          const rel = relPathOf(scriptFile, p);
           try {
             const content = readFileSync(scriptFile, 'utf-8');
             const preloadRegex = /preload\(["']([^"']+)["']\)/g;
@@ -801,7 +801,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         for (const importFile of importFiles) {
           const sourceFile = importFile.replace('.import', '');
           if (!existsSync(sourceFile)) {
-            const rel = importFile.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+            const rel = relPathOf(importFile, p);
             issues.push({
               severity: 'info',
               category: 'orphaned_import',
@@ -841,7 +841,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         scriptsToValidate = scriptsToValidate.slice(0, 50);
       }
 
-      const relOf = (f: string) => f.replace(p + (process.platform === 'win32' ? '\\' : '/'), '');
+      const relOf = (f: string) => relPathOf(f, p);
 
       // Batch Godot parser validation
       const BATCH_SIZE = 20;
@@ -1038,7 +1038,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               if (!extensions.includes(ext)) continue;
               const importPath = fullPath + '.import';
               if (existsSync(importPath)) {
-                skippedFiles.push(fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
+                skippedFiles.push(relPathOf(fullPath, p));
                 continue;
               }
               const uid = 'uid://' + Buffer.from(fullPath.replace(p, '').replace(/\\/g, '/')).toString('base64url').substring(0, 24);
@@ -1071,7 +1071,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                 ``,
                 `[deps]`,
                 ``,
-                `source_file="res://${fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), '').replace(/\\/g, '/')}"`,
+                `source_file="res://${relPathOf(fullPath, p).replace(/\\/g, '/')}"`,
                 ``,
                 `[params]`,
                 ``,
@@ -1081,7 +1081,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
                 ``,
               ].join('\n');
               writeFileSync(importPath, importContent, 'utf-8');
-              importedFiles.push(fullPath.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
+              importedFiles.push(relPathOf(fullPath, p));
             }
           }
         } catch (err) { getLogger().debug('validation', `import resources scan: ${err instanceof Error ? err.message : err}`); }
@@ -1138,7 +1138,10 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
       analyze_error: 'read',
       validate_project: 'read',
       validate_scripts: 'read',
-      import_resources: 'read',
+      // R1-tools(2026-10-14 审查): 实际批量 writeFileSync 生成 .import 文件(可上百个),
+      // 定级 'read' 绕过确认令牌门(guard: risk!=='read' 才确认)——零确认直接落盘。
+      // 对照同写盘语义的 create_files('write')。改标后首调用会要求确认,符合预期。
+      import_resources: 'write',
       export_list_presets: 'read',
       export_get_preset: 'read',
       validate_gdd: 'read',

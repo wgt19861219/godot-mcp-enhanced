@@ -1845,7 +1845,14 @@ export const INDEX_HTML: string = `<!doctype html>
     recovering = true;
     $('statusBar').textContent = t('warn.reconnecting');
     var probes = [];
-    for (var p = 9550; p <= 9569; p++) probes.push(probeHealth(p));
+    // M6(2026-10-14 审查): 扫描端口段从服务端注入的 meta 读(实例 portStart..+19),
+    // 缺省回落 9550-9569。不能写死在脚本里——内联脚本受 CSP sha256 校验,服务端无法
+    // 按实例端口替换字面量(hash 会失配);meta 不在 script 内,注入零影响。
+    var prMeta = (document.querySelector('meta[name="mcp-self-heal-ports"]') || {}).content || '';
+    var prMatch = /^(\\d+)-(\\d+)$/.exec(prMeta);
+    var pLo = prMatch ? Number(prMatch[1]) : 9550;
+    var pHi = prMatch ? Number(prMatch[2]) : 9569;
+    for (var p = pLo; p <= pHi; p++) probes.push(probeHealth(p));
     Promise.all(probes).then(function (alive) {
       var here = Number(location.port) || 80;
       // 环防护(真机实测教训):sessionStorage 记录已迁移过的端口,跳过的实例再跳回=乒乓死循环

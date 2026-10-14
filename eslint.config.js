@@ -71,6 +71,66 @@ export default tseslint.config(
       }],
     },
   },
+  // R2/R3-test(2026-10-14 全维度审查): lint 范围扩至 test/ 与 scripts/(此前 500+ 测试
+  // 文件与 28 个脚本零 ESLint,机械门禁文化的最大单点缺口)。
+  // test 块策略(增量收紧,不做 2300 项存量大清洗):
+  //  - vitest globals 消 no-undef 假阳性(1759 处为 describe/it/expect 未配 globals);
+  //  - no-explicit-any 降 warn(存量 ~400 处 as any,测试代码容忍度高;配 --max-warnings
+  //    锁定当前值防恶化,新代码增量清偿);
+  //  - 其余真 error 保持(修存量后逐步收敛)。
+  {
+    files: ['test/**/*.{js,ts,mjs}'],
+    languageOptions: {
+      globals: {
+        // vitest globals 模式(vitest.config.ts globals: true)
+        describe: 'readonly', it: 'readonly', test: 'readonly', expect: 'readonly',
+        beforeAll: 'readonly', afterAll: 'readonly', beforeEach: 'readonly', afterEach: 'readonly',
+        vi: 'readonly', suite: 'readonly', assert: 'readonly', chai: 'readonly',
+        // Node 运行时全局(测试在 Node 20+ 直跑,.js 无 import 声明时 no-undef 拿不到)
+        process: 'readonly', console: 'readonly', fetch: 'readonly', URL: 'readonly',
+        URLSearchParams: 'readonly', AbortController: 'readonly', structuredClone: 'readonly',
+        Blob: 'readonly', File: 'readonly', TextEncoder: 'readonly', TextDecoder: 'readonly',
+        crypto: 'readonly', performance: 'readonly', queueMicrotask: 'readonly',
+        setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly',
+        clearInterval: 'readonly', setImmediate: 'readonly', Buffer: 'readonly',
+        globalThis: 'readonly', require: 'readonly',
+      },
+    },
+    rules: {
+      // 存量锁定策略(R2/R3-test): test 先纳入 lint 管辖,真 error 项(除 any 外存量
+      // ~130 处:unused-vars/require-imports/no-empty 等)降 warn 由 --max-warnings
+      // 锁定——新增即红,存量增量清偿;src/ 维持全 error 零容忍不变。
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-require-imports': 'warn',
+      'no-useless-escape': 'warn',
+      'no-useless-assignment': 'warn',
+      'no-useless-catch': 'warn',
+      'no-empty': 'warn',
+      'prefer-const': 'warn',
+      '@typescript-eslint/no-unsafe-function-type': 'warn',
+      'no-regex-spaces': 'warn',
+      'no-constant-binary-expression': 'warn',
+      'no-unsafe-negation': 'warn',
+      'no-prototype-builtins': 'warn',
+    },
+  },
+  // scripts/ 构建脚本: node 环境 globals(mjs 无 import 的 require/env 引用兜底)
+  {
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
+    languageOptions: {
+      globals: {
+        require: 'readonly', module: 'readonly', process: 'readonly', console: 'readonly',
+        __dirname: 'readonly', Buffer: 'readonly', fetch: 'readonly', Request: 'readonly',
+        Response: 'readonly', TextDecoder: 'readonly', TextEncoder: 'readonly',
+        AbortController: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly',
+      },
+    },
+    rules: {
+      // spike-*.mjs 实验脚本存量;同 test 策略 warn + max-warnings 锁定
+      'no-useless-assignment': 'warn',
+    },
+  },
   {
     ignores: ['build/', 'coverage/', 'node_modules/', 'src/scripts/'],
   },

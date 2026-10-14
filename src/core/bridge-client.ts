@@ -933,11 +933,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, Math.max(0, ms)));
 }
 
-/** 单次 TCP auth 探测(独立 socket,即建即毁)。成功返回 true。
- *  A1: port 由调用方传入(registry 解析的实际端口,secret 文件与监听端口必须一致)。 */
+/** 单次 TCP 探测(独立 socket,即建即毁)。成功返回 true。
+ *  A1: port 由调用方传入(registry 解析的实际端口,secret 文件与监听端口必须一致)。
+ *  R2-core(2026-10-14 审查): 原实现 TCP 建连即发明文 {method:'auth', params:{secret}}——
+ *  任何占据 9081-9090 窗口的本机进程无需响应即可收割 secret,绕过 3A 加固批确立的
+ *  "哑占位者不降级、不把 secret 主动送给占端口假监听进程"契约。现对齐 _doConnect
+ *  的 challenge-response 编排:auth_begin 探测(默认)→ 合法 challenge(≥16)才发
+ *  HMAC proof(secret 不上线)→ authenticated 判 ready。
+ *  旧 bridge 兼容:对 auth_begin 回 JSON-RPC error 的对端(旧版 GD)复刻 _doConnect
+ *  降级矩阵——重开 socket 明文 auth 一次;GODOT_MCP_REQUIRE_CR_AUTH=true 拒降级。
+ *  [已知残余面]协议感知的假监听者可伪造 error 诱降级(与 _doConnect 同款声明,
+ *  localhost 明文模型下不可根除);哑占位者(不回应)从此拿不到 secret。 */
 function probeOnce(secretPath: string, port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    let settled = false;
     let secret: string;
     try {
       secret = readFileSync(secretPath, 'utf-8').trim();
@@ -945,23 +953,88 @@ function probeOnce(secretPath: string, port: number): Promise<boolean> {
       resolve(false);
       return;
     }
+    probeCr(port, secret, 1_000).then(resolve);
+  });
+}
+
+/** CR 探测阶段:auth_begin → challenge → HMAC proof → authenticated。 */
+function probeCr(port: number, secret: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sock.destroy();
+      resolve(ok);
+    };
     const sock = createConnection({ port, host: BRIDGE_HOST }, () => {
-      sock.write(JSON.stringify({ id: 0, method: 'auth', params: { secret } }) + '\n');
+      sock.write(JSON.stringify({ id: 0, method: 'auth_begin' }) + '\n');
     });
-    const timer = setTimeout(() => {
-      if (!settled) { settled = true; sock.destroy(); resolve(false); }
-    }, 1000);
-    // M2: 累积 buffer 按 \n 分割,防 auth 响应跨 TCP 包(partial)导致 JSON.parse 失败
+    const timer = setTimeout(() => done(false), timeoutMs);
+    // M2: 累积 buffer 按 \n 分割,防响应跨 TCP 包导致 JSON.parse 失败
     let buffer = '';
     sock.on('data', (data: Buffer) => {
       if (settled) return;
       buffer += data.toString();
       const idx = buffer.indexOf('\n');
-      if (idx === -1) return; // 等待完整行(bridge 响应以 \n 结尾)
+      if (idx === -1) return;
       try {
-        const resp = JSON.parse(buffer.substring(0, idx).trim());
-        if (resp?.result?.authenticated) {
+        const resp = JSON.parse(buffer.substring(0, idx).trim()) as {
+          result?: { challenge?: unknown; authenticated?: unknown };
+          error?: unknown;
+        };
+        // 旧 bridge:对 auth_begin 回 JSON-RPC error → 走降级矩阵(见 probeOnce docstring)。
+        // CR 阶段就此结束,结果由降级探测决定。
+        if (resp.error !== undefined) {
+          settled = true;
+          clearTimeout(timer);
+          sock.destroy();
+          degradeProbeLegacy(port, secret, timeoutMs).then(resolve);
+          return;
+        }
+        // 合法 challenge(形态校验对齐 _openSocket N-5:≥16)→ 发 HMAC proof,secret 不上线
+        const ch = resp.result?.challenge;
+        if (typeof ch === 'string' && ch.length >= 16) {
+          const proof = createHmac('sha256', secret).update(ch, 'utf8').digest('hex');
+          sock.write(JSON.stringify({ id: 1, method: 'auth_proof', params: { proof } }) + '\n');
+          return;
+        }
+        // proof 后的 authenticated 判定;其余形态(result 无 challenge/authenticated 的
+        // 异形响应)一律 not-ready(fail-closed,防占端口者伪造成 ready)
+        if (resp.result?.authenticated === true) done(true);
+        else if (resp.result?.authenticated === false) done(false);
+      } catch { /* 部分/非 JSON 数据,等待完整行或超时 */ }
+    });
+    sock.on('error', () => done(false));
+  });
+}
+
+/** 降级探测(旧 bridge):CR 探测收到 JSON-RPC error 后,重开 socket 明文 auth 一次。
+ *  对齐 _doConnect 降级矩阵;_requireBridgeCrAuth() 时拒降级(保持 false)。 */
+function degradeProbeLegacy(port: number, secret: string, timeoutMs: number): Promise<boolean> {
+  if (_requireBridgeCrAuth()) return Promise.resolve(false);
+  getLogger().info('bridge', 'probe: auth_begin rejected with JSON-RPC error (old bridge?) — probing with legacy plaintext auth once');
+  return new Promise((resolve) => {
+    let settled = false;
+    const sock = createConnection({ port, host: BRIDGE_HOST }, () => {
+      sock.write(JSON.stringify({ id: 0, method: 'auth', params: { secret } }) + '\n');
+    });
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; sock.destroy(); resolve(false); }
+    }, timeoutMs);
+    let buffer = '';
+    sock.on('data', (data: Buffer) => {
+      if (settled) return;
+      buffer += data.toString();
+      const idx = buffer.indexOf('\n');
+      if (idx === -1) return;
+      try {
+        const resp = JSON.parse(buffer.substring(0, idx).trim()) as { result?: { authenticated?: unknown } };
+        if (resp.result?.authenticated === true) {
           settled = true; clearTimeout(timer); sock.destroy(); resolve(true);
+        } else if (resp.result?.authenticated === false) {
+          settled = true; clearTimeout(timer); sock.destroy(); resolve(false);
         }
       } catch { /* 部分/非 JSON 数据,忽略 */ }
     });

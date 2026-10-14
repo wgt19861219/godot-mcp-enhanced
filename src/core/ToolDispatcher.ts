@@ -299,7 +299,12 @@ export class ToolDispatcher {
             // 不能冒泡到 executeMiddleware Phase 2(那里会转 'Tool execution error: ...'
             // 裸文本,违背结构化口径)。其余异常原样 rethrow,保持既有行为不变。
             return await withToolDeadline(progressEmitter, name,
-              () => this.executeToolCall(name, args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, callerLabel),
+              // R1-core(2026-10-14 审查): 消费 ctx.args 而非闭包原始 args——elicitation
+              // middleware 把用户补填的必填参数写入 ctx.args(浅拷贝副本),原闭包捕获
+              // pre-middleware 的 args 对象,elicit 值永远到不了工具执行(工具仍缺参执行)。
+              // ctx.args 是 middleware 管道公认的可变参数载体;audit after hook 读
+              // ctx.args.project_path 同步受益(原 :667 注释的浅拷贝 footgun 一并消除)。
+              () => this.executeToolCall(name, ctx.args, startTime, ctx.traceId, progressEmitter, srvCtx, clientTasksCapable, callerLabel),
               getToolDeadlineMs(),
             ).catch((err: unknown) => {
               if (err instanceof ToolDeadlineError) {
@@ -426,8 +431,10 @@ export class ToolDispatcher {
   }
 
   /** W6(2026-09-20 批3): 前置双门拦截——profile 硬隔离(Task 3 A-RCE #3) + action-gate(P0-3)。
-   * 从 executeToolCall 原样搬移(纯重构零行为变化);返回 opsErrorResult 或 null(通过)。 */
-  private _enforceGates(name: string, args: Record<string, unknown>): HandlerResult | null {
+   * 从 executeToolCall 原样搬移(纯重构零行为变化);返回 opsErrorResult 或 null(通过)。
+   * R4-core(2026-10-14): 返回类型从 HandlerResult 收窄为 ToolResult——两个 return 均
+   * 为 opsErrorResult,_confirmExecute(ToolResult 返回面)复用时无需宽化断言。 */
+  private _enforceGates(name: string, args: Record<string, unknown>): ToolResult | null {
     // ── Task 3 (A-RCE #3): profile 硬隔离入口强制 ──
     // isToolAllowed 原只在 getFilteredTools 广告层(:183),被转发 MCP 客户端(拿完整
     // tools/list 或硬编码工具名)仍可调用 TOOL_GROUPS/slim 过滤的工具。此处对称补强:
@@ -903,6 +910,14 @@ export class ToolDispatcher {
     currentExecutor: EditorToolExecutor | null,
     clientTasksCapable?: boolean,
   ): Promise<ToolResult> {
+    // R4-core(2026-10-14 审查): 对 (pending.toolName, pending.args) 重跑前置双门
+    // (profile 硬隔离 + action-gate)。token TTL 120s 内若管理员停用工具组或收紧
+    // GODOT_MCP_PRIVILEGED_GROUPS,已签发 token 不得按旧政策执行——与下方 ReadOnlyGuard
+    // 二次复检的意图一致(注: executeToolCall 入口的 _enforceGates 只检查了
+    // confirm_and_execute 自身,真实执行的 pending.toolName 此前不再过门)。
+    const gateErr = this._enforceGates(pending.toolName, pending.args);
+    if (gateErr) return gateErr;
+
     // 二次 guard 检查
     // 批4-T5: 传 pending action 做 action 级只读判定
     const confirmedGuardResult = this.readOnlyGuard.check(pending.toolName, typeof pending.args.action === 'string' ? pending.args.action : undefined);

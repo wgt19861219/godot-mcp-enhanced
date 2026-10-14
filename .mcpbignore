@@ -61,3 +61,9 @@ node_modules/**/*.ts
 node_modules/**/docs/
 node_modules/**/*.png
 node_modules/**/*.jpg
+
+# R2-addons(2026-10-14 审查): 运行时生成的面板入口页内嵌明文共享鉴权 TOKEN
+# (portal.ts ensurePackageRootEntry 写入)——本地跑过 server 后 mcpb pack 会把
+# token 打进对外分发 bundle。bat 同理。npm 渠道 files 白名单不含根目录文件,免疫。
+面板入口.html
+面板独立窗口.bat

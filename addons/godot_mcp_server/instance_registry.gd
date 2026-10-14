@@ -39,16 +39,26 @@ func _exit_tree() -> void:
 
 ## 写 instance JSON 到 registry(首次 + 启动时调用)
 func _write_instance_json() -> void:
-	# 可移植性 P4:显式 godot_mcp/editor_port 优先;未设时默认随 editor_port_base
-	# (websocket_server.gd _resolve_port_range 同源),用户改了端口段注册表文件名跟着对齐。
-	var port: int = int(ProjectSettings.get_setting(
-		"godot_mcp/editor_port",
-		ProjectSettings.get_setting("godot_mcp/editor_port_base", 9090)))
-	# 审查 Nit-1:非法值回落对齐 websocket_server._resolve_port_range(WS 侧回落 9090
-	# 监听,registry 用非法值会致 TS discovery 拿错端口/文件名)。
-	if port < 1 or port > 65535:
-		push_warning("[MCP] instance_registry: invalid editor port %d — falling back to 9090" % port)
-		port = 9090
+	# R1-addons(2026-10-14 全维度审查): 实际监听端口优先——plugin._enter_tree 先建
+	# websocket_server(同步 listen)后建本 registry,此时段内顺延结果已定格;配置端口
+	# 被前序实例占用时 WS 监听 9091+,本登记若仍写配置端口会致 TS InstanceManager
+	# 连错实例 + 多实例写同一文件名互覆。取不到(WS 未监听/插件形态异常)回落配置链。
+	var port: int = 0
+	if _plugin != null and is_instance_valid(_plugin):
+		var ws = _plugin.get("websocket_server")
+		if ws != null and is_instance_valid(ws) and ws.has_method("get_effective_port"):
+			port = ws.get_effective_port()
+	if port == 0:
+		# 可移植性 P4:显式 godot_mcp/editor_port 优先;未设时默认随 editor_port_base
+		# (websocket_server.gd _resolve_port_range 同源),用户改了端口段注册表文件名跟着对齐。
+		port = int(ProjectSettings.get_setting(
+			"godot_mcp/editor_port",
+			ProjectSettings.get_setting("godot_mcp/editor_port_base", 9090)))
+		# 审查 Nit-1:非法值回落对齐 websocket_server._resolve_port_range(WS 侧回落 9090
+		# 监听,registry 用非法值会致 TS discovery 拿错端口/文件名)。
+		if port < 1 or port > 65535:
+			push_warning("[MCP] instance_registry: invalid editor port %d — falling back to 9090" % port)
+			port = 9090
 	_instance_id = "editor-%d" % port
 	_registry_dir = _get_registry_dir()
 	_instance_file = "%s/%s.json" % [_registry_dir, _instance_id]

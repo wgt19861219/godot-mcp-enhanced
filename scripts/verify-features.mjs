@@ -305,7 +305,7 @@ const { listPrompts, getPrompt } = await import('../build/prompts.js');
 // 测试 25: 未知 prompt
 {
   try { await getPrompt('nope', {}); assert(false, '应报错'); }
-  catch (e) { assert(true, '未知 prompt 报错'); }
+  catch { assert(true, '未知 prompt 报错'); }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
