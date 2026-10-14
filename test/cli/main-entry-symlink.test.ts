@@ -76,7 +76,11 @@ describe.skipIf(!binLink)('入口守卫:经 npm bin symlink 启动(issue #71 回
 
   it('doctor 有输出(经 symlink 的子命令路由可达)', () => {
     const r = spawnSync(process.execPath, [binLink!, 'doctor'], { encoding: 'utf8', timeout: 60_000 });
-    expect(r.status).toBe(0);
+    // 退出码容忍 0/1(2026-10-14 CI 修复):doctor 是健康诊断,无 Godot 环境(如 macOS
+    // smoke「非 Godot 子集」runner)按设计 exit 1(doctor.ts hasError 路径)。本用例
+    // 验证的是 issue #71 的路由可达性——回归形态是「exit 0 + 零输出」,由下方输出
+    // 断言拦截;崩溃/超时(null 状态)与异常退出码同样不过 0/1 白名单。
+    expect([0, 1]).toContain(r.status);
     // doctor 首行固定输出 Node.js 版本检查(cli/doctor.ts)
     expect(r.stdout).toContain('Node.js');
   });

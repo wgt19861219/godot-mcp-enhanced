@@ -972,15 +972,20 @@ function probeCr(port: number, secret: string, timeoutMs: number): Promise<boole
       sock.write(JSON.stringify({ id: 0, method: 'auth_begin' }) + '\n');
     });
     const timer = setTimeout(() => done(false), timeoutMs);
-    // M2: 累积 buffer 按 \n 分割,防响应跨 TCP 包导致 JSON.parse 失败
+    // M2: 累积 buffer 按 \n 分割,防响应跨 TCP 包导致 JSON.parse 失败。
+    // 已解析行必须消费(substring(idx+1),对齐 :552/:654/:835 既有处理器)——否则
+    // challenge 行永远停在 buffer 头部,authenticated 响应永远解析不到,真机必超时
+    // (2026-10-14 CI 事故:mock 测试对每次 auth_proof 都回包,掩盖了该缺陷)。
     let buffer = '';
     sock.on('data', (data: Buffer) => {
       if (settled) return;
       buffer += data.toString();
       const idx = buffer.indexOf('\n');
       if (idx === -1) return;
+      const line = buffer.substring(0, idx);
+      buffer = buffer.substring(idx + 1);
       try {
-        const resp = JSON.parse(buffer.substring(0, idx).trim()) as {
+        const resp = JSON.parse(line.trim()) as {
           result?: { challenge?: unknown; authenticated?: unknown };
           error?: unknown;
         };
@@ -1029,8 +1034,10 @@ function degradeProbeLegacy(port: number, secret: string, timeoutMs: number): Pr
       buffer += data.toString();
       const idx = buffer.indexOf('\n');
       if (idx === -1) return;
+      const line = buffer.substring(0, idx);
+      buffer = buffer.substring(idx + 1); // 消费已解析行(对齐 probeCr 修复)
       try {
-        const resp = JSON.parse(buffer.substring(0, idx).trim()) as { result?: { authenticated?: unknown } };
+        const resp = JSON.parse(line.trim()) as { result?: { authenticated?: unknown } };
         if (resp.result?.authenticated === true) {
           settled = true; clearTimeout(timer); sock.destroy(); resolve(true);
         } else if (resp.result?.authenticated === false) {

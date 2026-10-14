@@ -273,8 +273,16 @@ describe('KbApi(逻辑层)', () => {
     expect(parseFrontmatterHead('\uFEFF---\nstatus: ok\n---\n')).toEqual({ status: 'ok' });   // BOM 容错
   });
 
+  // 平台自适应 fixture(2026-10-14 CI 修复):repoPath 走 isAbsolute 本机语义——
+  // 仓库映射表是用户本机路径(作 git cwd),异平台路径被拒是正确行为,测试不得写死 Windows 盘符
+  const ABS_REPO = process.platform === 'win32' ? 'D:\\repo' : '/home/u/repo';
+  const ABS_NEW = process.platform === 'win32'
+    ? 'D:\\GitHub\\godot-mcp-series\\godot-mcp-enhanced'
+    : '/home/u/godot-mcp-series/godot-mcp-enhanced';
+  const ABS_OLD = process.platform === 'win32' ? 'D:\\GitHub\\godot-mcp-enhanced' : '/home/u/godot-mcp-enhanced';
+
   it('parseRepoMapLine:反引号对提取/非绝对路径拒/非表格行 null', () => {
-    expect(parseRepoMapLine(`| \`D:\\repo\` | \`Dir/\` |`)).toEqual({ repoPath: 'D:\\repo', kbDir: 'Dir' });
+    expect(parseRepoMapLine(`| \`${ABS_REPO}\` | \`Dir/\` |`)).toEqual({ repoPath: ABS_REPO, kbDir: 'Dir' });
     expect(parseRepoMapLine('| `relative` | `Dir` |')).toBeNull();
     expect(parseRepoMapLine('普通行')).toBeNull();
     expect(parseRepoMapLine('| 只有 | 一对 `反引号` |')).toBeNull();
@@ -283,8 +291,8 @@ describe('KbApi(逻辑层)', () => {
   it('parseRepoMapLine:附注含反引号旧路径(真机 GodotMCP 行形态)——首对=repo 末对=kbDir,中段不误读', () => {
     // 真机回归(2026-10-08):GodotMCP 行附注带旧仓库反引号段,居中取第 2 对曾把旧路径
     // 误当 kbDir → GodotMCP 映射丢失(真机验证发现)。首末各取后:repo=新路径,kbDir=GodotMCP。
-    const line = '| `D:\\GitHub\\godot-mcp-series\\godot-mcp-enhanced`（2026-08-17 更正;原记 `D:\\GitHub\\godot-mcp-enhanced` 已失效） | `GodotMCP/` |';
-    expect(parseRepoMapLine(line)).toEqual({ repoPath: 'D:\\GitHub\\godot-mcp-series\\godot-mcp-enhanced', kbDir: 'GodotMCP' });
+    const line = `| \`${ABS_NEW}\`（2026-08-17 更正;原记 \`${ABS_OLD}\` 已失效） | \`GodotMCP/\` |`;
+    expect(parseRepoMapLine(line)).toEqual({ repoPath: ABS_NEW, kbDir: 'GodotMCP' });
   });
 
   it('断流阈值常量锁定(变更须同步前端文案与文档)', () => {
