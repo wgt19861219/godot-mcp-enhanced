@@ -176,15 +176,16 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   // ── 网络异常误报修复批(2026-09-16,真机反馈:扫描 401 显示「网络异常,扫描请求未送达」)──
   it('safeBody:响应体安全解析——空体/非 JSON 不再 reject 落 catch 伪装网络异常', () => {
     expect(INDEX_HTML).toContain('function safeBody');              // 帮助函数定义
-    expect(INDEX_HTML).toContain('try { j = t ? JSON.parse(t) : null; }');   // 空体→null,非 JSON→null(catch 吞)
+    expect(INDEX_HTML).toContain('try { j = txt ? JSON.parse(txt) : null; }');   // 空体→null,非 JSON→null(catch 吞;i18n 批参数名 t→txt,防遮蔽全局 t())
     expect(INDEX_HTML).not.toContain('r.json().then');              // 六处 fetch 全部替换干净(代码级,注释除外——本断言匹配不到注释因写法不同)
   });
   it('401 准确文案:scan/add/loadDir/loadFile/save 各失败分支按 status 提示鉴权失效', () => {
     // 指引闭环(2026-09-16 误报修复批):刷新不解决 token 缺失(qs 已被 replaceState 清、
-    // sessionStorage per-origin 迁移即丢),回入口页(带 token 跳转)才闭环
-    const hits = INDEX_HTML.match(/鉴权失效,请从 面板入口\.html 重新进入/g) ?? [];
+    // sessionStorage per-origin 迁移即丢),回入口页(带 token 跳转)才闭环。
+    // i18n 批(2026-10-13):内联中文换 t('err.authExpired') 调用,断言随之锁调用点数。
+    const hits = INDEX_HTML.match(/t\('err\.authExpired'\)/g) ?? [];
     expect(hits.length).toBeGreaterThanOrEqual(5);                  // scan/add/loadDir/loadFile/save/hex 至少 5 处
-    expect(INDEX_HTML).toContain("r.status === 401 ? '扫描失败: 鉴权失效");   // 触发用户反馈的 scan 路径
+    expect(INDEX_HTML).toContain("r.status === 401 ? t('err.authExpired')");   // 触发用户反馈的 scan 路径(401 分支接 i18n 键)
   });
 
   // ── 入口简化+自愈批(2026-09-16,用户确认):断线自动找活实例 + 友好死页 ──────
@@ -257,9 +258,11 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
   // ── daemon 前端批(2026-09-30 批 C):kind 徽标/会话占用/交接中/跨实例指引 ──────
   it('实例区:类型分组渲染(实例分类批 2026-10-08)——本实例/daemon/stdio/早期实例四组标题', () => {
     expect(INDEX_HTML).toContain('inst-group');   // 分组标题样式(类型徽标上移为组标题)
-    ['本实例', 'daemon', 'stdio', '早期实例'].forEach(t =>
-      expect(INDEX_HTML).toContain("'" + t + "'"));   // 四组标题文案(分组 match 链)
-    // 「早期实例」组标题带 hover 解释(kind 字段 2026-09-30 才加入登记)
+    // i18n 批(2026-10-13):组标题经 t() 取键(daemon/stdio 为固定术语不经字典),
+    // 断言锁 t() 调用 + 术语字面量
+    ["t('inst.group.self')", "'daemon'", "'stdio'", "t('inst.group.legacy')"].forEach(t =>
+      expect(INDEX_HTML).toContain(t));   // 四组标题(分组 match 链)
+    // 「早期实例」组标题带 hover 解释(kind 字段 2026-09-30 才加入登记;zh 兜底在字典内联 JSON 中)
     expect(INDEX_HTML).toContain('kind 字段 2026-09-30 才加入登记');
   });
   it('实例区:daemon 会话占用状态(sessionActive 三值:占用中/空闲/数据不可得不显示)', () => {
@@ -364,9 +367,10 @@ describe('INDEX_HTML 导出完整性(前端行为靠 Task 6/7 契约+真机验�
     expect(INDEX_HTML).toContain('暂无分钟时序数据');                       // timeSeries 空占位
   });
   it('布局:左列面板标题长文案挪 title(hover 显示)——修 340px 窄列标题挤压换行', () => {
-    expect(INDEX_HTML).toContain('<h2 title="增删/扫描影响 server 登记状态">项目</h2>');
-    expect(INDEX_HTML).toContain('<h2 title="「停止/清理」影响运行中的游戏进程">运行会话</h2>');
-    expect(INDEX_HTML).toContain('<h2 title="「重启」中断该实例的 MCP 会话,客户端重连拉起新进程">实例</h2>');
+    // i18n 批(2026-10-13):h2 增 data-i18n/-title 属性(中文保留为 zh 兜底),断言随之锁新形态
+    expect(INDEX_HTML).toContain('<h2 data-i18n="proj.pane" data-i18n-title="proj.pane.title" title="增删/扫描影响 server 登记状态">项目</h2>');
+    expect(INDEX_HTML).toContain('<h2 data-i18n="sess.pane" data-i18n-title="sess.pane.title" title="「停止/清理」影响运行中的游戏进程">运行会话</h2>');
+    expect(INDEX_HTML).toContain('<h2 data-i18n="inst.pane" data-i18n-title="inst.pane.title" title="「重启」中断该实例的 MCP 会话,客户端重连拉起新进程">实例</h2>');
   });
 
   // ── 会话输出视图(2026-10-08 输出查看批):游戏进程 stdout/stderr 的面板查看入口 ──

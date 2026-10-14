@@ -83,12 +83,29 @@ describe('WebGuiServer 设置端点(路由层)', () => {
     });
     expect(wrongType.status).toBe(400);
     const ok = await fetch(`${t.base}/api/settings?token=${t.token}`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
+      method: 'POST', headers: { 'content-type': 'application/json', 'accept-language': 'zh-CN' },   // i18n 批:显式 zh(Node fetch 默认带环境 Accept-Language,断言 lang 须确定)
       body: JSON.stringify({ godotPath: 'D:/ok.exe' }),
     });
     expect(ok.status).toBe(200);
     expect(await ok.json()).toEqual({ ok: true, persisted: { godotPath: 'D:/ok.exe', allowedProjectPaths: [] } });
-    expect(save).toHaveBeenCalledWith({ godotPath: 'D:/ok.exe' });
+    expect(save).toHaveBeenCalledWith({ godotPath: 'D:/ok.exe' }, 'zh');
+  });
+
+  it('POST /api/settings:Accept-Language=en → save 收到 lang=en(后端消息语言,i18n 批)', async () => {
+    const save = vi.fn(async () => ({ ok: true, persisted: { godotPath: '', allowedProjectPaths: [] } }));
+    const t = await start({ settings: makeSettingsApi({ save }) });
+    const res = await fetch(`${t.base}/api/settings?token=${t.token}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'accept-language': 'en-US,en;q=0.9' },
+      body: JSON.stringify({ godotPath: 'D:/ok.exe' }),
+    });
+    expect(res.status).toBe(200);
+    expect(save).toHaveBeenCalledWith({ godotPath: 'D:/ok.exe' }, 'en');
+    const zh = await fetch(`${t.base}/api/settings?token=${t.token}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'accept-language': 'zh-CN,zh;q=0.9' },
+      body: JSON.stringify({ godotPath: 'D:/ok.exe' }),
+    });
+    expect(zh.status).toBe(200);
+    expect(save).toHaveBeenLastCalledWith({ godotPath: 'D:/ok.exe' }, 'zh');
   });
 
   it('POST /api/settings:READ_ONLY → 403 read-only mode(不调 save)', async () => {

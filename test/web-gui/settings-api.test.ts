@@ -94,6 +94,18 @@ describe('UserSettingsService(逻辑层)', () => {
     expect(r).toEqual({ ok: false, stage: 'is-directory', detail: '路径是目录,须指向 Godot 可执行文件' });
   });
 
+  // i18n 批(2026-10-13):消息按 lang 双语;缺省 zh(既有调用方不变)。
+  it('verify/save:lang=en → 英文消息;缺省 zh(向后兼容)', async () => {
+    expect(await svc().verify('', 'en')).toEqual({ ok: false, stage: 'bad-request', detail: 'Path cannot be empty' });
+    vi.mocked(validateGodotBinaryDetailed).mockResolvedValue({ ok: false, stage: 'is-directory' });
+    expect(await svc().verify('D:/some/dir', 'en')).toEqual({ ok: false, stage: 'is-directory', detail: 'Path is a directory — it must point to a Godot executable' });
+    const s = await svc().save({ godotPath: 'relative/godot.exe' }, 'en');
+    expect((s as { error: string }).error).toBe('Godot path must be an absolute path');
+    const s2 = await svc().save({ allowedProjectPaths: ['relative/path'] }, 'en');
+    expect((s2 as { error: string }).error).toBe('Allowlist entries must be absolute paths: relative/path');
+    expect(await svc().save({})).toMatchObject({ ok: false, error: '没有要保存的设置字段' });   // 缺省 zh 不变
+  });
+
   it('verify:validate ok 但版本串读取失败 → version-read-failed', async () => {
     vi.mocked(detectGodotVersion).mockRejectedValue(new Error('boom'));
     const r = await svc().verify('D:/godot/g.exe');

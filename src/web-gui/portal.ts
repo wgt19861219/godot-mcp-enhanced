@@ -13,6 +13,7 @@
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { webGuiRegistryDir, hardenFilePermissionsWindows, SHARED_TOKEN_RE } from './registry.js';
+import { serializeI18nForInline } from './i18n.js';
 
 /** 构建入口页 HTML。token 非空时内嵌(跳转 URL 带 #token=,面板读 hash 握手 cookie 后清 URL,
  *  首次即过鉴权;token 不进 query/服务器日志);形状不符 SHARED_TOKEN_RE 一律按空处理(插值安全:hex 字符集,JSON.stringify 再兜底)。
@@ -27,7 +28,7 @@ export function buildPortalHtml(token?: string, preferredPort?: number): string 
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>godot-mcp-enhanced 面板入口</title>
+<title data-i18n="portal.title">godot-mcp-enhanced 面板入口</title>
 <style>
 body{font-family:system-ui,sans-serif;background:#16181d;color:#d7dce3;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
 .box{max-width:520px;padding:32px}
@@ -41,16 +42,32 @@ a.btn{display:inline-block;margin:6px 8px 6px 0;padding:8px 16px;background:#2d6
 </head>
 <body>
 <div class="box">
-<h1>godot-mcp-enhanced 监控面板</h1>
+<h1 data-i18n="header.title">godot-mcp-enhanced 监控面板</h1>
 <div id="list"></div>
 <div id="dead" style="display:none">
-<p>当前没有运行中的面板服务(godot-mcp server 未启动)。</p>
-<p>启动方式:打开任一 AI 客户端会话(面板随 godot-mcp server 自动启动),或运行<br><code>npx godot-mcp-enhanced dashboard --web</code></p>
-<p>启动后<a href="#" onclick="location.reload();return false">刷新本页</a>即可自动进入。</p>
+<p data-i18n="portal.dead.p1">当前没有运行中的面板服务(godot-mcp server 未启动)。</p>
+<p><span data-i18n="portal.dead.p2">启动方式:打开任一 AI 客户端会话(面板随 godot-mcp server 自动启动),或运行</span><br><code>npx godot-mcp-enhanced dashboard --web</code></p>
+<p><span data-i18n="portal.dead.p3pre">启动后</span><a href="#" onclick="location.reload();return false" data-i18n="portal.dead.refresh">刷新本页</a><span data-i18n="portal.dead.p3post">即可自动进入。</span></p>
 </div>
-<p class="status" id="status">正在扫描本机面板服务…</p>
+<p class="status" id="status" data-i18n="portal.scanning">正在扫描本机面板服务…</p>
 </div>
 <script>
+// i18n(2026-10-13):navigator.language 自动检测(zh* → zh,其余 en),无手动切换——
+// 入口页存活数秒即跳转,与主面板语言偏好(localStorage)不联动(file:// 与 http
+// origin 隔离,读不到);中文为 zh 兜底,en 时下方 data-i18n 替换。
+var I18N = ${serializeI18nForInline(['portal.', 'header.'])};
+var LANG = String(navigator.language || 'zh').toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en';
+function t(key, params) {
+  var s = (I18N[LANG] && I18N[LANG][key]) || I18N.zh[key] || key;
+  if (params) { for (var k in params) s = s.split('{' + k + '}').join(String(params[k])); }
+  return s;
+}
+if (LANG === 'en') {
+  document.title = t('portal.title');
+  document.documentElement.lang = 'en';
+  var els = document.querySelectorAll('[data-i18n]');
+  for (var i = 0; i < els.length; i++) els[i].textContent = t(els[i].getAttribute('data-i18n'));
+}
 var TOKEN = ${JSON.stringify(safeToken)};
 var PREFERRED = ${JSON.stringify(safePort)};
 // 2B (2026-09-19 安全加固批2): token 经 hash(#token=)传递而非 query——hash 不发给服务器
@@ -74,19 +91,19 @@ Promise.all(probes).then(function (alive) {
   var list = document.getElementById('list');
   if (found.length === 0) {
     document.getElementById('dead').style.display = 'block';
-    st.textContent = '扫描完成:9550-9569 无响应。';
+    st.textContent = t('portal.scanDone');
     return;
   }
   // 挑选(根治批 2026-10-08):preferred 活着优先(写入入口页的最近启动实例);
   // 否则回退最大端口。探测为 no-cors opaque(读不到版本,给 health 开 CORS 会推翻
   // M-4 收紧决策),故 preferred 是零安全代价下最准的"最新实例"判据。
   var target = (PREFERRED && found.indexOf(PREFERRED) !== -1) ? PREFERRED : found[found.length - 1];
-  st.textContent = '发现 ' + found.length + ' 个实例,正在进入面板服务(:' + target + ')…';
+  st.textContent = t('portal.found', { n: found.length, port: target });
   for (var i = 0; i < found.length; i++) {
     var a = document.createElement('a');
     a.className = 'btn';
     a.href = withToken('http://127.0.0.1:' + found[i] + '/');
-    a.textContent = (found[i] === target ? '\u2605 ' : '') + '实例 :' + found[i];
+    a.textContent = (found[i] === target ? '★ ' : '') + t('portal.instance', { port: found[i] });
     list.appendChild(a);
   }
   // 自动进入 target(★ 标注;点击上方按钮可选其他实例);
