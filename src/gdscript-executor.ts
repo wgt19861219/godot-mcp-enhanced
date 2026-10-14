@@ -760,8 +760,29 @@ export async function executeGdscript(
   scriptContent = scriptContent.replaceAll(MARKER_ERROR_SHARED, rndError);
 
   // Create isolated session directory
-  await cleanupOldSessions();
-  const sessionDir = await createSessionDir();
+  // R3-core(2026-10-14 审查): 此前 cleanupOldSessions/createSessionDir 不在任何 try 内,
+  // 磁盘满/EMFILE 等异常冒出时已获取的 short-running slot 永不释放(上限 3,三次瞬时
+  // 故障后所有 headless 执行永久 "Too many concurrent headless operations")。纳入
+  // try/catch 对齐 :772 writeTempScript 同款释放语义。
+  let sessionDir: string;
+  try {
+    await cleanupOldSessions();
+    sessionDir = await createSessionDir();
+  } catch (err) {
+    releaseShortRunningSlot();
+    return {
+      success: false,
+      compile_success: false,
+      compile_error: `Failed to create session directory: ${err instanceof Error ? err.message : String(err)}`,
+      errors: [],
+      run_success: false,
+      run_error: '',
+      outputs: [],
+      raw_output: '',
+      duration_ms: Date.now() - startTime,
+      autoload_detected: autoloadDetected,
+    };
+  }
 
   // Write temp file
   const tempFiles: string[] = [];

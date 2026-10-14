@@ -220,7 +220,7 @@ npm run watch
 # 构建(tsc + 拷贝 .gd 脚本到 build/scripts/)
 npm run build
 
-# Lint(只检查 src/)
+# Lint(src/ + test/ + scripts/;存量 warnings 锁定 533 上限,src/ 维持零容忍)
 npm run lint
 
 # 跑全部测试
@@ -276,7 +276,7 @@ export ALLOWED_PROJECT_PATHS="D:/GitHub/godot-mcp-enhanced"
 
 改动代码后,**报告完成 / 提交 / 开 PR 前**必须依次跑:
 
-1. `npm run lint` — ESLint 风格检查(`src/**/*.ts`)
+1. `npm run lint` — ESLint 风格检查(`src/ + test/ + scripts/`;存量 warnings 以 `--max-warnings 533` 锁定防恶化,src/ 维持全 error 零容忍)
 2. `npm run build` — TypeScript 编译(strict 模式,零错误才过)
 3. `npm test` — Vitest 全绿
 
@@ -491,3 +491,4 @@ CI 双脚本把关: `check-rules-version-bump.mjs` 在模板变更时强制要�
 | 2026-08-21 | 新增「分层约束与全局状态规则」:core→tools 禁止(eslint 门禁)/CLI 复用 bridge-session 会话链/禁止新增模块级 setter——源于当日全仓架构审查(C/D 组修复批) |
 | 2026-09-12 | 「架构约束」三层表述升级为"域×通道矩阵"(editor 域两通道:WS 9090 需登记 method-map / DAP TCP 6006 免登记)——源于九轮迭代架构检查 D2(报告 `docs/reviews/2026-09-12-九轮迭代架构检查.md`) |
 | 2026-10-01 | B3 校正(审查 `docs/reviews/2026-10-01-全维度项目审查.md`):版本表述去写死数字、SDK v2 依赖名、Vitest ^4.1.11、工具模块 43→44、setter 存量 23→26、工作目录改 `godot-mcp-series` 实际路径(3 处)、仓库结构补 daemon/telemetry/game-templates/skills 四子系统 |
+| 2026-10-14 | lint 描述同步(随 2026-10-14 审查修复批 R2/R3-test):范围 `src/` → `src/ + test/ + scripts/`,存量 warnings 533 锁定、src/ 零容忍——修正「开发命令」注释与「完成前强制检查」两处过时表述 |

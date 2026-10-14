@@ -88,3 +88,6 @@ test/fixtures/real-project/GeneratedAssets/
 # playwright MCP 插件 console 日志(会话产物,非仓库内容)
 .playwright-mcp/
 .tmp-*.log
+
+# MCP 审计中间件在本仓根运行时的落盘(audit after-hook 产物),运行时生成不进 git
+.godot/

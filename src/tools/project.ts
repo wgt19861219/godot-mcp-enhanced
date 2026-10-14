@@ -19,7 +19,7 @@ import {
   buildAdoptManifest, planReconcile, hashContent, countDeviations,
   type RulesManifest, type RulesMode,
 } from './rules-manifest.js';
-import { validatePath, resolveWithinRoot } from '../core/path-utils.js';
+import { validatePath, resolveWithinRoot, relPathOf } from '../core/path-utils.js';
 import { requireString, requireProjectPath } from '../core/args-validation.js';
 import { scanFiles } from '../core/file-scanner.js';
 import type { GodotConfig } from '../core/config-parser.js';
@@ -159,7 +159,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       // A-07: Replaced inline scan with scanFiles (empty array = all files)
       const extFilter = extensions && extensions.length > 0 ? extensions : [];
       const allFiles = scanFiles(target, extFilter, { skipDotFiles: true });
-      const files = allFiles.map(f => f.replace(p + (process.platform === 'win32' ? '\\' : '/'), ''));
+      const files = allFiles.map(f => relPathOf(f, p));
 
       return textResult(JSON.stringify({ count: files.length, files }, null, 2));
     }

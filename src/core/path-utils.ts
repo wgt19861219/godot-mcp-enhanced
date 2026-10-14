@@ -214,6 +214,25 @@ export function normalizeUserProjectPath(input: string): string {
   return trimmed;
 }
 
+/** R3-tools(2026-10-14 全维度审查): 绝对路径剥项目前缀的公共实现,替代散落 9 处的
+ *  `f.replace(p + (win32?'\\':'/'), '')` 裸模式。旧模式用户传正斜杠形态绝对路径
+ *  (D:/proj)时失配——最坏产出 `source_file="res://D:/proj/..."` 畸形路径。
+ *  归一策略:统一平台分隔符 + 盘符大写 + 去尾分隔符,双侧同步后剥前缀;
+ *  失配 throw(调用方路径均由 p 内部派生,失配=派生异常,显式暴露优于静默回显绝对路径)。 */
+export function relPathOf(absPath: string, projectPath: string): string {
+  const sep = process.platform === 'win32' ? '\\' : '/';
+  const norm = (path: string): string => {
+    let n = path.replace(/[\\/]+/g, sep).replace(/^([a-zA-Z]):/, m => m.toUpperCase());
+    while (n.length > 3 && n.endsWith(sep)) n = n.slice(0, -1);
+    return n;
+  };
+  const base = norm(projectPath);
+  const abs = norm(absPath);
+  if (abs === base) return '';
+  if (abs.startsWith(base + sep)) return abs.slice(base.length + 1);
+  throw new Error(`Path "${absPath}" is not inside project "${projectPath}"`);
+}
+
 // D 批（v0.30）：MCP Roots 动态授权源已退役。
 // 2026-07-28 规范正式废弃 Roots（12 个月窗口），SDK 官方迁移路径是 configuration
 // （即 ALLOWED_PROJECT_PATHS env）。此前 modern era 下 listRoots 本就抛错回落 env，

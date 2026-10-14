@@ -135,7 +135,27 @@ export function readJsonConfigWithBackup(filePath: string): Record<string, unkno
   if (!existsSync(filePath)) return {};
   const raw = readFileSync(filePath, 'utf-8');
   try {
-    return JSON.parse(stripJsonc(stripBom(raw))) as Record<string, unknown>;
+    const parsed = JSON.parse(stripJsonc(stripBom(raw))) as Record<string, unknown>;
+    // M3(2026-10-14 审查): 合法 JSONC(注释/尾逗号)解析成功但重写为纯 JSON 时,
+    // 用户的 // 注释、尾逗号、缩进风格会无痕丢失且不触发损坏备份。Claude Code/
+    // Cursor 配置官方支持 JSONC——解析成功但原文含 JSONC 特征(剥除后变短)时,
+    // 同样落备份再返回,保住可找回的原始副本。
+    if (stripBom(raw).length > stripJsonc(stripBom(raw)).length) {
+      const backupPath = `${filePath}.jsonc.${randomUUID()}.bak`;
+      try {
+        writeFileSync(backupPath, raw, 'utf-8');
+        console.warn(
+          `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will NOT be preserved on rewrite. Original backed up to ${backupPath}.`,
+        );
+      } catch {
+        // 备份失败不阻断配置写入(与损坏路径的硬失败不同:此处数据未损坏,丢注释
+        // 是降级而非破坏),warn 提示即可。
+        console.warn(
+          `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will be lost on rewrite (backup failed: ${filePath} not writable).`,
+        );
+      }
+    }
+    return parsed;
   } catch {
     const backupPath = `${filePath}.corrupt.${randomUUID()}.bak`;
     writeFileSync(backupPath, raw, 'utf-8'); // 失败则抛错 — 不覆盖未备份的损坏文件

@@ -84,8 +84,13 @@ function probe(port) {
   });
 }
 var probes = [];
-for (var p = 9550; p <= 9569; p++) probes.push(probe(p));
-Promise.all(probes).then(function (alive) {
+// M6(2026-10-14 审查): 扫描段跟随写入时的 preferred 端口(PREFERRED..+19,与 server
+// PORT_ATTEMPTS=20 同宽);默认段(9550-9569)兜底同扫——入口页落盘后用户改
+// GODOT_MCP_WEB_GUI_PORT 也能找到新段实例。去重防双段重叠时重复探测。
+function addRange(lo, hi) { for (var p = lo; p <= hi; p++) { if (probes.indexOf(p) === -1) probes.push(p); } }
+addRange(9550, 9569);
+if (PREFERRED && PREFERRED !== 9550) addRange(PREFERRED, PREFERRED + 19);
+Promise.all(probes.map(function (p) { return probe(p); })).then(function (alive) {
   var found = alive.filter(function (p) { return p >= 0; });
   var st = document.getElementById('status');
   var list = document.getElementById('list');

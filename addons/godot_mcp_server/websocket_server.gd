@@ -285,6 +285,13 @@ func _start_server() -> void:
 			return
 	push_error("[MCP] All ports (%d-%d) occupied" % [_base_port, _max_port])
 
+## R1-addons(2026-10-14 全维度审查): 实际监听端口只读暴露(0=未监听)。
+## instance_registry 写登记时以此为准——配置端口(9090)被前序实例占用时本侧在
+## 段内顺延(9091+),registry 此前仍写配置端口,致 TS InstanceManager 连错实例
+## 且多实例写同一文件名互覆。文件名/port 字段一律以实际监听端口为准。
+func get_effective_port() -> int:
+	return _current_port if _server != null and _server.is_listening() else 0
+
 ## 读 ProjectSettings 端口范围配置(可移植性 P4,见 _base_port 声明处注释);非法值回落默认。
 func _resolve_port_range() -> void:
 	var base := int(ProjectSettings.get_setting("godot_mcp/editor_port_base", 9090))

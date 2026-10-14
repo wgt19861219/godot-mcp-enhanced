@@ -858,13 +858,24 @@ function serializeGdValue(value: unknown): string {
         return `${t}(${rx}, ${ry}, ${rw}, ${rh})`;
       }
       if (t === 'Vector3' || t === 'Vector3i') {
-        return `${t}(${obj.x ?? 0}, ${obj.y ?? 0}, ${obj.z ?? 0})`;
+        // R4-tools(2026-10-14 审查): 对齐 I-6 补 typeof number 守卫——`?? 0` 只挡
+        // null/undefined,字符串值会原样内插进生成的 GDScript(防御深度缺口)。
+        const vx = typeof obj.x === 'number' ? obj.x : 0;
+        const vy = typeof obj.y === 'number' ? obj.y : 0;
+        const vz = typeof obj.z === 'number' ? obj.z : 0;
+        return `${t}(${vx}, ${vy}, ${vz})`;
       }
       if (t === 'Vector2' || t === 'Vector2i') {
-        return `${t}(${obj.x ?? 0}, ${obj.y ?? 0})`;
+        const vx = typeof obj.x === 'number' ? obj.x : 0;
+        const vy = typeof obj.y === 'number' ? obj.y : 0;
+        return `${t}(${vx}, ${vy})`;
       }
       if (t === 'Color') {
-        return `Color(${obj.r ?? 1}, ${obj.g ?? 1}, ${obj.b ?? 1}, ${obj.a ?? 1})`;
+        const cr = typeof obj.r === 'number' ? obj.r : 1;
+        const cg = typeof obj.g === 'number' ? obj.g : 1;
+        const cb = typeof obj.b === 'number' ? obj.b : 1;
+        const ca = typeof obj.a === 'number' ? obj.a : 1;
+        return `Color(${cr}, ${cg}, ${cb}, ${ca})`;
       }
       // I-01: Unknown _type intentionally falls through to auto-inference.
       // Users must use a known type or rely on auto-detection.

@@ -410,6 +410,7 @@ describe('F-2: formatPropertyValue never emits NaN/Infinity', () => {
 
   it('replaces non-finite Vector/Color fields with fallback (no NaN/Infinity literal)', () => {
     // 1e999 经 JSON.parse → Infinity;Vector/Color 字段必须不写出 NaN/Infinity 字面量
+    // eslint-disable-next-line no-loss-of-precision -- 故意越界字面量:测 Infinity 防护
     const v2 = formatPropertyValue({ x: 1e999, y: 0 });
     expect(v2).not.toContain('Infinity');
     expect(v2).not.toContain('NaN');

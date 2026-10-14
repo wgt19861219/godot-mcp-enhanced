@@ -95,6 +95,36 @@ export const GUI_STRINGS: Record<string, BiString> = {
   'err.listFull': { zh: '清单已满(200 上限)', en: 'Project list is full (limit 200)' },
   'err.dirMissing': { zh: '目录不存在', en: 'Directory does not exist' },
 
+  // ── 端点级错误(M4 2026-10-14 审查:此前十余处英文硬编码,zh 界面混排英文)─────
+  'err.notConfigured': { zh: '功能未配置', en: 'not configured' },
+  'err.readonly': { zh: '只读模式,操作被拒绝', en: 'read-only mode' },
+  'err.badJson': { zh: '请求体不是合法 JSON', en: 'bad json' },
+  'err.pidRequired': { zh: '需要整数 pid', en: 'pid (integer) required' },
+  'err.notRegistered': { zh: '实例未登记或已停止', en: 'not registered or dead' },
+  'err.daemonHandoff': { zh: 'daemon 实例须从其自身面板或 CLI 重启(受控交接)', en: 'daemon instance must be restarted from its own panel or CLI (controlled handoff)' },
+  'err.staleRegistration': { zh: '登记端口无监听——登记疑似过期(进程已死,PID 可能被无关进程复用),拒绝终止;请重新扫描或移除过期条目', en: 'registered port is not listening — registration is likely stale (process died, PID may be reused by an unrelated process). Refusing to kill. Run a rescan or remove the stale entry instead.' },
+  'err.payloadTooLarge': { zh: '请求体超限', en: 'payload too large' },
+  'err.saveFieldsRequired': { zh: '缺少 project/path/content/baseMtime 字段', en: 'project/path/content/baseMtime required' },
+  'err.godotPathType': { zh: 'godotPath 必须是字符串', en: 'godotPath must be a string' },
+  'err.allowedPathsType': { zh: 'allowedProjectPaths 必须是字符串数组', en: 'allowedProjectPaths must be a string array' },
+  'err.vaultPathType': { zh: 'vaultPath 必须是字符串', en: 'vaultPath must be a string' },
+  'err.pathRequired': { zh: '缺少 path 参数', en: 'path required' },
+  'err.notFound': { zh: '未找到', en: 'not found' },
+  'err.projectPathRequired': { zh: '缺少 projectPath 参数', en: 'projectPath required' },
+  'err.sessionRunning': { zh: '会话仍在运行', en: 'session is still running' },
+  'err.projectQueryRequired': { zh: '缺少 project 查询参数', en: 'project query required' },
+  'err.nameRequired': { zh: '缺少 name 参数', en: 'name required' },
+  'err.namePathRequired': { zh: '缺少 name 与 path 参数', en: 'name and path required' },
+  'err.modeInvalid': { zh: 'mode 必须是 text、raw 或 hex', en: 'mode must be text, raw or hex' },
+  'err.internal': { zh: '内部错误', en: 'internal error' },
+  'err.mcpNotActive': { zh: 'MCP 端点未激活', en: 'mcp endpoint not active' },
+  'err.stopFailed': { zh: '停止失败', en: 'stop failed' },
+  // 与原 API 英文契约逐字一致的独立键(不复用 files 语义键——其 en 文案不同,会破坏
+  // 既有消费方对错误文本的匹配)
+  'err.outsideRoots': { zh: '路径在白名单之外', en: 'path outside allowed roots' },
+  'err.notGodotProject404': { zh: '不是 Godot 项目', en: 'not a godot project' },
+  'err.runningStopFirst': { zh: '项目运行中,请先停止再操作', en: 'project is running; stop it first' },
+
   // ── 网络异常文案(逐操作建键,保持原文案粒度)───────────────────────────────
   'net.start': { zh: '网络异常,启动请求未送达', en: 'Network error — start request not delivered' },
   'net.reimport': { zh: '网络异常,重导入请求未送达', en: 'Network error — reimport request not delivered' },

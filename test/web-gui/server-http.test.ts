@@ -133,13 +133,16 @@ describe('WebGuiServer HTTP+鉴权(设计 §3.4/§5)', () => {
     // i18n 审查批 (2026-10-13) 二十次重锚:B-1 修复(renderStats ts→ts2 改名引用
     // 残留,时序图渲染 ReferenceError)+ Nit-1(fetch 统一注入 accept-language=LANG),
     // 脚本内容变更 → hash 轮换;同款双通道互证后锁入。
-    expect(WEB_GUI_CSP).toContain("'sha256-wq1vHgXWUK+CFDxuVk8IvO4LS9C34jZWXLJ8Efs3cc4='");
+    // M6/M4 批 (2026-10-14) 二十一次重锚:recoverPanel 扫描端口段从硬编码 9550-9569
+    // 改读 meta[name=mcp-self-heal-ports](自定义 GODOT_MCP_WEB_GUI_PORT 后自愈链
+    // 不断),脚本内容变更 → hash 轮换;同款双通道互证后锁入。
+    expect(WEB_GUI_CSP).toContain("'sha256-zT7qtRjLpJnsSBKdmBh00HvKAxk6LkTQUEHREfZLt78='");
     // 独立重算:split 提取(实现用 exec regex),CRLF 归一但**含前导换行**(浏览器语义)
     const after = INDEX_HTML.split('<script>')[1] ?? '';
     const body = after.slice(0, after.indexOf('</script>')).replace(/\r\n/g, '\n');
     const hash = createHash('sha256').update(body).digest('base64');
     expect(WEB_GUI_CSP).toContain(`'sha256-${hash}'`);
-    expect(hash).toBe('wq1vHgXWUK+CFDxuVk8IvO4LS9C34jZWXLJ8Efs3cc4=');   // 独立重算与锚互证
+    expect(hash).toBe('zT7qtRjLpJnsSBKdmBh00HvKAxk6LkTQUEHREfZLt78=');   // 独立重算与锚互证
     // 响应头与导出常量一致(接线不漂移)
     expect(after.length).toBeGreaterThan(0);
   });
@@ -732,10 +735,10 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
     return { srv, base: `http://127.0.0.1:${srv.port}`, token: srv.token };
   }
 
-  function post(base: string, path: string, token: string, body: unknown): Promise<Response> {
+  function post(base: string, path: string, token: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<Response> {
     return fetch(base + path, {
       method: 'POST',
-      headers: { 'x-gui-token': token, 'content-type': 'application/json' },
+      headers: { 'x-gui-token': token, 'content-type': 'application/json', ...extraHeaders },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     });
   }
@@ -827,14 +830,36 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
   // 防御性条件跑:TEST_PID 在本机确无进程才执行 kill 路径(见 describe 头注释)
   const TEST_PID = 999999;
   const testPidVacant = (() => { try { process.kill(TEST_PID, 0); return false; } catch { return true; } })();
-  (testPidVacant ? it : it.skip)('POST restart 他实例(登记+活 mock)→ 200 {ok:true}(taskkill 对空 pid 无害失败)', async () => {
+  (testPidVacant ? it : it.skip)('POST restart 他实例(登记+活 mock+登记端口真监听)→ 200 {ok:true}(taskkill 对空 pid 无害失败)', async () => {
     ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(TEST_PID); ALIVE_MOCK_PIDS.add(process.pid);
     const t = await startInstServer({ isPidAlive: isPidAliveMock });
     active = t.srv;
-    await writeRegistration({ pid: TEST_PID, port: 9559, token: t.token, startedAt: '2026-09-30T04:00:00Z', version: '0.0.0' }, { dir });
+    // M1(2026-10-14 审查): kill 前端口探测二次验证——登记端口须真有监听者才放行
+    // kill,防 PID 复用误杀无关进程。测试起真 TCP listener 扮演"登记端口的活实例"。
+    const listener = net.createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => listener.listen(9559, '127.0.0.1', resolve));
+    try {
+      await writeRegistration({ pid: TEST_PID, port: 9559, token: t.token, startedAt: '2026-09-30T04:00:00Z', version: '0.0.0' }, { dir });
+      const res = await post(t.base, '/api/instances/restart', t.token, { pid: TEST_PID });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    } finally {
+      await new Promise<void>(resolve => listener.close(() => resolve()));
+    }
+  });
+
+  // M1(2026-10-14 审查): 登记端口无监听者(登记陈旧,进程已死,PID 存活可能是被
+  // 复用的无关进程)→ 拒绝 kill 返 409,防误杀无辜进程树。
+  (testPidVacant ? it : it.skip)('POST restart 登记端口死(陈旧登记)→ 409 拒绝 kill(M1:PID 复用防线)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(TEST_PID); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    active = t.srv;
+    // 端口 9561 不起监听者:probePortAlive false → 409
+    await writeRegistration({ pid: TEST_PID, port: 9561, token: t.token, startedAt: '2026-09-30T04:00:00Z', version: '0.0.0' }, { dir });
     const res = await post(t.base, '/api/instances/restart', t.token, { pid: TEST_PID });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(res.status).toBe(409);
+    const v = await res.json() as { error: string };
+    expect(v.error).toContain('stale');
   });
 
   // D-2 fix(2026-10-01 审查):服务端拒绝跨实例硬杀 daemon——daemon 被 killPidTree 绕过

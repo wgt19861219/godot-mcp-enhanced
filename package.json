@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-enhanced",
-  "version": "0.34.1",
+  "version": "0.35.0",
   "mcpName": "io.github.wgt19861219/godot-mcp-enhanced",
   "description": "Enhanced MCP server for Godot game engine - closed-loop AI development with dynamic GDScript execution, scene tree query, node inspection, and more",
   "keywords": [
@@ -34,7 +34,7 @@
     "install-plugin": "node scripts/install-plugin.js",
     "generate-docs": "node scripts/generate-doc-db.js",
     "build:skills": "npm run build && node scripts/build-skills.mjs",
-    "lint": "eslint src/",
+    "lint": "eslint src/ test/ scripts/ --max-warnings 533",
     "typecheck:helpers": "tsc --noEmit -p tsconfig.test.json",
     "build": "tsc && node -e \"const fs=require('fs'),p=require('path');const src=p.join(__dirname,'src','scripts');const dst=p.join(__dirname,'build','scripts');fs.mkdirSync(dst,{recursive:true});fs.readdirSync(src).filter(f=>f.endsWith('.gd')).forEach(f=>{fs.copyFileSync(p.join(src,f),p.join(dst,f));console.log('Copied',f)});fs.copyFileSync(p.join(__dirname,'src','instructions.md'),p.join(__dirname,'build','instructions.md'));console.log('Copied instructions.md')\" && node scripts/copy-game-templates.mjs && node scripts/copy-codemirror.mjs",
     "version-sync": "node scripts/version-sync.mjs",

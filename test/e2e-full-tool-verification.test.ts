@@ -115,7 +115,9 @@ function expectErrorContains(r: { text: string; isError: boolean }, substr: stri
 }
 // 容错断言:允许 error,但必须返回结构化文本(not-found / 空列表也算通过)
 // 仅用于无法预判 success/error 的纯结构验证(L1/bridge 段);正路径用 expectSuccess,已知 error path 用 expectErrorContains
-function expectHasText(r: { text: string; isError: boolean }) {
+// R1-test(2026-10-14 审查): 更名 expectHasText → expectAnyOutcome——原名的'期望有文本'与
+// 实际的'报错也绿'容错语义有歧义,按全维度审查建议显式区分(环境依赖用例专用)。
+function expectAnyOutcome(r: { text: string; isError: boolean }) {
   expect(r.text).toBeDefined();
   expect(r.text.length).toBeGreaterThan(0);
 }
@@ -366,7 +368,7 @@ describe.skipIf(!hasProject)('E2E: scene_commit', () => {
     // scene_commit 通过 Godot load() + PackedScene 操作
     // P2-B: 容错断言(无 Godot 时走 error 路径是正常的——scene_commit 需 Godot 编译。
     // 此测试在 describe.skipIf(!hasProject || !hasGodot) 下,CI Godot 环境会走 success)。
-    expectHasText(r);
+    expectAnyOutcome(r);
     // 有 Godot 时应成功,无 Godot 时应返回结构化 error(两种都需有文本)
     if (!r.isError) {
       expect(r.text.length).toBeGreaterThan(10); // 成功响应应有实质内容
@@ -494,7 +496,7 @@ describe.skipIf(!hasGodot || !hasProject)('E2E: Godot-dependent tools', { timeou
       // Linux/macOS headless 无 GPU:PNG 可能不生成,底层返 success:false,但上层 textResult
       // 不带 isError(screenshot.ts:117 用 textResult 非 errorResult),故 isError 恒 false。
       // 成败都算通过,只验返回了结构化的 Screenshot 文本(saved 或 failed)。
-      expectHasText(r);
+      expectAnyOutcome(r);
       expect(r.text).toMatch(/Screenshot (saved|failed)/);
     }
   });
@@ -646,7 +648,7 @@ describe('E2E: editor (error path)', () => {
     const r = await callTool('editor', { action: 'sync_start' });
     // P2-B: 容错断言(无 editor 连接时 sync_start 可能返 EDITOR_NOT_CONNECTED error,
     // 也可能返 launch 提示消息——取决于 editor 连接检测时序。两种都需有结构化文本)。
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
 });
 
@@ -709,7 +711,7 @@ describe.skipIf(!hasGodot || !hasRealProject)('L1 real-project: 文件类 + 基�
       scene_path: SCENE_2D,
       image_path: 'user://l1_2d.png',
     });
-    expectHasText(r); // 2D headless 可能 BLANK_DETECTED,不算失败
+    expectAnyOutcome(r); // 2D headless 可能 BLANK_DETECTED,不算失败
   });
 
   it('workflow dev_loop: 真实执行', async () => {
@@ -722,7 +724,7 @@ describe.skipIf(!hasGodot || !hasRealProject)('L1 real-project: 文件类 + 基�
 
   it('docs list: 返回文档清单', async () => {
     const r = await callToolReal('docs', { action: 'list' });
-    expectHasText(r);
+    expectAnyOutcome(r);  // docs 需 Godot 版本探测,无 Godot 环境走 error 路径(容错)
   });
 
   it('ui get_layout: 读 UIBox 真实布局', async () => {
@@ -879,20 +881,20 @@ describe.skipIf(!hasGodot || !hasRealProject || !OPT_IN_L2)('L2 real-project: br
     const tree = await callToolReal('game', { action: 'game_query', method: 'get_tree' });
     expectSuccess(tree);
     const find = await callToolReal('game', { action: 'game_query', method: 'find_nodes', params: { pattern: 'Camera' } });
-    expectHasText(find);
+    expectAnyOutcome(find);
     const set = await callToolReal('game', { action: 'game_write', method: 'set_node_property',
       params: { path: '/root/Main2D/Camera2D', property: 'position', value: { x: 100, y: 50 } } });
-    expectHasText(set);
+    expectAnyOutcome(set);
     const monStart = await callToolReal('game', { action: 'monitor_start', node_path: 'root/Main2D', properties: ['position'], interval_frames: 10 });
-    expectHasText(monStart);
+    expectAnyOutcome(monStart);
     const monStop = await callToolReal('game', { action: 'monitor_stop' });
-    expectHasText(monStop);
+    expectAnyOutcome(monStop);
     const watchStart = await callToolReal('game', { action: 'watch_start', node_path: 'root/Main2D', signal_name: 'action_pressed', max_events: 10 });
-    expectHasText(watchStart);
+    expectAnyOutcome(watchStart);
     const watchStop = await callToolReal('game', { action: 'watch_stop' });
-    expectHasText(watchStop);
+    expectAnyOutcome(watchStop);
     const findUi = await callToolReal('game', { action: 'find_ui_elements', type: 'Button', visible_only: true });
-    expectHasText(findUi);
+    expectAnyOutcome(findUi);
   });
 
   afterAll(async () => {
@@ -939,25 +941,25 @@ describe.skipIf(!hasGodot || !hasRealProject || !OPT_IN_L2)('L2 real-project: re
     const run = await callToolReal('runtime', { action: 'run_project', wait_for_bridge: true, bridge_timeout: 30, timeout: 120 });
     expectSuccess(run);
     const start = await callToolReal('runtime', { action: 'record_start' });
-    expectHasText(start);
+    expectAnyOutcome(start);
     await callToolReal('game', { action: 'game_input', method: 'send_key', params: { key: 'Key_W', pressed: true } });
     const stop = await callToolReal('runtime', { action: 'record_stop' });
-    expectHasText(stop);
+    expectAnyOutcome(stop);
     // record_stop 返回 events_json(memory 方式 B),直接传 record_play
     const play = await callToolReal('runtime', { action: 'record_play', events_json: stop.text, speed: 1.0 });
-    expectHasText(play);
+    expectAnyOutcome(play);
   });
 
   it('profiler snapshot/start/get_data/stop(headless executeGdscript)', async () => {
     // profiler 通过 executeGdscript(headless 独立 Godot 进程),不需游戏运行
     const snap = await callToolReal('profiler', { action: 'snapshot' });
-    expectHasText(snap);
+    expectAnyOutcome(snap);
     const start = await callToolReal('profiler', { action: 'start' });
-    expectHasText(start);
+    expectAnyOutcome(start);
     const data = await callToolReal('profiler', { action: 'get_data', dimensions: ['process'], frame_count: 30 });
-    expectHasText(data);
+    expectAnyOutcome(data);
     const stop = await callToolReal('profiler', { action: 'stop' });
-    expectHasText(stop);
+    expectAnyOutcome(stop);
   });
 
   afterAll(async () => {
@@ -988,11 +990,11 @@ if (!hasEditorFlag) {
 describe.skipIf(!hasGodot || !hasRealProject || !hasEditorFlag)('L2 real-project: editor 正路径(GUI)', { timeout: 120_000 }, () => {
   it('launch_editor + sync_start + get_scene_tree', async () => {
     const launch = await callToolReal('runtime', { action: 'launch_editor' });
-    expectHasText(launch);
+    expectAnyOutcome(launch);
     const sync = await callToolReal('editor', { action: 'sync_start' });
     expectSuccess(sync);
     const tree = await callToolReal('editor', { action: 'get_scene_tree' });
-    expectHasText(tree);
+    expectAnyOutcome(tree);
   });
 
   afterAll(async () => {
@@ -1011,19 +1013,19 @@ if (!hasMultiInstance) {
 describe.skipIf(!hasMultiInstance)('L3: multi_instance + dynamic', { timeout: 60_000 }, () => {
   it('godot_list_instances: 返回实例列表', async () => {
     const r = await callTool('godot_list_instances', {});
-    expectHasText(r);
+    expectSuccess(r);
   });
   it('godot_select_instance: 选中实例', async () => {
     const r = await callTool('godot_select_instance', { project_path: REAL_PROJECT });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
   it('godot_list_dynamic_routes: 返回动态路由', async () => {
     const r = await callTool('godot_list_dynamic_routes', {});
-    expectHasText(r);
+    expectSuccess(r);
   });
   it('godot_advanced_tool: 代理 test', async () => {
     const r = await callTool('godot_advanced_tool', { tool_name: 'test', arguments: {} });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
 });
 
@@ -1033,23 +1035,23 @@ describe.skipIf(!hasMultiInstance)('L3: multi_instance + dynamic', { timeout: 60
 describe.skipIf(!hasRealProject)('L3: android(adb)', { timeout: 60_000 }, () => {
   it('list_devices: 返回设备列表(空也算正路径)', async () => {
     const r = await callToolReal('android', { action: 'list_devices' });
-    expectHasText(r); // 无设备返回空列表,无 adb 返回 error,均算工具响应
+    expectAnyOutcome(r); // 无设备返回空列表,无 adb 返回 error,均算工具响应
   });
   it('get_preset_info: 返回 preset', async () => {
     const r = await callToolReal('android', { action: 'get_preset_info' });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
   it('check_template: 校验模板', async () => {
     const r = await callToolReal('android', { action: 'check_template' });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
   it('logcat: 一次性快照', async () => {
     const r = await callToolReal('android', { action: 'logcat' });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
   it.skip('deploy: 需连接设备(手动启用)', async () => {
     const r = await callToolReal('android', { action: 'deploy' });
-    expectHasText(r);
+    expectAnyOutcome(r);
   });
 });
 

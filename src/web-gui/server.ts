@@ -14,10 +14,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { killPidTree, normalizeProjectKey, isAliveStatus, type RunSessionDetailed } from '../core/process-state.js';
+import { connect as tcpConnect } from 'node:net';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
-import { pickGuiLang } from './i18n.js';
+import { pickGuiLang, guiText } from './i18n.js';
 import { ensurePackageRootAppLauncher } from './app-window.js';
 import { getLogger, getServerId, resolveLogDir } from '../core/logger.js';
 import type { LogEntry } from '../core/logger.js';
@@ -157,33 +158,41 @@ const PORT_ATTEMPTS = 20;
 const PKG_VERSION: string = (createRequire(import.meta.url)('../../package.json') as { version?: string }).version ?? 'unknown';
 
 /**
- * 面板主文档 CSP(导出供测试精确断言)。
- * connect-src 除 'self' 外加 9550-9569 端口段(2026-09-16 入口简化批):前端自愈探测
- * 跨端口 fetch /api/health——CSP 源表达式 'self' 含端口,跨端口即跨源被拦(真机实测)。
- * 端口段与 html.ts recoverPanel 的扫描范围(9550..9569)一一对应,改动须两处同步;
+ * 面板主文档 CSP(按端口起点构建;WEB_GUI_CSP 导出为默认起点的实例,供测试精确断言)。
+ * connect-src 除 'self' 外加端口段 portStart..portStart+19(2026-09-16 入口简化批):
+ * 前端自愈探测跨端口 fetch /api/health——CSP 源表达式 'self' 含端口,跨端口即跨源
+ * 被拦(真机实测)。端口段与 html.ts recoverPanel 的扫描范围(meta 注入,见 M6)对应;
  * 127.0.0.1 与 localhost 双 host 都放(用户书签可能用任一形态)。
+ * M6(2026-10-14 审查): 端口段从模块加载期固化的 9550-9569 字面量改为按实际 portStart
+ * 运行期推导——自定义 GODOT_MCP_WEB_GUI_PORT 后 CSP/ACAO/前端扫描三处同步跟随,
+ * 迁移自愈链不再断。
  * CSP 加固(审查 Low,2026-09-17 批 3):script-src 去 'unsafe-inline' 改 sha256 精确
  * 放行 INDEX_HTML 内联脚本(hash 模块加载时计算,html.ts INDEX_SCRIPT_SHA256),
  * 注入的 HTML 与 INDEX_HTML 脚本不一致的测试场景仅 CSP 头与常量一致(浏览器才校验);
  * frame-ancestors 'none' 防被嵌入 iframe(clickjacking 面)。
  */
-export const WEB_GUI_CSP: string =
-  `default-src 'none'; script-src 'self' 'sha256-${INDEX_SCRIPT_SHA256}'; style-src 'unsafe-inline' 'self'; `
+export function buildWebGuiCsp(portStart: number): string {
+  return `default-src 'none'; script-src 'self' 'sha256-${INDEX_SCRIPT_SHA256}'; style-src 'unsafe-inline' 'self'; `
   // img-src data:(2026-10-01 NIT-1):head 内联 SVG favicon 走 data: URI,Chromium 将其纳入
   // img-src 管辖(实测被 'self'-only 拦截)。面板动态内容一律 textContent 无 img 注入面,
   // data: 图片仅此一处静态使用。
   + "img-src 'self' data:; media-src 'self'; connect-src 'self'"
-  + Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i)
+  + Array.from({ length: PORT_ATTEMPTS }, (_, i) => portStart + i)
     .flatMap(p => [` http://127.0.0.1:${p}`, ` http://localhost:${p}`])
     .join('')
   + "; frame-ancestors 'none'";
+}
+
+/** 默认起点的 CSP 实例(兼容既有测试导入;运行期实例用 buildWebGuiCsp(实际 portStart))。 */
+export const WEB_GUI_CSP: string = buildWebGuiCsp(DEFAULT_PORT_START);
 
 /** /api/health ACAO 白名单(M-4,2026-09-17 审查批):仅 127.0.0.1|localhost 的
- *  9550-9569 段 Origin 回显(前端自愈跨端口探测可读)。端口段由 CSP 同源常量
- *  机械生成,与 WEB_GUI_CSP / html.ts recoverPanel 扫描范围天然同步不漂移。 */
-const HEALTH_ACAO_ORIGIN_RE = new RegExp(
-  `^http://(127\\.0\\.0\\.1|localhost):(${Array.from({ length: PORT_ATTEMPTS }, (_, i) => DEFAULT_PORT_START + i).join('|')})$`,
-);
+ *  端口段 Origin 回显(前端自愈跨端口探测可读)。M6: 按实际 portStart 构建。 */
+export function buildHealthAcaoRe(portStart: number): RegExp {
+  return new RegExp(
+    `^http://(127\\.0\\.0\\.1|localhost):(${Array.from({ length: PORT_ATTEMPTS }, (_, i) => portStart + i).join('|')})$`,
+  );
+}
 
 // assets 固定清单(spec §4/I-2):白名单枚举而非目录扫描——含路径分隔符/编码(如
 // ..%2F)或不在清单的名字天然 404,无目录穿越面。Task 4 前端资源(Checkbox 任务书 §4)。
@@ -241,6 +250,38 @@ export class WebGuiServer {
     this.assetsRoot = opts.assetsDir ?? join(dirname(fileURLToPath(import.meta.url)), 'assets');
     // build/web-gui/server.js → 上两级 = 包根(src/web-gui/ 直跑同理,vitest 亦然)
     this.packageRoot = opts.packageRootDir ?? dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    // M6(2026-10-14 审查): 实例级 CSP/ACAO 按实际端口起点构建(构造期与 start() 的
+    // ?? 链同源),自定义 GODOT_MCP_WEB_GUI_PORT 后不再回落到 9550-9569 字面量段。
+    // portStart=0 是"系统随机分配"语义(start() 消费),非端口段起点——随机端口无法
+    // 预知段,CSP/ACAO/meta 回落默认段(测试实例与生产默认段实例互探)。
+    const ps = this.resolveSelfHealPortStart();
+    this.csp = buildWebGuiCsp(ps);
+    this.healthAcaoRe = buildHealthAcaoRe(ps);
+  }
+
+  /** M6: 端口起点解析(与 start() 首行 ?? 链同源;抽方法防两处漂移)。 */
+  private resolvePortStart(): number {
+    return this.opts.portStart ?? (Number(process.env.GODOT_MCP_WEB_GUI_PORT) || DEFAULT_PORT_START);
+  }
+
+  /** M6: 自愈端口段起点——portStart 无效(0=随机分配/越界)时回落默认段。 */
+  private resolveSelfHealPortStart(): number {
+    const ps = this.resolvePortStart();
+    return Number.isInteger(ps) && ps > 0 && ps <= 65535 - PORT_ATTEMPTS ? ps : DEFAULT_PORT_START;
+  }
+
+  /** M6: 实例级 CSP/ACAO(构造期按 resolvePortStart 构建)。 */
+  private readonly csp: string;
+  private readonly healthAcaoRe: RegExp;
+
+  /** M6: 向面板 HTML 注入自愈扫描端口段 meta(实例 portStart..+19)。
+   *  不能改 INDEX_HTML 脚本字面量——内联脚本受 CSP sha256 校验,发送期替换会破坏
+   *  hash;meta 不在 script 内,注入零影响。脚本侧读 meta(缺省回落 9550-9569)。 */
+  private injectSelfHealPortMeta(html: string): string {
+    const lo = this.resolveSelfHealPortStart();
+    const meta = `<meta name="mcp-self-heal-ports" content="${lo}-${lo + PORT_ATTEMPTS - 1}">`;
+    if (html.includes('mcp-self-heal-ports')) return html; // 幂等(测试注入的 HTML 可能已带)
+    return html.replace('<head>', `<head>${meta}`);
   }
 
   get port(): number {
@@ -256,7 +297,7 @@ export class WebGuiServer {
   }
 
   async start(): Promise<void> {
-    const start = this.opts.portStart ?? (Number(process.env.GODOT_MCP_WEB_GUI_PORT) || DEFAULT_PORT_START);
+    const start = this.resolvePortStart(); // M6: 与 CSP/ACAO/meta 注入同源,自定义起点全链一致
     // daemon 批 A(M-2):strictPort 只试起点一个端口,EADDRINUSE 直接 reject 到上层
     // (respawn 交接端口不漂移不变式);缺省维持 20 次顺延(历史行为,stdio 实例不动)。
     const attempts = this.opts.strictPort ? 1 : PORT_ATTEMPTS;
@@ -426,7 +467,7 @@ export class WebGuiServer {
           return;
         }
         res.writeHead(404, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'mcp endpoint not active' }));
+        res.end(JSON.stringify({ error: guiText(pickGuiLang(req.headers['accept-language']), 'err.mcpNotActive') }));
         return;
       }
       // 面板控制写路径(2026-09-14 + 项目面板批 2026-09-15):POST 先于 GET-only 拦截
@@ -453,7 +494,7 @@ export class WebGuiServer {
       // 响应只报 {ok,port}——无 pid/token/startedAt 等字段(前端自愈只消费 r.ok)。
       if (url.pathname === '/api/health') {
         const origin = req.headers.origin;
-        const acao = typeof origin === 'string' && HEALTH_ACAO_ORIGIN_RE.test(origin) ? origin : undefined;
+        const acao = typeof origin === 'string' && this.healthAcaoRe.test(origin) ? origin : undefined;
         res.writeHead(200, {
           'content-type': 'application/json; charset=utf-8',
           'cache-control': 'no-store',
@@ -476,10 +517,10 @@ export class WebGuiServer {
           // 底座不动,新增面全部限定 self。
           // connect-src 端口段(2026-09-16 入口简化批):自愈探测需跨端口 fetch /api/health
           // (CSP 的 'self' 含端口,跨端口即跨源被拦——真机实测)。端口段与前端 recoverPanel
-          // 扫描范围(9550-9569)一一对应;127.0.0.1 与 localhost 双 host 都放。
-          'content-security-policy': WEB_GUI_CSP,
+          // 扫描范围(meta 注入,M6)一一对应;127.0.0.1 与 localhost 双 host 都放。
+          'content-security-policy': this.csp,
         });
-        res.end(this.opts.getIndexHtml());
+        res.end(this.injectSelfHealPortMeta(this.opts.getIndexHtml()));
         return;
       }
       // cookie 双通道握手端点(须在 authorized 之前注册:自身鉴权只用 query token):
@@ -519,17 +560,17 @@ export class WebGuiServer {
       // 会话进程输出(2026-10-08 输出查看批):面板日志流只含 server 工具调用日志,
       // 游戏进程 stdout/stderr 在 process-state 内存桶——本端点是面板查看它的唯一通道
       if (url.pathname === '/api/sessions/output') {
-        void this.handleSessionOutput(url, res);
+        void this.handleSessionOutput(url, res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       // 设置面板读路径(2026-09-29 设置批):get() 异步 → 独立 async handler(鉴权已在上方过)
       if (url.pathname === '/api/settings') {
-        void this.handleSettingsGet(res);
+        void this.handleSettingsGet(res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       // 项目面板读路径(spec §4):list() 异步 → 独立 async handler(鉴权已在上方过)
       if (url.pathname === '/api/projects') {
-        void this.handleProjectsList(res);
+        void this.handleProjectsList(res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       // 实例列表(2026-09-30 实例管理批):registry 直读(server.ts import registry 先例;
@@ -540,24 +581,24 @@ export class WebGuiServer {
       }
       // 资源工作台读路径(spec §4,2026-09-15 v2):列目录 + 单文件三模式读(均异步 fs)
       if (url.pathname === '/api/projects/files') {
-        void this.handleFilesList(url, res);
+        void this.handleFilesList(url, res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       if (url.pathname === '/api/projects/file') {
-        void this.handleFileGet(url, res);
+        void this.handleFileGet(url, res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       // 知识库联动读路径(2026-10-08 批):总览/项目详情/日志正文,均异步 fs + 可能 spawn git
       if (url.pathname === '/api/kb/overview') {
-        void this.handleKbOverview(res);
+        void this.handleKbOverview(res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       if (url.pathname === '/api/kb/project') {
-        void this.handleKbProject(url, res);
+        void this.handleKbProject(url, res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       if (url.pathname === '/api/kb/file') {
-        void this.handleKbFile(url, res);
+        void this.handleKbFile(url, res, pickGuiLang(req.headers['accept-language']));
         return;
       }
       // 静态资产(spec §4/I-2):同步读 + 固定清单白名单;与 GET / 的无 token 不同,
@@ -655,6 +696,19 @@ export class WebGuiServer {
    *  归属,语义对齐批6-N-e"安全事件归机器"判例。不复用 auditWebGui:其 projectPath
    *  语义绑定项目目录,空路径的成功调用会被 existsSync 守卫整条丢弃(audit-helper
    *  批6-N-e 分支),实例操作走它会零留痕。best-effort,失败不阻断 HTTP 响应。 */
+  /** M1(2026-10-14 审查): TCP 探测端口是否有监听者(kill 前登记身份二次验证)。 */
+  private probePortAlive(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      const sock = tcpConnect({ port, host: '127.0.0.1' }, () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.on('error', () => resolve(false));
+      const t = setTimeout(() => { sock.destroy(); resolve(false); }, 1_500);
+      t.unref?.();
+    });
+  }
+
   private auditInstanceAction(action: string, ok: boolean, details?: Record<string, unknown>): void {
     if (!isAuditEnabled()) return;
     void appendMachineAuditLine({
@@ -700,6 +754,8 @@ export class WebGuiServer {
   }
 
   private async handleApiPost(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+    // M4(2026-10-14 审查): 端点级错误按请求语言返回(Accept-Language),zh 界面不再混排英文
+    const lang = pickGuiLang(req.headers['accept-language']);
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
@@ -725,18 +781,18 @@ export class WebGuiServer {
       // 不受 READ_ONLY 拦:重启是运维操作非项目写,对齐 sessions/stop 不被拦的现状。
       if (url.pathname === '/api/instances/restart') {
         const body = await this.readJsonBody(req);
-        if (!body.ok) return json(400, { error: 'bad json' });
+        if (!body.ok) return json(400, { error: guiText(lang, 'err.badJson') });
         const pid = (body.value as { pid?: unknown } | null)?.pid;
         if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
           getLogger().info('web-gui', `action=instance_restart result=400_bad_pid`);
-          return json(400, { error: 'pid (integer) required' });
+          return json(400, { error: guiText(lang, 'err.pidRequired') });
         }
         const entries = await listRegistrations(this.regOpts());
         const target = entries.find(e => e.pid === pid);
         if (!target) {
           getLogger().info('web-gui', `action=instance_restart pid=${pid} result=404_not_registered`);
           this.auditInstanceAction('restart', false, { pid, error: 'not_registered' });
-          return json(404, { error: 'not registered or dead' });
+          return json(404, { error: guiText(lang, 'err.notRegistered') });
         }
         if (pid === process.pid) {
           // 自重启:先响应 200,再走注入的有序退出(close 链清登记文件,前端收到响应后
@@ -756,10 +812,21 @@ export class WebGuiServer {
         if (target.kind === 'daemon') {
           getLogger().info('web-gui', `action=instance_restart pid=${pid} kind=daemon result=403_cross_instance_daemon`);
           this.auditInstanceAction('restart', false, { pid, error: 'cross_instance_daemon' });
-          return json(403, { error: 'daemon instance must be restarted from its own panel or CLI (controlled handoff)' });
+          return json(403, { error: guiText(lang, 'err.daemonHandoff') });
         }
         getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} version=${target.version ?? 'legacy'} result=200`);
         this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
+        // M1(2026-10-14 审查): kill 前二次验证登记身份——isPidAlive 仅探活不校验身份,
+        // server 崩溃后登记残留 + Windows PID 回收激进时,面板把无关进程显示为活实例,
+        // 用户点「重启」即 taskkill /T 强杀无辜进程树。探测登记端口:TCP 可连 = 端口
+        // 仍有服务(登记与进程互相印证);连不上 = 登记大概率陈旧(进程已死),PID 存活
+        // 更可能是被复用的无关进程——拒绝 kill 并提示登记过期。
+        const portAlive = await this.probePortAlive(target.port);
+        if (!portAlive) {
+          getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} result=409_stale_registration`);
+          this.auditInstanceAction('restart', false, { pid, error: 'stale_registration_port_dead' });
+          return json(409, { error: guiText(lang, 'err.staleRegistration') });
+        }
         killPidTree(pid);
         return json(200, { ok: true });
       }
@@ -777,7 +844,7 @@ export class WebGuiServer {
         const cb = this.opts.onControlledShutdown;
         if (!cb) {
           getLogger().info('web-gui', `action=shutdown mode=${mode} result=503_not_configured`);
-          return json(503, { error: 'not configured' });
+          return json(503, { error: guiText(lang, 'err.notConfigured') });
         }
         getLogger().info('web-gui', `action=shutdown mode=${mode} caller=${caller} result=200`);
         this.auditDaemonAction({ mode, caller });
@@ -794,27 +861,27 @@ export class WebGuiServer {
         // 留痕覆盖以 sessions/start(路径已知)为准,此分支仅 logger 留痕——诚实边界。
         if (this.opts.isReadOnly?.()) {
           getLogger().info('web-gui', 'action=file_save result=403_readonly');
-          return json(403, { error: 'read-only mode' });
+          return json(403, { error: guiText(lang, 'err.readonly') });
         }
         // I-6:content-length 预检在 readJsonBody 之前——超限 body 不进内存直接 413
         const cl = Number(req.headers['content-length'] ?? 0);
         if (cl > 600 * 1024) {
           getLogger().info('web-gui', `action=file_save result=413 content_length=${cl}`);
-          return json(413, { error: 'payload too large' });
+          return json(413, { error: guiText(lang, 'err.payloadTooLarge') });
         }
         const f = this.opts.files;
-        if (!f) return json(503, { error: 'not configured' });
+        if (!f) return json(503, { error: guiText(lang, 'err.notConfigured') });
         // readJsonBody 传 600KB(与上方 CL 预检同值):file save 语义上限独立于通用 64KB,
         // 且防 chunked 无 CL 绕过预检后整读进内存。
         const body = await this.readJsonBody(req, 600 * 1024);
         if (!body.ok) {
-          if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
-          return json(400, { error: 'bad json' });
+          if (body.reason === 'too_large') return json(413, { error: guiText(lang, 'err.payloadTooLarge') });
+          return json(400, { error: guiText(lang, 'err.badJson') });
         }
         const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
         const { project, path, content, baseMtime } = fields as Partial<Record<'project' | 'path' | 'content' | 'baseMtime', unknown>>;
         if (typeof project !== 'string' || typeof path !== 'string' || typeof content !== 'string' || typeof baseMtime !== 'number') {
-          return json(400, { error: 'project/path/content/baseMtime required' });
+          return json(400, { error: guiText(lang, 'err.saveFieldsRequired') });
         }
         try {
           const r = await f.saveText(project, path, content, baseMtime, pickGuiLang(req.headers['accept-language']));
@@ -836,7 +903,7 @@ export class WebGuiServer {
       // ── POST /api/projects/scan(spec §4:异步起、立即返回;无 body 契约)───
       if (url.pathname === '/api/projects/scan') {
         const p = this.opts.projects;
-        if (!p) return json(503, { error: 'not configured' });
+        if (!p) return json(503, { error: guiText(lang, 'err.notConfigured') });
         this.scanProgressLastPush = 0;   // 新扫描首轮进度立即可见
         // store 的互斥/UNRESTRICTED 决策在调用时同步作出(spec §3.1.1-1);
         // 完成事件经 then 回调后台推送;下方 0-tick 探针只取"是否已启动"决策。
@@ -867,8 +934,8 @@ export class WebGuiServer {
       // 通用 body 读取:64KB 统一上限(审查 Low);超限 413 先于 JSON 解析
       const body = await this.readJsonBody(req);
       if (!body.ok) {
-        if (body.reason === 'too_large') return json(413, { error: 'payload too large' });
-        return json(400, { error: 'bad json' });
+        if (body.reason === 'too_large') return json(413, { error: guiText(lang, 'err.payloadTooLarge') });
+        return json(400, { error: guiText(lang, 'err.badJson') });
       }
       const fields = typeof body.value === 'object' && body.value !== null ? body.value as Record<string, unknown> : {};
 
@@ -876,23 +943,23 @@ export class WebGuiServer {
       //    service 校验/持久化/热生效;失败 400 带 stage)────────────────────────
       if (url.pathname === '/api/settings') {
         const s = this.opts.settings;
-        if (!s) return json(503, { error: 'not configured' });
+        if (!s) return json(503, { error: guiText(lang, 'err.notConfigured') });
         // READ_ONLY 拦截(对齐 file_save 分支:设置写入不得绕过 AI 侧防线)
         if (this.opts.isReadOnly?.()) {
           getLogger().info('web-gui', 'action=settings_save result=403_readonly');
-          return json(403, { error: 'read-only mode' });
+          return json(403, { error: guiText(lang, 'err.readonly') });
         }
         const godotPath = fields.godotPath;
         const allowed = fields.allowedProjectPaths;
         const vaultPath = fields.vaultPath;
         if (godotPath !== undefined && typeof godotPath !== 'string') {
-          return json(400, { error: 'godotPath must be a string' });
+          return json(400, { error: guiText(lang, 'err.godotPathType') });
         }
         if (allowed !== undefined && (!Array.isArray(allowed) || allowed.some(p => typeof p !== 'string'))) {
-          return json(400, { error: 'allowedProjectPaths must be a string array' });
+          return json(400, { error: guiText(lang, 'err.allowedPathsType') });
         }
         if (vaultPath !== undefined && typeof vaultPath !== 'string') {
-          return json(400, { error: 'vaultPath must be a string' });
+          return json(400, { error: guiText(lang, 'err.vaultPathType') });
         }
         const patch: { godotPath?: string; allowedProjectPaths?: string[]; vaultPath?: string } = {};
         if (godotPath !== undefined) patch.godotPath = godotPath;
@@ -912,26 +979,26 @@ export class WebGuiServer {
       //    防线。探测结果即响应语义,非只读时恒 200 用 body.ok 区分)─────────────────
       if (url.pathname === '/api/settings/verify') {
         const s = this.opts.settings;
-        if (!s) return json(503, { error: 'not configured' });
+        if (!s) return json(503, { error: guiText(lang, 'err.notConfigured') });
         if (this.opts.isReadOnly?.()) {
           getLogger().info('web-gui', 'action=settings_verify result=403_readonly');
-          return json(403, { error: 'read-only mode' });
+          return json(403, { error: guiText(lang, 'err.readonly') });
         }
         const path = fields.path;
-        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: guiText(lang, 'err.pathRequired') });
         return json(200, await s.verify(path, pickGuiLang(req.headers['accept-language'])));
       }
 
       // ── POST /api/projects/add(spec §4:白名单 403 → store 校验/合并)────────
       if (url.pathname === '/api/projects/add') {
         const p = this.opts.projects;
-        if (!p) return json(503, { error: 'not configured' });
+        if (!p) return json(503, { error: guiText(lang, 'err.notConfigured') });
         const path = fields.path;
-        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: guiText(lang, 'err.pathRequired') });
         if (!isPathInAllowedRoots(path)) {
           getLogger().info('web-gui', `action=projects_add path=${path} result=403`);
           auditWebGui('projects', 'add', 'write', path, { ok: false, error: 'path outside allowed roots' });   // 批6-N-e: 越权尝试留痕(403 覆盖对齐 PathError 形态)
-          return json(403, { error: 'path outside allowed roots' });
+          return json(403, { error: guiText(lang, 'err.outsideRoots') });
         }
         let r: { ok: boolean; reason?: string };
         try {
@@ -950,7 +1017,7 @@ export class WebGuiServer {
         }
         if (r.reason === 'not_a_project') {
           getLogger().info('web-gui', `action=projects_add path=${path} result=404`);
-          return json(404, { error: 'not a godot project' });
+          return json(404, { error: guiText(lang, 'err.notGodotProject404') });
         }
         if (r.reason === 'duplicate') {
           getLogger().info('web-gui', `action=projects_add path=${path} result=200_duplicate`);
@@ -964,9 +1031,9 @@ export class WebGuiServer {
       // ── POST /api/projects/remove(spec §4:仅清单移除,不删文件)──────────────
       if (url.pathname === '/api/projects/remove') {
         const p = this.opts.projects;
-        if (!p) return json(503, { error: 'not configured' });
+        if (!p) return json(503, { error: guiText(lang, 'err.notConfigured') });
         const path = fields.path;
-        if (typeof path !== 'string' || path.length === 0) return json(400, { error: 'path required' });
+        if (typeof path !== 'string' || path.length === 0) return json(400, { error: guiText(lang, 'err.pathRequired') });
         let r: { ok: boolean; reason?: string };
         try {
           r = await p.remove(path);
@@ -982,34 +1049,34 @@ export class WebGuiServer {
           return json(200, { ok: true });
         }
         getLogger().info('web-gui', `action=projects_remove path=${path} result=404`);
-        return json(404, { error: 'not found' });
+        return json(404, { error: guiText(lang, 'err.notFound') });
       }
 
       // ── POST /api/sessions/start(spec §4:503 → readOnly 403 → 白名单 403 →
       //    project.godot 存在 404 → 注入回调(PathError→403)→ 200)────────────
       if (url.pathname === '/api/sessions/start') {
         const projectPath = fields.projectPath;
-        if (typeof projectPath !== 'string' || projectPath.length === 0) return json(400, { error: 'projectPath required' });
+        if (typeof projectPath !== 'string' || projectPath.length === 0) return json(400, { error: guiText(lang, 'err.projectPathRequired') });
         let mode: 'run' | 'edit' = 'run';   // mode 缺省 'run'(spec §4)
         if (fields.mode !== undefined) {
           if (fields.mode !== 'run' && fields.mode !== 'edit') return json(400, { error: "mode must be 'run' or 'edit'" });
           mode = fields.mode;
         }
         const fn = mode === 'run' ? this.opts.runProject : this.opts.editProject;
-        if (!fn) return json(503, { error: 'not configured' });
+        if (!fn) return json(503, { error: guiText(lang, 'err.notConfigured') });
         if (this.opts.isReadOnly?.()) {   // READ_ONLY 拦截(spec v2/IMP-3):面板不得绕过 AI 侧防线
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403_readonly`);
           auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: 'read-only mode' });   // 批6-N-e: 拒绝留痕(403 覆盖对齐)
-          return json(403, { error: 'read-only mode' });
+          return json(403, { error: guiText(lang, 'err.readonly') });
         }
         if (!isPathInAllowedRoots(projectPath)) {
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=403`);
           auditWebGui('sessions', 'start', 'process', projectPath, { ok: false, details: { mode }, error: 'path outside allowed roots' });   // 批6-N-e: 越权尝试留痕(路径不存在时由 audit-helper 落机器级)
-          return json(403, { error: 'path outside allowed roots' });
+          return json(403, { error: guiText(lang, 'err.outsideRoots') });
         }
         if (!existsSync(join(projectPath, 'project.godot'))) {
           getLogger().info('web-gui', `action=sessions_start mode=${mode} path=${projectPath} result=404`);
-          return json(404, { error: 'not a godot project' });
+          return json(404, { error: guiText(lang, 'err.notGodotProject404') });
         }
         try {
           await fn(projectPath);
@@ -1031,26 +1098,26 @@ export class WebGuiServer {
 
       const projectPath = fields.projectPath;
       if (typeof projectPath !== 'string' || projectPath.length === 0) {
-        return json(400, { error: 'projectPath required' });
+        return json(400, { error: guiText(lang, 'err.projectPathRequired') });
       }
       // ── POST /api/projects/reimport(资源重导入批 2026-10-08:503 → readOnly 403 →
       //    白名单 403 → project.godot 404 → 运行中 409 → 互斥 → fire 200)─────────
       if (url.pathname === '/api/projects/reimport') {
         const fn = this.opts.reimportProject;
-        if (!fn) return json(503, { error: 'not configured' });
+        if (!fn) return json(503, { error: guiText(lang, 'err.notConfigured') });
         if (this.opts.isReadOnly?.()) {   // 导入写 .godot/imported,属写路径(对齐 start 拦截)
           getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=403_readonly`);
           auditWebGui('projects', 'reimport', 'process', projectPath, { ok: false, error: 'read-only mode' });
-          return json(403, { error: 'read-only mode' });
+          return json(403, { error: guiText(lang, 'err.readonly') });
         }
         if (!isPathInAllowedRoots(projectPath)) {
           getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=403`);
           auditWebGui('projects', 'reimport', 'process', projectPath, { ok: false, error: 'path outside allowed roots' });
-          return json(403, { error: 'path outside allowed roots' });
+          return json(403, { error: guiText(lang, 'err.outsideRoots') });
         }
         if (!existsSync(join(projectPath, 'project.godot'))) {
           getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=404`);
-          return json(404, { error: 'not a godot project' });
+          return json(404, { error: guiText(lang, 'err.notGodotProject404') });
         }
         // 运行中拒绝(用户裁决 2026-10-08):importer 重写 .godot/imported 与运行中游戏
         // 并发访问会在 Windows 撞文件锁——先拒绝并提示停止。isAliveStatus/normalizeProjectKey
@@ -1061,7 +1128,7 @@ export class WebGuiServer {
         );
         if (running) {
           getLogger().info('web-gui', `action=projects_reimport path=${projectPath} result=409`);
-          return json(409, { error: 'project is running; stop it first' });
+          return json(409, { error: guiText(lang, 'err.runningStopFirst') });
         }
         // 共享互斥(2026-10-08 审查 I-1 修复):tryAcquire 非阻塞——占用即 {started:false}
         // (占用方可能是本端点先前的 fire,也可能是 runProject 自动按需导入,两者共用
@@ -1072,7 +1139,20 @@ export class WebGuiServer {
         }
         // 异步起、立即返回(scan 先例):--import 可能耗时数十秒,同步等会挂起 fetch;
         // 完成/失败经 SSE import 事件推送(pushImportDone 释放锁)。
-        void Promise.resolve(fn(projectPath)).then(
+        // M5(2026-10-14 审查): race 超时兜底——godot --import 挂死时 fn 永不 settle,
+        // pushImportDone 不执行 → import-mutex 永不释放 → 该项目后续 reimport 恒返
+        // {started:false, reason:'importing'} 直到 MCP 进程重启。10min 宽裕值只兜真
+        // 挂死(正常数十秒级导入不误伤);超时按失败走 pushImportDone 释放锁(fn 若
+        // 稍后仍 settle,then 已消费,不会二次推送)。timer unref 防拖住进程退出。
+        const REIMPORT_TIMEOUT_MS = 600_000;
+        const reimportTask = Promise.race([
+          Promise.resolve(fn(projectPath)),
+          new Promise<never>((_, rej) => {
+            const t = setTimeout(() => rej(new Error(`reimport timed out after ${REIMPORT_TIMEOUT_MS / 60000}min (godot --import hung?)`)), REIMPORT_TIMEOUT_MS);
+            t.unref?.();
+          }),
+        ]);
+        void reimportTask.then(
           (r) => this.pushImportDone(projectPath, key, true, r),
           (err: unknown) => this.pushImportDone(projectPath, key, false, err),
         );
@@ -1083,16 +1163,16 @@ export class WebGuiServer {
       // ── POST /api/sessions/stop(面板控制第一版既有语义)─────────────────────
       if (url.pathname === '/api/sessions/stop') {
         const fn = this.opts.stopSession;
-        if (!fn) return json(503, { error: 'not configured' });
+        if (!fn) return json(503, { error: guiText(lang, 'err.notConfigured') });
         try {
           const r = await fn(projectPath);
           if (r.ok) {
             auditWebGui('sessions', 'stop', 'process', projectPath);   // 批4-T8: 杀进程留痕(MCP 同语义 stop_project 是 risk=process 有审计)
             return json(200, { ok: true });
           }
-          if (r.reason === 'not_found') return json(404, { error: 'not found' });
+          if (r.reason === 'not_found') return json(404, { error: guiText(lang, 'err.notFound') });
           auditWebGui('sessions', 'stop', 'process', projectPath, { ok: false, error: r.reason ?? 'stop failed' });   // 批5-N4②: 失败留痕
-          return json(500, { error: r.reason ?? 'stop failed' });
+          return json(500, { error: r.reason ?? guiText(lang, 'err.stopFailed') });
         } catch (err) {
           auditWebGui('sessions', 'stop', 'process', projectPath, { ok: false, error: err instanceof Error ? err.message : String(err) });   // 批5-N4②: 失败留痕
           return json(500, { error: err instanceof Error ? err.message : String(err) });
@@ -1100,14 +1180,14 @@ export class WebGuiServer {
       }
       // ── POST /api/sessions/remove(面板控制第一版既有语义)───────────────────
       const rm = this.opts.removeSession;
-      if (!rm) return json(503, { error: 'not configured' });
+      if (!rm) return json(503, { error: guiText(lang, 'err.notConfigured') });
       const r = rm(projectPath);
       if (r.ok) {
         auditWebGui('sessions', 'remove', 'process', projectPath);   // 批4-T8: 移除会话记录留痕
         return json(200, { ok: true });
       }
-      if (r.reason === 'alive') return json(409, { error: 'session is still running' });
-      return json(404, { error: 'not found' });
+      if (r.reason === 'alive') return json(409, { error: guiText(lang, 'err.sessionRunning') });
+      return json(404, { error: guiText(lang, 'err.notFound') });
     } catch {
       if (!res.headersSent) res.writeHead(500).end();
     }
@@ -1118,28 +1198,28 @@ export class WebGuiServer {
   /** GET /api/sessions/output?project=...(2026-10-08 输出查看批):读路径,不审计。
    *  注入缺席 503 / 缺 project 400 / 桶不存在 404 / 正常 200 {status,running,lines,total}。
    *  尾部截断(OUTPUT_TAIL_LINES)由本层统一保证——注入实现给全量 buffer。鉴权已在 handle() 过。 */
-  private async handleSessionOutput(url: URL, res: ServerResponse): Promise<void> {
+  private async handleSessionOutput(url: URL, res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
     };
     const fn = this.opts.getSessionOutput;
-    if (!fn) return json(503, { error: 'not configured' });
+    if (!fn) return json(503, { error: guiText(lang, 'err.notConfigured') });
     const project = url.searchParams.get('project') ?? '';
-    if (project === '') return json(400, { error: 'project query required' });
+    if (project === '') return json(400, { error: guiText(lang, 'err.projectQueryRequired') });
     const out = fn(project);
-    if (!out) return json(404, { error: 'not found' });
+    if (!out) return json(404, { error: guiText(lang, 'err.notFound') });
     const lines = out.lines.slice(-SESSION_OUTPUT_TAIL_LINES);
     return json(200, { status: out.status, running: out.running, lines, total: out.lines.length, truncated: out.lines.length > lines.length });
   }
 
   /** GET /api/projects:list() 异步快照;注入缺席 503。鉴权已在 handle() 过。 */
-  private async handleProjectsList(res: ServerResponse): Promise<void> {
+  private async handleProjectsList(res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     try {
       const p = this.opts.projects;
       if (!p) {
         res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: 'not configured' }));
+        res.end(JSON.stringify({ error: guiText(lang, 'err.notConfigured') }));
         return;
       }
       const list = await p.list();
@@ -1151,12 +1231,12 @@ export class WebGuiServer {
   }
 
   /** GET /api/settings:设置视图快照(2026-09-29 设置批);注入缺席 503。鉴权已在 handle() 过。 */
-  private async handleSettingsGet(res: ServerResponse): Promise<void> {
+  private async handleSettingsGet(res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     try {
       const s = this.opts.settings;
       if (!s) {
         res.writeHead(503, { 'content-type': 'application/json; charset=utf-8' });
-        res.end(JSON.stringify({ error: 'not configured' }));
+        res.end(JSON.stringify({ error: guiText(lang, 'err.notConfigured') }));
         return;
       }
       const view = await s.get();
@@ -1178,7 +1258,7 @@ export class WebGuiServer {
     not_configured: 503,
   };
 
-  private kbErr(e: unknown, json: (code: number, body: unknown) => void): void {
+  private kbErr(e: unknown, json: (code: number, body: unknown) => void, lang: 'zh' | 'en' = 'zh'): void {
     if (e instanceof KbError) {
       json(WebGuiServer.KB_ERR_STATUS[e.code], { error: e.message, code: e.code });
       return;
@@ -1186,58 +1266,58 @@ export class WebGuiServer {
     // 审查 N-3:未知异常(fs EPERM/EBUSY 等)的 message 常含本地绝对路径——响应归一固定
     // 文本(PII-safe),详情进 server 日志(本机文件,非响应面)。
     getLogger().warn('web-gui', `action=kb_internal_error detail=${e instanceof Error ? e.message : String(e)}`);
-    json(500, { error: 'internal error' });
+    json(500, { error: guiText(lang, 'err.internal') });
   }
 
   /** GET /api/kb/overview:vault 项目总览 + 断流检测(未配置时 configured:false,非报错)。 */
-  private async handleKbOverview(res: ServerResponse): Promise<void> {
+  private async handleKbOverview(res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
     try {
       const kb = this.opts.kb;
-      if (!kb) return json(503, { error: 'not configured' });
+      if (!kb) return json(503, { error: guiText(lang, 'err.notConfigured') });
       const view = await kb.overview();
       getLogger().info('web-gui', `action=kb_overview projects=${view.projects.length} stall=${view.projects.filter(p => p.stall).length}`);
       json(200, view);
     } catch (e) {
-      this.kbErr(e, json);
+      this.kbErr(e, json, lang);
     }
   }
 
   /** GET /api/kb/project?name=:项目详情(日志列表 + 看板分节摘要)。 */
-  private async handleKbProject(url: URL, res: ServerResponse): Promise<void> {
+  private async handleKbProject(url: URL, res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
     try {
       const kb = this.opts.kb;
-      if (!kb) return json(503, { error: 'not configured' });
+      if (!kb) return json(503, { error: guiText(lang, 'err.notConfigured') });
       const name = url.searchParams.get('name') ?? '';
-      if (name === '') return json(400, { error: 'name required' });
+      if (name === '') return json(400, { error: guiText(lang, 'err.nameRequired') });
       json(200, await kb.projectDetail(name));
     } catch (e) {
-      this.kbErr(e, json);
+      this.kbErr(e, json, lang);
     }
   }
 
   /** GET /api/kb/file?name=&path=:开发日志正文(只读,防穿越在 kb-api resolveWithinRoot 链)。 */
-  private async handleKbFile(url: URL, res: ServerResponse): Promise<void> {
+  private async handleKbFile(url: URL, res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
     try {
       const kb = this.opts.kb;
-      if (!kb) return json(503, { error: 'not configured' });
+      if (!kb) return json(503, { error: guiText(lang, 'err.notConfigured') });
       const name = url.searchParams.get('name') ?? '';
       const path = url.searchParams.get('path') ?? '';
-      if (name === '' || path === '') return json(400, { error: 'name and path required' });
+      if (name === '' || path === '') return json(400, { error: guiText(lang, 'err.namePathRequired') });
       json(200, await kb.readFile(name, path));
     } catch (e) {
-      this.kbErr(e, json);
+      this.kbErr(e, json, lang);
     }
   }
 
@@ -1252,13 +1332,13 @@ export class WebGuiServer {
   }
 
   /** GET /api/projects/files:列目录({entries});注入缺席 503(对齐 projects 语义)。 */
-  private async handleFilesList(url: URL, res: ServerResponse): Promise<void> {
+  private async handleFilesList(url: URL, res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
     const f = this.opts.files;
-    if (!f) return json(503, { error: 'not configured' });
+    if (!f) return json(503, { error: guiText(lang, 'err.notConfigured') });
     try {
       const { entries } = await f.listDir(url.searchParams.get('project') ?? '', url.searchParams.get('sub') ?? '');
       json(200, { entries });
@@ -1268,13 +1348,13 @@ export class WebGuiServer {
   }
 
   /** GET /api/projects/file:按 mode 分派 text(JSON)/raw(带 CSP 防线)/hex(JSON)。 */
-  private async handleFileGet(url: URL, res: ServerResponse): Promise<void> {
+  private async handleFileGet(url: URL, res: ServerResponse, lang: 'zh' | 'en' = 'zh'): Promise<void> {
     const json = (code: number, body: unknown): void => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
     const f = this.opts.files;
-    if (!f) return json(503, { error: 'not configured' });
+    if (!f) return json(503, { error: guiText(lang, 'err.notConfigured') });
     const project = url.searchParams.get('project') ?? '';
     const path = url.searchParams.get('path') ?? '';
     const mode = url.searchParams.get('mode') ?? 'text';
@@ -1299,7 +1379,7 @@ export class WebGuiServer {
         res.end(r.bytes);
         return;
       }
-      json(400, { error: 'mode must be text, raw or hex' });
+      json(400, { error: guiText(lang, 'err.modeInvalid') });
     } catch (e) {
       if (!res.headersSent) this.filesErr(e, json);
     }

@@ -734,6 +734,46 @@ describe('isBridgeReady', () => {
     const r = await isBridgeReady('/p', 5000, { isCancelled: () => true });
     expect(r.ready).toBe(true);
   });
+
+  // R2-core(2026-10-14 全维度审查): probeOnce 原实现 TCP 建连即发明文 secret,
+  // 占端口进程无需响应即可收割。改 auth_begin CR 探测后:合法 challenge 才发
+  // HMAC proof,secret 永不出现在任何 socket write。
+  it('R2-core: CR 握手(auth_begin→challenge→auth_proof)→ ready,secret 不出现在任何 write', async () => {
+    const sock = new EventEmitter();
+    const writes: string[] = [];
+    (sock as any).write = vi.fn((data: string) => {
+      writes.push(data);
+      if (data.includes('auth_begin')) {
+        queueMicrotask(() => sock.emit('data', Buffer.from(JSON.stringify({ id: 0, result: { challenge: 'a'.repeat(32) } }) + '\n')));
+      } else if (data.includes('auth_proof')) {
+        queueMicrotask(() => sock.emit('data', Buffer.from(JSON.stringify({ id: 1, result: { authenticated: true } }) + '\n')));
+      }
+    });
+    (sock as any).destroy = vi.fn();
+    // mockReturnValue 不触发 connect 回调(auth_begin 写不出),须 implementation 触发 cb
+    mockCreate.mockImplementation(((opts: unknown, cb?: (err: Error | undefined) => void) => {
+      queueMicrotask(() => { if (typeof cb === 'function') cb(undefined); });
+      return sock;
+    }) as unknown as typeof mockCreate);
+    const r = await isBridgeReady('/p', 2000);
+    expect(r.ready).toBe(true);
+    expect(writes.some(w => w.includes('auth_proof'))).toBe(true);   // 发的是 HMAC proof
+    expect(writes.some(w => w.includes('test-secret'))).toBe(false); // secret 永不上线
+  });
+
+  it('R2-core: 哑占位者(建连不回应)→ not ready,write 仅 auth_begin 且无 secret', async () => {
+    const sock = stuckSocket();
+    mockCreate.mockImplementation(((opts: unknown, cb?: (err: Error | undefined) => void) => {
+      queueMicrotask(() => { if (typeof cb === 'function') cb(undefined); });
+      return sock;
+    }) as unknown as typeof mockCreate);
+    const r = await isBridgeReady('/p', 300);
+    expect(r.ready).toBe(false);
+    expect(sock.write).toHaveBeenCalled(); // 发过 auth_begin
+    const allWrites = ((sock as any).write as ReturnType<typeof vi.fn>).mock.calls.map(c => String(c[0])).join('');
+    expect(allWrites.includes('auth_begin')).toBe(true);
+    expect(allWrites.includes('test-secret')).toBe(false); // 绝无 secret
+  });
 });
 
 // ===== P1-3: bridge change_scene 断连 characterization（锁基线，红绿不论）=====

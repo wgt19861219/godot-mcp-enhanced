@@ -74,6 +74,7 @@ describe('buildAppLauncherBat(双击件内容)', () => {
   });
   it('纯 ASCII + CRLF:cmd 按系统代码页解析,UTF-8 中文会乱码;LF-only bat 的 goto 有历史坑', () => {
     const bat = buildAppLauncherBat('file:///D:/%E9%9D%A2.html');
+    // eslint-disable-next-line no-control-regex -- 测试意图:断言纯 ASCII(含控制字符区间)
     expect(/^[\x00-\x7F]*$/.test(bat)).toBe(true);
     expect(bat).toContain('\r\n');
     expect(bat).not.toMatch(/[^\r]\n/);   // 无裸 LF(全部 CRLF)

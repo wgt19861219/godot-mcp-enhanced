@@ -12,7 +12,7 @@ import { batchValidateScripts } from './validation.js';
 import { sendToBridge, setBridgeProjectDir, BRIDGE_READ_ONLY_METHODS } from './game-bridge.js';
 import { spawnGodot } from './spawn-helper.js';
 import type { RiskLevel } from '../core/tool-registry.js';
-import { handleBatchAction } from './batch-tools.js';
+import { handleBatchAction, BATCH_ACTION_PARAMS } from './batch-tools.js';
 import { referenceSimScript, extractFrameMetricsScript } from './frame-verify/gdscripts.js';
 import { classifyDegradation, type FrameMetrics } from './frame-verify/degradation.js';
 import { createProofRun, cleanupProofRun, recordFrameBytes, type ProofRun } from './frame-verify/proof-bundle.js';
@@ -91,7 +91,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'workflow',
-      description: '开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量验证多个脚本。',
+      description: '开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量脚本验证。create_files: 批量创建文件(支持自动验证 .gd)。run_verify: 批量运行 headless 验证场景。diff_scenes: 比较两个场景文件差异。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -99,7 +99,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。dev_loop=执行+验证一体, scene_snapshot=场景树快照, batch_validate=批量脚本验证',
+            description: '操作类型。dev_loop=执行+验证一体, scene_snapshot=场景树快照, batch_validate=批量脚本验证, create_files=批量创建文件, run_verify=批量验证场景, diff_scenes=场景差异比较',
           },
           // dev_loop params
           code: { type: 'string', description: 'dev_loop: 要执行的 GDScript 代码(片段或完整 extends SceneTree)' },
@@ -199,6 +199,12 @@ export function getToolDefinitions(): Tool[] {
             description: 'batch_validate: 脚本路径数组(相对项目)',
             items: { type: 'string' },
           },
+          // C1(2026-10-14): batch 三 action(create_files/run_verify/diff_scenes)的专属参数。
+          // 单源自 batch-tools.ts BATCH_ACTION_PARAMS 展开——v0.18 吸收时漏搬 schema,
+          // P8-2 未知参数拒绝把真实调用全拒(详见 batch-tools.ts 同名导出注释)。
+          // SSOT-DELEGATE: src/tools/batch-tools.ts —— 声明这些参数的 handler 读取发生在
+          // 被委托文件(check-ssot-params.mjs 按此标记把目标文件键池并入本文件对账)。
+          ...BATCH_ACTION_PARAMS,
           godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
         },
         required: ['action'],
@@ -403,6 +409,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             // Queries
             const queries = bridge.queries as Array<Record<string, unknown>> | undefined;
             if (queries && queries.length > 0) {
+              // R5-tools(2026-10-14 审查): schema maxItems:10 运行时不查(args-validator
+              // 明确不覆盖 maxItems)——显式拒绝防单次调用串行耗尽 deadline(每条 10s 超时)。
+              if (queries.length > 10) {
+                bridgeResult.queries = [{ method: '(rejected)', success: false, error: `Too many bridge queries: ${queries.length} (max 10).` }];
+              } else {
               const queryResults: Array<Record<string, unknown>> = [];
               for (const q of queries) {
                 const method = q.method as string;
@@ -424,6 +435,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               bridgeResult.queries = queryResults;
               if (queryResults.length > 0) {
                 bridgeResult.all_queries_passed = queryResults.every(r => r.success !== false && (r.match === undefined || r.match === true));
+              }
               }
             }
           }
@@ -487,6 +499,17 @@ func _initialize():
 
         const assertionList = (acceptance.assertions as Array<Record<string, string>>) ?? [];
         if (assertionList.length > 0) {
+          // R5-tools(2026-10-14 审查): assertions 无任何上限——每条 gdscript 断言
+          // spawn Godot ≤15s,串行可耗尽 1h 全局 deadline。对照 batch MAX_FILE_COUNT=50
+          // 补显式上限 20(最坏 ~5min 串行,远低于 deadline)。
+          if (assertionList.length > 20) {
+            result.acceptance = {
+              passed: false,
+              error: `Too many acceptance assertions: ${assertionList.length} (max 20).`,
+            };
+            if (capturedRun) cleanupProofRun(capturedRun); // B1: 早退同样清 proof 临时目录
+            return textResult(JSON.stringify(result, null, 2));
+          }
           const assertionResults: Array<Record<string, unknown>> = [];
 
           for (let i = 0; i < assertionList.length; i++) {
@@ -763,7 +786,9 @@ func _initialize():
       return handleBatchAction(action, args, ctx);
 
     default:
-      return textResult(`Unknown action: ${action}. Use "dev_loop", "scene_snapshot", or "batch_validate".`);
+      // R2-tools 真漏点(2026-10-14 验证复核): 'Unknown action:' 非 Error: 前缀,
+      // healthSample 的 isErrorText 兜底不命中——改 opsErrorResult 结构化报错。
+      return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}. Use "dev_loop", "scene_snapshot", "batch_validate", "create_files", "run_verify", or "diff_scenes".`);
   }
 }
 

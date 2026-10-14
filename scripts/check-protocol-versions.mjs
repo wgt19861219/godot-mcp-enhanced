@@ -22,7 +22,7 @@ try {
   const mod = await import(sdkPath).catch(() => null)
     || (await import(join(root, 'node_modules', '@modelcontextprotocol', 'sdk', 'dist', 'esm', 'server', 'index.js')));
   sdkVersions = mod.SUPPORTED_PROTOCOL_VERSIONS;
-} catch (e) {
+} catch {
   // 兜底：直接 require 解析
   try {
     sdkVersions = (await import('@modelcontextprotocol/server')).SUPPORTED_PROTOCOL_VERSIONS;

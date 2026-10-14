@@ -249,7 +249,7 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
     try {
       const addFn = vi.fn(async () => ({ ok: true }));
       const t = await startSrv({ projects: mockProjects({ add: addFn }) }); active = t.srv;
-      const denied = await post(t.base, '/api/projects/add', t.token, { path: join(outsideDir, 'x') });
+      const denied = await post(t.base, '/api/projects/add', t.token, { path: join(outsideDir, 'x') }, { 'accept-language': 'en' });
       expect(denied.status).toBe(403);
       expect(await denied.json()).toEqual({ error: 'path outside allowed roots' });
       expect(addFn).not.toHaveBeenCalled();
@@ -268,7 +268,7 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
       return { ok: false };   // 满员形态(Task 2 契约:无 reason)
     };
     const t = await startSrv({ projects: mockProjects({ add: addFn }) }); active = t.srv;
-    const r404 = await post(t.base, '/api/projects/add', t.token, { path: 'D:/nope' });
+    const r404 = await post(t.base, '/api/projects/add', t.token, { path: 'D:/nope' }, { 'accept-language': 'en' });
     expect(r404.status).toBe(404);
     expect(await r404.json()).toEqual({ error: 'not a godot project' });
     const dup = await post(t.base, '/api/projects/add', t.token, { path: 'D:/dup' });
@@ -351,7 +351,7 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
     try {
       const runProject = vi.fn(async () => undefined);
       const t = await startSrv({ runProject }); active = t.srv;
-      const res = await post(t.base, '/api/sessions/start', t.token, { projectPath: join(outsideDir, 'evil') });
+      const res = await post(t.base, '/api/sessions/start', t.token, { projectPath: join(outsideDir, 'evil') }, { 'accept-language': 'en' });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: 'path outside allowed roots' });
       expect(runProject).not.toHaveBeenCalled();
@@ -455,7 +455,7 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
 
   it('reimport:注入缺席 → 503 {error:"not configured"}', async () => {
     const t = await startSrv(); active = t.srv;   // reimportProject 缺席
-    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir });
+    const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: projDir }, { 'accept-language': 'en' });
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'not configured' });
   });
@@ -474,7 +474,7 @@ describe('WebGuiServer 项目端点 + SSE projects(Task 3,spec §4/§5)', () => 
     try {
       const fn = vi.fn(async () => undefined);
       const t = await startSrv({ reimportProject: fn }); active = t.srv;
-      const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: join(outsideDir, 'evil') });
+      const res = await post(t.base, '/api/projects/reimport', t.token, { projectPath: join(outsideDir, 'evil') }, { 'accept-language': 'en' });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: 'path outside allowed roots' });
       expect(fn).not.toHaveBeenCalled();
