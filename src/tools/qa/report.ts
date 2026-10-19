@@ -7,7 +7,10 @@ import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpa
 import { join, isAbsolute, resolve, sep } from 'path';
 import { homedir } from 'os';
 
-export type StepStatus = 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED';
+/** B2 (2026-10-19): UNMEASURED = 前提不成立(目标节点/属性不存在),测不了而非测了没过。
+ * Feel Gate 语义:无法测量的检查不是通过——summary.unmeasured>0 时整体仍 FAILED,但计数可辨,
+ * 排查方向从"值不对"转向"前置步骤没建出目标"。 */
+export type StepStatus = 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED' | 'UNMEASURED';
 
 export interface StepRecord {
   index: number;
@@ -44,6 +47,8 @@ export interface QaReport {
     failed: number;
     errors: number;
     skipped: number;
+    /** B2: 前提不成立的步骤数(节点/属性不存在)。旧报告无此字段按 0 处理(diff/render 兼容)。 */
+    unmeasured?: number;
     status: 'PASSED' | 'FAILED' | 'CANCELLED';
     duration_ms: number;
   };
@@ -93,7 +98,7 @@ export function renderMarkdown(report: QaReport): string {
     `- run_id: \`${report.run_id}\``,
     `- project: \`${report.suite.project_path}\``,
     `- started: ${report.suite.started_at} · duration: ${(s.duration_ms / 1000).toFixed(1)}s`,
-    `- result: **${s.status}** (${s.passed} passed / ${s.failed} failed / ${s.errors} errors / ${s.skipped} skipped of ${s.total})`,
+    `- result: **${s.status}** (${s.passed} passed / ${s.failed} failed / ${s.errors} errors / ${s.skipped} skipped${s.unmeasured ? ` / ${s.unmeasured} unmeasured` : ''} of ${s.total})`,
   ];
   if (report.setup_error) lines.push(`- setup error: ${report.setup_error}`);
   lines.push('', '| # | label | type | status | detail |', '|---|---|---|---|---|');

@@ -2610,6 +2610,10 @@ func _position_rule_state(node: Node) -> String:
 			return str(rules[p]["mode"])
 	return ""
 
+## B1 (2026-10-19): find_ui_elements 的 role 过滤白名单——与 _ui_role 返回值
+## 一一对应(11 值)。校验用(非法 role 报错而非静默空结果);顺序即 join 后的展示顺序。
+const _UI_ROLES: Array = ["combobox", "list", "tablist", "checkbox", "progressbar", "button", "text", "textbox", "slider", "scrollarea", "panel"]
+
 ## UI role 适配表(gua auto_adapter _control_role 移植 + ProgressBar 扩展)。
 ## 子类先判(OptionButton/CheckBox/CheckButton/SpinBox 都是 BaseButton/Range 子类)。
 func _ui_role(ctrl: Control) -> String:
@@ -3537,6 +3541,21 @@ func _cmd_find_ui_elements(params: Dictionary) -> Variant:
 	var max_results: int = _int_guarded(params.get("limit"), 200)
 	if max_results > 500:
 		max_results = 500
+	# B1 (2026-10-19): role 语义过滤 + match 匹配模式。
+	# role: _UI_ROLES 之一(空 = 不过滤);非法值报错防"拼错静默空结果"。
+	# match: wildcard(默认,现状 Godot match 语法扫 name/text,向后兼容)|
+	#        exact(全等比较,扫 name/text/label 三通道)|
+	#        contains(子串,扫 name/text/label 三通道)。
+	# exact/contains 比 wildcard 多扫 label(_ui_label 语义名:文本类取 text,
+	# 容器类取节点名)——新参数才激活的模式,不改 wildcard 现状行为。
+	var role_filter: String = str(params.get("role", ""))
+	if role_filter != "" and not (role_filter in _UI_ROLES):
+		return {"error": {"code": -1, "message": "Invalid role: %s (valid: %s)" % [role_filter, ", ".join(_UI_ROLES)]}}
+	var match_mode: String = str(params.get("match", "wildcard"))
+	if match_mode == "":
+		match_mode = "wildcard"
+	if not (match_mode in ["wildcard", "exact", "contains"]):
+		return {"error": {"code": -1, "message": "Invalid match mode: %s (valid: wildcard/exact/contains)" % match_mode}}
 
 	# A-06: 复用 _traverse_tree + callback 过滤
 	var results: Array = _traverse_tree(
@@ -3552,8 +3571,19 @@ func _cmd_find_ui_elements(params: Dictionary) -> Variant:
 				var text_to_match := ""
 				if "text" in ctrl:
 					text_to_match = str(ctrl.get("text"))
-				if not ctrl.name.match(pattern) and not text_to_match.match(pattern):
-					return false
+				if match_mode == "wildcard":
+					if not ctrl.name.match(pattern) and not text_to_match.match(pattern):
+						return false
+				elif match_mode == "exact":
+					var label_to_match := _ui_label(ctrl)
+					if str(ctrl.name) != pattern and text_to_match != pattern and label_to_match != pattern:
+						return false
+				else:  # contains
+					var label_sub := _ui_label(ctrl)
+					if not (pattern in str(ctrl.name)) and not (pattern in text_to_match) and not (pattern in label_sub):
+						return false
+			if role_filter != "" and _ui_role(ctrl) != role_filter:
+				return false
 			if type_filter != "" and not ctrl.is_class(type_filter):
 				return false
 			return true,

@@ -8,7 +8,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 
 // src/tools/get-context.ts
 import type { ToolContext, ToolResult } from '../types.js';
-import { textResult } from '../types.js';
+import { structuredResult } from '../types.js';
 import { opsSuccess } from './shared.js';
 import { getCallRecorder } from '../core/call-recorder.js';
 import { listPromptDefs } from '../prompts.js';
@@ -56,6 +56,36 @@ export function getToolDefinitions(): Tool[] {
         include_performance: { type: 'boolean', description: '是否采集性能（默认 true；仅 bridge 有效）' },
       },
     },
+    // B4 (2026-10-19): typed outputs 试点——声明返回结构,modern 客户端直接消费
+    // structuredContent 免 parse;text 通道与旧客户端行为不变。schema 从实际返回
+    // 提炼(字段可 null 是字段级降级语义:failedFields 注明哪些字段没采到)。
+    outputSchema: {
+      type: 'object' as const,
+      properties: {
+        success: { type: 'boolean' },
+        data: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', enum: ['ok', 'partial'] },
+            failedFields: { type: 'array', items: { type: 'string' } },
+            mode: { type: ['string', 'null'], enum: ['headless', 'editor', 'bridge', null] },
+            project: { type: ['object', 'null'] },
+            connections: { type: 'object' },
+            scene: { type: ['object', 'null'] },
+            recentCalls: { type: 'array' },
+            callStats: { type: ['object', 'null'] },
+            toolGroups: { type: 'array' },
+            workflows: { type: 'array' },
+            rules: { type: 'array', items: { type: 'string' } },
+            performance: { type: ['object', 'null'] },
+            hint: { type: 'string' },
+          },
+          required: ['status', 'mode'],
+        },
+        warnings: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['success', 'data'],
+    },
   }];
 }
 
@@ -66,14 +96,17 @@ export async function handleTool(
 ): Promise<ToolResult | null> {
   if (toolName !== 'godot_get_context') return null;
   // 外层 try/catch：任何未预期错误都降级为 partial，永不抛给调用方
+  // (N-4 审查修复:降级路径同走 structuredResult——双通道承诺是工具级的,
+  // 声明了 outputSchema 的工具不能只在 happy-path 给 structuredContent)
   try {
     return await handleGetContext(args, ctx);
   } catch {
-    return textResult(JSON.stringify(opsSuccess({
+    return structuredResult(opsSuccess({
       status: 'partial',
       failedFields: ['__handler__'],
+      mode: null,  // schema required 字段——降级路径同样满足声明
       hint: 'godot_get_context 内部异常，已降级返回',
-    })));
+    }) as unknown as Record<string, unknown>);
   }
 }
 
@@ -103,7 +136,7 @@ async function handleGetContext(args: Record<string, unknown>, ctx: ToolContext)
     ? await safeAsync(() => readPerformance(ctx), 'performance', failedFields)
     : null;
 
-  return textResult(JSON.stringify(opsSuccess({
+  return structuredResult(opsSuccess({
     status: failedFields.length === 0 ? 'ok' : 'partial',
     failedFields,
     mode,
@@ -117,7 +150,7 @@ async function handleGetContext(args: Record<string, unknown>, ctx: ToolContext)
     rules,
     performance,
     hint: 'scene.nodeCount=节点总数；recentCalls=最近操作；callStats.topTools=最常用工具；workflows=推荐入口(prompt)；performance 仅 bridge；status=partial 时看 failedFields',
-  })));
+  }) as Record<string, unknown>);
 }
 
 /** 字段级降级 wrapper：抛错 → 字段名入 failedFields，返回 null。 */

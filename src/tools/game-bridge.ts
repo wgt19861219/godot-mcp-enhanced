@@ -12,7 +12,7 @@ import { writeFileAtomic } from '../core/fs-atomic.js';
 import { join, dirname } from 'path';
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
-import { textResult, errorResult, getErrorMessage } from '../types.js';
+import { textResult, errorResult, getErrorMessage, structuredResult } from '../types.js';
 import { opsErrorResult } from './shared.js';
 import { requireProjectPath } from '../core/args-validation.js';
 import { PathError } from '../core/tool-errors.js';
@@ -348,8 +348,10 @@ export function getToolDefinitions(): Tool[] {
           max_events: { type: 'number', description: 'watch_start: 最大记录事件数（默认 1000，最大 5000）' },
           push: { type: 'boolean', description: 'P3-6 watch_start/monitor_start: 启用 push 模式（事件/采样产生时主动推送 MCP notification，无需 poll）。client 需订阅 resources/subscribe 才能收到' },
           observation_profile: { type: 'string', enum: ['debug', 'player'], description: 'P7 观察档位(默认 debug;player 需游戏侧 env GODOT_MCP_BRIDGE_ALLOWED_PROFILES 授权,节点 meta 级联隐藏 + agent_field_rules 字段投影生效,详见规则文档)', default: 'debug' },
-          pattern: { type: 'string', description: 'find_ui_elements: 名称/文字匹配模式（Godot match 语法）' },
+          pattern: { type: 'string', description: 'find_ui_elements: 名称/文字匹配(语义按 match:wildcard=Godot match 语法,exact/contains=全等/子串)' },
           type: { type: 'string', description: 'find_ui_elements: 按类型过滤（如 "Button"、"Label"）' },
+          role: { type: 'string', description: 'find_ui_elements: 按语义角色过滤(同输出 role 枚举):combobox/list/tablist/checkbox/progressbar/button/text/textbox/slider/scrollarea/panel;空=不过滤,非法值报错' },
+          match: { type: 'string', enum: ['wildcard', 'exact', 'contains'], description: 'find_ui_elements: pattern 匹配模式。wildcard(默认)=Godot match 通配符扫 name/text;exact=全等;contains=子串(exact/contains 额外扫 label)', default: 'wildcard' },
           visible_only: { type: 'boolean', description: 'find_ui_elements: 仅返回可见元素（默认 true）' },
           limit: { type: 'number', description: 'find_ui_elements: 最大返回数（默认 200，上限 500）' },
           text: { type: 'string', description: 'click_button: 按钮文字（和 path 二选一）' },
@@ -581,6 +583,14 @@ async function bridgeAction(method: string, params: Record<string, unknown>, ctx
     _registerSubscription(method, params);
   } else if (method === 'watch.stop' || method === 'monitor.stop') {
     _removeSubscription(method === 'watch.stop' ? 'watch.start' : 'monitor.start');
+  }
+  // B4 (2026-10-19): typed outputs 试点(输出侧)——3 个机器消费型 method 的成功响应
+  // 挂 structuredContent(modern 客户端免文本 parse)。game 是多 action 工具,工具级
+  // outputSchema 无法对单 action 如实声明,故这 3 个只做输出侧增强、不声明 schema
+  // (wire 断言 content 文本与 structuredContent 等值,legacy 行为零变化)。
+  if ((method === 'find_ui_elements' || method === 'monitor.poll' || method === 'watch.poll')
+      && resp.result !== null && typeof resp.result === 'object') {
+    return structuredResult(resp.result as Record<string, unknown>);
   }
   return textResult(JSON.stringify(resp.result, null, 2));
 }
@@ -1015,6 +1025,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return await bridgeAction('find_ui_elements', {
           pattern: (args.pattern as string) ?? '',
           type: (args.type as string) ?? '',
+          role: (args.role as string) ?? '',  // B1 (2026-10-19): 语义角色过滤
+          match: (args.match as string) ?? 'wildcard',  // B1: 匹配模式(exact/contains)
           visible_only: args.visible_only !== false,
           limit: (args.limit as number) ?? 200,
           observation_profile: (args.observation_profile as string) ?? 'debug',  // P7: 观察档位

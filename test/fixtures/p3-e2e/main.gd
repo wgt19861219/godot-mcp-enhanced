@@ -3,7 +3,7 @@ extends Node2D
 ## P7 (2026-09-11) 扩展:语义观察层节点(_ready 动态创建,带 agent meta 声明)。
 ## GDA_CALLABLE 声明 call_method 可调面(P1-4 default deny;顺便验证与新功能联动)。
 
-const GDA_CALLABLE := ["setup_net_peer", "clear_net_peer", "get_check_state", "get_p7_nodes", "hide_secret_enemy", "unhide_secret_enemy", "get_secret_position", "emit_p7_ping", "hide_main", "unhide_main", "toggle_p10_flag"]
+const GDA_CALLABLE := ["setup_net_peer", "clear_net_peer", "get_check_state", "get_p7_nodes", "hide_secret_enemy", "unhide_secret_enemy", "get_secret_position", "emit_p7_ping", "hide_main", "unhide_main", "toggle_p10_flag", "setup_b1_ui"]
 
 ## P7: watch 中途可见性用例——player 档 watch 本信号,游戏 hide_main() 后事件不再记录。
 signal p7_ping(value: int)
@@ -149,6 +149,54 @@ func get_check_state() -> Dictionary:
 var p10_flag := false
 var p10_ticks := 0
 var p10_pos := Vector2(10.0, 20.0)
+
+
+## B1 (2026-10-19): find_ui_elements role/match 用例控件——_ready 不建、用例内显建,
+## 不扰动既有 pattern 断言的元素集合。补齐 fixture 缺的 8 种 role 场景控件
+## (combobox/list/tablist/progressbar/text/textbox/slider/scrollarea);
+## 名字带 B1 前缀,与 MyCheck/MyButton 的 pattern 匹配不互撞。
+## B1Text/B1Line 带 text 供 match=exact/contains 的 text/label 通道用例。
+func setup_b1_ui() -> Dictionary:
+	var root := get_node_or_null("UI/Root") as Control
+	if root == null:
+		return {"ok": false}
+	var combo := OptionButton.new()
+	combo.name = "B1Combo"
+	combo.add_item("Alpha")
+	combo.add_item("Beta")
+	root.add_child(combo)
+	var list := ItemList.new()
+	list.name = "B1List"
+	root.add_child(list)
+	var tabs := TabContainer.new()
+	tabs.name = "B1Tab"
+	var page := Control.new()
+	page.name = "B1TabPage"
+	tabs.add_child(page)
+	root.add_child(tabs)
+	var progress := ProgressBar.new()
+	progress.name = "B1Progress"
+	progress.value = 40.0
+	root.add_child(progress)
+	var label := Label.new()
+	label.name = "B1Text"
+	label.text = "LabelTextSample"
+	root.add_child(label)
+	var edit := LineEdit.new()
+	edit.name = "B1Line"
+	edit.text = "EditSample"
+	root.add_child(edit)
+	var slide := HSlider.new()
+	slide.name = "B1Slide"
+	root.add_child(slide)
+	var scroll := ScrollContainer.new()
+	scroll.name = "B1Scroll"
+	var inner := Label.new()
+	inner.name = "B1ScrollText"
+	inner.text = "Inner"
+	scroll.add_child(inner)
+	root.add_child(scroll)
+	return {"ok": true}
 
 
 func _mcp_state() -> Dictionary:

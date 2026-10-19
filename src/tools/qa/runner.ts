@@ -314,19 +314,22 @@ export async function runQaSuite(
   return report;
 }
 
-/** 统计 steps 状态 → summary（cancelled 优先；否则 failed/errors/skipped>0 或 setup_error ? FAILED : PASSED） */
+/** 统计 steps 状态 → summary(cancelled 优先;否则任一非 PASSED 或 setup_error ? FAILED : PASSED)。
+ * B2: UNMEASURED 单独计数且计入 anyNotPassed——Feel Gate 语义"无法测量的检查不是通过",
+ * 整体仍 FAILED,但 unmeasured 计数可辨,排查方向指向前提(前置步骤没建出目标)。 */
 function finalizeSummary(report: QaReport, startedMs: number, cancelled: boolean): void {
-  let passed = 0, failed = 0, errors = 0, skipped = 0;
+  let passed = 0, failed = 0, errors = 0, skipped = 0, unmeasured = 0;
   for (const s of report.steps) {
     if (s.status === 'PASSED') passed++;
     else if (s.status === 'FAILED') failed++;
     else if (s.status === 'ERROR') errors++;
+    else if (s.status === 'UNMEASURED') unmeasured++;
     else skipped++;
   }
-  const anyNotPassed = failed > 0 || errors > 0 || skipped > 0;
+  const anyNotPassed = failed > 0 || errors > 0 || skipped > 0 || unmeasured > 0;
   report.summary = {
     total: report.steps.length,
-    passed, failed, errors, skipped,
+    passed, failed, errors, skipped, unmeasured,
     status: cancelled ? 'CANCELLED' : (anyNotPassed || report.setup_error ? 'FAILED' : 'PASSED'),
     duration_ms: Date.now() - startedMs,
   };
@@ -335,7 +338,7 @@ function finalizeSummary(report: QaReport, startedMs: number, cancelled: boolean
 // ─── 单步执行 ────────────────────────────────────────────────────────────────
 
 interface StepOutcome {
-  status: 'PASSED' | 'FAILED' | 'ERROR';
+  status: 'PASSED' | 'FAILED' | 'ERROR' | 'UNMEASURED';
   detail?: string;
   mismatch?: Record<string, { expected: unknown; actual: unknown }>;
   evidence?: { screenshot_path?: string };
@@ -437,11 +440,32 @@ async function execStep(step: QaStep, o: ResolvedOptions, runId: string, index: 
         totalMs,
         step.interval_ms ?? 500,
       );
-      if (r.error) return err(`bridge: ${condense(r.error)}`);
+      // B2: 节点不存在也是"前提不成立"而非基础设施错——wait_for_property 对缺失节点
+      // 报 JSON-RPC error "Node not found"(pollWaitCondition 立即中止),归 UNMEASURED。
+      const respError = r.error as { message?: string } | undefined;
+      if (respError) {
+        if (typeof respError.message === 'string' && respError.message.includes('Node not found')) {
+          return { status: 'UNMEASURED', detail: `前提不成立: ${respError.message} (waited ${r.elapsed_ms ?? '?'}ms of ${totalMs}ms)` };
+        }
+        return err(`bridge: ${condense(r.error)}`);
+      }
       if (r.wait_completed === true) {
         return { status: 'PASSED', detail: `${step.method} satisfied in ${r.elapsed_ms}ms` };
       }
-      return { status: 'FAILED', detail: `${step.method} 未在 ${totalMs}ms 内满足 (last: ${condense(r)})` };
+      // B2 超时三分支:前提不成立(节点不存在/属性缺失)→ UNMEASURED,排查方向指向
+      // 前置步骤;目标存在但值不满足 → FAILED(现状)。detail 带实测数字(expected/last/at)。
+      const waited = `waited ${r.elapsed_ms ?? '?'}ms of ${totalMs}ms`;
+      const wparams = (step.params ?? {}) as { path?: string; property?: string; value?: unknown };
+      if (step.method === 'wait_for_node' && r.exists === false) {
+        return { status: 'UNMEASURED', detail: `前提不成立: node ${wparams.path ?? '?'} 不存在 (expected exists=true, last exists=false, ${waited})` };
+      }
+      if (step.method === 'wait_for_property' && r.match === false && r.current === null) {
+        return { status: 'UNMEASURED', detail: `前提不成立: ${wparams.path ?? '?'}.${wparams.property ?? '?'} 缺失或值为 null (expected ${condense(wparams.value, 60)}, last current=null, ${waited})` };
+      }
+      const lastBits = step.method === 'wait_for_property'
+        ? `expected ${condense(r.expected ?? wparams.value, 60)}, last current=${condense(r.current, 60)}`
+        : condense(r);
+      return { status: 'FAILED', detail: `${step.method} 未在 ${totalMs}ms 内满足 (${lastBits}, ${waited})` };
     }
     case 'wait_frames': {
       const resp = await sendToBridge('playtest.step', { frames: step.frames }, computePlaytestTimeoutMs('playtest.step', undefined, o.step_timeout_ms));
@@ -461,7 +485,22 @@ async function execStep(step: QaStep, o: ResolvedOptions, runId: string, index: 
       if (step.wall_budget_ms !== undefined) params.wall_budget_ms = step.wall_budget_ms;
       const resp = await sendToBridge('playtest.step_until', params, computePlaytestTimeoutMs('playtest.step_until', step.wall_budget_ms, o.step_timeout_ms));
       if (resp.error) return err(`bridge: ${resp.error.message}`);
-      return { status: 'PASSED', detail: condense(resp.result) };
+      // B2: 响应契约(GD 帧循环完成时){success, predicate_met, frames_elapsed, wall_exceeded, error}。
+      // 原实现无条件 PASSED,把 predicate_met=false(帧耗尽/wall 超预算,条件未满足)也判过——
+      // 与 spec "推进至条件满足"语义相悖,假绿。现按三态:前提不成立(node/property not found,
+      // GD 侧 error 字段)→ UNMEASURED;条件在而未满足 → FAILED;满足 → PASSED。
+      const r = (resp.result ?? {}) as { predicate_met?: boolean; error?: string; frames_elapsed?: number; wall_exceeded?: boolean };
+      if (typeof r.error === 'string' && r.error !== '') {
+        return { status: 'UNMEASURED', detail: `前提不成立: ${r.error} (stepped ${r.frames_elapsed ?? '?'} frame(s))` };
+      }
+      if (r.predicate_met !== true) {
+        return {
+          status: 'FAILED',
+          detail: `step_until 条件未满足 (stepped ${r.frames_elapsed ?? '?'} frame(s)${r.wall_exceeded === true ? ', wall budget exceeded' : ''}, conditions: ${condense(step.conditions, 120)})`,
+          mismatch: { predicate: { expected: condense(step.conditions, 120), actual: `not met after ${r.frames_elapsed ?? '?'} frame(s)` } },
+        };
+      }
+      return { status: 'PASSED', detail: `predicate met after ${r.frames_elapsed ?? '?'} frame(s)` };
     }
     case 'snapshot':
     case 'restore': {

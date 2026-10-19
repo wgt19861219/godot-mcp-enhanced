@@ -12,6 +12,7 @@ import { safeRealPath, iterativeDecode, isPathInAllowedRoots, resolveWithinRoot 
 import { scanFiles } from './core/file-scanner.js';
 import { getGateStatus } from './core/action-gate.js';
 import { getActiveGroups, TOOL_GROUPS } from './core/tool-registry.js';
+import { packagedSkillsDir, listPackagedSkills } from './cli/skills.js';
 
 const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB — reject files larger than this
 
@@ -401,10 +402,31 @@ async function readFileResource(projectPath: string, filePath: string): Promise<
 
 // ─── Resource listing ─────────────────────────────────────────────────────────
 
+/** B3 (2026-10-19): skill:// 资源——打包 skills(SKILL.md)经 MCP Resources 暴露,
+ * AI 客户端不装 skills 也能按需读取。不依赖 projectPath(打包内容,机器级),
+ * 目录缺失/读失败降级为空列表(dev 仓未 build:skills 时 resources/list 不炸)。 */
+function skillResources(): McpResource[] {
+  const dir = packagedSkillsDir();
+  if (!existsSync(dir)) return [];
+  try {
+    return listPackagedSkills(dir).map(s => ({
+      uri: `skill://${s.name}/SKILL.md`,
+      name: `Skill: ${s.name}`,
+      description: s.description || 'godot-mcp packaged skill (SKILL.md)',
+      mimeType: 'text/markdown',
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function listResources(projectPath: string | undefined): McpResource[] {
+  // skill:// 独立于项目路径,无项目/项目不在白名单时仍可发现(仅 help + skills)
+  const skills = skillResources();
   if (!projectPath || !isPathInAllowedRoots(projectPath)) {
     return [
       { uri: 'godot://help', name: 'Help', description: 'No project path available or path not in allowed roots.', mimeType: 'text/plain' },
+      ...skills,
     ];
   }
 
@@ -432,6 +454,8 @@ export function listResources(projectPath: string | undefined): McpResource[] {
     { uri: 'godot://console-errors', name: 'Console Errors', description: 'Recent Godot engine errors and warnings (requires Bridge)', mimeType: 'application/json' },
     { uri: 'godot://scene-tree', name: 'Scene Tree', description: 'Current scene tree snapshot (requires Bridge)', mimeType: 'application/json' },
   );
+
+  resources.push(...skills);
 
   scanForResources(projectPath, resources);
   if (resources.length >= MAX_RESOURCES) {
@@ -504,7 +528,42 @@ export function listResourceTemplates(): McpResourceTemplate[] {
 
 // ─── Resource reading ─────────────────────────────────────────────────────────
 
+/** B3 (2026-10-19): skill://<name>/SKILL.md 只读通道——限定打包 skills 目录,
+ * 形态白名单(第二段必须字面 SKILL.md)+ resolve 后前缀复核双防线防逃逸
+ * (正则限字符已排除 .. 与分隔符,前缀复核防构造性漂移)。 */
+async function readSkillResource(uri: string): Promise<McpResourceContent> {
+  const rest = uri.substring('skill://'.length);
+  const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)\/SKILL\.md$/.exec(rest);
+  if (!m) {
+    return { uri, mimeType: 'text/plain', text: `ERROR: Invalid skill URI: ${rest}. Expected skill://<name>/SKILL.md` };
+  }
+  const name = m[1]!;
+  // 纵深冗余(审查 N-8):正则首字符限定 [A-Za-z0-9] 已令 '..' 无法匹配,此处显式
+  // 检查是防正则未来放宽时的第二道防线,不是当前路径的必要判定。
+  if (name === '.' || name === '..' || name.includes('..')) {
+    return { uri, mimeType: 'text/plain', text: `Access denied: invalid skill name` };
+  }
+  const root = resolve(packagedSkillsDir());
+  const full = resolve(root, name, 'SKILL.md');
+  if (!(full === root || full.startsWith(root + sep))) {
+    return { uri, mimeType: 'text/plain', text: `Access denied: ${name}` };
+  }
+  if (!existsSync(full)) {
+    return { uri, mimeType: 'text/plain', text: `ERROR: Skill not found: ${name}. Use resources/list to see available skills.` };
+  }
+  const size = (await stat(full)).size;
+  if (size > MAX_FILE_SIZE) {
+    return { uri, mimeType: 'text/plain', text: `ERROR: File too large (${(size / 1024 / 1024).toFixed(1)}MB, limit 1MB)` };
+  }
+  return { uri, mimeType: 'text/markdown', text: await readFile(full, 'utf-8') };
+}
+
 export async function readResource(uri: string, projectPath: string | undefined): Promise<McpResourceContent> {
+  // B3: skill:// 不依赖项目路径(打包内容),先于 projectPath 守卫分流
+  if (uri.startsWith('skill://')) {
+    return await readSkillResource(uri);
+  }
+
   if (!projectPath) {
     return { uri, mimeType: 'text/plain', text: 'ERROR: No project path available.' };
   }

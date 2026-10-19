@@ -90,10 +90,13 @@ describe('scene 资源', () => {
 });
 
 describe('listResources / templates', () => {
-  it('无 projectPath → 仅 help 兜底;有 → 含 project/info 与内置 guides', () => {
+  it('无 projectPath → help 兜底 + skill:// 条目(B3);有 → 含 project/info 与内置 guides', () => {
     const none = listResources(undefined);
-    expect(none).toHaveLength(1);
     expect(none[0]!.uri).toBe('godot://help');
+    // B3: 打包 skills 不依赖项目路径,无项目也可发现(源码仓 build 后必有 skills/)
+    const skillUris = none.filter(r => r.uri.startsWith('skill://')).map(r => r.uri);
+    expect(skillUris.length).toBeGreaterThanOrEqual(6);
+    expect(skillUris).toContain('skill://godot-router/SKILL.md');
 
     const list = listResources(PROJ);
     const uris = list.map(r => r.uri);
@@ -101,6 +104,22 @@ describe('listResources / templates', () => {
     expect(uris).toContain('godot://project/config');
     expect(uris.some(u => u.startsWith('godot://guide/'))).toBe(true);
     expect(uris).toContain('godot://tool-groups');
+    expect(uris.filter(u => u.startsWith('skill://')).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('B3: skill:// 读取与逃逸拒(不依赖 projectPath)', async () => {
+    // 正常读取:返回 SKILL.md 内容(frontmatter 含 skill 名)
+    const ok = await readResource('skill://godot-router/SKILL.md', undefined);
+    expect(ok.mimeType).toBe('text/markdown');
+    expect(ok.text).toContain('godot-router');
+    // 逃逸/形态拒:.. 段、多余路径段、非 SKILL.md 文件名
+    for (const bad of ['skill://../evil/SKILL.md', 'skill://x/../../etc/passwd', 'skill://godot-router/other.md', 'skill://godot-router/../../package.json']) {
+      const r = await readResource(bad, undefined);
+      expect(r.text.startsWith('ERROR') || r.text.startsWith('Access denied'), `应拒: ${bad}`).toBe(true);
+    }
+    // 不存在的 skill → 可行动错误
+    const nf = await readResource('skill://no-such-skill/SKILL.md', undefined);
+    expect(nf.text).toContain('not found');
   });
 
   it('templates 提供 scene/script/file 动态发现', () => {

@@ -28,7 +28,11 @@ export const THRESHOLDS = {
   // 易用性批 1 (2026-09-19) 23 工具 action 描述补全+project_path 统一+5 工具英译中(审查 A-1/2/3,
   // 报告 docs/reviews/2026-09-19-易用性审查-用户界面三层.md)正当增量 ~4.7KB 推到 111019B(~108.4KiB)——同前例
   // 接受水位,warn 线校准至 112KB 给 ~1.2KB 余量;error 120KB 硬线不动。回弹语义保留。
-  totalSum:      { warn: 112 * 1024, error: 120 * 1024 },
+  // B1 (2026-10-19) find_ui_elements 加 role/match 参数(game schema +521B)正当增量推到 115174B——
+  // 同前例接受水位,warn 线校准至 116*1024=118784B(余量 3610B,二进制口径——注释里的
+  // KB 一律按 1024 换算,防十进制误读);B4 outputSchema(+1350B,extract 口径含 outputSchema
+  // 后实测 116524B)同批并入此水位。error 硬线不动。回弹语义保留。
+  totalSum:      { warn: 116 * 1024, error: 120 * 1024 },
 };
 
 /** @typedef {{name:string,size:{descBytes:number,schemaBytes:number,totalBytes:number}}} CapLike */

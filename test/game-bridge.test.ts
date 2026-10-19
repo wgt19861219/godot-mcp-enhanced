@@ -1411,3 +1411,67 @@ describe('Task 4.4: _doConnect 端口单次解析(secret 读取与 TCP 连接同
     }
   });
 });
+
+// ===== B1 (2026-10-19): find_ui_elements role/match 参数透传 =====
+
+describe('B1: find_ui_elements role/match 透传', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExists.mockReturnValue(true);
+    mockRead.mockReturnValue('test-secret');
+    setBridgeProjectDir('/__reset__');
+    setBridgeProjectDir('/p');
+  });
+
+  /** 从 mockCreate 最后返回的 sock 上抓 method=find_ui_elements 的 write payload params。 */
+  async function findUiParams(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    setupBridgeSocket('result');
+    const result = await handleTool('game', { action: 'find_ui_elements', ...args }, { projectDir: '/p' } as never);
+    expect(result?.isError, `find_ui_elements 不应报错: ${JSON.stringify(result?.content?.[0])}`).not.toBe(true);
+    const sock = mockCreate.mock.results.at(-1)?.value as EventEmitter;
+    expect(sock, '应创建过 bridge socket').toBeTruthy();
+    const writes = (sock as unknown as { write: ReturnType<typeof vi.fn> }).write.mock.calls.map(c => String(c[0]));
+    const methodLine = writes.find(w => w.includes('"find_ui_elements"'));
+    expect(methodLine, '应发出 find_ui_elements method 请求').toBeTruthy();
+    const parsed = JSON.parse(methodLine!) as { params?: Record<string, unknown> };
+    expect(parsed.params).toBeTruthy();
+    return parsed.params!;
+  }
+
+  it('显式 role/match → bridge payload 携带显式值', async () => {
+    const params = await findUiParams({ role: 'button', match: 'exact' });
+    expect(params.role).toBe('button');
+    expect(params.match).toBe('exact');
+  });
+
+  it('不传 role/match → payload 带默认(\'\'/wildcard),旧调用面不变', async () => {
+    const params = await findUiParams({ type: 'Button' });
+    expect(params.role).toBe('');
+    expect(params.match).toBe('wildcard');
+    expect(params.type).toBe('Button');
+    expect(params.visible_only).toBe(true);
+    expect(params.limit).toBe(200);
+  });
+
+  it('B4 输出侧:find_ui_elements/monitor_poll/watch_poll 成功响应挂 structuredContent 且与文本等值', async () => {
+    setupBridgeSocket('result');
+    const r = await handleTool('game', { action: 'find_ui_elements' }, { projectDir: '/p' } as never);
+    expect(r?.isError).not.toBe(true);
+    // mock bridge 回 {ok:true,data:'pong'}(对象)→ structuredResult 生效
+    expect(r?.structuredContent).toEqual({ ok: true, data: 'pong' });
+    expect(JSON.parse(r!.content[0]!.type === 'text' ? r!.content[0].text : '')).toEqual({ ok: true, data: 'pong' });
+
+    setupBridgeSocket('result');
+    const mp = await handleTool('game', { action: 'monitor_poll' }, { projectDir: '/p' } as never);
+    expect(mp?.structuredContent).toEqual({ ok: true, data: 'pong' });
+
+    setupBridgeSocket('result');
+    const wp = await handleTool('game', { action: 'watch_poll' }, { projectDir: '/p' } as never);
+    expect(wp?.structuredContent).toEqual({ ok: true, data: 'pong' });
+
+    // 非 3 个试点 method 不受影响(仍纯文本)——ping 走 game_query 内联路径,用 get_tree 类 query
+    setupBridgeSocket('result');
+    const other = await handleTool('game', { action: 'game_query', method: 'ping' }, { projectDir: '/p' } as never);
+    expect(other?.structuredContent, '非试点 method 不挂 structuredContent').toBeUndefined();
+  });
+});

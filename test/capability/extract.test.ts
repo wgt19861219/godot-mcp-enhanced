@@ -61,10 +61,16 @@ describe('extractCapabilities', () => {
     registerAllModules();
     const caps = extractCapabilities(PROJECT_ROOT);
     expect(caps.length).toBeGreaterThan(0);
+    // B4 (2026-10-19): schemaBytes 口径含 outputSchema(typed outputs 进 tools/list 载荷),
+    // 无 outputSchema 的工具恰好等于 inputSchema 字节;有则为其增量
+    const defByname = new Map(getAllToolDefinitions().map(t => [t.name, t]));
     for (const c of caps) {
       expect(c.size).toBeDefined();
       expect(c.size.descBytes).toBe(Buffer.byteLength(c.description, 'utf8'));
-      expect(c.size.schemaBytes).toBe(Buffer.byteLength(JSON.stringify(c.inputSchema), 'utf8'));
+      const def = defByname.get(c.name);
+      const expected = Buffer.byteLength(JSON.stringify(def?.inputSchema ?? {}), 'utf8')
+        + (def?.outputSchema ? Buffer.byteLength(JSON.stringify(def.outputSchema), 'utf8') : 0);
+      expect(c.size.schemaBytes).toBe(expected);
       expect(c.size.totalBytes).toBe(c.size.descBytes + c.size.schemaBytes);
       expect(c.size.descBytes).toBeGreaterThan(0); // 每个工具有非空描述
     }

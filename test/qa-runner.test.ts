@@ -213,18 +213,70 @@ describe('失败语义', () => {
     expect(report.steps[1]!.status).toBe('SKIPPED');
   });
 
-  it('wait 超时 → FAILED（非 ERROR）', async () => {
+  it('wait 超时三分支(B2):节点不存在→UNMEASURED / 值不符→FAILED / 属性缺失→UNMEASURED', async () => {
+    // ① wait_for_node 节点不存在(exists=false 持续到超时)→ UNMEASURED(前提不成立)
     vi.mocked(sendToBridge).mockImplementation(async (method: string) => {
-      if (method === 'wait_for_node') return { id: 1, result: { exists: false } };
+      if (method === 'wait_for_node') return { id: 1, result: { exists: false, path: '/root/Nope' } };
       return { id: 5, result: {} };
     });
-    const s = suite({
+    const s1 = suite({
       options: { wait_timeout_ms: 600 },
       steps: [{ type: 'wait', method: 'wait_for_node', params: { path: '/root/Nope' } }],
     });
-    const report = await runQaSuite(s, PROJECT, makeCtx(), 'inline');
-    expect(report.steps[0]!.status).toBe('FAILED');
-    expect(report.steps[0]!.detail).toContain('未在');
+    const r1 = await runQaSuite(s1, PROJECT, makeCtx(), 'inline');
+    expect(r1.steps[0]!.status).toBe('UNMEASURED');
+    expect(r1.steps[0]!.detail).toContain('前提不成立');
+    expect(r1.steps[0]!.detail).toContain('/root/Nope');
+    expect(r1.summary.unmeasured).toBe(1);
+    expect(r1.summary.status).toBe('FAILED');  // Feel Gate:无法测量的检查不是通过
+
+    // ② wait_for_property 属性存在但值不符(match=false current 有值)→ FAILED(现状)
+    vi.mocked(sendToBridge).mockImplementation(async (method: string) => {
+      if (method === 'wait_for_property') return { id: 2, result: { match: false, property: 'hp', current: 30, expected: '100' } };
+      return { id: 5, result: {} };
+    });
+    const s2 = suite({
+      options: { wait_timeout_ms: 600 },
+      steps: [{ type: 'wait', method: 'wait_for_property', params: { path: '/root/Root', property: 'hp', value: '100' } }],
+    });
+    const r2 = await runQaSuite(s2, PROJECT, makeCtx(), 'inline');
+    expect(r2.steps[0]!.status).toBe('FAILED');
+    expect(r2.steps[0]!.detail).toContain('未在');
+    expect(r2.steps[0]!.detail).toContain('30');
+    expect(r2.summary.unmeasured).toBe(0);
+
+    // ③ wait_for_property 属性缺失(current=null)→ UNMEASURED
+    vi.mocked(sendToBridge).mockImplementation(async (method: string) => {
+      if (method === 'wait_for_property') return { id: 3, result: { match: false, property: 'mana', current: null, expected: '50' } };
+      return { id: 5, result: {} };
+    });
+    const s3 = suite({
+      options: { wait_timeout_ms: 600 },
+      steps: [{ type: 'wait', method: 'wait_for_property', params: { path: '/root/Root', property: 'mana', value: '50' } }],
+    });
+    const r3 = await runQaSuite(s3, PROJECT, makeCtx(), 'inline');
+    expect(r3.steps[0]!.status).toBe('UNMEASURED');
+    expect(r3.steps[0]!.detail).toContain('mana');
+    expect(r3.summary.unmeasured).toBe(1);
+
+    // ④ wait_for_property 节点缺失(GD 报 JSON-RPC error Node not found,轮询立即中止)→ UNMEASURED
+    vi.mocked(sendToBridge).mockResolvedValue({ id: 4, error: { code: -1, message: 'Node not found: /root/Gone' } });
+    const s4 = suite({
+      options: { wait_timeout_ms: 600 },
+      steps: [{ type: 'wait', method: 'wait_for_property', params: { path: '/root/Gone', property: 'hp', value: '1' } }],
+    });
+    const r4 = await runQaSuite(s4, PROJECT, makeCtx(), 'inline');
+    expect(r4.steps[0]!.status).toBe('UNMEASURED');
+    expect(r4.steps[0]!.detail).toContain('Node not found');
+
+    // ⑤ 其他 bridge error(非 Node not found)仍 ERROR(现状不放松)
+    vi.mocked(sendToBridge).mockResolvedValue({ id: 6, error: { code: -2, message: 'Blocked property: script' } });
+    const s5 = suite({
+      options: { wait_timeout_ms: 600 },
+      steps: [{ type: 'wait', method: 'wait_for_property', params: { path: '/root/Root', property: 'script', value: 'x' } }],
+    });
+    const r5 = await runQaSuite(s5, PROJECT, makeCtx(), 'inline');
+    expect(r5.steps[0]!.status).toBe('ERROR');
   });
 });
 
@@ -304,6 +356,7 @@ describe('步骤分支覆盖（审查 NIT-8 补缺：set/call/step_until/wait_fr
   });
 
   it('step_until 步骤：conditions/max_frames/wall_budget_ms 透传 playtest.step_until', async () => {
+    vi.mocked(sendToBridge).mockResolvedValue({ id: 5, result: { success: true, predicate_met: true, frames_elapsed: 42, wall_exceeded: false, error: '' } });
     const s = suite({
       steps: [{
         type: 'step_until',
@@ -322,6 +375,29 @@ describe('步骤分支覆盖（审查 NIT-8 补缺：set/call/step_until/wait_fr
     });
     // wall_budget 5000 + 5s 余量公式（≥10000，且不小于 step 基础超时下限）
     expect(call?.[2]).toBeGreaterThanOrEqual(10000);
+  });
+
+  it('step_until 三态(B2):条件未满足→FAILED(修原无条件 PASSED 假绿)/ 前提缺失→UNMEASURED', async () => {
+    // ① predicate_met=false(帧耗尽)→ FAILED(原实现无条件 PASSED,与 spec 语义相悖)
+    vi.mocked(sendToBridge).mockResolvedValue({ id: 5, result: { success: true, predicate_met: false, frames_elapsed: 120, wall_exceeded: false, error: '' } });
+    const s1 = suite({
+      steps: [{ type: 'step_until', conditions: [{ path: '/root/Root', property: 'x', op: '>=', value: 3 }], max_frames: 120 }],
+    });
+    const r1 = await runQaSuite(s1, PROJECT, makeCtx(), 'inline');
+    expect(r1.steps[0]!.status).toBe('FAILED');
+    expect(r1.steps[0]!.detail).toContain('未满足');
+    expect(r1.steps[0]!.detail).toContain('120');
+    expect(r1.steps[0]!.mismatch?.predicate).toBeTruthy();
+
+    // ② 前提缺失(node/property not found,GD result.error 非空)→ UNMEASURED
+    vi.mocked(sendToBridge).mockResolvedValue({ id: 5, result: { success: true, predicate_met: false, frames_elapsed: 7, wall_exceeded: false, error: 'node not found/freed: /root/Root' } });
+    const s2 = suite({
+      steps: [{ type: 'step_until', conditions: [{ path: '/root/Root', property: 'x', op: '>=', value: 3 }] }],
+    });
+    const r2 = await runQaSuite(s2, PROJECT, makeCtx(), 'inline');
+    expect(r2.steps[0]!.status).toBe('UNMEASURED');
+    expect(r2.steps[0]!.detail).toContain('前提不成立');
+    expect(r2.summary.unmeasured).toBe(1);
   });
 
   it('wait_frames 步骤：playtest.step {frames} 透传', async () => {

@@ -103,6 +103,23 @@ describe('writeReport / readReport', () => {
     expect(md).toContain('setup error');
     expect(md).toContain('| 0 | a | assert | FAILED |');
   });
+
+  it('B2: UNMEASURED 渲染——状态行 + summary 计数;unmeasured=0 时旧格式不变', () => {
+    const r = report('20261019-b2a', 'b2a', [
+      step(0, 'pre', 'input', 'PASSED'),
+      step(1, 'gate', 'wait', 'UNMEASURED'),
+    ]);
+    r.summary.unmeasured = 1;
+    r.summary.status = 'FAILED';
+    const { md_path } = writeReport(r);
+    const md = readFileSync(md_path, 'utf-8');
+    expect(md).toContain('| 1 | gate | wait | UNMEASURED |');
+    expect(md).toContain('1 unmeasured');
+    // unmeasured=0/缺省 → 不输出该段(旧报告渲染形态不变)
+    const r0 = report('20261019-b2b', 'b2b', [step(0, 'x', 'sleep', 'PASSED')]);
+    const md0 = readFileSync(writeReport(r0).md_path, 'utf-8');
+    expect(md0).not.toContain('unmeasured');
+  });
 });
 
 describe('diffReports', () => {
@@ -146,6 +163,24 @@ describe('diffReports', () => {
     const b5 = report('b5', 'b5', [step(0, undefined, 'input', 'PASSED')]);
     const h5 = report('h5', 'h5', [step(0, undefined, 'input', 'FAILED')]);
     expect(diffReports(b5, h5).regressions[0]!.case).toBe('0:input');
+  });
+
+  it('B2: UNMEASURED 视为 not-passed(回归判定覆盖);与旧格式报告(无 unmeasured 字段)diff 不炸', () => {
+    // PASSED → UNMEASURED = 回归(前提不成立不是通过)
+    const b6 = report('b6', 'b6', [step(0, 'x', 'wait', 'PASSED')]);
+    const h6 = report('h6', 'h6', [step(0, 'x', 'wait', 'UNMEASURED')]);
+    const d = diffReports(b6, h6);
+    expect(d.verdict).toBe('REGRESSED');
+    expect(d.regressions[0]).toMatchObject({ base: 'PASSED', head: 'UNMEASURED' });
+    // UNMEASURED → PASSED = 修复
+    const h7 = report('h7', 'h7', [step(0, 'x', 'wait', 'PASSED')]);
+    const b7 = report('b7', 'b7', [step(0, 'x', 'wait', 'UNMEASURED')]);
+    expect(diffReports(b7, h7).verdict).toBe('IMPROVED');
+    // 向后兼容:旧格式 head 报告(无 summary.unmeasured 字段)参与 diff 不报错、归类正确
+    const legacy = JSON.parse(JSON.stringify(h6)) as QaReport;
+    delete legacy.summary.unmeasured;
+    const d2 = diffReports(b6, legacy);
+    expect(d2.verdict).toBe('REGRESSED');
   });
 });
 
