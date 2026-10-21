@@ -3,11 +3,17 @@
 ## AI 触发的 mutation 经此 wrapper 接入 Godot 编辑器的 undo 栈，
 ## 用户 Ctrl+Z 可逐步撤销 AI 操作（UX 信任保障）。
 ##
-## 接入 undo 的 handler（8 个）：
-## - node_commands.gd（add_node/remove_node/edit_node 等 6 处）
-## - ui_commands.gd（create_control/set_layout/set_theme 等 14 处）
+## 历史上限（2026-10-21，编辑器 40GB 内存事故根治项）：UndoRedo.max_steps 默认
+## 0 = 无上限（官方文档），长 AI 会话数千次 mutation commit 进编辑器 undo 栈致
+## 内存单调增长。create_action_mixed 每次调用先把 global + 当前场景两条 history
+## 的 UndoRedo 上限压到 MAX_UNDO_STEPS（见 _cap_undo_history）。上限作用于共享栈
+## （含用户手动编辑）；更深的回滚走 git。
+##
+## 接入 undo 的 handler（8 个，生产调用共 37 处——剔注释口径，2026-10-21 逐行复核）：
+## - node_commands.gd（add_node/remove_node/edit_node/batch_add 4 处）
+## - ui_commands.gd（create_control/set_layout/theme/container 等 8 处）
 ## - animation_commands.gd（7 处）
-## - asset/asset_placer.gd（place_one/place_batch 等 7 处，经 asset_commands.gd 间接调用）
+## - asset/asset_placer.gd（place_one/place_batch 2 处，经 asset_commands.gd 间接调用）
 ## - particle_commands.gd（5 处）
 ## - nav_commands.gd（5 处）
 ## - animtree_commands.gd（4 处）
@@ -22,6 +28,10 @@
 ##
 extends Node
 
+## 编辑器共享 undo 栈的历史步数上限。取 200：截断长 AI 会话的无限增长，
+## 用户手动 undo 深度基本无感；更深回滚走 git。
+const MAX_UNDO_STEPS := 200
+
 var _plugin: EditorPlugin
 
 func setup(plugin: EditorPlugin) -> void:
@@ -35,6 +45,7 @@ func setup(plugin: EditorPlugin) -> void:
 ## {"type": "reference", "value": Node}  # Issue 1: add_do_reference 仅限 Node
 func create_action_mixed(action_name: String, do_ops: Array, undo_ops: Array) -> void:
 	var undo_redo = _plugin.get_undo_redo()
+	_cap_undo_history(undo_redo)
 	var label: String = "MCP: %s" % action_name
 	undo_redo.create_action(label)
 	for op in do_ops:
@@ -42,6 +53,27 @@ func create_action_mixed(action_name: String, do_ops: Array, undo_ops: Array) ->
 	for op in undo_ops:
 		_apply_op(undo_redo, "undo", op)
 	undo_redo.commit_action()
+
+
+## 把编辑器 undo 历史上限压到 MAX_UNDO_STEPS（幂等，每次 create_action_mixed 调用）。
+## 关键 API 约束（2026-10-21 审查核实，勿回退成 undo_redo.max_steps = N）：
+## EditorUndoRedoManager 继承 Object、零属性、无 max_steps——上限只能设在它管理的
+## 各 history 的 UndoRedo 上（get_history_undo_redo）。create_action 无 custom_context
+## 时按首个操作推断目标 history：Node → 当前编辑场景，非 Node → GLOBAL_HISTORY，
+## 因此两条都要盖。场景未打开时 get_edited_scene_root() 为 null，只盖 global。
+func _cap_undo_history(undo_redo: EditorUndoRedoManager) -> void:
+	var global_ur: UndoRedo = undo_redo.get_history_undo_redo(EditorUndoRedoManager.GLOBAL_HISTORY)
+	if global_ur != null and global_ur.max_steps != MAX_UNDO_STEPS:
+		global_ur.max_steps = MAX_UNDO_STEPS
+	var ei: EditorInterface = _plugin.get_editor_interface()
+	if ei == null:
+		return
+	var scene_root := ei.get_edited_scene_root()
+	if scene_root == null:
+		return
+	var scene_ur: UndoRedo = undo_redo.get_history_undo_redo(undo_redo.get_object_history_id(scene_root))
+	if scene_ur != null and scene_ur.max_steps != MAX_UNDO_STEPS:
+		scene_ur.max_steps = MAX_UNDO_STEPS
 
 
 func _add_method(undo_redo: EditorUndoRedoManager, mode: String, target: Object, method: String, args: Array) -> void:
