@@ -1,28 +1,27 @@
 ; Engine configuration file.
-; M3c gdscript-check fixture — 最小空项目,仅启用 godot_mcp_server plugin 供 --import 编译检查。
-; 手写(R5:features 段完整含 4.6 + 渲染器,不用 Godot 生成——本机无 Godot)。
-; addons/ 由 check-gdscript.ts main() 每次运行时从源 addons/godot_mcp_server/ 复制(.gitignore 排除)。
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
 
 [application]
 
 config/name="M3c gdscript check"
-config/features=PackedStringArray("4.6", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[debug]
+
+file_logging/enable_file_logging.pc=false
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/godot_mcp_server/plugin.cfg")
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-
-[editor_plugins]
-
-enabled=PackedStringArray("godot_mcp_server")
-
-; P0-2 (2026-09-11): dual-key file logging off — concurrent instances share user://logs,
-; RotatedFileLogger rotate race makes abort look like engine_crashed (aigengame pit).
-; Base key defaults false, but the .pc feature-tag override defaults TRUE on desktop and
-; wins at startup — closing only the base key is a no-op.
-[debug]
-
-file_logging/enable_file_logging=false
-file_logging/enable_file_logging.pc=false
