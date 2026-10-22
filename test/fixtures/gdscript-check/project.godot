@@ -15,6 +15,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [debug]
 
+file_logging/enable_file_logging=false
 file_logging/enable_file_logging.pc=false
 
 [editor_plugins]
