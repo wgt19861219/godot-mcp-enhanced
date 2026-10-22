@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -22,5 +22,46 @@ describe('fullSystemScanGodot filter excludes --editor processes', () => {
 
     // 反向断言：过滤必须排除 --editor
     expect(shBlock![0]).toMatch(/grep.*-v.*--editor|--editor.*exclude/i);
+  });
+});
+
+// ── M-2(2026-10-22 审查): 超时兜底强杀不被 killed 标志短路,POSIX 升级 SIGKILL ──
+describe('M-2 forceKillTree ignoreKilled 升级强杀', () => {
+  beforeEach(() => {
+    // isWin 在模块加载时固化,改 platform 后须 resetModules 重载
+    vi.resetModules();
+    vi.doMock('child_process', () => ({
+      spawn: vi.fn(() => ({ on: vi.fn() })),
+    }));
+  });
+
+  const withPlatform = async <T>(platform: string, fn: () => Promise<T>): Promise<T> => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    try { return await fn(); } finally {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    }
+  };
+
+  it('killed=true 且无 ignoreKilled → 短路不杀(既有守卫语义保留)', async () => {
+    await withPlatform('linux', async () => {
+      const { forceKillTree } = await import('../../src/core/process-state.js');
+      const kill = vi.fn();
+      forceKillTree({ killed: true, pid: 123, kill } as any);
+      expect(kill).not.toHaveBeenCalled();
+    });
+  });
+
+  it('killed=true 且 ignoreKilled:true → POSIX 分支仍发 SIGKILL 升级', async () => {
+    await withPlatform('linux', async () => {
+      const { forceKillTree } = await import('../../src/core/process-state.js');
+      const kill = vi.fn();
+      forceKillTree({ killed: true, pid: 123, kill } as any, { ignoreKilled: true });
+      expect(kill).toHaveBeenCalledWith('SIGKILL');
+    });
+  });
+
+  it('killProcess 5s 兜底改走升级路径(源码锚定:ignoreKilled: true)', () => {
+    const src = readFileSync(join(__dirname, '../../src/core/process-state.ts'), 'utf-8');
+    expect(src).toMatch(/forceKillTree\(proc,\s*\{\s*ignoreKilled:\s*true\s*\}\)/);
   });
 });
