@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync, readdirSync, statSync, chmodSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { readJsonConfigWithBackup, readJsonForCheck, stripBom, stripJsonc, writeFileAtomicWithMode, buildEnv } from '../../../src/cli/clients/json-config.js';
+import { readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, stripBom, stripJsonc, writeFileAtomicWithMode, buildEnv } from '../../../src/cli/clients/json-config.js';
 
 const BOM = String.fromCharCode(0xFEFF);
 
@@ -250,5 +250,43 @@ describe('buildEnv (C1 env 白名单合并)', () => {
 
   it('空 oldEnv 对象 → 只含 GODOT_PATH', () => {
     expect(buildEnv('/g', {})).toEqual({ GODOT_PATH: '/g' });
+  });
+});
+
+// M-8(2026-10-22 审查第二轮): unconfigure 侧读取通道——JSONC 注释被剥离重写前
+// 必须落 .jsonc 备份(此前 readJsonForCheck 纯读,注释静默丢失无备份可找回)。
+describe('readJsonConfigForUnconfigure (M-8)', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mcp-jsonc-u-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('JSONC 注释 → 落 .jsonc 备份 + 返回解析结果(重写后注释可找回)', () => {
+    const configPath = join(dir, 'settings.json');
+    writeFileSync(configPath, '{\n  // my comment\n  "mcpServers": { "godot": {} } }\n');
+    const result = readJsonConfigForUnconfigure(configPath);
+    expect(result).not.toBeNull();
+    expect((result!.mcpServers as Record<string, unknown>).godot).toBeTruthy();
+    const bak = readdirSync(dir).find(f => f.includes('.jsonc.') && f.endsWith('.bak'));
+    expect(bak).toBeTruthy();
+    expect(readFileSync(join(dir, bak!), 'utf-8')).toContain('// my comment');
+  });
+
+  it('纯 JSON → 返回解析结果,不落备份', () => {
+    const configPath = join(dir, 'plain.json');
+    writeFileSync(configPath, '{"a": 1}');
+    const result = readJsonConfigForUnconfigure(configPath);
+    expect(result!.a).toBe(1);
+    expect(readdirSync(dir).some(f => f.endsWith('.bak'))).toBe(false);
+  });
+
+  it('损坏 JSON → 抛错且不落备份(unconfigure 无新内容,不动用户文件让命令层报 ✗)', () => {
+    const configPath = join(dir, 'broken.json');
+    writeFileSync(configPath, '{ broken');
+    expect(() => readJsonConfigForUnconfigure(configPath)).toThrow('config parse error');
+    expect(readdirSync(dir).some(f => f.endsWith('.bak'))).toBe(false);
+  });
+
+  it('文件不存在 → null(调用方视为未配置)', () => {
+    expect(readJsonConfigForUnconfigure(join(dir, 'no.json'))).toBeNull();
   });
 });

@@ -121,6 +121,27 @@ export function buildEnv(godotPath: string, oldEnv?: Record<string, unknown>): R
 }
 
 /**
+ * M-8(2026-10-22 审查)/M3 共享:原文含 JSONC 特征(注释/尾逗号,剥除后变短)时,
+ * 重写前把原始内容备份到 `<path>.jsonc.<uuid>.bak` 并 warn——纯 JSON.stringify 重写
+ * 会无痕丢掉用户的 // 注释与缩进风格,备份保住可找回的原始副本。
+ * 备份失败(磁盘满/权限)只 warn 不阻断(数据未损坏,丢注释是降级而非破坏)。
+ */
+function backupJsoncIfPresent(raw: string, filePath: string): void {
+  if (stripBom(raw).length <= stripJsonc(stripBom(raw)).length) return;  // 纯 JSON,无需备份
+  const backupPath = `${filePath}.jsonc.${randomUUID()}.bak`;
+  try {
+    writeFileSync(backupPath, raw, 'utf-8');
+    console.warn(
+      `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will NOT be preserved on rewrite. Original backed up to ${backupPath}.`,
+    );
+  } catch {
+    console.warn(
+      `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will be lost on rewrite (backup failed: ${filePath} not writable).`,
+    );
+  }
+}
+
+/**
  * 读取 JSON 配置文件,用于 CLI client adapter 的 configure()。
  *
  * F3: 当文件存在但 JSON 解析失败(用户配置损坏)时,**不静默用空对象覆盖**——
@@ -138,23 +159,8 @@ export function readJsonConfigWithBackup(filePath: string): Record<string, unkno
     const parsed = JSON.parse(stripJsonc(stripBom(raw))) as Record<string, unknown>;
     // M3(2026-10-14 审查): 合法 JSONC(注释/尾逗号)解析成功但重写为纯 JSON 时,
     // 用户的 // 注释、尾逗号、缩进风格会无痕丢失且不触发损坏备份。Claude Code/
-    // Cursor 配置官方支持 JSONC——解析成功但原文含 JSONC 特征(剥除后变短)时,
-    // 同样落备份再返回,保住可找回的原始副本。
-    if (stripBom(raw).length > stripJsonc(stripBom(raw)).length) {
-      const backupPath = `${filePath}.jsonc.${randomUUID()}.bak`;
-      try {
-        writeFileSync(backupPath, raw, 'utf-8');
-        console.warn(
-          `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will NOT be preserved on rewrite. Original backed up to ${backupPath}.`,
-        );
-      } catch {
-        // 备份失败不阻断配置写入(与损坏路径的硬失败不同:此处数据未损坏,丢注释
-        // 是降级而非破坏),warn 提示即可。
-        console.warn(
-          `[godot-mcp] ${filePath} contains JSONC comments/trailing commas — they will be lost on rewrite (backup failed: ${filePath} not writable).`,
-        );
-      }
-    }
+    // Cursor 配置官方支持 JSONC——落备份再返回,保住可找回的原始副本。
+    backupJsoncIfPresent(raw, filePath);
     return parsed;
   } catch {
     const backupPath = `${filePath}.corrupt.${randomUUID()}.bak`;
@@ -164,6 +170,32 @@ export function readJsonConfigWithBackup(filePath: string): Record<string, unkno
     );
     return {};
   }
+}
+
+/**
+ * M-8(2026-10-22 审查): unconfigure 侧读取——与 configure 共用 JSONC 备份策略。
+ *
+ * 此前 unconfigure 用 readJsonForCheck(纯读不备份)剥注释后 JSON.stringify 重写,
+ * 用户的 JSONC 注释被静默删除且无任何备份可找回(审查 M-8;antigravity/opencode
+ * 同源,见审查 L-29)。本函数在重写路径前落 .jsonc 备份。
+ *
+ * 与 readJsonConfigWithBackup 的区别(损坏 JSON 语义相反):
+ * - 损坏 JSON → **抛错**。unconfigure 无新内容要写,备份+重写反而扩大破坏面,
+ *   正确行为是不动用户文件并让命令层报 ✗(对齐原 readJsonForCheck 调用方注释)。
+ * - 合法 JSONC → 落 .jsonc 备份后返回解析结果(注释会丢,但有备份 + warn 提示)。
+ * - 文件不存在 → 返回 null(调用方视为未配置)。
+ */
+export function readJsonConfigForUnconfigure(filePath: string): Record<string, unknown> | null {
+  if (!existsSync(filePath)) return null;
+  const raw = readFileSync(filePath, 'utf-8');
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(stripJsonc(stripBom(raw))) as Record<string, unknown>;
+  } catch {
+    throw new Error(`config parse error: ${filePath}`);
+  }
+  backupJsoncIfPresent(raw, filePath);
+  return parsed;
 }
 
 /**
