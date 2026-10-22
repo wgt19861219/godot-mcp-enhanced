@@ -134,6 +134,7 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('H1 send_input_sequence e2e (L
   }
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     // 清理本文件注入的 env(防 T11 同款测试污染:同 worker 后续 bridge 测试继承 EXTRA_METHODS)
     delete process.env.GODOT_MCP_BRIDGE_EXTRA_METHODS;
     try {

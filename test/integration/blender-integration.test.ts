@@ -51,5 +51,6 @@ describe.skipIf(!run)('execute_bpy integration (real blender)', () => {
 });
 
 describe.skipIf(run)('execute_bpy integration', () => {
-  it('skipped (no blender — set GODOT_BLENDER_PATH to enable)', () => { expect(true).toBe(true); });
+  // 2026-10-22 审查 Medium-T1:占位恒真断言改显式 it.skip(WEAK_RE 已覆盖该形态)
+  it.skip('skipped (no blender — set GODOT_BLENDER_PATH to enable)', () => { /* 占位:run=true 时由 skipIf 接管 */ });
 });

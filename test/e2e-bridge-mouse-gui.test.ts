@@ -140,6 +140,7 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('C1 send_mouse_click gui_input
   }, 200000);
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     // 清理本文件注入的 env(防同 worker 后续 bridge 测试继承 EXTRA_METHODS)
     delete process.env.GODOT_MCP_BRIDGE_EXTRA_METHODS;
     try {
@@ -297,6 +298,7 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('C2 headless spawn 输入派�
   });
 
   afterAll(() => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try {
       writeFileSync(resolve(FIXTURE, 'project.godot'), projectGodotSnap);
       rmSync(resolve(FIXTURE, '.godot'), { recursive: true, force: true });

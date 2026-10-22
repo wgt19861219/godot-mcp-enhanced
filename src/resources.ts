@@ -8,11 +8,12 @@ import { readFile, stat } from 'fs/promises';
 import { resolve, join, extname, sep, basename } from 'path';
 import { parseTscnSummary } from './tscn/tscn-parser.js';
 import { parseConfigValue } from './core/config-parser.js';
-import { safeRealPath, iterativeDecode, isPathInAllowedRoots, resolveWithinRoot } from './core/path-utils.js';
+import { safeRealPath, iterativeDecode, isPathInAllowedRoots, resolveWithinRoot, relPathOf } from './core/path-utils.js';
 import { scanFiles } from './core/file-scanner.js';
 import { getGateStatus } from './core/action-gate.js';
 import { getActiveGroups, TOOL_GROUPS } from './core/tool-registry.js';
-import { packagedSkillsDir, listPackagedSkills } from './cli/skills.js';
+// N-6 下沉(2026-10-22):不再 import ./cli/skills.js(server 基础设施不依赖 CLI 模块)
+import { packagedSkillsDir, listPackagedSkills } from './packaged-skills.js';
 
 const MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB — reject files larger than this
 
@@ -474,7 +475,9 @@ function scanForResources(projectPath: string, resources: McpResource[]): void {
   const files = scanFiles(projectPath, ['.tscn', '.gd'], { skipDirs: [...FORBIDDEN_DIRS] });
   for (const f of files) {
     if (resources.length >= MAX_RESOURCES) break;
-    const rel = f.replace(projectPath + (process.platform === 'win32' ? '\\' : '/'), '');
+    // R3-tools(2026-10-22 审查 Nit-8): 裸前缀剥离残留第 10 处——归一化失败时 rel 保留
+    // 绝对前缀产出畸形 URI;换公共 relPathOf(归一分隔符/盘符,失配显式 throw)
+    const rel = relPathOf(f, projectPath);
     const entryName = basename(f);
     const ext = extname(entryName).toLowerCase();
     if (ext === '.tscn') {

@@ -58,11 +58,14 @@ export default tseslint.config(
   // gdscript-executor/tscn——module-loader import 全部工具模块,tools 层恰是最高频改动面):
   // 入口 + GodotServer + module-loader + gdscript-executor + core + daemon + tools + tscn +
   // web-gui server 进程内文件(server/registry/settings-api)。
+  // 2026-10-22 审查 Major-A1:resources.ts(GodotServer readMcpResource 消费)与
+  // packaged-skills.ts(N-6 下沉产物)均在 server 可达面,补入清单。
   {
     files: [
       'src/index.ts', 'src/GodotServer.ts', 'src/module-loader.ts', 'src/gdscript-executor.ts',
       'src/core/**/*.ts', 'src/daemon/**/*.ts', 'src/tools/**/*.ts', 'src/tscn/**/*.ts',
       'src/web-gui/server.ts', 'src/web-gui/registry.ts', 'src/web-gui/settings-api.ts',
+      'src/resources.ts', 'src/packaged-skills.ts',
     ],
     rules: {
       'no-restricted-syntax': ['error', {

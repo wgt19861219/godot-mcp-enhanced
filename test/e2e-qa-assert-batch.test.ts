@@ -74,6 +74,7 @@ describe('L2 e2e: qa 断言四件套 + 人为破坏（真 Godot）', () => {
   });
 
   afterAll(() => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     if (!RUN) return;
     // 进程槽兜底清理(qa stop_after 正常已停;防中途失败泄漏游戏进程占 9081)
     const proc = ps.getRunningProcess();

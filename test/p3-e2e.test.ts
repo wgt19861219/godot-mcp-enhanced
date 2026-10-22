@@ -126,6 +126,7 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('P3 e2e (L2)', { timeout: 240_
   }, 200000);
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try {
       const mod = getModuleForTool('runtime');
       if (mod) await mod.handleTool('runtime', { project_path: FIXTURE, action: 'stop_project' }, makeCtx());

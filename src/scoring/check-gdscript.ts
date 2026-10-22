@@ -47,6 +47,22 @@ export function listGd(root: string): string[] {
   return out;
 }
 
+/** 递归收集插件加载面非脚本资产(.cfg/.tscn)。2026-10-22 审查 Major-F1:
+ *  syncCheckProjectFixture 原只拷 .gd,plugin.cfg 与 ui/status_panel.tscn 不随链填充,
+ *  而 fixture addons/ 被 .gitignore → CI 全新 checkout 上 project.godot 的 enabled 指向
+ *  不存在的 plugin.cfg,插件(含 preload status_panel.tscn 链)实际从未启用,check:gdscript
+ *  的编辑器模式覆盖在 CI 落空。symlink 排除同 listGd。 */
+export function listPluginAssets(root: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(root, { withFileTypes: true })) {
+    if (e.isSymbolicLink()) continue;
+    const p = join(root, e.name);
+    if (e.isDirectory()) out.push(...listPluginAssets(p));
+    else if (e.name.endsWith('.cfg') || e.name.endsWith('.tscn')) out.push(p);
+  }
+  return out;
+}
+
 // ===== main(IO 层) =====
 
 const SRC_ADDON = resolve(process.cwd(), 'addons', 'godot_mcp_server');
@@ -71,11 +87,19 @@ function writeReport(r: GdscriptReport): void {
  * (test/global-setup.ts)共用——CI check job 的 vitest 跑在本脚本之前,不填充则
  * Godot load() 得 null → SCRIPT ERROR → SceneTree _init 中断 quit() 不执行 → 挂死超时。
  */
-export function syncCheckProjectFixture(): { addonFiles: string[]; scriptFiles: string[] } {
+export function syncCheckProjectFixture(): { addonFiles: string[]; scriptFiles: string[]; assetFiles: string[] } {
   const addonFiles = listGd(SRC_ADDON);
   const scriptFiles = listGd(SRC_SCRIPTS);
+  // Major-F1 (2026-10-22): plugin.cfg/status_panel.tscn 等插件加载面资产必须随链填充,
+  // 否则 CI 全新 checkout 上插件悬空启用(fixture addons/ 不进 git,本地残留会掩盖断链)。
+  const assetFiles = listPluginAssets(SRC_ADDON);
   mkdirSync(CHECK_ADDON, { recursive: true });
   for (const f of addonFiles) {
+    const dst = resolve(CHECK_ADDON + f.slice(SRC_ADDON.length));
+    mkdirSync(dirname(dst), { recursive: true });
+    copyFileSync(f, dst);
+  }
+  for (const f of assetFiles) {
     const dst = resolve(CHECK_ADDON + f.slice(SRC_ADDON.length));
     mkdirSync(dirname(dst), { recursive: true });
     copyFileSync(f, dst);
@@ -86,7 +110,7 @@ export function syncCheckProjectFixture(): { addonFiles: string[]; scriptFiles: 
     mkdirSync(dirname(dst), { recursive: true });
     copyFileSync(f, dst);
   }
-  return { addonFiles, scriptFiles };
+  return { addonFiles, scriptFiles, assetFiles };
 }
 
 async function main(): Promise<void> {
@@ -106,6 +130,18 @@ async function main(): Promise<void> {
   // ② 复制 addon + src/scripts 进检查项目(每次新拷最新源)
   const { addonFiles, scriptFiles } = syncCheckProjectFixture();
   const expected = addonFiles.length + scriptFiles.length;
+
+  // ②b Major-F1 自检(2026-10-22):填充后插件加载面必须在场。enabled 指向缺失
+  // plugin.cfg 时 Godot 只输出 core 层 ERROR(不匹配 RE_ERROR),CI 会假绿——
+  // 以 incomplete 硬否决显式暴露断链,而非静默漏编译插件加载面。
+  if (!existsSync(join(CHECK_ADDON, 'plugin.cfg'))) {
+    process.stderr.write(
+      '[Major-F1] fixture 同步后 plugin.cfg 缺失——插件加载面供给链断链,编辑器模式覆盖不可信。\n',
+    );
+    writeReport({ errors: 0, warnings: 0, files: 0, details: [], detailsTotal: 0,
+                  incomplete: true, reason: 'fixture plugin.cfg missing after sync (plugin enable surface broken)' });
+    return;
+  }
 
   // ③ runGodotHeadless --import(复用 helper,继承 forceKillTree)
   let result;

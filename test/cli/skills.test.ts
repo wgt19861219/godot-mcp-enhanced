@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
-  listPackagedSkills, installSkills, packagedSkillsDir, runSkills, CLIENT_SKILLS_DIRS,
+  installSkills, runSkills, CLIENT_SKILLS_DIRS,
 } from '../../src/cli/skills.js';
+// N-6 下沉(2026-10-22):两个纯函数移至 src/packaged-skills.ts
+import { listPackagedSkills, packagedSkillsDir } from '../../src/packaged-skills.js';
 
 // ─── 纯函数:listPackagedSkills / installSkills ─────────────────────────────
 

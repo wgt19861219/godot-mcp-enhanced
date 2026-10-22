@@ -453,7 +453,11 @@ export function registerBridgePushHandler(handler: ((params: Record<string, unkn
  *  下不可根除,GODOT_MCP_REQUIRE_CR_AUTH=true 可硬锁拒一切降级。 */
 async function _doConnect(timeout: number): Promise<Socket> {
   // 批4-T2: 降级记忆 TTL 内直接明文;过期则重试 CR(成功复位,失败按降级矩阵处置)
-  if (_bridgeLegacyAuth && Date.now() - _bridgeLegacyAuthSince < LEGACY_AUTH_RETRY_TTL_MS) {
+  // Nit-N1(2026-10-22 审查): 补 !_requireBridgeCrAuth()——与降级写入点(:470)和 probe
+  // 降级点对称。正常时序不可达(REQUIRE=true 时记忆永不写入),仅 env 运行时从无到有
+  // 且 TTL 窗口内残留旧记忆时成立,防御对称性收口。
+  if (_bridgeLegacyAuth && !_requireBridgeCrAuth()
+      && Date.now() - _bridgeLegacyAuthSince < LEGACY_AUTH_RETRY_TTL_MS) {
     return _openSocket(timeout, true);
   }
   try {
@@ -976,40 +980,45 @@ function probeCr(port: number, secret: string, timeoutMs: number): Promise<boole
     // 已解析行必须消费(substring(idx+1),对齐 :552/:654/:835 既有处理器)——否则
     // challenge 行永远停在 buffer 头部,authenticated 响应永远解析不到,真机必超时
     // (2026-10-14 CI 事故:mock 测试对每次 auth_proof 都回包,掩盖了该缺陷)。
+    // Nit-2(2026-10-22 审查): while 循环处理完 buffer 内全部完整行(对齐 :547-553
+    // 既有连接处理器)——同包多行不再等下一次 data 事件;challenge 行前有非 JSON
+    // banner 行时免白耗 1s 超时(fail-closed 语义不变)。
     let buffer = '';
     sock.on('data', (data: Buffer) => {
       if (settled) return;
       buffer += data.toString();
-      const idx = buffer.indexOf('\n');
-      if (idx === -1) return;
-      const line = buffer.substring(0, idx);
-      buffer = buffer.substring(idx + 1);
-      try {
-        const resp = JSON.parse(line.trim()) as {
-          result?: { challenge?: unknown; authenticated?: unknown };
-          error?: unknown;
-        };
-        // 旧 bridge:对 auth_begin 回 JSON-RPC error → 走降级矩阵(见 probeOnce docstring)。
-        // CR 阶段就此结束,结果由降级探测决定。
-        if (resp.error !== undefined) {
-          settled = true;
-          clearTimeout(timer);
-          sock.destroy();
-          degradeProbeLegacy(port, secret, timeoutMs).then(resolve);
-          return;
-        }
-        // 合法 challenge(形态校验对齐 _openSocket N-5:≥16)→ 发 HMAC proof,secret 不上线
-        const ch = resp.result?.challenge;
-        if (typeof ch === 'string' && ch.length >= 16) {
-          const proof = createHmac('sha256', secret).update(ch, 'utf8').digest('hex');
-          sock.write(JSON.stringify({ id: 1, method: 'auth_proof', params: { proof } }) + '\n');
-          return;
-        }
-        // proof 后的 authenticated 判定;其余形态(result 无 challenge/authenticated 的
-        // 异形响应)一律 not-ready(fail-closed,防占端口者伪造成 ready)
-        if (resp.result?.authenticated === true) done(true);
-        else if (resp.result?.authenticated === false) done(false);
-      } catch { /* 部分/非 JSON 数据,等待完整行或超时 */ }
+      let idx = buffer.indexOf('\n');
+      while (idx !== -1 && !settled) {
+        const line = buffer.substring(0, idx);
+        buffer = buffer.substring(idx + 1);
+        idx = buffer.indexOf('\n');
+        try {
+          const resp = JSON.parse(line.trim()) as {
+            result?: { challenge?: unknown; authenticated?: unknown };
+            error?: unknown;
+          };
+          // 旧 bridge:对 auth_begin 回 JSON-RPC error → 走降级矩阵(见 probeOnce docstring)。
+          // CR 阶段就此结束,结果由降级探测决定。
+          if (resp.error !== undefined) {
+            settled = true;
+            clearTimeout(timer);
+            sock.destroy();
+            degradeProbeLegacy(port, secret, timeoutMs).then(resolve);
+            return;
+          }
+          // 合法 challenge(形态校验对齐 _openSocket N-5:≥16)→ 发 HMAC proof,secret 不上线
+          const ch = resp.result?.challenge;
+          if (typeof ch === 'string' && ch.length >= 16) {
+            const proof = createHmac('sha256', secret).update(ch, 'utf8').digest('hex');
+            sock.write(JSON.stringify({ id: 1, method: 'auth_proof', params: { proof } }) + '\n');
+            continue;
+          }
+          // proof 后的 authenticated 判定;其余形态(result 无 challenge/authenticated 的
+          // 异形响应)一律 not-ready(fail-closed,防占端口者伪造成 ready)
+          if (resp.result?.authenticated === true) { done(true); return; }
+          if (resp.result?.authenticated === false) { done(false); return; }
+        } catch { /* 部分/非 JSON 行,继续处理剩余完整行 */ }
+      }
     });
     sock.on('error', () => done(false));
   });
@@ -1032,18 +1041,21 @@ function degradeProbeLegacy(port: number, secret: string, timeoutMs: number): Pr
     sock.on('data', (data: Buffer) => {
       if (settled) return;
       buffer += data.toString();
-      const idx = buffer.indexOf('\n');
-      if (idx === -1) return;
-      const line = buffer.substring(0, idx);
-      buffer = buffer.substring(idx + 1); // 消费已解析行(对齐 probeCr 修复)
-      try {
-        const resp = JSON.parse(line.trim()) as { result?: { authenticated?: unknown } };
-        if (resp.result?.authenticated === true) {
-          settled = true; clearTimeout(timer); sock.destroy(); resolve(true);
-        } else if (resp.result?.authenticated === false) {
-          settled = true; clearTimeout(timer); sock.destroy(); resolve(false);
-        }
-      } catch { /* 部分/非 JSON 数据,忽略 */ }
+      // Nit-2(2026-10-22 审查): while 循环处理完 buffer 内全部完整行(同 probeCr)
+      let idx = buffer.indexOf('\n');
+      while (idx !== -1 && !settled) {
+        const line = buffer.substring(0, idx);
+        buffer = buffer.substring(idx + 1); // 消费已解析行(对齐 probeCr 修复)
+        idx = buffer.indexOf('\n');
+        try {
+          const resp = JSON.parse(line.trim()) as { result?: { authenticated?: unknown } };
+          if (resp.result?.authenticated === true) {
+            settled = true; clearTimeout(timer); sock.destroy(); resolve(true);
+          } else if (resp.result?.authenticated === false) {
+            settled = true; clearTimeout(timer); sock.destroy(); resolve(false);
+          }
+        } catch { /* 部分/非 JSON 行,继续处理剩余完整行 */ }
+      }
     });
     sock.on('error', () => {
       if (!settled) { settled = true; clearTimeout(timer); resolve(false); }

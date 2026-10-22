@@ -204,6 +204,12 @@ describe('findGodot', () => {
 // ─── Project-level override tests ──────────────────────────────────────────────
 
 describe('findGodot with projectPath', () => {
+  // 2026-10-22 Major-S1: 项目 override 现走 origin='override'(白名单未配置 fail-closed)。
+  // 本 describe 测读取/优先级/缓存语义,统一旁路白名单;收紧语义由下方专项 describe 覆盖。
+  beforeEach(() => {
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', 'true');
+  });
+
   it('reads godot_path from .godot/mcp-godot.json', async () => {
     const projectPath = '/projects/my-game';
     const godotBin = '/opt/godot/Godot_v4.6.3';
@@ -390,6 +396,48 @@ describe('findGodot with projectPath', () => {
     mockExecFileError();
 
     await expect(findGodot()).rejects.not.toThrow('mcp-godot.json');
+  });
+});
+
+// ─── Project override whitelist hardening (2026-10-22 Major-S1) ────────────────
+// 项目 override 三来源均为项目内 AI 可写文件,与工具参数 godot_path 面同威胁链:
+// 白名单未配置时 fail-closed(origin='override'),被拒回落 GODOT_PATH env/自动发现。
+
+describe('project override whitelist hardening', () => {
+  it('rejects project override without whitelist configured (fail-closed), falls back to GODOT_PATH env', async () => {
+    const projectPath = '/projects/my-game';
+    const projectBin = '/opt/godot/Project';
+    const envBin = '/opt/godot/Env';
+
+    // test/setup.js 全局设 UNRESTRICTED=true 绕过白名单;本用例测收紧语义,须显式覆盖为空
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
+    vi.stubEnv('GODOT_PATH', envBin);
+    // 白名单 env 未配置;readGodotPathsConfig 的 godot-paths.json 在 existsSync mock 下不存在 → allowed 空
+    existsSyncMock.mockImplementation((p) =>
+      p === projectBin || p === envBin || p.endsWith('mcp-godot.json')
+    );
+    readFileSyncMock.mockReturnValue(JSON.stringify({ godot_path: projectBin }));
+    mockExecFileSuccess('Godot v4.3');
+
+    const result = await findGodot(projectPath);
+    expect(result).toBe(envBin);
+  });
+
+  it('allows project override when the path is whitelisted', async () => {
+    const projectPath = '/projects/my-game';
+    const projectBin = '/opt/godot/Project';
+
+    // 覆盖 setup 的全局 UNRESTRICTED,确保走白名单匹配真路径而非 bypass
+    vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
+    vi.stubEnv('GODOT_MCP_ALLOWED_GODOT_PATHS', projectBin);
+    existsSyncMock.mockImplementation((p) =>
+      p === projectBin || p.endsWith('mcp-godot.json')
+    );
+    readFileSyncMock.mockReturnValue(JSON.stringify({ godot_path: projectBin }));
+    mockExecFileSuccess('Godot v4.3');
+
+    const result = await findGodot(projectPath);
+    expect(result).toBe(projectBin);
   });
 });
 

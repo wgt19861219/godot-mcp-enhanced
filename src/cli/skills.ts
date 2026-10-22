@@ -10,31 +10,13 @@
  * load_skill 库——env `GODOT_SKILL_LIBRARIES` 指向该目录即可(load_skill 递归扫 .md)。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { homedir } from 'os';
-import { fileURLToPath } from 'url';
 import { opt, hasFlag } from './args.js';
 import { auditSkillsInstall } from './audit-helper.js';
-
-/** 打包内 skills 分发目录(相对本文件:build/cli/ → 包根 skills/) */
-export function packagedSkillsDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  // build/cli/skills.js → 包根;dev 场景 build/cli → 仓库根
-  return join(here, '..', '..', 'skills');
-}
-
-/** 列出打包 skills(name + description 摘自 SKILL.md frontmatter) */
-export function listPackagedSkills(skillsDir: string): { name: string; description: string }[] {
-  const out: { name: string; description: string }[] = [];
-  for (const entry of readdirSync(skillsDir)) {
-    const skillMd = join(skillsDir, entry, 'SKILL.md');
-    if (!existsSync(skillMd)) continue;
-    const content = readFileSync(skillMd, 'utf-8');
-    const descMatch = content.match(/^description:\s*"([\s\S]*?)"\s*$/m);
-    out.push({ name: entry, description: descMatch?.[1]?.slice(0, 120) ?? '' });
-  }
-  return out.sort((a, b) => a.name.localeCompare(b.name));
-}
+// N-6 下沉(2026-10-22):packagedSkillsDir/listPackagedSkills 移至 src/packaged-skills.ts
+// ——resources.ts(server 进程)不再依赖 CLI 模块;本文件按新路径引用。
+import { packagedSkillsDir, listPackagedSkills } from '../packaged-skills.js';
 
 /** 安装:拷贝打包 skills 到目标目录(默认 ~/.claude/skills/)。已存在的跳过(--force 覆盖) */
 export function installSkills(

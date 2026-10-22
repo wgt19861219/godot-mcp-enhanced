@@ -170,7 +170,8 @@ vi.mock('../../src/core/process-state.js', async (importOriginal) => {
 import { GodotServer } from '../../src/GodotServer.js';
 import { WebGuiServer } from '../../src/web-gui/server.js';
 import { ProjectsStore } from '../../src/web-gui/projects-store.js';
-import { executeRunProject } from '../../src/tools/runtime.js';
+// 2026-10-22 审查 Nit-9: 删除 vi.mock 定向替换后零引用的 executeRunProject 真实 import
+// (55ff49ad 存量;mock 工厂用模块路径字符串,不依赖此标识符)
 import { tryAcquireImportLock, releaseImportLock, isImportLocked, resetImportLocks } from '../../src/web-gui/import-mutex.js';
 import { normalizeProjectKey, setSessionStatus, appendOutput, setRunSessionProc, removeRunSession } from '../../src/core/process-state.js';
 

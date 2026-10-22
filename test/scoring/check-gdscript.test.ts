@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { parseGdscriptOutput, extractClassNames, listGd } from '../../src/scoring/check-gdscript.js';
+import { parseGdscriptOutput, extractClassNames, listGd, listPluginAssets } from '../../src/scoring/check-gdscript.js';
 
 describe('parseGdscriptOutput', () => {
   it('SCRIPT ERROR 行计入 errors', () => {
@@ -93,6 +93,28 @@ describe('listGd', () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── listPluginAssets(2026-10-22 审查 Major-F1:插件加载面资产随链填充)───────
+
+describe('listPluginAssets', () => {
+  it('递归收集 .cfg/.tscn(排除 .gd 与其他扩展名)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'listassets-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'plugin.cfg'), 'x');
+      fs.mkdirSync(path.join(tmp, 'ui'), { recursive: true });
+      fs.writeFileSync(path.join(tmp, 'ui', 'panel.tscn'), 'x');
+      fs.writeFileSync(path.join(tmp, 'a.gd'), 'x');
+      fs.writeFileSync(path.join(tmp, 'a.gd.uid'), 'x');
+      fs.writeFileSync(path.join(tmp, 'icon.png'), 'x');
+      const files = listPluginAssets(tmp);
+      expect(files.length).toBe(2);
+      expect(files.some(f => f.endsWith('plugin.cfg'))).toBe(true);
+      expect(files.some(f => f.endsWith('panel.tscn'))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });
