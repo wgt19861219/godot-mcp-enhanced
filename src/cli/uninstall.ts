@@ -123,6 +123,48 @@ async function findAliveInstances(): Promise<{ project: string; port: number; pi
   }
 }
 
+/** L-18(2026-10-22 审查): addon 目录删除前的分发清单比对结果。
+ *  removable = 与本仓分发逐字节一致的文件(工具自资产,可安全删除);
+ *  keep = 用户改过(modified)或自加(untracked)的文件——此前 addon 目录 rmSync
+ *  recursive 整删连坐(仅 bridge 脚本做过 tool-managed 比对,审查 L-18)。 */
+export interface AddonRemovalDiff {
+  removable: string[];  // rel 路径(相对 addons/godot_mcp_server)
+  keep: Array<{ rel: string; reason: 'modified' | 'untracked' }>;
+}
+
+/** 比对项目 addon 目录与本仓分发目录(纯函数,单测锚点)。
+ *  distDir 不存在 → null(调用方保守跳过删除);`<file>.uid` 且 dist 存在 `<file>`
+ *  → Godot 引擎伴生文件,视为 removable(与 bridge 脚本 .uid 删除先例一致)。 */
+export function diffAddonForRemoval(projectAddonDir: string, distAddonDir: string): AddonRemovalDiff | null {
+  if (!existsSync(distAddonDir)) return null;
+  const diff: AddonRemovalDiff = { removable: [], keep: [] };
+  const walk = (relDir: string): void => {
+    const absDir = relDir ? join(projectAddonDir, relDir) : projectAddonDir;
+    let entries: Dirent[];
+    try { entries = readdirSync(absDir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const rel = relDir ? `${relDir}/${e.name}` : e.name;
+      if (e.isDirectory()) { walk(rel); continue; }
+      if (!e.isFile()) { diff.keep.push({ rel, reason: 'untracked' }); continue; }  // symlink 等
+      const distPath = join(distAddonDir, rel);
+      try {
+        if (rel.endsWith('.uid') && existsSync(join(distAddonDir, rel.slice(0, -'.uid'.length)))) {
+          diff.removable.push(rel);  // 引擎为分发 .gd 生成的伴生 uid
+          continue;
+        }
+        if (!existsSync(distPath)) { diff.keep.push({ rel, reason: 'untracked' }); continue; }
+        if (readFileSync(join(projectAddonDir, rel), 'utf-8') === readFileSync(distPath, 'utf-8')) {
+          diff.removable.push(rel);
+        } else {
+          diff.keep.push({ rel, reason: 'modified' });
+        }
+      } catch { diff.keep.push({ rel, reason: 'modified' }); }  // 读失败按保守处理
+    }
+  };
+  walk('');
+  return diff;
+}
+
 export async function runUninstall(args: string[]): Promise<void> {
   const dryRun = hasFlag(args, 'dry-run');
   const assumeYes = hasFlag(args, 'yes');
@@ -226,11 +268,34 @@ export async function runUninstall(args: string[]): Promise<void> {
       }
     }
     if (hasAddon) {
-      if (dryRun) console.log(`  - 将删除 ${addonDir}(${readdirSync(addonDir).length} 项)`);
-      else {
+      // L-18(2026-10-22 审查): addon 目录整删前与本仓分发清单逐文件比对——
+      // 用户改过/自加的文件保留并警告;分发目录不可用时保守跳过(宁可残留不误删)。
+      const distAddonDir = join(pkgRoot, 'addons', 'godot_mcp_server');
+      const addonDiff = diffAddonForRemoval(addonDir, distAddonDir);
+      if (dryRun) {
+        if (addonDiff && addonDiff.keep.length > 0) {
+          console.log(`  - 将删除 ${addonDir} 工具自资产 ${addonDiff.removable.length} 个;保留用户文件 ${addonDiff.keep.length} 个(改过/自加,见执行时 ! 行)`);
+        } else if (addonDiff === null) {
+          console.log(`  ! 分发清单不可用(${distAddonDir} 不存在)——将跳过 addon 删除`);
+        } else {
+          console.log(`  - 将删除 ${addonDir}(${readdirSync(addonDir).length} 项)`);
+        }
+      } else if (addonDiff === null) {
+        console.log(`  ! 分发清单不可用(${distAddonDir} 不存在)——跳过 addon 删除,请手动确认后删 ${addonDir}`);
+        failed++;
+      } else if (addonDiff.keep.length === 0) {
         rmSync(addonDir, { recursive: true, force: true });
         changedFiles.push('addons/godot_mcp_server');
         console.log('  ✓ addons/godot_mcp_server 已删除');
+      } else {
+        for (const rel of addonDiff.removable) {
+          try { unlinkSync(join(addonDir, rel)); } catch { /* best effort */ }
+        }
+        for (const k of addonDiff.keep) {
+          console.log(`  ! addons/godot_mcp_server/${k.rel}: ${k.reason === 'modified' ? '与本仓分发不一致(用户改过)' : '非本工具分发文件(用户自加)'}——保留,需要请手动删`);
+        }
+        changedFiles.push('addons/godot_mcp_server(部分)');
+        console.log(`  ✓ 工具自资产 ${addonDiff.removable.length} 个文件已删除;${addonDiff.keep.length} 个用户文件保留(见 ! 行)`);
       }
     }
     if (scriptToolManaged) {
