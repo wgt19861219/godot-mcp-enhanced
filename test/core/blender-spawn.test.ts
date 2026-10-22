@@ -2,8 +2,8 @@ import { it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
 
 class FakeProc extends EventEmitter {
-  stdout = new EventEmitter();
-  stderr = new EventEmitter();
+  stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+  stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
   pid = 12345;
 }
 
@@ -47,14 +47,16 @@ it('accumulates stdout/stderr and resolves exitCode on close', async () => {
   expect(r).toEqual({ exitCode: 0, stdout: 'out1-out2', stderr: 'err' });
 });
 
-it('resolves exitCode null on timeout (forceKillTree)', async () => {
+it('resolves exitCode null on timeout (forceKillTree; L-15 等真实 close 才 resolve)', async () => {
   vi.useFakeTimers();
   const proc = new FakeProc();
   mockSpawn.mockReturnValue(proc);
   const p = runBlenderHeadless(['--background'], '/fake/blender', 1000);
   vi.advanceTimersByTime(1001);
+  expect(mockForceKillTree).toHaveBeenCalledWith(proc);
+  // L-15(2026-10-22 审查): 超时分支不再裸 resolve,等 close(kill 发出后进程退出)
+  proc.emit('close', null);
   const r = await p;
   expect(r.exitCode).toBeNull();
-  expect(mockForceKillTree).toHaveBeenCalledWith(proc);
   vi.useRealTimers();
 });
