@@ -49,7 +49,8 @@ describe('checkBudget', () => {
     // (P8 热加载/SSOT 描述 + P9 dap 工具正当增量推至 ~103.9KB,审查 N-5 记录)
     // 易用性批 1 (2026-09-19) 23 工具 action 描述补全等正当增量 ~4.7KB 推至 ~110.8KB——
     // 校准 105→112KB(error 120KB 硬线不变),见 check-token-budget.mjs 注释
-    expect(THRESHOLDS.totalSum.warn).toBe(112 * 1024);
+    // B1 (2026-10-19) find_ui_elements role/match 参数正当增量推至 ~112.5KB——校准 112→116KB
+    expect(THRESHOLDS.totalSum.warn).toBe(116 * 1024);
     expect(THRESHOLDS.totalSum.error).toBe(120 * 1024);
   });
 });

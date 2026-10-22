@@ -434,4 +434,79 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('P7 e2e (L2)', { timeout: 240_
     const restoreDbg = await playtestCall('playtest.restore', {});
     expect(restoreDbg.err).toBe('');
   });
+
+  // B1 (2026-10-19): find_ui_elements role 过滤(11 值)+ match 模式(wildcard/exact/contains)。
+  // 控件由 setup_b1_ui() 用例内动态创建(不扰动 OBS-g 等既有 pattern 断言)。
+  it('OBS-n: find_ui_elements role 过滤(11 值)+ match 三模式 + 非法值报错', async (ctx) => {
+    if (_initError) return ctx.skip(_initError);
+    const setup = await callMain('setup_b1_ui');
+    expect(setup.ok, 'setup_b1_ui 建控件').toBe(true);
+
+    const findUi = async (args: Record<string, unknown>): Promise<{ els: Array<Record<string, unknown>>; err: string }> => {
+      const res = await callTool({ action: 'find_ui_elements', ...args });
+      if (res.isError) return { els: [], err: res.text };
+      try {
+        return { els: (JSON.parse(res.text) as { elements: Array<Record<string, unknown>> }).elements, err: '' };
+      } catch (e) {
+        return { els: [], err: `JSON parse: ${String(e)}` };
+      }
+    };
+    const namesOf = (els: Array<Record<string, unknown>>): string[] => els.map(e => String((e.path as string).split('/').pop()));
+
+    // role 过滤:11 值各至少一命中 + 关键不越界(集合断言,不依赖引擎内部子节点数量)
+    for (const [role, expectIn, expectOut] of [
+      ['combobox', ['B1Combo'], ['MyCheck', 'MyButton', 'B1Text']],
+      ['list', ['B1List'], ['MyButton', 'B1Combo']],
+      ['tablist', ['B1Tab'], ['MyButton', 'B1List']],
+      ['checkbox', ['MyCheck'], ['MyButton']],  // CheckBox 子类先判,不被 button 吞
+      ['progressbar', ['B1Progress'], ['B1Slide']],  // ProgressBar/Slider 同属 Range,先判 progressbar
+      ['button', ['MyButton'], ['MyCheck', 'B1Combo']],  // OptionButton 是 combobox 非 button
+      ['text', ['B1Text'], ['MyButton', 'B1Line']],
+      ['textbox', ['B1Line'], ['B1Text', 'MyCheck']],
+      ['slider', ['B1Slide'], ['B1Progress']],
+      ['scrollarea', ['B1Scroll'], ['B1List', 'B1Tab']],
+      ['panel', ['Root'], ['MyButton', 'MyCheck', 'B1Combo', 'B1Text']],  // UI/Root 是无 role 命中的 Control
+    ] as const) {
+      const { els, err } = await findUi({ role });
+      expect(err, `role=${role} 不应报错`).toBe('');
+      const names = namesOf(els);
+      for (const want of expectIn) expect(names.includes(want), `role=${role} 应含 ${want}(实际: ${names.join(',')})`).toBe(true);
+      for (const nope of expectOut) expect(names.includes(nope), `role=${role} 不应含 ${nope}`).toBe(false);
+      for (const el of els) expect(el.role, `role=${role} 结果 role 字段一致`).toBe(role);
+    }
+
+    // match=exact:全等比较(name 通道),wildcard 字符不解释
+    const exactHit = await findUi({ match: 'exact', pattern: 'MyButton' });
+    expect(namesOf(exactHit.els)).toEqual(['MyButton']);
+    const exactNoWild = await findUi({ match: 'exact', pattern: '*MyButton*' });
+    expect(namesOf(exactNoWild.els), 'exact 下 * 不是通配符').toEqual([]);
+    // exact 的 text/label 通道:MyCheck 的 text="MyCheck"(tscn 属性)
+    const exactText = await findUi({ match: 'exact', pattern: 'MyCheck' });
+    expect(namesOf(exactText.els)).toContain('MyCheck');
+    // exact 的 label 通道:B1Text 的 label=text="LabelTextSample"
+    const exactLabel = await findUi({ match: 'exact', pattern: 'LabelTextSample' });
+    expect(namesOf(exactLabel.els), 'label 全等命中').toEqual(['B1Text']);
+
+    // match=contains:子串(name/text/label)
+    const containsName = await findUi({ match: 'contains', pattern: 'MyBut' });
+    expect(namesOf(containsName.els)).toEqual(['MyButton']);
+    const containsText = await findUi({ match: 'contains', pattern: 'TextSample' });
+    expect(namesOf(containsText.els), 'text 子串命中').toContain('B1Text');
+    expect(namesOf(containsText.els)).not.toContain('B1Line');  // EditSample 不含 TextSample
+    const containsMiss = await findUi({ match: 'contains', pattern: 'zzz-not-exist' });
+    expect(namesOf(containsMiss.els)).toEqual([]);
+
+    // 默认 wildcard(不传 match)行为不变:通配符生效
+    const wild = await findUi({ pattern: '*MyCheck*' });
+    expect(namesOf(wild.els)).toEqual(['MyCheck']);
+    // role 与 pattern 组合
+    const combo = await findUi({ role: 'button', match: 'contains', pattern: 'My' });
+    expect(namesOf(combo.els)).toEqual(['MyButton']);
+
+    // 非法值报错(role/match 各一)
+    const badRole = await findUi({ role: 'Button' });
+    expect(badRole.err).toContain('Invalid role');
+    const badMatch = await findUi({ match: 'regex' });
+    expect(badMatch.err).toContain('Invalid match mode');
+  });
 });

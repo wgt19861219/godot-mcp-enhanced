@@ -2298,11 +2298,25 @@
           },
           "pattern": {
             "type": "string",
-            "description": "find_ui_elements: 名称/文字匹配模式（Godot match 语法）"
+            "description": "find_ui_elements: 名称/文字匹配(语义按 match:wildcard=Godot match 语法,exact/contains=全等/子串)"
           },
           "type": {
             "type": "string",
             "description": "find_ui_elements: 按类型过滤（如 \"Button\"、\"Label\"）"
+          },
+          "role": {
+            "type": "string",
+            "description": "find_ui_elements: 按语义角色过滤(同输出 role 枚举):combobox/list/tablist/checkbox/progressbar/button/text/textbox/slider/scrollarea/panel;空=不过滤,非法值报错"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "wildcard",
+              "exact",
+              "contains"
+            ],
+            "description": "find_ui_elements: pattern 匹配模式。wildcard(默认)=Godot match 通配符扫 name/text;exact=全等;contains=子串(exact/contains 额外扫 label)",
+            "default": "wildcard"
           },
           "visible_only": {
             "type": "boolean",
@@ -2383,6 +2397,8 @@
         "observation_profile",
         "pattern",
         "type",
+        "role",
+        "match",
         "visible_only",
         "limit",
         "text",
@@ -2429,8 +2445,8 @@
       },
       "size": {
         "descBytes": 393,
-        "schemaBytes": 9178,
-        "totalBytes": 9571
+        "schemaBytes": 9699,
+        "totalBytes": 10092
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2560,8 +2576,8 @@
       },
       "size": {
         "descBytes": 175,
-        "schemaBytes": 388,
-        "totalBytes": 563
+        "schemaBytes": 1138,
+        "totalBytes": 1313
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2674,8 +2690,8 @@
       },
       "size": {
         "descBytes": 105,
-        "schemaBytes": 33,
-        "totalBytes": 138
+        "schemaBytes": 633,
+        "totalBytes": 738
       },
       "annotations": {
         "readOnlyHint": false,

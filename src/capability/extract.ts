@@ -62,7 +62,10 @@ export function extractCapabilities(projectRoot: string): ToolCapability[] {
     const trustedNonRead = TRUSTED_NONREAD[tool.name];
 
     const descBytes = Buffer.byteLength(tool.description ?? '', 'utf8');
-    const schemaBytes = Buffer.byteLength(JSON.stringify(tool.inputSchema), 'utf8');
+    // B4 (2026-10-19): outputSchema(typed outputs)同样进 tools/list 网络载荷,
+    // 计入 schemaBytes——只数 inputSchema 会漏报增量(统计口径与真实载荷一致)。
+    const schemaBytes = Buffer.byteLength(JSON.stringify(tool.inputSchema), 'utf8')
+      + (tool.outputSchema ? Buffer.byteLength(JSON.stringify(tool.outputSchema), 'utf8') : 0);
 
     // P1-2: annotations 单一真相源 —— 优先读 tool.annotations 最终值(injectTags 已派生+override),
     // 未走 injectTags 的 inline tool 降级到 deriveMcpHints 重算(防御性,保持与 tools/list 一致)。

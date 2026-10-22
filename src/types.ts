@@ -49,6 +49,18 @@ export function errorResult(message: string): ToolResult {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
+/** B4 (2026-10-19): typed outputs 双通道结果——content 保留 JSON 文本(旧客户端行为
+ * 不变,MCP 规范要求 content 必须存在)+ structuredContent 挂同一对象(modern 客户端
+ * 免文本 parse,声明了 outputSchema 的工具可做 schema 校验)。约定与
+ * github-mcp-server modern era 一致:content 文本 == JSON(structuredContent)。
+ * 默认 text = JSON.stringify(obj, null, 2)(两通道语义等值,格式美化仅为可读)。 */
+export function structuredResult(obj: Record<string, unknown>, text?: string): ToolResult {
+  return {
+    content: [{ type: 'text', text: text ?? JSON.stringify(obj, null, 2) }],
+    structuredContent: obj,
+  };
+}
+
 /** Safely extract a message string from an unknown thrown value. */
 export function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;

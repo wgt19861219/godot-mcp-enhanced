@@ -62,6 +62,15 @@ export function installSkills(
   return { installed, skipped };
 }
 
+/** B3 (2026-10-19): --client 安装面映射——只收有真实用户级 skills 目录机制的客户端,
+ * 不确定的客户端不加(装到无效目录 = 假成功,比不装更糟)。新客户端支持 skills 时
+ * 在此表加条目即可。注意与 clients/ 的 15 个 MCP server 适配器是两个概念:
+ * 那边管 server 配置,这边只管 skills 目录。 */
+export const CLIENT_SKILLS_DIRS: Record<string, () => string> = {
+  'claude-code': () => join(homedir(), '.claude', 'skills'),
+  'zcode': () => join(homedir(), '.zcode', 'skills'),
+};
+
 export async function runSkills(args: string[]): Promise<void> {
   const force = args.includes('--force');
   const skillsDir = packagedSkillsDir();
@@ -97,11 +106,35 @@ export async function runSkills(args: string[]): Promise<void> {
       process.exit(1);
       return;
     }
-    const targetDir = explicitTarget ?? join(homedir(), '.claude', 'skills');
+    // B3 (2026-10-19): --client <name> 按客户端映射装 skills 目录(与 --target 互斥)
+    const clientName = opt(args, 'client');
+    if (hasFlag(args, 'client') && !clientName) {
+      console.error('✗ --client requires a client name argument');
+      process.exit(1);
+      return;
+    }
+    if (clientName && explicitTarget) {
+      console.error('✗ --client and --target are mutually exclusive — pick one install destination');
+      process.exit(1);
+      return;
+    }
+    let targetDir: string;
+    if (clientName) {
+      const factory = CLIENT_SKILLS_DIRS[clientName];
+      if (!factory) {
+        console.error(`✗ Unknown client: ${clientName}. Supported: ${Object.keys(CLIENT_SKILLS_DIRS).join(', ')}`);
+        console.error('  (仅收录有真实用户级 skills 目录机制的客户端;其余客户端用 --target <dir> 自定路径)');
+        process.exit(1);
+        return;
+      }
+      targetDir = factory();
+    } else {
+      targetDir = explicitTarget ?? join(homedir(), '.claude', 'skills');
+    }
     const { installed, skipped } = installSkills(skillsDir, targetDir, force);
     // 批4-T9(五维评估 P2): CLI 写面留痕——写 ~/.claude/skills/(机器级,非项目内)
     if (installed.length > 0) auditSkillsInstall(installed.length);
-    console.log(`Target: ${targetDir}\n`);
+    console.log(`Target: ${targetDir}${clientName ? ` (client: ${clientName})` : ''}\n`);
     for (const name of installed) console.log(`  ✓ ${name}: installed`);
     for (const name of skipped) console.log(`  ⊘ ${name}: already exists (use --force to overwrite)`);
     console.log(`\n${installed.length > 0 ? `✓ ${installed.length} skill(s) installed.` : 'No new skills installed.'}`);
@@ -110,6 +143,6 @@ export async function runSkills(args: string[]): Promise<void> {
   }
 
   console.error(`Unknown subcommand: ${sub}`);
-  console.error('Usage: godot-mcp-enhanced skills [list|install] [--force]');
+  console.error('Usage: godot-mcp-enhanced skills [list|install] [--force] [--client <name> | --target <dir>]');
   process.exit(1);
 }

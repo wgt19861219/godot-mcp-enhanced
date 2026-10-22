@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
-  listPackagedSkills, installSkills, packagedSkillsDir, runSkills,
+  listPackagedSkills, installSkills, packagedSkillsDir, runSkills, CLIENT_SKILLS_DIRS,
 } from '../../src/cli/skills.js';
 
 // ─── 纯函数:listPackagedSkills / installSkills ─────────────────────────────
@@ -119,6 +119,39 @@ describe('runSkills CLI', () => {
 
   it('install --target 缺参数 exits 1', async () => {
     await runSkills(['install', '--target']);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('B3: install --client 装入映射目录;--client 与 --target 互斥;未知 client 报错', async () => {
+    // 映射重定向 tmp(测试隔离,不写真 ~/.zcode/skills)
+    const target = mkdtempSync(join(tmpdir(), 'skills-client-'));
+    const orig = CLIENT_SKILLS_DIRS['zcode']!;
+    CLIENT_SKILLS_DIRS['zcode'] = () => target;
+    try {
+      await runSkills(['install', '--client', 'zcode']);
+      const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(out).toContain('client: zcode');
+      expect(existsSync(join(target, 'godot-router', 'SKILL.md'))).toBe(true);
+    } finally {
+      CLIENT_SKILLS_DIRS['zcode'] = orig;
+      rmSync(target, { recursive: true, force: true });
+    }
+
+    // 互斥:--client 与 --target 同时给 → exit 1
+    exitSpy.mockClear(); errSpy.mockClear();
+    await runSkills(['install', '--client', 'zcode', '--target', 'D:/x']);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errSpy.mock.calls.flat().join(' ')).toContain('mutually exclusive');
+
+    // 未知 client → exit 1 且列支持项
+    exitSpy.mockClear(); errSpy.mockClear();
+    await runSkills(['install', '--client', 'nope']);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errSpy.mock.calls.flat().join(' ')).toContain('Supported');
+
+    // --client 缺参数 → exit 1
+    exitSpy.mockClear();
+    await runSkills(['install', '--client']);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

@@ -9,7 +9,7 @@ import type { Tool } from "@modelcontextprotocol/server";
 
 // src/tools/instance-tools.ts
 import type { ToolContext, ToolResult } from '../types.js';
-import { textResult, getErrorMessage } from '../types.js';
+import { textResult, structuredResult, getErrorMessage } from '../types.js';
 import { opsSuccess, opsError } from './shared.js';
 import type { InstanceManager } from '../core/instance-manager.js';
 import type { InstanceRouter } from '../core/instance-router.js';
@@ -37,6 +37,38 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {},
+      },
+      // B4 (2026-10-19): typed outputs 试点(单形态 JSON 工具,工具级 schema 可如实声明)
+      outputSchema: {
+        type: 'object' as const,
+        properties: {
+          success: { type: 'boolean' },
+          data: {
+            type: 'object',
+            properties: {
+              instances: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    projectPath: { type: 'string' },
+                    projectName: { type: ['string', 'null'] },
+                    port: { type: 'number' },
+                    status: { type: 'string' },
+                    godotVersion: { type: ['string', 'null'] },
+                  },
+                  required: ['id', 'projectPath', 'port', 'status'],
+                },
+              },
+              selectedInstanceId: { type: ['string', 'null'] },
+              total: { type: 'number' },
+            },
+            required: ['instances', 'total'],
+          },
+          warnings: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['success', 'data'],
       },
     },
     {
@@ -89,11 +121,11 @@ async function handleListInstances(): Promise<ToolResult> {
 
   const selectedId = _router?.getSelectedId() ?? null;
 
-  return textResult(JSON.stringify(opsSuccess({
+  return structuredResult(opsSuccess({
     instances: list,
     selectedInstanceId: selectedId,
     total: list.length,
-  })));
+  }) as Record<string, unknown>);
 }
 
 async function handleSelectInstance(args: Record<string, unknown>): Promise<ToolResult> {

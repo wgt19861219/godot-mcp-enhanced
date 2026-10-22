@@ -101,7 +101,7 @@ interface RunData {
   run_id: string;
   suite_name: string;
   project_path: string;
-  summary: { status: string; passed: number; failed: number; errors: number; skipped: number; total: number; duration_ms: number };
+  summary: { status: string; passed: number; failed: number; errors: number; skipped: number; unmeasured?: number; total: number; duration_ms: number };
   report: { json_path: string; md_path: string };
 }
 
@@ -129,7 +129,7 @@ export async function runQa(args: string[]): Promise<void> {
       console.log(JSON.stringify(json.data, null, 2));
     } else {
       const s = data.summary;
-      console.log(`QA ${data.summary.status}: ${s.passed} passed / ${s.failed} failed / ${s.errors} errors / ${s.skipped} skipped (${(s.duration_ms / 1000).toFixed(1)}s)`);
+      console.log(`QA ${data.summary.status}: ${s.passed} passed / ${s.failed} failed / ${s.errors} errors / ${s.skipped} skipped${s.unmeasured ? ` / ${s.unmeasured} unmeasured` : ''} (${(s.duration_ms / 1000).toFixed(1)}s)`);
       console.log(`  report: ${data.report.md_path}`);
     }
     process.exit(data.summary.status === 'PASSED' ? EXIT_CODES.EXIT_OK : EXIT_CODES.EXIT_OPERATION_FAILED);
