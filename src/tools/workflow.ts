@@ -469,17 +469,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               const tmpPath = `user://mcp_frame_${i}.png`;
               const ssResp = await sendToBridge('take_screenshot', { path: tmpPath }, 10000);
               if (ssResp.error) { captureError = `frame ${i} 截图失败: ${ssResp.error.message ?? JSON.stringify(ssResp.error)}`; break; }
-              // 通过 executeGdscript 把 user:// 的 PNG 字节读到 proof 目录（GDScript 函数体用 tab 缩进）
+              // 通过 GDScript 把 user:// 的 PNG 字节读到 proof 目录（GDScript 函数体用 tab 缩进）
               const frameName = `frame_${String(i).padStart(2, '0')}.png`;
+              // H-2(2026-10-22 审查): run.dir 是 Windows 绝对路径,反斜杠在 GDScript 双引号
+              // 字符串里是非法转义——统一正斜杠并转义引号。tmpPath 为定值 user://mcp_frame_N.png。
+              const gdRunDir = run.dir.replace(/\\/g, '/').replace(/"/g, '\\"');
               const copyScript = `extends SceneTree
 func _initialize():
 	var img := Image.load_from_file("${tmpPath}")
-	var f := FileAccess.open("${run.dir}/${frameName}", FileAccess.WRITE)
+	var f := FileAccess.open("${gdRunDir}/${frameName}", FileAccess.WRITE)
 	f.store_buffer(img.save_png_to_buffer())
 	quit()
 `;
               // N2: 检查归档结果——失败则停止(防 proof 缺帧致 frame_degradation 误判)
-              const copyResult = await executeGdscript({ godotPath: godot, projectPath, code: copyScript, timeout: Math.min(timeout, 15), loadAutoloads });
+              // H-2: 归档脚本全部由服务端拼接(仅 run.dir 服务端产物 + 定值 frameName 参与),
+              // 无用户输入——普通通道的 FileAccess.WRITE 沙箱拦截必误伤,切受信通道。
+              const copyResult = await executeGdscriptTrusted({ godotPath: godot, projectPath, code: copyScript, timeout: Math.min(timeout, 15), loadAutoloads });
               if (!copyResult.compile_success || !copyResult.run_success) { captureError = `frame ${i} 归档失败: ${copyResult.compile_error || copyResult.run_error}`; break; }
               // N1: 配额累计(此路径用 GDScript 直写绕过 archiveFrame,需显式检查,防 60 帧撑爆磁盘)
               try { recordFrameBytes(run, join(run.dir, frameName)); }
@@ -498,20 +503,20 @@ func _initialize():
         }
 
         const assertionList = (acceptance.assertions as Array<Record<string, string>>) ?? [];
-        if (assertionList.length > 0) {
-          // R5-tools(2026-10-14 审查): assertions 无任何上限——每条 gdscript 断言
-          // spawn Godot ≤15s,串行可耗尽 1h 全局 deadline。对照 batch MAX_FILE_COUNT=50
-          // 补显式上限 20(最坏 ~5min 串行,远低于 deadline)。
-          if (assertionList.length > 20) {
-            result.acceptance = {
-              passed: false,
-              error: `Too many acceptance assertions: ${assertionList.length} (max 20).`,
-            };
-            if (capturedRun) cleanupProofRun(capturedRun); // B1: 早退同样清 proof 临时目录
-            return textResult(JSON.stringify(result, null, 2));
-          }
-          const assertionResults: Array<Record<string, unknown>> = [];
+        // R5-tools(2026-10-14 审查): assertions 无任何上限——每条 gdscript 断言
+        // spawn Godot ≤15s,串行可耗尽 1h 全局 deadline。对照 batch MAX_FILE_COUNT=50
+        // 补显式上限 20(最坏 ~5min 串行,远低于 deadline)。
+        if (assertionList.length > 20) {
+          result.acceptance = {
+            passed: false,
+            error: `Too many acceptance assertions: ${assertionList.length} (max 20).`,
+          };
+          if (capturedRun) cleanupProofRun(capturedRun); // B1: 早退同样清 proof 临时目录
+          return textResult(JSON.stringify(result, null, 2));
+        }
+        const assertionResults: Array<Record<string, unknown>> = [];
 
+        if (assertionList.length > 0) {
           for (let i = 0; i < assertionList.length; i++) {
             const a = assertionList[i]!;
             const desc = a.description ?? `assertion ${i}`;
@@ -674,15 +679,20 @@ func _initialize():
               assertionResults.push({ description: desc, passed: false, error: err instanceof Error ? err.message : String(err) });
             }
           }
-
-          // B1:验证完成后清理 frame_sequence 捕获的 proof 临时目录(防 proof/ 无限堆积)
-          if (capturedRun) cleanupProofRun(capturedRun);
-
-          result.acceptance = {
-            passed: assertionResults.every(r => r.passed),
-            results: assertionResults,
-          };
         }
+
+        // B1:验证完成后清理 frame_sequence 捕获的 proof 临时目录(防 proof/ 无限堆积)
+        // H-2 重构:随汇总一并移出「断言非空」块,仅有 frame_sequence 无断言时同样清理(L-4 方向)。
+        if (capturedRun) cleanupProofRun(capturedRun);
+
+        // H-2(2026-10-22 审查): 汇总移出「断言非空」块——有 acceptance 对象即汇总;
+        // frame_sequence 捕获失败即 acceptance 失败,不再静默通过。
+        const frameSeqError = (result.frame_sequence as { error?: string } | undefined)?.error;
+        result.acceptance = {
+          passed: assertionResults.every(r => r.passed) && !frameSeqError,
+          results: assertionResults,
+          ...(frameSeqError ? { frame_sequence_error: frameSeqError } : {}),
+        };
       }
 
       // ── Step 5: Save State (optional, file-as-memory pattern) ──

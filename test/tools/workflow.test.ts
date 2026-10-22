@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { genSceneSnapshotScript } from '../../src/tools/workflow.js';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 // ── Task 4 mocks: dev_loop 的外部依赖（避免真跑 godot）──
 // 注：export 名按 workflow.ts 实际 import 核实（brief 的 shared.js mock 名不符）：
@@ -148,5 +151,85 @@ describe('dev_loop progress 推送（Task 4）', () => {
       [2, 3, 'send_mouse_click'],
       [3, 3, 'send_key'],
     ]);
+  });
+});
+
+// ── H-2(2026-10-22 审查): frame_sequence 受信通道 + 路径转义 + 帧错误纳入 acceptance ──
+describe('H-2 frame_sequence 归档链路与 acceptance 帧错误', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const makeCtx = () => ({ findGodot: async () => '/fake/godot' });
+
+  it('copyScript 走 executeGdscriptTrusted,Windows 反斜杠路径转正斜杠(不再被沙箱 FileAccess.WRITE 误拦)', async () => {
+    const { requireProjectPath } = await import('../../src/core/args-validation.js');
+    const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-h2-'));
+    vi.mocked(requireProjectPath).mockReturnValue(tmpProject);
+    try {
+      const { executeGdscript, executeGdscriptTrusted } = await import('../../src/gdscript-executor.js');
+      // step1 execute 正常通过(否则 early-return 到不了 acceptance)
+      (executeGdscript as any).mockResolvedValue({ compile_success: true, run_success: true, outputs: [] });
+      // 受信通道 mock:从 code 中解析目标路径并真写文件(recordFrameBytes 会 statSync 该文件)
+      (executeGdscriptTrusted as any).mockImplementation(async (opts: { code: string }) => {
+        const m = /FileAccess\.open\("([^"]+)"/.exec(opts.code);
+        if (m) fs.writeFileSync(m[1]!, Buffer.alloc(8));
+        return { compile_success: true, run_success: true, outputs: [] };
+      });
+      const { sendToBridge } = await import('../../src/tools/game-bridge.js');
+      (sendToBridge as any).mockResolvedValue({ result: {} });
+      const { handleTool } = await import('../../src/tools/workflow.js');
+      const result: any = await handleTool('workflow', {
+        action: 'dev_loop', code: 'pass', project_path: tmpProject,
+        acceptance: { frame_sequence: { count: 2 }, assertions: [] },
+      }, makeCtx() as any);
+
+      // 归档脚本必须落在受信通道,普通通道零 FileAccess.open 调用(修复前:executeGdscript 被沙箱拦截必报 compile_error)
+      const trustedCalls = (executeGdscriptTrusted as any).mock.calls.filter((c: any[]) => /FileAccess\.open/.test(c[0].code));
+      expect(trustedCalls.length).toBeGreaterThanOrEqual(2); // count=2 帧
+      const sandboxCalls = (executeGdscript as any).mock.calls.filter((c: any[]) => /FileAccess\.open/.test(c[0].code));
+      expect(sandboxCalls).toHaveLength(0);
+      // 路径转义:code 内不得出现 "X:\..." 裸反斜杠(Windows run.dir 必含 \,已转正斜杠)
+      for (const c of trustedCalls) {
+        expect(c[0].code).not.toMatch(/"[A-Za-z]:\\[^"]*"/);
+        expect(c[0].code).toMatch(/FileAccess\.open\("[^"\\]*\/frame_\d+\.png"/);
+      }
+      // 帧捕获成功 + 无断言 → 仍产出 acceptance 汇总(H-2: 汇总移出「断言非空」块),passed=true
+      const text = JSON.parse(result.content[0].text);
+      expect(text.frame_sequence.error).toBeUndefined();
+      expect(text.acceptance).toEqual({ passed: true, results: [] });
+      // B1/L-4: 无断言仅有 frame_sequence 时 proof 目录同样被清理
+      expect(fs.existsSync(text.frame_sequence.dir)).toBe(false);
+    } finally {
+      vi.mocked(requireProjectPath).mockReturnValue('/fake/project');
+      fs.rmSync(tmpProject, { recursive: true, force: true });
+    }
+  });
+
+  it('帧捕获失败 → acceptance.passed=false 且 frame_sequence_error 存在(即使断言列表为空)', async () => {
+    const { requireProjectPath } = await import('../../src/core/args-validation.js');
+    const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-h2-'));
+    vi.mocked(requireProjectPath).mockReturnValue(tmpProject);
+    try {
+      const { executeGdscript } = await import('../../src/gdscript-executor.js');
+      (executeGdscript as any).mockResolvedValue({ compile_success: true, run_success: true, outputs: [] });
+      const { sendToBridge } = await import('../../src/tools/game-bridge.js');
+      (sendToBridge as any).mockResolvedValue({ error: { message: 'bridge down' } }); // 截图失败
+      const { handleTool } = await import('../../src/tools/workflow.js');
+      const result: any = await handleTool('workflow', {
+        action: 'dev_loop', code: 'pass', project_path: tmpProject,
+        acceptance: { frame_sequence: { count: 2 }, assertions: [] },
+      }, makeCtx() as any);
+
+      const text = JSON.parse(result.content[0].text);
+      expect(text.frame_sequence.error).toContain('frame 0');
+      // H-2 核心:帧错误必须把 acceptance 判死,不再静默通过
+      expect(text.acceptance.passed).toBe(false);
+      expect(text.acceptance.frame_sequence_error).toContain('frame 0');
+      expect(text.acceptance.results).toEqual([]);
+    } finally {
+      vi.mocked(requireProjectPath).mockReturnValue('/fake/project');
+      fs.rmSync(tmpProject, { recursive: true, force: true });
+    }
   });
 });
