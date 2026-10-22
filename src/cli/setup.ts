@@ -17,8 +17,14 @@ export function detectMcpCommand(): { command: string; args: string[] } {
 
   // IMPORTANT-7: 原路径段启发式(npm pack 解压临时目录、CI 本地 node_modules)会误判为全局安装。
   // 改进:优先 npm_config_global 强信号;路径段匹配时排除 npm pack 的隐藏临时段(.package/.staging 等)。
+  // M-6(2026-10-22 审查): 原「任何 . 开头路径段都算临时」的点目录启发式会把
+  // ~/.npm/_npx/<hash>/node_modules/... 与 ~/.npm-global/... 误判为临时安装 → 写死
+  // node 绝对路径进客户端配置,npx 缓存被清后配置即损坏(README 推荐的 npx 试用方式)。
+  // 改为显式临时段集合:仅 npm pack 真实使用过的解压临时段;npx 缓存/_npx/npm-global
+  // 判为全局 → 输出 npx godot-mcp-enhanced(可随缓存清理自愈)。
+  const TEMP_PATH_SEGMENTS = new Set(['.package', '.staging', '.package-tmp']);
   const pathSegments = entryPath.replace(/\\/g, '/').split('/');
-  const hasTempSegment = pathSegments.some(seg => seg.startsWith('.') && seg !== '.');
+  const hasTempSegment = pathSegments.some(seg => TEMP_PATH_SEGMENTS.has(seg));
   const inGlobalNodeModules = (process.env.npm_config_global === 'true' ||
       (pathSegments.includes('node_modules') && pathSegments.includes('godot-mcp-enhanced'))) &&
     !hasTempSegment;
