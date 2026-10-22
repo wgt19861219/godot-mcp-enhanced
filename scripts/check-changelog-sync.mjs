@@ -77,14 +77,17 @@ function getCommitsSince(sinceDate) {
 }
 
 /**
- * 筛需进 CHANGELOG 的 commit(按惯例:feat/fix(security/reliability/correctness)/BREAKING)。
- * 纯 test/docs/refactor/chore/style/ci/build 不检测(本就不进 CHANGELOG)。
+ * 筛需进 CHANGELOG 的 commit(按惯例:feat/fix/BREAKING)。
+ * 纯 test/docs/refactor/chore/style/ci/build 不检测(type 不匹配即排除,本就不进 CHANGELOG)。
+ * 2026-10-22 审查 Medium-D1:原限定 fix(security|reliability|correctness) 三个 scope,
+ * 对本仓实际的 fix(core/...)/fix(web-gui)/fix(cli) 等主流风格全部失明——豁免语义
+ * 应基于 type 而非 scope 拼写,放宽为 type 前缀匹配。
  *
  * BREAKING 检测两种形态:
  * 1. subject 前缀 feat!: / fix!: (Conventional Commits 的 ! 语法)
  * 2. footer BREAKING CHANGE: 描述 (在 body 里)
  */
-const SUBJECT_WORTHY = /^(feat!?|fix\(security\)!?|fix\(reliability\)!?|fix\(correctness\)!?|BREAKING)/i;
+const SUBJECT_WORTHY = /^(feat!?|fix!?|BREAKING)/i;
 const FOOTPER_BREAKING = /^BREAKING[ -]CHANGE:/im;
 
 function isChangelogWorthy(subject, body) {

@@ -830,9 +830,12 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
   // 防御性条件跑:TEST_PID 在本机确无进程才执行 kill 路径(见 describe 头注释)
   const TEST_PID = 999999;
   const testPidVacant = (() => { try { process.kill(TEST_PID, 0); return false; } catch { return true; } })();
-  (testPidVacant ? it : it.skip)('POST restart 他实例(登记+活 mock+登记端口真监听)→ 200 {ok:true}(taskkill 对空 pid 无害失败)', async () => {
+  (testPidVacant ? it : it.skip)('POST restart 他实例(登记+活 mock+登记端口真监听+owner 一致)→ 200 {ok:true}(taskkill 对空 pid 无害失败)', async () => {
     ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(TEST_PID); ALIVE_MOCK_PIDS.add(process.pid);
-    const t = await startInstServer({ isPidAlive: isPidAliveMock });
+    // Low-2(2026-10-22 审查): 注入 probePortOwner 返回登记 pid(模拟端口 owner 与登记
+    // 一致的正常路径);不注入时 Windows 生产实现在测试进程持端口、登记 TEST_PID 的
+    // 构造下必然 mismatch → 409,那是 owner-mismatch 用例的语义。
+    const t = await startInstServer({ isPidAlive: isPidAliveMock, probePortOwner: async () => TEST_PID });
     active = t.srv;
     // M1(2026-10-14 审查): kill 前端口探测二次验证——登记端口须真有监听者才放行
     // kill,防 PID 复用误杀无关进程。测试起真 TCP listener 扮演"登记端口的活实例"。
@@ -843,6 +846,25 @@ describe('实例管理端点(2026-09-30 实例管理批)', () => {
       const res = await post(t.base, '/api/instances/restart', t.token, { pid: TEST_PID });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true });
+    } finally {
+      await new Promise<void>(resolve => listener.close(() => resolve()));
+    }
+  });
+
+  // Low-2(2026-10-22 审查): TCP 探活通过但端口 owner ≠ 登记 pid(登记陈旧 + 端口被
+  // 无关进程占用)→ 409 拒绝 kill——端口-PID 身份绑定,概率收敛升级为身份校验。
+  (testPidVacant ? it : it.skip)('POST restart 端口活但 owner≠登记 pid → 409 拒绝 kill(Low-2:端口-PID 身份绑定)', async () => {
+    ALIVE_MOCK_PIDS.clear(); ALIVE_MOCK_PIDS.add(TEST_PID); ALIVE_MOCK_PIDS.add(process.pid);
+    const t = await startInstServer({ isPidAlive: isPidAliveMock, probePortOwner: async () => 424242 });
+    active = t.srv;
+    const listener = net.createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => listener.listen(9562, '127.0.0.1', resolve));
+    try {
+      await writeRegistration({ pid: TEST_PID, port: 9562, token: t.token, startedAt: '2026-09-30T04:00:00Z', version: '0.0.0' }, { dir });
+      const res = await post(t.base, '/api/instances/restart', t.token, { pid: TEST_PID });
+      expect(res.status).toBe(409);
+      const v = await res.json() as { error: string };
+      expect(v.error).toContain('stale');
     } finally {
       await new Promise<void>(resolve => listener.close(() => resolve()));
     }

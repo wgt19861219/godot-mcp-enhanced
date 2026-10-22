@@ -24,7 +24,7 @@ registerAllModules();
  */
 
 describe('P4-1: game 描述瘦身', () => {
-  it('SLIM-a: game 描述压缩生效——schema < 7800B(回归锚,P10 后校准)+ 指针存在', () => {
+  it('SLIM-a: game 描述压缩生效——schema < 当前回归锚(校准史见下方注释)+ 指针存在', () => {
     const def = getToolDefinition('game');
     expect(def).toBeDefined();
     const schemaBytes = Buffer.byteLength(JSON.stringify(def!.inputSchema), 'utf8');

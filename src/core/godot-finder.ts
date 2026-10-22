@@ -115,6 +115,13 @@ export function writeGodotPathsConfig(paths: string[]): void {
  * godot_path 参数指向它被 spawn = 任意代码执行。env 显式值/GODOT_PATH、godot-paths.json、
  * PATH/registry/scoop 自动发现链保留 back-compat 放行——直接全局收紧会砍断新装用户的
  * 自动发现链(开箱即坏),且这些来源属用户环境而非 AI 可控写盘面。
+ *
+ * 2026-10-22 审查 Major-S1(B5 批 open 项清偿): 项目级 override 三来源
+ * (.godot/mcp-godot.json / project.godot [godot_mcp] / .godot-version)同为
+ * origin='override'——驱动它们的文件都在项目目录内(AI 可控写盘面),与工具参数面
+ * 威胁链同构;此前走 origin='auto' 属 M-2 修复遗漏而非取舍。合法项目 override 用户
+ * 迁移:设 GODOT_MCP_ALLOWED_GODOT_PATHS 或 ~/.godot-mcp/godot-paths.json 含该路径,
+ * 被拒时回落 GODOT_PATH env/自动发现链(不报错,security 域日志留痕)。
  */
 export type GodotPathOrigin = 'auto' | 'override';
 
@@ -248,7 +255,8 @@ async function tryProjectOverride(projectPath: string): Promise<string | null> {
       const config = JSON.parse(raw) as { godot_path?: string };
       if (config.godot_path) {
         const candidate = config.godot_path;
-        if (existsSync(candidate) && await validateGodotBinary(candidate)) return candidate;
+        // 2026-10-22 Major-S1: 项目 override 走 'override'(AI 可控项目内文件,白名单未配置 fail-closed)
+        if (existsSync(candidate) && await validateGodotBinary(candidate, 'override')) return candidate;
       }
     } catch (err) {
       getLogger().debug('godot-finder', `mcp-godot.json parse error: ${err instanceof Error ? err.message : err}`);
@@ -266,7 +274,8 @@ async function tryProjectOverride(projectPath: string): Promise<string | null> {
         const pathMatch = sectionMatch[1].match(/^godot_path\s*=\s*"?(.+?)"?\s*$/m);
         if (pathMatch?.[1]) {
           const candidate = pathMatch[1].trim();
-          if (existsSync(candidate) && await validateGodotBinary(candidate)) return candidate;
+          // 2026-10-22 Major-S1: 同 A 分支,项目 override 一律 'override' origin
+          if (existsSync(candidate) && await validateGodotBinary(candidate, 'override')) return candidate;
         }
       }
     } catch (err) {
@@ -282,7 +291,8 @@ async function tryProjectOverride(projectPath: string): Promise<string | null> {
       if (versionSpec) {
         const resolved = resolveGodotsVersion(versionSpec);
         if (resolved) {
-          if (await validateGodotBinary(resolved)) return resolved;
+          // 2026-10-22 Major-S1: .godot-version 亦为项目内 AI 可写文件,统一 'override' origin
+          if (await validateGodotBinary(resolved, 'override')) return resolved;
         }
       }
     } catch (err) {

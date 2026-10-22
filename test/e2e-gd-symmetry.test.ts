@@ -78,6 +78,7 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('批 2 GD 对称性 e2e (L2)',
   }, 200000);
 
   afterAll(() => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { writeFileSync(resolve(FIXTURE, 'project.godot'), projectGodotSnap, 'utf8'); } catch { /* best-effort */ }
     try { rmSync(resolve(FIXTURE, '.godot'), { recursive: true, force: true }); } catch { /* best-effort */ }
   });

@@ -15,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { killPidTree, normalizeProjectKey, isAliveStatus, type RunSessionDetailed } from '../core/process-state.js';
 import { connect as tcpConnect } from 'node:net';
+import { execFile } from 'node:child_process';
 import { removeRegistration, writeRegistration, sweepStaleRegistrations, getOrCreateSharedToken, listRegistrations, type RegistryOpts } from './registry.js';
 import { ensurePortalPage, ensureProjectPortalEntry, ensurePackageRootEntry } from './portal.js';
 import { INDEX_SCRIPT_SHA256 } from './html.js';
@@ -105,6 +106,10 @@ export interface WebGuiServerOptions {
   onControlledShutdown?: (mode: 'stop' | 'restart') => void;
   /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
   isPidAlive?: (pid: number) => boolean;
+  /** 2026-10-22 审查 Low-2:端口 Listening owner PID 查询注入(测试 mock)。
+   *  缺省 = 生产实现(Windows Get-NetTCPConnection / 其他平台 null=无法判定)。
+   *  构造器注入,不新增模块级 setter(对齐 isPidAlive 先例)。 */
+  probePortOwner?: (port: number) => Promise<number | null>;
   /** daemon 批 A(2026-09-30 spec §3.4/M-2):严格端口。true = 只试 portStart 一个端口,
    *  EADDRINUSE 直接 reject 不吃 20 次顺延——respawn 交接的端口不漂移不变式(daemon
    *  旧进程死后新进程必须回到同端口,客户端重连地址才不漂移;顺延成功反而是静默故障)。 */
@@ -718,6 +723,30 @@ export class WebGuiServer {
     });
   }
 
+  /** Low-2(2026-10-22 审查): 端口 Listening owner PID(端口-PID 身份绑定,kill 前与
+   *  登记 pid 比对)。TCP 探活只证"端口有服务",不证"服务属于登记 PID"——server 崩溃
+   *  登记 + Windows PID 回收 + 端口恰被无关进程绑定三条件同时满足时仍会误杀无辜进程树。
+   *  返回 null = 非 Windows / 查询失败 / 无监听者(调用方回落纯探活语义,威胁模型内低危)。
+   *  port 先过整数+范围校验再进命令行(登记 JSON 解析值不可信);execFile 数组形式无 shell。 */
+  private probePortOwnerPidDefault(port: number): Promise<number | null> {
+    return new Promise((resolve) => {
+      if (process.platform !== 'win32') return resolve(null);
+      const safePort = Number(port);
+      if (!Number.isInteger(safePort) || safePort <= 0 || safePort > 65535) return resolve(null);
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command',
+          `Get-NetTCPConnection -LocalPort ${safePort} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`],
+        { timeout: 3_000 },
+        (err, stdout) => {
+          if (err) return resolve(null);
+          const n = parseInt(String(stdout ?? '').trim(), 10);
+          resolve(Number.isInteger(n) && n > 0 ? n : null);
+        },
+      );
+    });
+  }
+
   private auditInstanceAction(action: string, ok: boolean, details?: Record<string, unknown>): void {
     if (!isAuditEnabled()) return;
     void appendMachineAuditLine({
@@ -823,8 +852,6 @@ export class WebGuiServer {
           this.auditInstanceAction('restart', false, { pid, error: 'cross_instance_daemon' });
           return json(403, { error: guiText(lang, 'err.daemonHandoff') });
         }
-        getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} version=${target.version ?? 'legacy'} result=200`);
-        this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
         // M1(2026-10-14 审查): kill 前二次验证登记身份——isPidAlive 仅探活不校验身份,
         // server 崩溃后登记残留 + Windows PID 回收激进时,面板把无关进程显示为活实例,
         // 用户点「重启」即 taskkill /T 强杀无辜进程树。探测登记端口:TCP 可连 = 端口
@@ -836,6 +863,23 @@ export class WebGuiServer {
           this.auditInstanceAction('restart', false, { pid, error: 'stale_registration_port_dead' });
           return json(409, { error: guiText(lang, 'err.staleRegistration') });
         }
+        // Low-2(2026-10-22 审查): 端口-PID 身份绑定——TCP 探活只证端口有服务,不证
+        // 服务属于登记 PID;Windows 下比对 Get-NetTCPConnection 的 OwningProcess,
+        // 不匹配 = 登记陈旧且端口被无关进程占用,拒绝 kill。null(非 Windows/查询失败)
+        // 回落纯探活语义。注入优先(测试 mock),对齐 isPidAlive 先例。
+        const ownerPid = await (this.opts.probePortOwner
+          ? this.opts.probePortOwner(target.port)
+          : this.probePortOwnerPidDefault(target.port));
+        if (ownerPid !== null && ownerPid !== pid) {
+          getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} owner=${ownerPid} result=409_port_owner_mismatch`);
+          this.auditInstanceAction('restart', false, { pid, error: 'port_owner_mismatch', ownerPid });
+          return json(409, { error: guiText(lang, 'err.staleRegistration') });
+        }
+        // Nit-3(2026-10-22 审查): 成功日志/审计移到全部验证通过后(先判后记,对齐
+        // 403/404/409 分支)——原实现在端口探测前落 ok:true 审计,陈旧登记场景会
+        // 产生 ok:true+ok:false 矛盾双审计,且日志 200 与实返 409 不一致。
+        getLogger().info('web-gui', `action=instance_restart pid=${pid} port=${target.port} version=${target.version ?? 'legacy'} result=200`);
+        this.auditInstanceAction('restart', true, { pid, port: target.port, version: target.version ?? null });
         killPidTree(pid);
         return json(200, { ok: true });
       }

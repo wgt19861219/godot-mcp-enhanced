@@ -191,6 +191,7 @@ describe.skipIf(!hasGodot || !hasRealProject || !RUN)('get_node_layout 字段级
   });
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { await callToolReal('runtime', { action: 'stop_project' }); } catch { /* best effort */ }
     if (projectGodotSnap) {
       try { writeFileSync(resolve(REAL_PROJECT, 'project.godot'), projectGodotSnap, 'utf-8'); } catch { /* best effort */ }

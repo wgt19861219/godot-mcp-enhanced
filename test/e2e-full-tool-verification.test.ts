@@ -171,6 +171,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
   if (_mainSceneSnap && existsSync(MAIN_SCENE)) {
     writeFileSync(MAIN_SCENE, _mainSceneSnap, 'utf-8');
   }
@@ -841,6 +842,7 @@ describe.skipIf(!hasRealProject)('L1 real-project: cpp scaffold_gdextension', { 
   });
 
   afterAll(() => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     // 清理:cpp 生成的工程不进 git,删除避免 fixture 污染
     for (const d of [cppDir1, cppDir2]) {
       if (existsSync(d)) rmSync(d, { recursive: true, force: true });
@@ -898,6 +900,7 @@ describe.skipIf(!hasGodot || !hasRealProject || !OPT_IN_L2)('L2 real-project: br
   });
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { await callToolReal('runtime', { action: 'stop_project' }); } catch { /* best effort */ }
     // 恢复 project.godot(game_bridge_install 写了 autoload,避免 fixture 污染)
     if (projectGodotSnap) {
@@ -963,6 +966,7 @@ describe.skipIf(!hasGodot || !hasRealProject || !OPT_IN_L2)('L2 real-project: re
   });
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { await callToolReal('runtime', { action: 'stop_project' }); } catch { /* best effort */ }
     if (projectGodotSnap) {
       try { writeFileSync(resolve(REAL_PROJECT, 'project.godot'), projectGodotSnap, 'utf-8'); } catch { /* best effort */ }
@@ -998,6 +1002,7 @@ describe.skipIf(!hasGodot || !hasRealProject || !hasEditorFlag)('L2 real-project
   });
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { await callToolReal('editor', { action: 'sync_stop' }); } catch { /* best effort */ }
   });
 });
@@ -1071,6 +1076,7 @@ describe.skipIf(!hasGodot || !hasRealProject || !OPT_IN_L2)('L2 run_project brid
   });
 
   afterAll(async () => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET; // 2026-10-22 审查 Nit-13: 跨文件 env 泄漏清理
     try { await callToolReal('runtime', { action: 'stop_project' }); } catch { /* best effort */ }
   });
 });
@@ -1083,6 +1089,8 @@ describe('E2E: Cleanup', () => {
     for (const f of [NEW_SCENE_PATH, NEW_SCRIPT_PATH]) {
       if (existsSync(f)) rmSync(f, { force: true });
     }
-    expect(true).toBe(true);
+    // 2026-10-22 审查 Medium-T1:原恒真断言(门禁盲区形态)改真断言——删除后确认不在场
+    expect(existsSync(NEW_SCENE_PATH)).toBe(false);
+    expect(existsSync(NEW_SCRIPT_PATH)).toBe(false);
   });
 });

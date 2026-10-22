@@ -208,7 +208,9 @@ function detectMockDrift() {
  * 阈值：基线 + ~5% 容差 = 860。粗 grep 含合理用法（字段访问前存在性前置等），作"防恶化上限"非"消除目标"。
  */
 const WEAK_ASSERTION_LIMIT = 860;
-const WEAK_RE = /(\.toBeTruthy\(\)|\.toBeDefined\(\)|\.not\.toBeNull\(\))/g;
+// 2026-10-22 审查 Medium-T1:增补恒真断言形态(原 WEAK_RE 只盯三弱形态,
+// expect(true).toBe(true) 是检测盲区——全仓曾残留 2 处未被发现)
+const WEAK_RE = /(\.toBeTruthy\(\)|\.toBeDefined\(\)|\.not\.toBeNull\(\)|expect\(true\)\.toBe\(true\))/g;
 
 /**
  * @returns {{count:number, limit:number}}

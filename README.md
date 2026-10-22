@@ -128,7 +128,7 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 ```json
 { "env": { "ALLOWED_PROJECT_PATHS": "D:/proj/game-a;D:/proj/game-b" } }
 ```
-- **Godot 二进制白名单** — `GODOT_MCP_ALLOWED_GODOT_PATHS`（分号分隔,realpath 归一）在 `godot --version` 签名校验之上加硬隔离,防 AI 可控的 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。空 env = back-compat 放行(本地信任场景,签名校验仍兜底);**例外(2026-10-13 安全收紧,审查 M-2)**:AI 可控的工具参数 `godot_path` override 在白名单未配置时一律拒绝——防"cwd 内写伪造 `--version` 签名的二进制再经参数指向它"的执行链(GODOT_PATH env、godot-paths.json 与自动发现链不受影响);多用户/不可信环境显式列可信路径
+- **Godot 二进制白名单** — `GODOT_MCP_ALLOWED_GODOT_PATHS`（分号分隔,realpath 归一）在 `godot --version` 签名校验之上加硬隔离,防 AI 可控的 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。空 env = back-compat 放行(本地信任场景,签名校验仍兜底);**例外(2026-10-13 安全收紧,审查 M-2;2026-10-22 扩至项目 override)**:AI 可控的 `godot_path` 工具参数与项目级 override(`.godot/mcp-godot.json`/`project.godot [godot_mcp]`/`.godot-version`)在白名单未配置时一律拒绝——防"项目内写伪造 `--version` 签名的二进制再经参数或项目 override 指向它"的执行链(GODOT_PATH env、godot-paths.json 与自动发现链不受影响;项目 override 被拒时回落 GODOT_PATH env/自动发现,迁移方式=把该 Godot 路径加入白名单);多用户/不可信环境显式列可信路径
 - **GDScript 注入防御** — 危险 API 模式扫描 + 字符串拼接绕过检测
 - **危险操作确认令牌** — 删节点等操作需显式确认
 - **输出标记防伪造** — 每次执行随机标记,防 GDScript 伪造 MCP 输出
