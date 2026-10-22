@@ -19,7 +19,7 @@
  */
 
 import { spawn } from 'child_process';
-import { existsSync, statSync, mkdirSync } from 'fs';
+import { existsSync, statSync, mkdirSync, unlinkSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { forceKillTree } from './core/process-state.js';
@@ -177,6 +177,10 @@ export async function captureScreenshot(
   // 条件等待(命名参数,置于位置参数之后,不影响 GDScript 位置解析)
   if (options.waitNode) args.push('--wait-node', options.waitNode);
   if (options.waitText) args.push('--wait-text', options.waitText);
+
+  // H-1(2026-10-22 审查):运行前删除旧输出,防 Godot 失败/超时时 existsSync 命中上次
+  // 陈旧文件返回假成功。重试分支无需再删——仅在 !existsSync 时进入,天然无旧文件。
+  try { unlinkSync(outputPath); } catch { /* ENOENT: 首次截图无旧文件 */ }
 
   // --- Attempt 1: primary mode (windowed or headless based on platform) ---
   const result1 = await runScreenshot(godotPath, args, timeout);
