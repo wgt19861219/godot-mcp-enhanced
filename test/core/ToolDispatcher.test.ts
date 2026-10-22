@@ -807,6 +807,63 @@ describe('ToolDispatcher.handleCall', () => {
     mockIsDynamicToolName.mockReturnValue(false);
   });
 
+  // ── C-1 (2026-10-22 审查第二轮): 动态 method 含内部短 action 参数时,确认门必须按真实
+  // args.action 解析静态 action——animation_keyframe{action:"remove"} 映射 remove_keyframe
+  // (destructive)而非默认 add_keyframe(read)。修复前映射值覆盖真实参数,删除/更新无确认执行。
+  it('C-1: dynamic animation_keyframe{action:"remove"} resolves destructive action and requires confirmation', async () => {
+    const guard = createMockGuard(false);
+    mockIsDynamicToolName.mockImplementation((name: string) => name === 'animation_keyframe');
+    // 模拟真实 guard 语义:animation_track.remove_keyframe risk=destructive → 确认
+    mockRequiresConfirmation.mockImplementation(
+      (guardName: string, guardArgs: { action?: string }) =>
+        guardName === 'animation_track' && guardArgs?.action === 'remove_keyframe',
+    );
+    mockCreatePendingToken.mockReturnValue('c1-remove-token');
+    const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+    const result = await dispatcher.handleCall({
+      params: { name: 'animation_keyframe', arguments: { node_path: 'Player', animation_name: 'a', track_index: 0, action: 'remove', keyframe_index: 0 } },
+    });
+    const text = (result.content[0] as { text: string }).text;
+    const parsed = JSON.parse(text);
+    expect(parsed.requires_confirmation).toBe(true);
+    // C-1 核心:确认门以真实 action 反查出的 (animation_track, remove_keyframe) 判定
+    expect(mockRequiresConfirmation).toHaveBeenCalledWith('animation_track', expect.objectContaining({ action: 'remove_keyframe' }));
+    mockIsDynamicToolName.mockReturnValue(false);
+  });
+
+  it('C-1: dynamic animation_keyframe{action:"add"} (read) does not require confirmation', async () => {
+    const guard = createMockGuard(false);
+    mockIsDynamicToolName.mockImplementation((name: string) => name === 'animation_keyframe');
+    // guard 对 read action 放行;add_keyframe risk=read 本就不需确认
+    mockRequiresConfirmation.mockReturnValue(false);
+    mockGetModuleForTool.mockReturnValue({ handleTool: vi.fn().mockResolvedValue(mockToolResult) });
+    const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+    const result = await dispatcher.handleCall({
+      params: { name: 'animation_keyframe', arguments: { node_path: 'Player', animation_name: 'a', track_index: 0, action: 'add', time: 0.5 } },
+    });
+    const text = (result.content[0] as { text: string }).text;
+    const parsed = JSON.parse(text);
+    expect(parsed.requires_confirmation).toBeUndefined();
+    // 映射口径核验:add 分支按 (animation_track, add_keyframe) 判定而非 remove_keyframe
+    expect(mockRequiresConfirmation).toHaveBeenCalledWith('animation_track', expect.objectContaining({ action: 'add_keyframe' }));
+    mockIsDynamicToolName.mockReturnValue(false);
+  });
+
+  it('C-1: dynamic animation_keyframe with unregistered action fails closed', async () => {
+    mockIsDynamicToolName.mockImplementation((name: string) => name === 'animation_keyframe');
+    mockRequiresConfirmation.mockReturnValue(false);  // guard 本身放行
+    mockCreatePendingToken.mockReturnValue('c1-fail-closed-token');
+    const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: createMockGuard(false) });
+    const result = await dispatcher.handleCall({
+      params: { name: 'animation_keyframe', arguments: { node_path: 'Player', animation_name: 'a', track_index: 0, action: 'evil_action', keyframe_index: 0 } },
+    });
+    const text = (result.content[0] as { text: string }).text;
+    const parsed = JSON.parse(text);
+    // actions 表无 evil_action → resolveDynamicTool 返 undefined → fail-closed 强制确认
+    expect(parsed.requires_confirmation).toBe(true);
+    mockIsDynamicToolName.mockReturnValue(false);
+  });
+
   // [T12] editor 模式 + executor 存在 → 转发
   it('forwards to editor executor in editor mode', async () => {
     const guard = createMockGuard(false);

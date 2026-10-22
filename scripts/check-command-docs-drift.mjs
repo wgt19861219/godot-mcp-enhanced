@@ -57,8 +57,10 @@ const METHOD_TO_TOOL = {
   editor_sync_stop:         { tool: 'editor', action: 'sync_stop' },
   editor_get_scene_tree:    { tool: 'editor', action: 'get_scene_tree' },
   // ─── animation_commands:split(3 个→animation_track,1 个→animation) ────
-  animation_track:          { tool: 'animation_track', action: 'add_track' },
-  animation_keyframe:       { tool: 'animation_track', action: 'add_keyframe' },
+  // C-1(2026-10-22 审查):animation_track/animation_keyframe 的 GD method 含内部短 action
+  // 参数(add/remove/update),风险必须按真实 action 解析;actions 表缺该 action → fail-closed。
+  animation_track:          { tool: 'animation_track', action: 'add_track', actions: { add: 'add_track', remove: 'remove_track' } },
+  animation_keyframe:       { tool: 'animation_track', action: 'add_keyframe', actions: { add: 'add_keyframe', remove: 'remove_keyframe', update: 'update_keyframe' } },
   animation_curve:          { tool: 'animation_track', action: 'set_curve' },
   animation_blend:          { tool: 'animation', action: 'blend' },
   // ─── animtree_commands:tool=animtree, action 扁平 ───────────────────────

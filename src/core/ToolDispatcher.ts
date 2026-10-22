@@ -395,7 +395,10 @@ export class ToolDispatcher {
       // 反查优先级:legacy 映射 > 动态映射 > 原名。未映射的动态方法风险未知 → fail-closed
       // 直接要求确认(防 GD 新增 method 漏登记 METHOD_TO_TOOL 时静默绕门)。
       const legacyMap = tryLegacyMapping(name);
-      const dynMap = isDynamicToolName(name) ? resolveDynamicTool(name) : undefined;
+      // C-1(2026-10-22 审查):含内部 action 参数的动态 method 按真实 args.action 解析静态风险;
+      // actions 表查不到该 action → resolveDynamicTool 返 undefined → 下方 fail-closed 要求确认。
+      const actualAction = typeof args.action === 'string' ? args.action : undefined;
+      const dynMap = isDynamicToolName(name) ? resolveDynamicTool(name, actualAction) : undefined;
       const guardName = legacyMap?.tool ?? dynMap?.tool ?? name;
       const guardArgs = (legacyMap ?? dynMap) ? { ...args, action: legacyMap?.action ?? dynMap?.action } : args;
       const confirmRequired = (isDynamicToolName(name) && !dynMap) || requiresConfirmation(guardName, guardArgs);
@@ -452,7 +455,9 @@ export class ToolDispatcher {
     // isActionGated('debug_evaluate','') 永不命中 → gated action 经动态通道绕过。经
     // METHOD_TO_TOOL 反查回静态 (tool, action) 再判定;执行仍用原平铺名(editor 转发需要)。
     const _action = typeof args.action === 'string' ? args.action : '';
-    const _dyn = isDynamicToolName(name) ? resolveDynamicTool(name) : undefined;
+    // C-1(2026-10-22 审查):action-gate 同步按真实 args.action 解析——含内部短 action 的
+    // 动态 method(如 animation_keyframe)若用默认 action 判定,gated 的真实 action 永不命中。
+    const _dyn = isDynamicToolName(name) ? resolveDynamicTool(name, _action || undefined) : undefined;
     const _gateTool = _dyn?.tool ?? name;
     const _gateAction = _dyn?.action ?? _action;
     if (isActionGated(_gateTool, _gateAction) && !isActionAllowed(_gateTool, _gateAction, resolveEnabledGroups())) {
@@ -648,7 +653,10 @@ export class ToolDispatcher {
       // 经 resolveDynamicTool 反查回静态 (tool, action)(复用 executeToolCall 既有解析),
       // 与 confirm/action-gate 两道门的 A1 反查对齐。落盘也记解析后的名字
       // (audit get_log 的 `${tool}.${action}` key 与静态调用一致)。
-      const auditDynMap = isDynamicToolName(ctx.toolName) ? resolveDynamicTool(ctx.toolName) : undefined;
+      // C-1(2026-10-22 审查):审计风险计算与 confirm 门同一口径——按真实 args.action 解析,
+      // 含 actions 表的动态 method 未命中该 action 时 auditDynMap=undefined → 落 fail-closed 档。
+      const _ctxActualAction = typeof ctx.args?.action === 'string' ? ctx.args.action : undefined;
+      const auditDynMap = isDynamicToolName(ctx.toolName) ? resolveDynamicTool(ctx.toolName, _ctxActualAction) : undefined;
       const unmappedDynamic = isDynamicToolName(ctx.toolName) && !auditDynMap;
       const auditTool = auditDynMap?.tool ?? ctx.toolName;
       const auditAction = auditDynMap?.action ?? String(ctx.args.action ?? '');
@@ -961,7 +969,9 @@ export class ToolDispatcher {
       // C-3 (2026-08-14): 与 audit middleware 同步接 resolveDynamicTool 反查 ——
       // pending.toolName 可能是动态平铺名(engine_call_method),平铺名 getActionRisk
       // 恒 undefined → 确认执行的动态写操作零审计。反查回静态 (tool, action) 再判风险/落盘。
-      const auditDynMap = isDynamicToolName(pending.toolName) ? resolveDynamicTool(pending.toolName) : undefined;
+      // C-1(2026-10-22 审查):与 audit middleware 同口径按真实 args.action 解析(见上)。
+      const _pendingActualAction = typeof pending.args?.action === 'string' ? pending.args.action : undefined;
+      const auditDynMap = isDynamicToolName(pending.toolName) ? resolveDynamicTool(pending.toolName, _pendingActualAction) : undefined;
       const unmappedDynamic = isDynamicToolName(pending.toolName) && !auditDynMap;
       const auditTool = auditDynMap?.tool ?? pending.toolName;
       const auditAction = auditDynMap?.action ?? String(pending.args.action ?? '');

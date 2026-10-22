@@ -14,19 +14,53 @@ import { METHOD_TO_TOOL, resolveDynamicTool } from '../../src/core/dynamic-risk-
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DRIFT_SCRIPT = join(repoRoot, 'scripts', 'check-command-docs-drift.mjs');
 
-/** 从 mjs 源码正则提取 METHOD_TO_TOOL 条目(method: { tool: 'x', action: 'y' }) */
-function extractMjsMap(source: string): Map<string, { tool: string; action: string }> {
+/** 从 mjs 源码正则提取 METHOD_TO_TOOL 条目(method: { tool: 'x', action: 'y' [, actions: {...}] }) */
+function extractMjsMap(source: string): Map<string, { tool: string; action: string; actions?: Record<string, string> }> {
   const blockMatch = source.match(/const METHOD_TO_TOOL = \{([\s\S]*?)\n\};/);
   expect(blockMatch, 'check-command-docs-drift.mjs 的 METHOD_TO_TOOL 块未找到(结构被破坏)').toBeTruthy();
   const body = blockMatch![1]!;
-  const out = new Map<string, { tool: string; action: string }>();
-  const entryRe = /^ {2}([a-z_]+):\s*\{ tool: '([a-z_]+)',\s*action: '([a-z_]+)' \},?/gm;
+  const out = new Map<string, { tool: string; action: string; actions?: Record<string, string> }>();
+  // C-1(2026-10-22): 新形状含 actions 表(animation_track/keyframe 按 GD 短 action 解析风险);
+  // 旧形状(无 actions)仍须匹配——两种条目逐条比对,缺一即 drift。
+  const entryRe = /^ {2}([a-z_]+):\s*\{ tool: '([a-z_]+)',\s*action: '([a-z_]+)'(, actions: \{ ([^}]+) \})? \},?/gm;
   let m: RegExpExecArray | null;
   while ((m = entryRe.exec(body)) !== null) {
-    out.set(m[1]!, { tool: m[2]!, action: m[3]! });
+    const entry: { tool: string; action: string; actions?: Record<string, string> } = { tool: m[2]!, action: m[3]! };
+    if (m[5]) {
+      const actions: Record<string, string> = {};
+      for (const pair of m[5]!.split(',')) {
+        const kv = pair.match(/^\s*([a-z]+):\s*'([a-z_]+)'\s*$/);
+        expect(kv, `mjs actions 表条目格式异常: ${pair}(method ${m[1]})`).toBeTruthy();
+        actions[kv![1]!] = kv![2]!;
+      }
+      entry.actions = actions;
+    }
+    out.set(m[1]!, entry);
   }
   return out;
 }
+
+describe('C-1 真实 action 解析（2026-10-22 审查第二轮）', () => {
+  it('animation_keyframe + remove → remove_keyframe（destructive）', () => {
+    expect(resolveDynamicTool('animation_keyframe', 'remove'))
+      .toEqual({ tool: 'animation_track', action: 'remove_keyframe' });
+  });
+  it('animation_keyframe + update → update_keyframe（destructive）', () => {
+    expect(resolveDynamicTool('animation_keyframe', 'update'))
+      .toEqual({ tool: 'animation_track', action: 'update_keyframe' });
+  });
+  it('animation_track + remove → remove_track（destructive）', () => {
+    expect(resolveDynamicTool('animation_track', 'remove'))
+      .toEqual({ tool: 'animation_track', action: 'remove_track' });
+  });
+  it('已登记 method + 未登记 action → undefined（fail-closed）', () => {
+    expect(resolveDynamicTool('animation_keyframe', 'evil_action')).toBeUndefined();
+  });
+  it('无内部 action 的 method 不受 actualAction 影响', () => {
+    expect(resolveDynamicTool('engine_call_method', 'whatever'))
+      .toEqual({ tool: 'engine', action: 'call_method' });
+  });
+});
 
 describe('dynamic-risk-map (A1 双副本同步契约)', () => {
   it('METHOD_TO_TOOL 与 check-command-docs-drift.mjs 逐条一致', () => {
