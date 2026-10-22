@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import type { ChildProcess } from 'child_process';
 
 describe('fullSystemScanGodot filter excludes --editor processes', () => {
   const srcPath = join(__dirname, '../../src/core/orphan-cleanup.ts');
@@ -46,7 +47,7 @@ describe('M-2 forceKillTree ignoreKilled 升级强杀', () => {
     await withPlatform('linux', async () => {
       const { forceKillTree } = await import('../../src/core/process-state.js');
       const kill = vi.fn();
-      forceKillTree({ killed: true, pid: 123, kill } as any);
+      forceKillTree({ killed: true, pid: 123, kill } as unknown as ChildProcess);
       expect(kill).not.toHaveBeenCalled();
     });
   });
@@ -55,7 +56,7 @@ describe('M-2 forceKillTree ignoreKilled 升级强杀', () => {
     await withPlatform('linux', async () => {
       const { forceKillTree } = await import('../../src/core/process-state.js');
       const kill = vi.fn();
-      forceKillTree({ killed: true, pid: 123, kill } as any, { ignoreKilled: true });
+      forceKillTree({ killed: true, pid: 123, kill } as unknown as ChildProcess, { ignoreKilled: true });
       expect(kill).toHaveBeenCalledWith('SIGKILL');
     });
   });
