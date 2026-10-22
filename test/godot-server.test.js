@@ -219,6 +219,23 @@ describe('GodotServer', () => {
       expect(mockServerClose).toHaveBeenCalled();
     });
 
+    // M-3(2026-10-22 审查): close 实例级幂等——并发/重入复用同一 Promise,清理链恰执行一次。
+    it('M-3: 并发 Promise.all close 不抛且 server.close 仅执行一次', async () => {
+      const server = new GodotServer('/fake/ops.gd');
+      mockServerClose.mockClear();
+      const results = await Promise.all([server.close(), server.close(), server.close()]);
+      expect(results).toEqual([undefined, undefined, undefined]);
+      expect(mockServerClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('M-3: 先 await close() 再并发重入同样只执行一次', async () => {
+      const server = new GodotServer('/fake/ops.gd');
+      mockServerClose.mockClear();
+      await server.close();
+      await expect(Promise.all([server.close(), server.close()])).resolves.toEqual([undefined, undefined]);
+      expect(mockServerClose).toHaveBeenCalledTimes(1);
+    });
+
     // P0-2 架构修复: close() 须清理 tools 侧模块级引用,防测试隔离泄漏/热重启残留。
     // 以 instance-tools 为代表(setInstanceManager/setInstanceRouter 在 run() 注入,close 应清空);
     // setDynamicSender/setToolCallDelegate/setBridgeProjectDir 在同一 finally 块,结构对称,由本机制保证。
