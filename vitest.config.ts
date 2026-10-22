@@ -1,14 +1,51 @@
 /// <reference types="vitest/globals" />
 import { defineConfig } from 'vitest/config';
 
+// M-7(2026-10-22 审查): 真 Godot 集成测试共享可变 fixture(test/fixtures/real-project、
+// 固定输出路径如 res://resources/_csv_test_out/),全量并行时 worker 互相清理/覆盖 →
+// 超时假红 + READBACK_LOAD_NULL(实测:npm test 2 failed、覆盖率跑 4 failed,隔离重跑全过,
+// 系测试隔离缺陷而非机器慢)。Vitest 4 已移除 vitest.workspace.ts(2/3 机制),等价机制是
+// 根 config 的 test.projects:unit 保持并行,godot-integration 文件级串行。
+const COMMON = {
+  globals: true,
+  // 填充 gdscript-check fixture(被 gitignore 的运行时拷贝产物)——CI vitest 跑在
+  // check:gdscript 之前,不填充则 GD 类测试 load null 挂死超时(见 test/global-setup.ts)
+  globalSetup: ['test/global-setup.ts'],
+  setupFiles: ['test/setup.js'],
+  testTimeout: 10_000,
+};
+
 export default defineConfig({
   test: {
-    globals: true,
-    // 填充 gdscript-check fixture(被 gitignore 的运行时拷贝产物)——CI vitest 跑在
-    // check:gdscript 之前,不填充则 GD 类测试 load null 挂死超时(见 test/global-setup.ts)
-    globalSetup: ['test/global-setup.ts'],
-    setupFiles: ['test/setup.js'],
-    include: ['test/**/*.test.{js,ts}'],
+    projects: [
+      {
+        test: {
+          ...COMMON,
+          name: 'unit',
+          include: ['test/**/*.test.{js,ts}'],
+          exclude: [
+            'test/integration/**',
+            'test/tools/*integration*.test.ts',
+            'test/e2e-full-tool-verification.test.ts',
+          ],
+        },
+      },
+      {
+        test: {
+          ...COMMON,
+          name: 'godot-integration',
+          // 真 Godot + 共享可变 fixture:必须文件级串行(M-7)
+          fileParallelism: false,
+          include: [
+            'test/integration/**',
+            'test/tools/*integration*.test.ts',
+            // 依赖真 Godot(describe.skipIf(!hasGodot)),自 unit 挪入串行池(计划第 4 点分支:
+            // 依真 Godot 且不稳 → 移入 godot-integration,以两轮全量跑全绿为准)
+            'test/e2e-full-tool-verification.test.ts',
+          ],
+        },
+      },
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
@@ -33,6 +70,5 @@ export default defineConfig({
         lines: 77,
       },
     },
-    testTimeout: 10_000,
   },
 });

@@ -132,6 +132,8 @@ export class GodotServer {
   private resourceSubscriptions = new Set<string>();
   // Web GUI(spec 2026-09-14 §3.2):server 进程内嵌监控面板;附属功能,启动失败降级禁用。
   private webGuiServer: WebGuiServer | null = null;
+  // M-3(2026-10-22 审查): close 实例级幂等——并发/重入复用同一 Promise,清理链只跑一遍。
+  private _closePromise: Promise<void> | undefined;
   /** run() 完成后已定(设计 B-2):index.ts 的 TUI 决策查询点。 */
   webGuiActive = false;
 
@@ -858,6 +860,16 @@ export class GodotServer {
   }
 
   async close(): Promise<void> {
+    // M-3(2026-10-22 审查): 实例级幂等——并发/重入 close 复用同一 Promise。
+    // 此前仅局部 serverClosed 标志防 server.close() 重复调用,清理链其余步骤
+    // (in-flight/DAP/editor manager/进程 kill/模块 setter)可被并发执行两遍
+    // (onSelfRestart 与请求处理重叠时)。同一 Promise 保证链恰执行一次。
+    if (this._closePromise) return this._closePromise;
+    this._closePromise = this._closeInternal();
+    return this._closePromise;
+  }
+
+  private async _closeInternal(): Promise<void> {
     // P2: 整体 try/finally 兜底，finally 保证 server.close + 模块级引用清理必执行。
     // 各步骤虽多 best-effort，但 agentCtx.destroy()/server.close() 抛错会中断后续清理 →
     // 模块级引用残留（影响测试隔离与重启）。finally 用 serverClosed 标志防重复 close。
@@ -870,6 +882,12 @@ export class GodotServer {
     };
     let serverClosed = false;
     try {
+      // M-3: transport(server)关闭提为清理链第一步——停止接收新请求先于进程级清理。
+      // 此前 server.close() 在链末,onSelfRestart 窗口内 stdio 仍可能收新调用,
+      // 与清理中的 manager/进程状态竞争。logger 全容错(失败静默),链内后续
+      // warn 日志在 transport 关闭后安全。
+      try { await this.server.close(); } catch { /* best-effort: 已损坏或重复关闭 */ }
+      serverClosed = true;
       // P4-3: 清本进程 in-flight 记录文件(正常退出不留孤儿;异常死亡才留 → 下个启动报丧)
       await safeStep('clearInflight', () => clearAllInflight());
       // H-4 (2026-09-17 审查): dap 会话纳入清理链——销毁全部 DAP TCP socket + 清簿记。
@@ -970,8 +988,6 @@ export class GodotServer {
       // M-10 (2026-09-17 审查): 首步清理后,close 窗口内并发工具调用的 markInflight
       // 会重建 in-flight 文件,末步再清一次(否则正常退出也留孤儿 → 下个启动误报丧)。
       await safeStep('clearInflightFinal', () => clearAllInflight());
-      await this.server.close();
-      serverClosed = true;
     } finally {
       // 必执行：模块级引用清理（防测试隔离泄漏 / 重启残留）+ server.close 兜底
       if (!serverClosed) {

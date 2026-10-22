@@ -21,8 +21,10 @@ const MAX_SHORT_CONCURRENT = 3;
 // ─── Cross-platform process termination ────────────────────────────────────
 
 /** Kill process tree without blocking the event loop. Uses async spawn on Windows. */
-export function forceKillTree(proc: ChildProcess): void {
-  if (proc.killed) return;
+export function forceKillTree(proc: ChildProcess, opts: { ignoreKilled?: boolean } = {}): void {
+  // M-2(2026-10-22 审查): 兜底升级路径(ignoreKilled=true)不因 killed 标志短路——
+  // SIGTERM 已发(proc.killed=true)但进程仍存活(信号被忽略/阻塞)时,必须仍能升级强杀。
+  if (proc.killed && !opts.ignoreKilled) return;
   if (isWin) {
     try {
       const child = spawn('taskkill', ['/F', '/T', '/PID', String(proc.pid)], { stdio: 'ignore' });
@@ -46,7 +48,9 @@ export function forceKillTree(proc: ChildProcess): void {
         getLogger().debug('process-state', `pkill failed, falling back to proc.kill: ${err}`);
       }
     }
-    proc.kill('SIGTERM');
+    // M-2: 常规路径 SIGTERM;兜底升级路径(ignoreKilled)直接 SIGKILL——
+    // 能走到这一步说明 SIGTERM 已被证明无效,再发一次同样信号没有意义。
+    proc.kill(opts.ignoreKilled ? 'SIGKILL' : 'SIGTERM');
   }
 }
 
@@ -85,7 +89,8 @@ export function killProcess(proc: ChildProcess): Promise<void> {
     let resolved = false;
     const done = () => { if (!resolved) { resolved = true; resolve(); } };
     const timer = setTimeout(() => {
-      forceKillTree(proc);
+      // M-2: 兜底升级——此时 SIGTERM 已发但进程未退,killed 标志为 true 不应阻断强杀
+      forceKillTree(proc, { ignoreKilled: true });
       done();
     }, 5000);
 

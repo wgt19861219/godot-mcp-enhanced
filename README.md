@@ -237,7 +237,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 >
 > **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
 >
-> **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:272**(matrix 的 risk 聚合 read 134+write 112+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
+> **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:272**(matrix 的 risk 聚合 read 133+write 113+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
 
 ### 执行工具
 

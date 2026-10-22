@@ -78,6 +78,29 @@ describe('wrapSnippet', () => {
     expect(result).toContain('static func add(a, b):');
     expect(result).toContain('\treturn a + b');
   });
+
+  // ── H-6(2026-10-22 审查): root 重命名词法安全化 ──
+  it('H-6: 无 var root 声明时字符串字面量零替换 print("root") 原样保留', () => {
+    const result = wrapSnippet('print("root")');
+    expect(result).toContain('print("root")');
+    expect(result).not.toContain('_mcp_user_root');
+  });
+
+  it('H-6: 无声明时节点路径字符串 get_node("/root/Main") 不被误改', () => {
+    const result = wrapSnippet('var n = get_node("/root/Main")\nprint(n)');
+    expect(result).toContain('get_node("/root/Main")');
+    expect(result).not.toContain('_mcp_user_root');
+  });
+
+  it('H-6: 有 var root 声明时标识符改写,同现字符串与注释保留', () => {
+    const result = wrapSnippet('var root = 1  # the root node\nprint(root)\nprint("root")');
+    // 声明与标识符引用被改写(避开 SceneTree.root 冲突)
+    expect(result).toContain('var _mcp_user_root = 1');
+    expect(result).toContain('print(_mcp_user_root)');
+    // 字符串字面量与注释整段保留
+    expect(result).toContain('print("root")');
+    expect(result).toContain('# the root node');
+  });
 });
 
 // ─── wrapSnippetAsNode ────────────────────────────────────────────────────────
@@ -184,6 +207,16 @@ describe('createAutoloadLoaderScript', () => {
   it('escapes double quotes in paths', () => {
     const result = createAutoloadLoaderScript('/path/with"quote/script.gd');
     expect(result).toContain('/path/with\\"quote/script.gd');
+  });
+
+  // M-1(2026-10-22 审查): 实例必须 add_child 入树后 _initialize 才可用 get_tree()
+  it('M-1: add_child(instance) 在 _initialize 调用之前(实例入树)', () => {
+    const result = createAutoloadLoaderScript('/p/s.gd');
+    expect(result).toContain('\tadd_child(instance)');
+    const addChildIdx = result.indexOf('add_child(instance)');
+    const initIdx = result.indexOf('instance._initialize()');
+    expect(addChildIdx).toBeGreaterThan(-1);
+    expect(initIdx).toBeGreaterThan(addChildIdx);
   });
 });
 

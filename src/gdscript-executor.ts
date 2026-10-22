@@ -398,6 +398,31 @@ function _normalizeIndentToTabs(lines: string[]): void {
   }
 }
 
+/** H-6(2026-10-22 审查): 字符串字面量切分——split 后奇数段为字符串,原样保留。 */
+const STRING_SPLIT = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
+
+/** H-6: 仅对字符串字面量之外、# 注释之前的代码段做 token 替换。
+ *  已知限制:GDScript 三引号字符串(""")不在词法层识别——三引号内含引号时切分
+ *  可能错乱(触发前提:用户声明 var root + 同行三引号内引号与 root 特定排列,概率
+ *  极低且修复前该场景必然误改);彻底方案需 tokenizer,见审查 Nit-2 留档。 */
+function renameOutsideLiterals(line: string, pattern: RegExp, reserved: string): string {
+  // 找引号外首个 # 作为注释起点,注释段整段保留
+  let inStr: string | null = null;
+  let commentIdx = -1;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (inStr) { if (ch === '\\') i++; else if (ch === inStr) inStr = null; continue; }
+    if (ch === '"' || ch === "'") inStr = ch;
+    else if (ch === '#') { commentIdx = i; break; }
+  }
+  const codePart = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
+  const commentPart = commentIdx >= 0 ? line.slice(commentIdx) : '';
+  const renamed = codePart.split(STRING_SPLIT)
+    .map((seg, i) => (i % 2 === 1 ? seg : seg.replace(pattern, `_mcp_user_${reserved}`)))
+    .join('');
+  return renamed + commentPart;
+}
+
 /**
  * Wrap a snippet into a valid `extends SceneTree` script with helper functions.
  * Splits user code into declarations (class-level) and statements (inside _initialize).
@@ -411,20 +436,26 @@ export function wrapSnippet(code: string, resultMarker = MARKER_RESULT_SHARED): 
   // Rename user's `var root` → `var _mcp_user_root` and update references.
   const ST_RESERVED = ['root'];
   for (const reserved of ST_RESERVED) {
+    // H-6 守卫: declarationLines 无 `var root` 声明时整段跳过重命名——
+    // 修主害:get_node("/root/Main")、字符串/注释中的 root 不再被误改(此前必然误改)。
+    const declaresReserved = declarationLines.some(l => new RegExp(`^(var\\s+)${reserved}\\b`).test(l));
+    if (!declaresReserved) continue;
     // Step 1: Rename declaration `var root =` → `var _mcp_user_root =`
     // Also covers `var root: Type = ...` and `var root` (no initializer)
+    // (声明行自身是代码非字面量,整行替换安全)
     const declPattern = new RegExp(`^(var\\s+)${reserved}\\b`, 'g');
     for (let i = 0; i < declarationLines.length; i++) {
       declarationLines[i] = declarationLines[i]!.replace(declPattern, `$1_mcp_user_${reserved}`);
     }
     // Step 2: Update references in both declarationLines and statementLines.
     // _mcp_user_root contains 'root' but is preceded by '_' so refPattern won't match it.
+    // H-6: 替换仅作用于字符串字面量与 # 注释之外的代码段。
     const refPattern = new RegExp(`(?<![_.\\w])\\b${reserved}\\b(?!\\w)`, 'g');
     for (let i = 0; i < declarationLines.length; i++) {
-      declarationLines[i] = declarationLines[i]!.replace(refPattern, `_mcp_user_${reserved}`);
+      declarationLines[i] = renameOutsideLiterals(declarationLines[i]!, refPattern, reserved);
     }
     for (let i = 0; i < statementLines.length; i++) {
-      statementLines[i] = statementLines[i]!.replace(refPattern, `_mcp_user_${reserved}`);
+      statementLines[i] = renameOutsideLiterals(statementLines[i]!, refPattern, reserved);
     }
   }
 
@@ -1095,6 +1126,9 @@ export function createAutoloadLoaderScript(userScriptPath: string, errorMarker: 
     '\t\tget_tree().quit(0)',
     '\t\treturn',
     '\tvar instance: Variant = user_script.new()',
+    // M-1(2026-10-22 审查): 实例加入场景树——loader 自身在树中,add_child 后
+    // instance.get_tree()/_mcp_get_root() 可用(此前未入树,节点树 API 全 null)。
+    '\tadd_child(instance)',
     '\tif instance.has_method("_initialize"):',
     '\t\tinstance._initialize()',
     '\tget_tree().quit(0)',

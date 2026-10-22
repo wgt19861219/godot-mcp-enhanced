@@ -2,7 +2,7 @@
 
 > Free · Open Source · Secure — a rare open-source MCP server for Godot offering **systematic security protections + a three-tier architecture + runtime control**.
 
-An MCP server that gives AI (Claude Code, Cursor, and other MCP clients) a tool layer to truly **read, write, run, and verify** Godot projects: 46 MCP tools (merged, with 240+ actions; full list in [capability-matrix](docs/capability-matrix.md)) covering scenes / scripts / UI / animation / physics / particles / navigation / audio / testing / export, a three-tier architecture (headless + editor + game bridge) + path allowlist / injection defense / sandbox security.
+An MCP server that gives AI (Claude Code, Cursor, and other MCP clients) a tool layer to truly **read, write, run, and verify** Godot projects: 46 MCP tools (merged, with 272 actions; full list in [capability-matrix](docs/capability-matrix.md)) covering scenes / scripts / UI / animation / physics / particles / navigation / audio / testing / export, a three-tier architecture (headless + editor + game bridge) + path allowlist / injection defense / sandbox security.
 While competitors bet on **authoring** (generation), this project bets on **verification** — QA orchestration, regression diffs, an operation audit log, and deterministic playtesting together form a **continuous verification pipeline for AI-assisted game development** (CI for AI game dev).
 
 > **Tool descriptions are in Chinese** (serving the Chinese Godot developer community; i18n PRs welcome). This English README covers positioning, comparison, security, and setup; for the full per-action tool list see the [Chinese README](README.md) and [capability-matrix](docs/capability-matrix.md).
@@ -15,7 +15,7 @@ New to game engines? After installing [Godot](https://godotengine.org/download),
 
 1. **Say what you want** — the AI scaffolds the project (`create_project`) and writes scenes & scripts (`quick_scene` / `write_script`);
 2. **See it run** — `run_and_verify` actually runs the game with structured error analysis; `screenshot` (action `capture`) shows you what it looks like;
-3. **Iterate** — every `edit_script` change goes through `validate_scripts` full compilation; you just give feedback;
+3. **Iterate** — every script edit goes through `validate_scripts` (per-script `load()` compile check; full project compile via `npm run check:gdscript`); you just give feedback;
 4. **Accept** — `qa` runs a structured suite against the *real running game* (`playtest.seed` locks RNG: same input → reproducible); `verify_delivery` gates delivery (scene-tree integrity + script health + performance);
 5. **Mistakes are cheap** — editor-tier writes all register into Godot's native undo stack: one **Ctrl+Z** reverts any AI mistake.
 
@@ -157,12 +157,12 @@ Every editor-tier write registers into Godot's native undo stack (10 production 
 ### Closed-loop AI development
 
 ```
-read_scene / read_script → understand structure → write_script / edit_script
-→ run_and_verify (error analysis) → validate_scripts → verify_delivery (delivery gate)
+scene(read_scene) / script(read_script) → understand structure → script(write_script / edit_script)
+→ validation(run_and_verify, error analysis) → validation(validate_scripts) → validation(verify_delivery, delivery gate)
 ```
 
 - **`verify_delivery`** — end-to-end delivery gate: scene-tree integrity + script health + performance + custom assertions
-- **`validate_scripts`** — triggers full Godot compile (incl. cross-file deps), catches Parse Errors headless misses
+- **`validate_scripts`** — per-script Godot `load()` compile check (legacy alias kept for the merged `validation` tool's action; **not** a full project compile — use `npm run check:gdscript` for that), catches Parse Errors headless runs miss
 - **`dev_loop`** — execute → verify → screenshot, with acceptance criteria
 
 ### Batch ops & resource management
