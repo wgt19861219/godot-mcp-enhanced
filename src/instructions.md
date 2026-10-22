@@ -1,6 +1,6 @@
 # Godot MCP Enhanced 使用速查
 
-三层架构（headless + editor + bridge），覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出等领域。工具清单见 `manage_tools` / `docs/capability-matrix.md`。
+三层架构（headless + editor + bridge），覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出等领域。工具清单见 `manage_tools`（action=list_groups/discover 可查全量工具与激活态）。
 
 ## 三层模式决策
 

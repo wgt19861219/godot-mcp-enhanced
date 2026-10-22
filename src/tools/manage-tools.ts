@@ -62,7 +62,7 @@ export function getToolDefinitions(): Tool[] {
       name: 'manage_tools',
       description:
         '动态管理工具组的启用/停用状态。始终可用，不可被禁用。' +
-        '支持 list_groups（列出所有组+profile 价格标签）、discover（关键词发现工具——全量 45 工具×action 搜索评分,返回匹配/所属组/激活态/激活指引,未激活组里的能力由此发现）、activate（启用组）、deactivate（停用组）、sync（同步连接状态）、reconnect（手动重连）。',
+        '支持 list_groups（列出所有组+profile 价格标签）、discover（关键词发现工具——全量工具×action 搜索评分,返回匹配/所属组/激活态/激活指引,未激活组里的能力由此发现）、activate（启用组）、deactivate（停用组）、sync（同步连接状态）、reconnect（手动重连）。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -116,7 +116,7 @@ export async function handleTool(
 /**
  * P5-1 (2026-09-11): discover 按需发现评分(上游报告 #9 / satellite discover_tools 模式)。
  * 默认 basic profile 只 ships 25 工具,未激活组(engine/blender/android/asset/debug 等)里
- * 的能力对 agent 不可见——discover 用关键词在全量 45 工具×action 名上搜索评分,返回匹配
+ * 的能力对 agent 不可见——discover 用关键词在全量工具×action 名上搜索评分,返回匹配
  * +所属组+激活态+激活指引(activate hint),让"能力可见性"不依赖全量 ships(省 token 的
  * 另一半)。评分:工具名×5 > action 名×4 > 组名×3 > schema 属性描述×2 > 顶层描述×1,
  * 每词累计,大小写不敏感。属性描述维度承重:P4 瘦身后 action 级能力词(如 game 的

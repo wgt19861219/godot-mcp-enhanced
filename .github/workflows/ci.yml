@@ -33,6 +33,14 @@ jobs:
         # drift = 实时提取 vs committed docs/capability-matrix.json 不一致。
         # 改了工具契约（inputSchema/securityLevel/risk）须跑 npm run build-matrix 并 commit。
         run: node build/capability/diff-matrix.js
+      - name: Generated docs drift gate (H-5)
+        # H-5(2026-10-22 审查): docs/tools/** 与 capability-matrix 是生成物但随 npm 分发,
+        # 改了工具描述/契约后须跑 npm run build-matrix && npm run gen:tool-docs 并 commit,
+        # 否则包内文档与实现漂移。重生成后 git diff 必须为空。
+        run: |
+          npm run build-matrix
+          npm run gen:tool-docs
+          git diff --exit-code docs/capability-matrix.json docs/capability-matrix.md docs/tools
       - name: Check token budget (spec §E 体积预算)
         # warn-only 基线：error 阈值极高（当前 0 触发）。读 committed json 快照，
         # 不重算（drift step 已保证 json 是最新契约）。size 不进 diff-matrix drift。

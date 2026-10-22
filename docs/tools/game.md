@@ -50,9 +50,10 @@
 | `label_b` | string |  | sync_state compare: 比对快照 B 的标签。 |
 | `tolerance` | number |  | sync_state compare: 浮点容差(默认 0.0001,数值 |a-b|<=tolerance 视为相等;Vector2/3/4 自动转 {x,y,z} dict 分量级容差;浮点位置类不逐位相等是多人比对必然,masteryee 亲读坑)。 |
 | `group` | string |  | sync_state snapshot: 可选组名(如 mcp_watch)——组内无 _mcp_state 的成员记存在性标记参与节点集比对。 |
-| `method` | string |  | 方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。 |
-| `params` | object |  | 方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。 |
+| `method` | string |  | 方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/dump_layout_tree/get_font_report/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。 |
+| `params` | object |  | 方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path="/root",max_depth=32,visible_only=false}(整树控件坐标表导出:controls/hidden 两组 {名:[x,y,w,h]} 运行态 global 坐标 roundi,重名 _2 后缀,visible_only=true 隐藏子树剪枝;配合 analysis.layout_compare 比对);get_font_report{path="/root",max_depth=32}(子树 Label 字体度量:font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量,负=偏上;跨引擎字体不居中诊断);get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。 |
 | `timeout` | number |  | game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000) |
+| `request_id` | string |  | game_write/custom_command 幂等键(可选):超时(outcomeUnknown)后重试传同一值,bridge 按其去重;不传自动生成 |
 | `interval_ms` | number |  | game_wait 专用：轮询探测间隔（毫秒，默认 200，范围 50-2000）。仅 wait_for_node/wait_for_property 生效 |
 | `node_path` | string |  | monitor_start: 要监控的节点路径（如 /root/Player） |
 | `properties` | array |  | monitor_start: 要监控的属性名列表（如 ["position", "health"]）;被安全过滤的属性会在返回 dropped_blocked 中逐个点名 |
@@ -61,8 +62,10 @@
 | `max_events` | number |  | watch_start: 最大记录事件数（默认 1000，最大 5000） |
 | `push` | boolean |  | P3-6 watch_start/monitor_start: 启用 push 模式（事件/采样产生时主动推送 MCP notification，无需 poll）。client 需订阅 resources/subscribe 才能收到 |
 | `observation_profile` | enum: debug | player |  | P7 观察档位(默认 debug;player 需游戏侧 env GODOT_MCP_BRIDGE_ALLOWED_PROFILES 授权,节点 meta 级联隐藏 + agent_field_rules 字段投影生效,详见规则文档) |
-| `pattern` | string |  | find_ui_elements: 名称/文字匹配模式（Godot match 语法） |
+| `pattern` | string |  | find_ui_elements: 名称/文字匹配(语义按 match:wildcard=Godot match 语法,exact/contains=全等/子串) |
 | `type` | string |  | find_ui_elements: 按类型过滤（如 "Button"、"Label"） |
+| `role` | string |  | find_ui_elements: 按语义角色过滤(同输出 role 枚举):combobox/list/tablist/checkbox/progressbar/button/text/textbox/slider/scrollarea/panel;空=不过滤,非法值报错 |
+| `match` | enum: wildcard | exact | contains |  | find_ui_elements: pattern 匹配模式。wildcard(默认)=Godot match 通配符扫 name/text;exact=全等;contains=子串(exact/contains 额外扫 label) |
 | `visible_only` | boolean |  | find_ui_elements: 仅返回可见元素（默认 true） |
 | `limit` | number |  | find_ui_elements: 最大返回数（默认 200，上限 500） |
 | `text` | string |  | click_button: 按钮文字（和 path 二选一） |
@@ -79,4 +82,4 @@
 读 12 / 写 6 / 进程 2
 
 ---
-<!-- AUTO-GENERATED by scripts/gen-tool-docs.mjs from capability-matrix.json v0.33.8. DO NOT edit manually; re-run npm run gen:tool-docs after tool changes. -->
+<!-- AUTO-GENERATED by scripts/gen-tool-docs.mjs from capability-matrix.json v0.35.0. DO NOT edit manually; re-run npm run gen:tool-docs after tool changes. -->
