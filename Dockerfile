@@ -8,9 +8,9 @@ FROM node:20-slim
 # 安装已发布的 npm 包（含 bin: godot-mcp-enhanced -> build/index.js）
 RUN npm install -g godot-mcp-enhanced@0.35.0
 
-# 本地开发模式（跳过 ALLOWED_PROJECT_PATHS 白名单校验）
-# Glama check 只发 initialize/tools/list 不调工具，但开启更稳，避免任何路径相关警告中断
-ENV GODOT_MCP_UNRESTRICTED=true
+# Glama check 只发 initialize/tools/list,不调工具,无需任何安全旁路 env。
+# B-1(2026-10-22 审查):曾设 GODOT_MCP_UNRESTRICTED=true,与 index.ts runStartupSequence
+# 的生产模式 FATAL 检查冲突,容器启动即 exit 1。已删除。
 
 # stdio MCP server — Glama 经 stdin/stdout JSON-RPC 通信
 ENTRYPOINT ["godot-mcp-enhanced"]

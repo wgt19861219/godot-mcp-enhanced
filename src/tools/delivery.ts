@@ -9,7 +9,7 @@ import { scanFiles } from '../core/file-scanner.js';
 import { getLogger } from '../core/logger.js';
 import { executeGdscriptRuntime as executeGdscript } from '../gdscript-executor.js';
 import { batchValidateScripts } from './validation.js';
-import { SCENE_TREE_HEADER, wrapAssertionCode, opsErrorResult } from './shared.js';
+import { SCENE_TREE_HEADER, wrapAssertionCode, resolveAssertionPass, opsErrorResult } from './shared.js';
 import { parseAsserts } from './frame-verify/assert-protocol.js';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative, isAbsolute } from 'path';
@@ -459,9 +459,11 @@ func _initialize():
           } else if (!assertResult.run_success) {
             assertionResults.push({ description: desc, passed: false, error: assertResult.run_error });
           } else {
-            const actual = String(assertResult.outputs.find(e => e.key.startsWith('assert_') || e.key === 'assert_result')?.value ?? '');
+            // H-3(2026-10-22 审查): actual 显式取 assert_result(原 startsWith('assert_') 会
+            // 误命中协议字段);判定唯一依据 resolveAssertionPass(结构化协议字段,fail-closed)。
+            const actual = String(assertResult.outputs.find(e => e.key === 'assert_result')?.value ?? '');
             const expected = a.expect;
-            const passed = expected ? actual === expected : true;
+            const passed = resolveAssertionPass(assertResult.outputs, expected);
             assertionResults.push({ description: desc, passed, actual, expected });
           }
         } catch (err) {

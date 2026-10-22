@@ -12,8 +12,17 @@
 // 两份独立副本(mjs 无法 import TS)。contract 测试 test/dynamic-risk-map.test.ts 逐条
 // 比对两份表,drift 即红。GD command_handler 新增 method 时两处同步登记。
 
+/** 动态 method → 静态工具映射。actions 仅在 method 含内部 action 参数（GD 短名）时登记。 */
+export interface DynamicToolMapping {
+  readonly tool: string;
+  /** 默认静态 action（无 actions 表，或 actualAction 未传时使用） */
+  readonly action: string;
+  /** GD 内部短 action → 静态全名 action。有此表的 method：actualAction 不在表中 = fail-closed。 */
+  readonly actions?: Readonly<Record<string, string>>;
+}
+
 /** GD command_handler 扁平 method 名 → 静态 (tool, action)。与 check-command-docs-drift.mjs METHOD_TO_TOOL 同步维护。 */
-export const METHOD_TO_TOOL: Readonly<Record<string, { readonly tool: string; readonly action: string }>> = {
+export const METHOD_TO_TOOL: Readonly<Record<string, DynamicToolMapping>> = {
   // ─── debug (CMP-3 + CMP-14):tool=debug, 10 action ───────────────────────
   debug_set_breakpoint: { tool: 'debug', action: 'set_breakpoint' },
   debug_clear_breakpoint: { tool: 'debug', action: 'clear_breakpoint' },
@@ -45,9 +54,11 @@ export const METHOD_TO_TOOL: Readonly<Record<string, { readonly tool: string; re
   editor_sync_stop: { tool: 'editor', action: 'sync_stop' },
   editor_get_scene_tree: { tool: 'editor', action: 'get_scene_tree' },
   // ─── animation_commands:split(3 个→animation_track,1 个→animation) ────
-  animation_track: { tool: 'animation_track', action: 'add_track' },
-  animation_keyframe: { tool: 'animation_track', action: 'add_keyframe' },
-  animation_curve: { tool: 'animation_track', action: 'set_curve' },
+  // C-1(2026-10-22 审查):animation_track/animation_keyframe 的 GD method 含内部短 action
+  // 参数(add/remove/update),风险必须按真实 action 解析;actions 表缺该 action → fail-closed。
+  animation_track:    { tool: 'animation_track', action: 'add_track', actions: { add: 'add_track', remove: 'remove_track' } },
+  animation_keyframe: { tool: 'animation_track', action: 'add_keyframe', actions: { add: 'add_keyframe', remove: 'remove_keyframe', update: 'update_keyframe' } },
+  animation_curve:    { tool: 'animation_track', action: 'set_curve' },
   animation_blend: { tool: 'animation', action: 'blend' },
   // ─── animtree_commands:tool=animtree, action 扁平 ───────────────────────
   animtree_create: { tool: 'animtree', action: 'animtree_create' },
@@ -95,7 +106,16 @@ export const METHOD_TO_TOOL: Readonly<Record<string, { readonly tool: string; re
 /**
  * 动态工具名(= GD 扁平 method 名,methodToToolName 对本表 method 是恒等变换)→ 静态 (tool, action)。
  * 未映射返 undefined —— 调用方(ToolDispatcher)对未映射动态工具按 fail-closed 处理(风险未知 → 需确认)。
+ * C-1(2026-10-22 审查): 含 actions 表的 method 按 actualAction(GD 内部短名)解析真实静态
+ * action;actualAction 不在表中同样返 undefined(fail-closed,防新增 action 漏登记静默绕门)。
  */
-export function resolveDynamicTool(toolName: string): { tool: string; action: string } | undefined {
-  return METHOD_TO_TOOL[toolName];
+export function resolveDynamicTool(toolName: string, actualAction?: string): { tool: string; action: string } | undefined {
+  const m = METHOD_TO_TOOL[toolName];
+  if (!m) return undefined;
+  if (m.actions) {
+    if (actualAction === undefined) return { tool: m.tool, action: m.action };
+    const mapped = m.actions[actualAction];
+    return mapped !== undefined ? { tool: m.tool, action: mapped } : undefined; // fail-closed
+  }
+  return { tool: m.tool, action: m.action };
 }

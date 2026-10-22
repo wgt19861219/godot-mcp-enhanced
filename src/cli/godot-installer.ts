@@ -13,6 +13,7 @@ import { createHash } from 'crypto';
 import { createReadStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import { InternalError } from '../core/tool-errors.js';
+import { EXIT_CODES } from '../core/exit-codes.js';
 
 export const DOWNLOAD_HOSTS = ['github.com', 'objects.githubusercontent.com', 'api.github.com'] as const;
 
@@ -255,14 +256,26 @@ export async function installGodot(opts: {
 
 // ─── CLI 入口(`npx godot-mcp-enhanced install [tag]`)────────────────────────
 
-/** install 子命令:可选版本 tag 参数(默认 latest stable),交互确认后安装。 */
+/** install 子命令:可选版本 tag 参数(默认 latest stable),交互确认后安装;
+ * --yes 跳过确认(非交互/CI 环境)。 */
 export async function runInstall(args: string[]): Promise<void> {
-  const versionTag = args[0];
+  const versionTag = args.find(a => !a.startsWith('--'));
+  const assumeYes = args.includes('--yes');
   console.log('📥 Godot 自动安装(官方 GitHub releases,SHA512 同源校验)\n');
+  // H-4(2026-10-22 审查):非 TTY 且无 --yes → exit 2(对齐 uninstall 先例)。原实现
+  // confirmYesNo 在非 TTY 静默 return false → 'cancelled by user' → index.ts 映射
+  // exitCode 0,CI 误判成功。TTY 主动取消仍走 confirm=false → exit 0(用户行为非错误)。
+  if (!assumeYes && !process.stdin.isTTY) {
+    console.error('✗ 非交互环境(管道/CI)拒绝默认确认。重跑加 --yes:');
+    console.error('  执行: npx godot-mcp-enhanced install --yes [-- <versionTag>]');
+    process.exit(EXIT_CODES.EXIT_USAGE);
+    return;
+  }
   const { confirmYesNo } = await import('./confirm.js');
+  const confirm = () => (assumeYes ? Promise.resolve(true) : confirmYesNo('确认下载并安装?'));
   const { godotPath, versionTag: tag } = await installGodot({
     versionTag,
-    confirm: () => confirmYesNo('确认下载并安装?'),
+    confirm,
     onProgress: (msg) => console.log(`  ${msg}`),
   });
   console.log(`\n✓ Godot ${tag} 安装完成: ${godotPath}`);

@@ -48,3 +48,31 @@ describe('screenshot-core: import does not crash', () => {
     expect(captureScreenshot).toBeDefined();
   });
 });
+
+// ─── H-1 (2026-10-22 审查第二轮): 运行前删除旧输出,堵陈旧截图假成功 ──────────
+// 修复前:captureScreenshot 在校验 Godot 退出码之前仅凭 existsSync(outputPath) 返回
+// success:true——Godot 本次失败/超时时,上一次的旧文件命中 existsSync 返回假成功。
+// 修复:runScreenshot 首次调用前 unlinkSync 旧输出;本用例预置旧文件 + 无效 godotPath
+// (进程必失败、不产出新文件),断言失败结果且旧文件不存活充当假证据。
+describe('screenshot-core: H-1 stale output removal', () => {
+  it('H-1: Godot 失败且存在旧截图文件时必须返回失败并删除旧文件', async () => {
+    const { mkdtempSync, writeFileSync, existsSync, rmSync } = await import('fs');
+    const { join } = await import('path');
+    const { tmpdir } = await import('os');
+    const tmpProjDir = mkdtempSync(join(tmpdir(), 'ss-h1-'));
+    try {
+      const outputPath = join(tmpProjDir, 'screenshot.png');
+      writeFileSync(outputPath, Buffer.from('stale-png-bytes'));
+      const result = await captureScreenshot({
+        godotPath: '/nonexistent/godot-binary',
+        projectPath: tmpProjDir,
+        outputPath,
+      });
+      expect(result.success).toBe(false);
+      // H-1 核心:旧文件不得存活充当假证据(运行前已删且本次未产出)
+      expect(existsSync(outputPath)).toBe(false);
+    } finally {
+      rmSync(tmpProjDir, { recursive: true, force: true });
+    }
+  });
+});
