@@ -15,7 +15,7 @@ New to game engines? After installing [Godot](https://godotengine.org/download),
 
 1. **Say what you want** — the AI scaffolds the project (`create_project`) and writes scenes & scripts (`quick_scene` / `write_script`);
 2. **See it run** — `run_and_verify` actually runs the game with structured error analysis; `screenshot` (action `capture`) shows you what it looks like;
-3. **Iterate** — every `edit_script` change goes through `validate_scripts` full compilation; you just give feedback;
+3. **Iterate** — every script edit goes through `validate_scripts` (per-script `load()` compile check; full project compile via `npm run check:gdscript`); you just give feedback;
 4. **Accept** — `qa` runs a structured suite against the *real running game* (`playtest.seed` locks RNG: same input → reproducible); `verify_delivery` gates delivery (scene-tree integrity + script health + performance);
 5. **Mistakes are cheap** — editor-tier writes all register into Godot's native undo stack: one **Ctrl+Z** reverts any AI mistake.
 

@@ -401,7 +401,10 @@ function _normalizeIndentToTabs(lines: string[]): void {
 /** H-6(2026-10-22 审查): 字符串字面量切分——split 后奇数段为字符串,原样保留。 */
 const STRING_SPLIT = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g;
 
-/** H-6: 仅对字符串字面量之外、# 注释之前的代码段做 token 替换。 */
+/** H-6: 仅对字符串字面量之外、# 注释之前的代码段做 token 替换。
+ *  已知限制:GDScript 三引号字符串(""")不在词法层识别——三引号内含引号时切分
+ *  可能错乱(触发前提:用户声明 var root + 同行三引号内引号与 root 特定排列,概率
+ *  极低且修复前该场景必然误改);彻底方案需 tokenizer,见审查 Nit-2 留档。 */
 function renameOutsideLiterals(line: string, pattern: RegExp, reserved: string): string {
   // 找引号外首个 # 作为注释起点,注释段整段保留
   let inStr: string | null = null;
