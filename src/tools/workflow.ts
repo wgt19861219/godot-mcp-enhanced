@@ -7,7 +7,7 @@ import { textResult } from '../types.js';
 import { requireProjectPath } from '../core/args-validation.js';
 import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
 import { executeGdscript, executeGdscriptTrusted, executeGdscriptRuntime } from '../gdscript-executor.js';
-import { SCENE_TREE_HEADER, parseGdscriptResult, wrapAssertionCode, opsErrorResult, validateTimeout, escapeForGdLiteral } from './shared.js';
+import { SCENE_TREE_HEADER, parseGdscriptResult, wrapAssertionCode, resolveAssertionPass, opsErrorResult, validateTimeout, escapeForGdLiteral } from './shared.js';
 import { batchValidateScripts } from './validation.js';
 import { sendToBridge, setBridgeProjectDir, BRIDGE_READ_ONLY_METHODS } from './game-bridge.js';
 import { spawnGodot } from './spawn-helper.js';
@@ -664,8 +664,10 @@ func _initialize():
               } else if (!assertResult.run_success) {
                 assertionResults.push({ description: desc, passed: false, error: assertResult.run_error });
               } else {
-                const actual = String(assertResult.outputs.find(e => e.key.startsWith('assert_') || e.key === 'assert_result')?.value ?? '');
-                const passed = a.expect ? actual === a.expect : true;
+                // H-3(2026-10-22 审查): actual 显式取 assert_result(原 startsWith('assert_')
+                // 会误命中协议字段 assert_protocol_pass);判定唯一依据结构化协议字段。
+                const actual = String(assertResult.outputs.find(e => e.key === 'assert_result')?.value ?? '');
+                const passed = resolveAssertionPass(assertResult.outputs, a.expect);
                 assertionResults.push({ description: desc, passed, actual, expected: a.expect });
               }
             } catch (err) {

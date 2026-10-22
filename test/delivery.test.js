@@ -751,6 +751,8 @@ describe('delivery: assertions dimension', () => {
   });
 
   it('executes custom assertions and reports results', async () => {
+    // H-3(2026-10-22 审查): mock outputs 补协议字段 assert_protocol_pass——wrapper 真实
+    // 输出形态(用户代码出 assert_result,wrapper 派生协议结论),判定唯一依据该字段。
     mockExecuteGdscript.mockResolvedValue({
       success: true,
       compile_success: true,
@@ -758,7 +760,10 @@ describe('delivery: assertions dimension', () => {
       errors: [],
       run_success: true,
       run_error: '',
-      outputs: [{ key: 'assert_1', value: 'true' }],
+      outputs: [
+        { key: 'assert_result', value: 'true' },
+        { key: 'assert_protocol_pass', value: 'true' },
+      ],
       raw_output: '',
       duration_ms: 50,
     });
@@ -784,6 +789,7 @@ describe('delivery: assertions dimension', () => {
   });
 
   it('detects assertion mismatch (expected vs actual)', async () => {
+    // H-3: expect 不匹配 → wrapper else 分支打协议 false → fail(fail-closed)
     mockExecuteGdscript.mockResolvedValue({
       success: true,
       compile_success: true,
@@ -791,7 +797,10 @@ describe('delivery: assertions dimension', () => {
       errors: [],
       run_success: true,
       run_error: '',
-      outputs: [{ key: 'assert_1', value: 'false' }],
+      outputs: [
+        { key: 'assert_result', value: 'false' },
+        { key: 'assert_protocol_pass', value: 'false' },
+      ],
       raw_output: '',
       duration_ms: 50,
     });
@@ -916,6 +925,8 @@ describe('delivery: assertions dimension', () => {
   });
 
   it('passes assertion with no expected value', async () => {
+    // H-3: 无 expect 时 assert_result 有证据(非空非 "false")→ wrapper 打协议 true → pass。
+    // 协议字段缺失(如本 mock 删掉 assert_protocol_pass)则必 fail——空代码/忘输出堵死假绿。
     mockExecuteGdscript.mockResolvedValue({
       success: true,
       compile_success: true,
@@ -923,7 +934,10 @@ describe('delivery: assertions dimension', () => {
       errors: [],
       run_success: true,
       run_error: '',
-      outputs: [{ key: 'assert_result', value: 'anything' }],
+      outputs: [
+        { key: 'assert_result', value: 'anything' },
+        { key: 'assert_protocol_pass', value: 'true' },
+      ],
       raw_output: '',
       duration_ms: 50,
     });
@@ -946,6 +960,7 @@ describe('delivery: assertions dimension', () => {
   });
 
   it('uses assert_result key for output lookup', async () => {
+    // H-3: actual 显式取 assert_result(不再 startsWith('assert_') 误命中协议字段)
     mockExecuteGdscript.mockResolvedValue({
       success: true,
       compile_success: true,
@@ -953,7 +968,10 @@ describe('delivery: assertions dimension', () => {
       errors: [],
       run_success: true,
       run_error: '',
-      outputs: [{ key: 'assert_result', value: '42' }],
+      outputs: [
+        { key: 'assert_result', value: '42' },
+        { key: 'assert_protocol_pass', value: 'true' },
+      ],
       raw_output: '',
       duration_ms: 50,
     });
