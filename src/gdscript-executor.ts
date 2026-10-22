@@ -1123,6 +1123,9 @@ export function createAutoloadLoaderScript(userScriptPath: string, errorMarker: 
     '\t\tget_tree().quit(0)',
     '\t\treturn',
     '\tvar instance: Variant = user_script.new()',
+    // M-1(2026-10-22 审查): 实例加入场景树——loader 自身在树中,add_child 后
+    // instance.get_tree()/_mcp_get_root() 可用(此前未入树,节点树 API 全 null)。
+    '\tadd_child(instance)',
     '\tif instance.has_method("_initialize"):',
     '\t\tinstance._initialize()',
     '\tget_tree().quit(0)',

@@ -208,6 +208,16 @@ describe('createAutoloadLoaderScript', () => {
     const result = createAutoloadLoaderScript('/path/with"quote/script.gd');
     expect(result).toContain('/path/with\\"quote/script.gd');
   });
+
+  // M-1(2026-10-22 审查): 实例必须 add_child 入树后 _initialize 才可用 get_tree()
+  it('M-1: add_child(instance) 在 _initialize 调用之前(实例入树)', () => {
+    const result = createAutoloadLoaderScript('/p/s.gd');
+    expect(result).toContain('\tadd_child(instance)');
+    const addChildIdx = result.indexOf('add_child(instance)');
+    const initIdx = result.indexOf('instance._initialize()');
+    expect(addChildIdx).toBeGreaterThan(-1);
+    expect(initIdx).toBeGreaterThan(addChildIdx);
+  });
 });
 
 // ─── createAutoloadLoaderScene ─────────────────────────────────────────────────
