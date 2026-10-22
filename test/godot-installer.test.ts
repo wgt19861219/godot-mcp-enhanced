@@ -193,6 +193,20 @@ describe('fetchLatestStableTag(GODOT_MCP_INSTALL_TAG pin)', () => {
     vi.stubEnv('GODOT_MCP_INSTALL_TAG', 'evil');
     await expect(m.fetchLatestStableTag()).rejects.toThrow(/stable only/);
   });
+
+  it('L-17: 版本查询带 AbortSignal 超时,失败重试 1 次后成功(不再永久挂起)', async () => {
+    vi.stubEnv('GODOT_MCP_INSTALL_TAG', '');  // 空串 falsy → 走联网路径
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('TimeoutError: signal timed out'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: '4.7.2-stable' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await m.fetchLatestStableTag()).toBe('4.7.2-stable');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 两次尝试都必须带 AbortSignal(弱网挂起不再无限等待)
+    expect((fetchMock.mock.calls[0] as unknown[])[1]).toHaveProperty('signal');
+    expect((fetchMock.mock.calls[1] as unknown[])[1]).toHaveProperty('signal');
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('confirmYesNo(CLI 交互确认)', () => {
