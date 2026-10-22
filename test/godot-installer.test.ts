@@ -273,6 +273,18 @@ describe('extractZip(零依赖 zip reader)', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('L-16: 目录条目(尾 /)同样拒穿越——../evil-dir/ 不再跳过校验', async () => {
+    // 原实现只对非目录条目过 assertSafeEntryName,`../evil-dir/` 的目录条目
+    // 直达 mkdirSync(join(destDir, name)),在解压根外建目录(2026-10-22 审查 L-16)。
+    const { buildZipWithEntryName } = await import('./godot-installer.test-helper.js');
+    const dir = mkdtempSync(join(tmpdir(), 'gme-unzip-direvil-'));
+    const evilZip = join(dir, 'evil-dir.zip');
+    buildZipWithEntryName(evilZip, '../evil-dir/', Buffer.alloc(0));
+    await expect(m.extractZip(evilZip, dir)).rejects.toThrow(/traversal|escapes/i);
+    expect(existsSync(join(dir, '..', 'evil-dir'))).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('安全P3-1: NTFS 交替数据流形态(基名含冒号)全拒——foo.txt:ads 落盘即 ADS 隐藏流', async () => {
     const { buildZipWithEntryName } = await import('./godot-installer.test-helper.js');
     const dir = mkdtempSync(join(tmpdir(), 'gme-unzip-ads-'));
