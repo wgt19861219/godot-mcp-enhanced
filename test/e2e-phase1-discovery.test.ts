@@ -60,15 +60,6 @@ async function startEditor(): Promise<ChildProcess> {
   throw new Error('editor 30s 内未就绪(WS 9090 未 LISTEN)');
 }
 
-async function waitForConnected(conn: EditorConnection, timeoutMs = 60_000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (conn.isConnected()) return true;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
-}
-
 // ─── 共享状态(所有测试用同一个 editor + conn)─────────────────────────────
 let editor: ChildProcess | null = null;
 let conn: EditorConnection | null = null;
@@ -91,9 +82,12 @@ beforeAll(async () => {
     port: EDITOR_PORT, host: '127.0.0.1', secret,
     reconnect: true, reconnectInterval: 300, maxReconnectAttempts: 10,
   });
-  conn.connect();
-  const ok = await waitForConnected(conn);
-  if (!ok) throw new Error('editor 连接超时');
+  // issue #72: 必须 await connect()——它在 performAuth 成功后才 resolve。裸 connect() +
+  // 轮询 isConnected() 会在 ws open 后、auth 完成前的窗口放行(EditorConnection.connected
+  // 在 performAuth 之前置位),首个 request 收 -32001 Authentication required 且被 peer.close
+  // 断连;beforeAll 的 rmSync(.godot) 让 editor 冷启动全量 re-import、auth 往返可超 200ms
+  // 轮询间隔,窗口放大 → CI 偶发红。同坑先例:e2e-resilience-editor.test.ts issue #23。
+  await conn.connect();
 }, 90_000);
 
 afterAll(async () => {
