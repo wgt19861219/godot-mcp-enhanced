@@ -3,12 +3,13 @@ extends McpTestSuite
 
 ## P1-5 coverage suite for undo_manager.gd.
 ##
-## Covers all 5 funcs in addons/godot_mcp_server/undo_manager.gd:
+## Covers all 6 funcs in addons/godot_mcp_server/undo_manager.gd:
 ##   1. setup(plugin)
 ##   2. create_action_mixed(action_name, do_ops, undo_ops)
-##   3. _add_method(undo_redo, mode, target, method, args)  [private]
-##   4. _add_method_call(undo_redo, mode, m)                [private]
-##   5. _apply_op(undo_redo, mode, op)                       [private]
+##   3. _cap_undo_history(undo_redo)                        [private, 2026-10-21]
+##   4. _add_method(undo_redo, mode, target, method, args)  [private]
+##   5. _add_method_call(undo_redo, mode, m)                [private]
+##   6. _apply_op(undo_redo, mode, op)                       [private]
 ##
 ## Runs in editor context (EditorUndoRedoManager is unavailable in headless).
 ## All suites are short (<1s) — phase-1 sync path has no transport hard gate.
@@ -309,3 +310,26 @@ func test_batch_operations_atomic_undo() -> void:
 	for i in range(3):
 		assert_ne(nodes[i].get_parent(), _arena, "batch undo: node %d removed from arena" % i)
 		assert_true(is_instance_valid(nodes[i]), "batch undo: node %d still valid (reference lifecycle)" % i)
+
+
+# ----- test 10: create_action_mixed 封顶 undo 历史 (2026-10-21) --------------
+
+func test_create_action_caps_undo_history() -> void:
+	## 40GB 内存事故根治项：create_action_mixed 后，global 与当前场景两条 history
+	## 的 UndoRedo.max_steps 都必须等于 MAX_UNDO_STEPS。注意：cap 是产品行为本身，
+	## 本测试运行即把上限真实设进当前编辑器会话（非测试副作用）。只断言属性落位，
+	## 不触发 200+ 步真实裁剪（避免污染用户 undo 历史）——裁剪语义由引擎
+	## UndoRedo.max_steps 文档保证（"older steps are removed from history"）。
+	_undo_manager.create_action_mixed("cap probe", [], [])
+	var undo_redo := _plugin.get_undo_redo()
+	## Nit-2(null 防御,对齐 mcp_test_suite._collect_histories 风格):
+	## get_history_undo_redo 理论可返 null,null 时给出断言失败而非 SCRIPT ERROR。
+	var global_ur: UndoRedo = undo_redo.get_history_undo_redo(EditorUndoRedoManager.GLOBAL_HISTORY)
+	assert_true(global_ur != null, "global history UndoRedo resolved")
+	assert_eq(global_ur.max_steps, UndoManagerScript.MAX_UNDO_STEPS, "global history capped at MAX_UNDO_STEPS")
+	## suite_setup 已对"无场景"skip_suite，此处 scene_root 必非 null；防御性断言。
+	var scene_root := EditorInterface.get_edited_scene_root()
+	assert_true(scene_root != null, "scene open (guaranteed by suite_setup skip)")
+	var scene_ur: UndoRedo = undo_redo.get_history_undo_redo(undo_redo.get_object_history_id(scene_root))
+	assert_true(scene_ur != null, "scene history UndoRedo resolved")
+	assert_eq(scene_ur.max_steps, UndoManagerScript.MAX_UNDO_STEPS, "scene history capped at MAX_UNDO_STEPS")
