@@ -285,3 +285,19 @@ jobs:
       - name: 非 Godot 单测子集(CLI/客户端适配器/卸载链)
         run: npx vitest run test/cli/
 
+  # B-1(2026-10-22 审查): Dockerfile 曾设 GODOT_MCP_UNRESTRICTED=true,与生产模式 FATAL
+  # 检查冲突致容器启动即 exit 1(Glama 等基于 Dockerfile 的分发入口不可用)。此 job 构建
+  # 镜像并做 stdio initialize 握手,堵容器启动回归。
+  docker-smoke:
+    name: Docker stdio smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f Dockerfile -t godot-mcp-smoke .
+      - name: stdio initialize handshake
+        run: |
+          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.0"}}}\n' \
+            | docker run -i --rm godot-mcp-smoke | grep -q '"serverInfo"'
+
