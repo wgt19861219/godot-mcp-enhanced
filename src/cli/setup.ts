@@ -66,6 +66,9 @@ export async function runSetup(_args: string[]): Promise<void> {
   console.log(`\n📁 Project: ${projectDir}\n`);
 
   let configured = 0;
+  // M-5(2026-10-22 审查): 配置失败必须反映到退出码——原实现 catch 只打印 ✗,
+  // 全部失败仍 exit 0,CI/脚本无法区分「已完成」「全部失败」「无可做」。
+  let failed = 0;
   for (const adapter of ALL_ADAPTERS) {
     const installed = await adapter.detect();
     if (!installed) {
@@ -87,6 +90,7 @@ export async function runSetup(_args: string[]): Promise<void> {
       auditClientConfigured('cli:setup', adapter.name, adapter.scope, projectDir);
     } catch (err) {
       console.error(`  ✗ ${adapter.name} (${adapter.scope}): ${getErrorMessage(err)}`);
+      failed++;
     }
   }
 
@@ -100,5 +104,9 @@ export async function runSetup(_args: string[]): Promise<void> {
     console.log('\nNo new clients to configure.');
     console.log('  支持的全部客户端:npx godot-mcp-enhanced configure --list(15 个)');
     console.log('  客户端装在非默认位置/已配置想重写:configure <客户端名> --force');
+  }
+  if (failed > 0) {
+    console.error(`\n✗ ${failed} client(s) failed to configure (see ✗ lines above).`);
+    process.exitCode = 1;
   }
 }

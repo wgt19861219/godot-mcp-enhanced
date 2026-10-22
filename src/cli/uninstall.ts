@@ -150,6 +150,10 @@ export async function runUninstall(args: string[]): Promise<void> {
   const confirm = async (question: string): Promise<boolean> =>
     (dryRun || assumeYes) ? true : await confirmYesNo(question);
 
+  // M-5(2026-10-22 审查): unconfigure/purge 失败必须反映到退出码——原实现 catch 只
+  // 打印 ✗,清理链有失败仍 exit 0,CI/脚本无法区分「已清理」「清理失败」「无可清理」。
+  let failed = 0;
+
   // ── Phase 1:AI 客户端 MCP 注册移除 ──
   // 审查 Important-3:Phase 1 自带确认门——antigravity/codex 等是 global scope(改用户全局
   // 配置),不能无确认直接改写;dry-run/--yes 下 confirm 短路 true 零成本。
@@ -176,6 +180,7 @@ export async function runUninstall(args: string[]): Promise<void> {
         console.log(removed ? `  ✓ ${adapter.name}: 已移除` : `  ⊘ ${adapter.name}: 未配置`);
       } catch (err) {
         console.error(`  ✗ ${adapter.name}: ${getErrorMessage(err)}`);
+        failed++;
       }
     }
     if (!dryRun) console.log(`  小计: ${clientsRemoved} 个客户端注册已移除。`);
@@ -279,6 +284,7 @@ export async function runUninstall(args: string[]): Promise<void> {
         console.log('  ✓ ~/.godot-mcp/ 已删除');
       } catch (err) {
         console.error(`  ✗ 删除失败(可能有文件被占用,关闭在跑实例后重试): ${getErrorMessage(err)}`);
+        failed++;
       }
     }
   }
@@ -287,4 +293,8 @@ export async function runUninstall(args: string[]): Promise<void> {
   console.log('\nNext steps:');
   console.log('  npm 全局安装的包本体(如有)请手动移除: npm uninstall -g godot-mcp-enhanced');
   console.log('  npx 方式使用无需清理(临时进程,不驻留)。');
+  if (failed > 0) {
+    console.error(`\n✗ ${failed} step(s) failed (see ✗ lines above).`);
+    process.exitCode = 1;
+  }
 }
