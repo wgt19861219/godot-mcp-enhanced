@@ -30,6 +30,7 @@ describe('runWeb --port 严格校验(L-2)', () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       await expect(runWeb(['--serve-only', emptyDir, '--port=8080'])).rejects.toThrow('EXIT_CALLED');
       // exit(2) 来自 index.html 缺失分支,port 校验已放行
+      expect(exitSpy).toHaveBeenCalledWith(2);
       expect(errSpy.mock.calls.flat().join('\n')).toContain('index.html');
     } finally {
       rmSync(emptyDir, { recursive: true, force: true });

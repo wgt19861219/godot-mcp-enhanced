@@ -76,7 +76,8 @@ describe('requiresConfirmation', () => {
   });
   it('returns false for game.game_query', () => {
     expect(requiresConfirmation('game', { action: 'game_query' })).toBe(false);
-    expect(requiresConfirmation('game', { action: 'game_input' })).toBe(false);
+    // L-6(2026-10-22 审查):game_input 注入输入改变运行态,提级 write 需确认
+    expect(requiresConfirmation('game', { action: 'game_input' })).toBe(true);
   });
   it('returns true for runtime.run_project', () => {
     expect(requiresConfirmation('runtime', { action: 'run_project' })).toBe(true);
@@ -104,9 +105,9 @@ describe('requiresConfirmation', () => {
     expect(requiresConfirmation('physics', { action: 'collision_overlay' })).toBe(true);
   });
 
-  it('CRITICAL-1: does not guard read/boundary actions (game_input/signal_connect/audio_play)', () => {
+  it('CRITICAL-1: does not guard read/boundary actions (signal_connect/audio_play;game_input 已 L-6 提级 write)', () => {
     expect(requiresConfirmation('game', { action: 'game_query' })).toBe(false);
-    expect(requiresConfirmation('game', { action: 'game_input' })).toBe(false);
+    expect(requiresConfirmation('game', { action: 'game_input' })).toBe(true);  // L-6 提级
     expect(requiresConfirmation('signal', { action: 'signal_list' })).toBe(false);
     expect(requiresConfirmation('signal', { action: 'signal_connect' })).toBe(false);
     expect(requiresConfirmation('audio', { action: 'audio_play' })).toBe(false);
