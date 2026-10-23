@@ -445,12 +445,15 @@ describe('EditorConnection', () => {
     expect(conn.connected).toBe(true);
 
     const req = conn.request('slow_method', { n: 1 });
+    // 先挂 allSettled 再触发 supersede——reject 发生在 connect 内部,若此时 req 尚无
+    // handler,Node 报 unhandledRejection(vitest 记 Unhandled Error 拖红整个 run)
+    const settledPromise = Promise.allSettled([req]);
     await new Promise((r) => setTimeout(r, 100));  // 让 request 进 pending
 
     // 二次 connect → 触发入口 supersede 清理(旧 ws terminate,close handler 已被摘)
     const t0 = Date.now();
     await conn.connect();
-    const settled = await Promise.allSettled([req]);
+    const settled = await settledPromise;
     expect(settled[0].status).toBe('rejected');
     expect(settled[0].reason.code).toBe('CONNECTION_LOST');
     expect(Date.now() - t0).toBeLessThan(5_000);  // 立即 reject,而非等 30s timeout
