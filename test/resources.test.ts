@@ -36,6 +36,24 @@ describe('readResource 守卫', () => {
   });
 });
 
+// L-27(2026-10-22 审查第二轮): project.godot 读取大小上限(错误返回,非崩溃)。
+// 独立临时项目,不污染模块级共享 fixture PROJ。
+describe('L-27 project.godot 大小上限', () => {
+  it('超大 project.godot(>10MB)→ project/info 与 project/config 均返回明确错误', async () => {
+    const big = mkdtempSync(join(tmpdir(), 'mcp-res-l27-'));
+    try {
+      mkdirSync(big, { recursive: true });
+      writeFileSync(join(big, 'project.godot'), '; ' + 'x'.repeat(10 * 1024 * 1024 + 100) + '\n');
+      const info = await readResource('godot://project/info', big);
+      expect(info.text).toContain('too large');
+      const cfg = await readResource('godot://project/config', big);
+      expect(cfg.text).toContain('too large');
+    } finally {
+      rmSync(big, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('单段动态 URI', () => {
   it('tool-groups 返回组激活状态 JSON', async () => {
     const r = await readResource('godot://tool-groups', PROJ);
