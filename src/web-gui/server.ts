@@ -909,7 +909,7 @@ export class WebGuiServer {
         }
         // Low-2(2026-10-22 审查): 端口-PID 身份绑定——TCP 探活只证端口有服务,不证
         // 服务属于登记 PID;Windows 下比对 Get-NetTCPConnection 的 OwningProcess,
-        // 不匹配 = 登记陈旧且端口被无关进程占用,拒绝 kill。null(非 Windows/查询失败)
+        // 不匹配 = 登记陈旧且端口被无关进程占用,拒绝 kill。null(探测工具缺失/查询失败)
         // 回落纯探活语义。注入优先(测试 mock),对齐 isPidAlive 先例。
         const ownerPid = await (this.opts.probePortOwner
           ? this.opts.probePortOwner(target.port)

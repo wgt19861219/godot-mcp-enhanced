@@ -255,27 +255,36 @@ describe('buildEnv (C1 env 白名单合并)', () => {
 
 // M-8(2026-10-22 审查第二轮): unconfigure 侧读取通道——JSONC 注释被剥离重写前
 // 必须落 .jsonc 备份(此前 readJsonForCheck 纯读,注释静默丢失无备份可找回)。
+// Nit-2 时机修正:读取只返回 {config, raw},备份延后到 backupJsoncBeforeRewrite
+// (调用方确认将重写才执行,未配置客户端零副作用)。
 describe('readJsonConfigForUnconfigure (M-8)', () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mcp-jsonc-u-')); });
   afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
-  it('JSONC 注释 → 落 .jsonc 备份 + 返回解析结果(重写后注释可找回)', () => {
+  it('JSONC 读取返回 {config, raw};确认将重写时 backupJsoncBeforeRewrite 落备份(含注释)', async () => {
+    const { readJsonConfigForUnconfigure, backupJsoncBeforeRewrite } = await import('../../../src/cli/clients/json-config.js');
     const configPath = join(dir, 'settings.json');
     writeFileSync(configPath, '{\n  // my comment\n  "mcpServers": { "godot": {} } }\n');
-    const result = readJsonConfigForUnconfigure(configPath);
-    expect(result).not.toBeNull();
-    expect((result!.mcpServers as Record<string, unknown>).godot).toBeTruthy();
+    const read = readJsonConfigForUnconfigure(configPath);
+    expect(read).not.toBeNull();
+    expect(read!.raw).toContain('// my comment');
+    expect((read!.config.mcpServers as Record<string, unknown>).godot).toBeTruthy();
+    // Nit-2: 读取阶段零副作用——未调 backup 前无备份文件
+    expect(readdirSync(dir).some(f => f.endsWith('.bak'))).toBe(false);
+    backupJsoncBeforeRewrite(read!.raw, configPath);
     const bak = readdirSync(dir).find(f => f.includes('.jsonc.') && f.endsWith('.bak'));
     expect(bak).toBeTruthy();
     expect(readFileSync(join(dir, bak!), 'utf-8')).toContain('// my comment');
   });
 
-  it('纯 JSON → 返回解析结果,不落备份', () => {
+  it('纯 JSON:返回解析结果,backupJsoncBeforeRewrite 不落备份', async () => {
+    const { readJsonConfigForUnconfigure, backupJsoncBeforeRewrite } = await import('../../../src/cli/clients/json-config.js');
     const configPath = join(dir, 'plain.json');
     writeFileSync(configPath, '{"a": 1}');
-    const result = readJsonConfigForUnconfigure(configPath);
-    expect(result!.a).toBe(1);
+    const read = readJsonConfigForUnconfigure(configPath);
+    expect(read!.config.a).toBe(1);
+    backupJsoncBeforeRewrite(read!.raw, configPath);
     expect(readdirSync(dir).some(f => f.endsWith('.bak'))).toBe(false);
   });
 

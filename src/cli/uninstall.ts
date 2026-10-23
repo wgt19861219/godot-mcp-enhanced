@@ -124,9 +124,11 @@ async function findAliveInstances(): Promise<{ project: string; port: number; pi
 }
 
 /** L-18(2026-10-22 审查): addon 目录删除前的分发清单比对结果。
- *  removable = 与本仓分发逐字节一致的文件(工具自资产,可安全删除);
- *  keep = 用户改过(modified)或自加(untracked)的文件——此前 addon 目录 rmSync
- *  recursive 整删连坐(仅 bridge 脚本做过 tool-managed 比对,审查 L-18)。 */
+ *  removable = 与本仓分发内容逐字节一致(Buffer 比较,审查 Nit-5:utf-8 字符串比较
+ *  对无效字节序列统一替换 U+FFFD,二进制资产存在误判一致的碰撞面)的文件(工具
+ *  自资产,可安全删除);keep = 用户改过(modified)或自加(untracked)的文件——
+ *  此前 addon 目录 rmSync recursive 整删连坐(仅 bridge 脚本做过 tool-managed
+ *  比对,审查 L-18)。 */
 export interface AddonRemovalDiff {
   removable: string[];  // rel 路径(相对 addons/godot_mcp_server)
   keep: Array<{ rel: string; reason: 'modified' | 'untracked' }>;
@@ -153,7 +155,7 @@ export function diffAddonForRemoval(projectAddonDir: string, distAddonDir: strin
           continue;
         }
         if (!existsSync(distPath)) { diff.keep.push({ rel, reason: 'untracked' }); continue; }
-        if (readFileSync(join(projectAddonDir, rel), 'utf-8') === readFileSync(distPath, 'utf-8')) {
+        if (readFileSync(join(projectAddonDir, rel)).equals(readFileSync(distPath))) {
           diff.removable.push(rel);
         } else {
           diff.keep.push({ rel, reason: 'modified' });

@@ -207,11 +207,14 @@ describe('project_replace atomic write', () => {
     expect(existsSync(join(dirRef.path, 'root.bak'))).toBe(true);
   });
 
-  it('M-4: 真实写入仅清 matchedFiles 命名空间内 .bak/.tmp 残留,根目录用户 .bak 不动', async () => {
+  it('M-4: 真实写入仅清 pendingWrites 命名空间内 .bak/.tmp 残留,命名空间外用户 .bak 不动', async () => {
     const { writeFileSync, existsSync, readFileSync: rf } = await import('node:fs');
-    // a.gd 在 matchedFiles(含 old_name)→ a.gd.bak 是工具中断残留形态,应清
+    // a.gd 含 old_name → 进 pendingWrites → a.gd.bak 是工具中断残留形态,应清
     writeFileSync(join(dirRef.path, 'scripts', 'a.gd.bak'), 'interrupted residual');
-    // 根目录 other.bak 不在工具命名空间(工具只写 <matched>.bak/.tmp),必须保留
+    // c.gd matched-but-unchanged(不含 old_name,不进 pendingWrites)→ 其 .bak 是
+    // 用户手动备份,必须保留(审查 Nit-3:清理范围收窄到 pendingWrites)
+    writeFileSync(join(dirRef.path, 'scripts', 'c.gd.bak'), 'user manual backup');
+    // 根目录 other.bak 不在工具命名空间,必须保留
     writeFileSync(join(dirRef.path, 'other.bak'), 'user backup keep me');
 
     const result = await script.handleTool('script', {
@@ -225,6 +228,7 @@ describe('project_replace atomic write', () => {
 
     expect(result.isError).toBeFalsy();
     expect(existsSync(join(dirRef.path, 'scripts', 'a.gd.bak'))).toBe(false);
+    expect(existsSync(join(dirRef.path, 'scripts', 'c.gd.bak'))).toBe(true);
     expect(existsSync(join(dirRef.path, 'other.bak'))).toBe(true);
     expect(rf(join(dirRef.path, 'other.bak'), 'utf-8')).toBe('user backup keep me');
     // 替换本体仍生效

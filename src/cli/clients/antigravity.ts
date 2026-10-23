@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { ClientAdapter } from './types.js';
-import { readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
+import { backupJsoncBeforeRewrite, readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
 
 export class AntigravityAdapter implements ClientAdapter {
   name = 'Antigravity';
@@ -60,17 +60,18 @@ export class AntigravityAdapter implements ClientAdapter {
 
   /** uninstall 反向操作:新/旧双路径都查,任一路径含 godot entry 即删并写回该文件
    *  (configure 只写新路径,但旧 IDE 装机可能两处都有残留)。损坏 JSON 抛错不动文件。
-   *  M-8(2026-10-22 审查): 读取改走 readJsonConfigForUnconfigure——JSONC 注释
-   *  被剥离重写前先落 .jsonc 备份(此前 readJsonForCheck 纯读,注释静默丢失无备份)。 */
+   *  M-8(2026-10-22 审查): JSONC 注释重写前落 .jsonc 备份;Nit-2 时机修正——
+   *  确认存在 godot entry(将重写)才备份,未配置路径零副作用。 */
   async unconfigure(_projectDir: string): Promise<boolean> {
     let removed = false;
     for (const path of [this.newPath(), this.legacyPath()]) {
-      const config = readJsonConfigForUnconfigure(path);
-      if (!config) continue;
-      const mcp = config.mcpServers as Record<string, unknown> | undefined;
+      const read = readJsonConfigForUnconfigure(path);
+      if (!read) continue;
+      const mcp = read.config.mcpServers as Record<string, unknown> | undefined;
       if (!mcp?.godot) continue;
+      backupJsoncBeforeRewrite(read.raw, path);
       delete mcp.godot;
-      writeFileAtomicWithMode(path, JSON.stringify(config, null, 2) + '\n');
+      writeFileAtomicWithMode(path, JSON.stringify(read.config, null, 2) + '\n');
       removed = true;
     }
     return removed;

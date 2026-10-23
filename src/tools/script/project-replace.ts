@@ -65,23 +65,6 @@ export async function projectReplace(args: Record<string, unknown>): Promise<Too
 
   const relOf = (absPath: string) => absPath.slice(p.length + 1);
 
-  // M-4(2026-10-22 审查): 残留清理收窄为「真实写入路径 + 工具可证命名空间」。原实现
-  // 无条件扫项目根与一级子目录删 *.bak/*.mcp-tmp——dry-run 也删用户自备份(如手动
-  // save.gd.bak);且写入实际产生的后缀是 .tmp(Phase 2 Step 1)与 .bak(Step 2),
-  // `.mcp-tmp` 从未存在过(原注释命名空间失实)。现仅在真实写入前清 matchedFiles
-  // 同路径的 .bak/.tmp 历史残留(中断遗留的可证命名空间),dry-run 零删除零写入。
-  const cleanedResiduals: string[] = [];
-  if (!dryRun) {
-    for (const filePath of matchedFiles) {
-      for (const suffix of ['.bak', '.tmp']) {
-        const residual = filePath + suffix;
-        if (existsSync(residual)) {
-          try { unlinkSync(residual); cleanedResiduals.push(relOf(residual)); } catch { /* best effort */ }
-        }
-      }
-    }
-  }
-
   const changedFiles: string[] = [];
   const unchangedFiles: string[] = [];
   const skippedLarge: string[] = [];
@@ -118,6 +101,25 @@ export async function projectReplace(args: Record<string, unknown>): Promise<Too
     }
 
     changedFiles.push(relOf(filePath));
+  }
+
+  // M-4(2026-10-22 审查): 残留清理收窄为「真实写入路径 + 工具可证命名空间」。原实现
+  // 无条件扫项目根与一级子目录删 *.bak/*.mcp-tmp——dry-run 也删用户自备份(如手动
+  // save.gd.bak);且写入实际产生的后缀是 .tmp(Phase 2 Step 1)与 .bak(Step 2),
+  // `.mcp-tmp` 从未存在过(原注释命名空间失实)。现仅清 pendingWrites 同路径的
+  // .bak/.tmp 历史残留——工具写入只会发生在 pendingWrites 上,中断残留不可能出现在
+  // 其他位置;matched-but-unchanged 文件的手动备份不受牵连(审查 Nit-3 的收窄)。
+  // dry-run 下 pendingWrites 恒空,天然零删除零写入。
+  const cleanedResiduals: string[] = [];
+  if (!dryRun) {
+    for (const pw of pendingWrites) {
+      for (const suffix of ['.bak', '.tmp']) {
+        const residual = pw.filePath + suffix;
+        if (existsSync(residual)) {
+          try { unlinkSync(residual); cleanedResiduals.push(relOf(residual)); } catch { /* best effort */ }
+        }
+      }
+    }
   }
 
   // P1-2 FileGuard: 拒写插件自资产——整批原子检查(任一命中全拒,保持批量原子性)

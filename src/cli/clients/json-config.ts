@@ -142,6 +142,16 @@ function backupJsoncIfPresent(raw: string, filePath: string): void {
 }
 
 /**
+ * M-8(2026-10-22 审查): 重写前落 JSONC 备份(公开导出)——unconfigure 流程在
+ * **确认将重写**(容器内存在 godot entry)之后才调用;未配置客户端不产垃圾备份
+ * 与不实警告(审查 Nit-2:备份先于判定会在 uninstall 遍历全部 detected 客户端时
+ * 对「JSONC 但无 godot entry」的配置每次都落 .bak + 误报注释将丢失)。
+ */
+export function backupJsoncBeforeRewrite(raw: string, filePath: string): void {
+  backupJsoncIfPresent(raw, filePath);
+}
+
+/**
  * 读取 JSON 配置文件,用于 CLI client adapter 的 configure()。
  *
  * F3: 当文件存在但 JSON 解析失败(用户配置损坏)时,**不静默用空对象覆盖**——
@@ -177,15 +187,15 @@ export function readJsonConfigWithBackup(filePath: string): Record<string, unkno
  *
  * 此前 unconfigure 用 readJsonForCheck(纯读不备份)剥注释后 JSON.stringify 重写,
  * 用户的 JSONC 注释被静默删除且无任何备份可找回(审查 M-8;antigravity/opencode
- * 同源,见审查 L-29)。本函数在重写路径前落 .jsonc 备份。
+ * 同源,见审查 L-29)。返回 { config, raw }:raw 供调用方在**确认将重写**(容器内
+ * 存在 godot entry)后经 backupJsoncBeforeRewrite 落备份(审查 Nit-2 的时机修正)。
  *
  * 与 readJsonConfigWithBackup 的区别(损坏 JSON 语义相反):
  * - 损坏 JSON → **抛错**。unconfigure 无新内容要写,备份+重写反而扩大破坏面,
  *   正确行为是不动用户文件并让命令层报 ✗(对齐原 readJsonForCheck 调用方注释)。
- * - 合法 JSONC → 落 .jsonc 备份后返回解析结果(注释会丢,但有备份 + warn 提示)。
- * - 文件不存在 → 返回 null(调用方视为未配置)。
+ * - 文件不存在 → null(调用方视为未配置)。
  */
-export function readJsonConfigForUnconfigure(filePath: string): Record<string, unknown> | null {
+export function readJsonConfigForUnconfigure(filePath: string): { config: Record<string, unknown>; raw: string } | null {
   if (!existsSync(filePath)) return null;
   const raw = readFileSync(filePath, 'utf-8');
   let parsed: Record<string, unknown>;
@@ -194,8 +204,7 @@ export function readJsonConfigForUnconfigure(filePath: string): Record<string, u
   } catch {
     throw new Error(`config parse error: ${filePath}`);
   }
-  backupJsoncIfPresent(raw, filePath);
-  return parsed;
+  return { config: parsed, raw };
 }
 
 /**

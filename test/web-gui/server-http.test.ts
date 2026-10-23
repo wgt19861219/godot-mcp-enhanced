@@ -1120,7 +1120,8 @@ describe('POST /api/shutdown(daemon 批 B 2026-09-30)', () => {
 
 // L-21(2026-10-22 审查): POSIX 端口 owner 探测的输出解析器——probePortOwnerPidDefault
 // 的 linux(ss→lsof 回落)/darwin(lsof)分支在 Windows 测试机不可达,解析逻辑提为
-// 模块级纯函数在此跨平台锚定;命令接线(Ubuntu CI 有 ss)由 e2e 覆盖。
+// 模块级纯函数在此跨平台锚定;ss/lsof 的 execFile 命令接线无自动化覆盖(审查
+// Nit-6 订正:editor-e2e workflow 不含 web-gui 测试),依赖 Ubuntu CI 环境或人工验证。
 describe('parseSsOwnerPid / parseLsofOwnerPid(L-21 POSIX 端口归属探测)', () => {
   it('ss: 监听行含 users:(("node",pid=1234,fd=20)) → 1234', async () => {
     const { parseSsOwnerPid } = await import('../../src/web-gui/server.js');

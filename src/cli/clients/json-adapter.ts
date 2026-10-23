@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { ClientAdapter } from './types.js';
-import { readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
+import { backupJsoncBeforeRewrite, readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
 export interface JsonAdapterSpec {
   name: string;
   scope: 'project' | 'global';
@@ -104,21 +104,22 @@ export class JsonAdapterBase implements ClientAdapter {
    *  容器结构(如 mcpServers 根键)保留——其他 MCP server 共用同一容器,不能连坐。
    *  损坏 JSON 抛错而非备份覆盖(configure 语义):unconfigure 无新内容要写,
    *  备份+重写反而扩大破坏面,正确行为是不动用户文件并让命令层报 ✗。
-   *  M-8(2026-10-22 审查): 读取改走 readJsonConfigForUnconfigure——原文含 JSONC
-   *  注释时先落 .jsonc 备份再重写(此前 readJsonForCheck 纯读,注释被静默剥离无备份)。 */
+   *  M-8(2026-10-22 审查): JSONC 注释重写前落 .jsonc 备份;Nit-2 时机修正——
+   *  确认容器内存在 godot entry(将重写)才备份,未配置客户端零副作用。 */
   async unconfigure(projectDir: string): Promise<boolean> {
     const configPath = this.spec.configPath(projectDir);
-    const config = readJsonConfigForUnconfigure(configPath);
-    if (!config) return false;
+    const read = readJsonConfigForUnconfigure(configPath);
+    if (!read) return false;
     const keys = this.spec.rootKeys ?? ['mcpServers'];
-    let node: Record<string, unknown> | undefined = config;
+    let node: Record<string, unknown> | undefined = read.config;
     for (const k of keys) {
       node = node?.[k] as Record<string, unknown> | undefined;
       if (!node) return false;
     }
     if (!node.godot) return false;
+    backupJsoncBeforeRewrite(read.raw, configPath);
     delete node.godot;
-    writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+    writeFileAtomicWithMode(configPath, JSON.stringify(read.config, null, 2) + '\n');
     return true;
   }
 }
