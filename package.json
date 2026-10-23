@@ -12,6 +12,10 @@
     "closed-loop"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wgt19861219/godot-mcp-enhanced.git"
+  },
   "type": "module",
   "bin": {
     "godot-mcp-enhanced": "./build/index.js",
@@ -100,5 +104,8 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
   }
 }
