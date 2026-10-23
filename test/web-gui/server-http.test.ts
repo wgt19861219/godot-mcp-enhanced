@@ -1117,3 +1117,32 @@ describe('POST /api/shutdown(daemon 批 B 2026-09-30)', () => {
     }
   });
 });
+
+// L-21(2026-10-22 审查): POSIX 端口 owner 探测的输出解析器——probePortOwnerPidDefault
+// 的 linux(ss→lsof 回落)/darwin(lsof)分支在 Windows 测试机不可达,解析逻辑提为
+// 模块级纯函数在此跨平台锚定;命令接线(Ubuntu CI 有 ss)由 e2e 覆盖。
+describe('parseSsOwnerPid / parseLsofOwnerPid(L-21 POSIX 端口归属探测)', () => {
+  it('ss: 监听行含 users:(("node",pid=1234,fd=20)) → 1234', async () => {
+    const { parseSsOwnerPid } = await import('../../src/web-gui/server.js');
+    const out = 'State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process\n'
+      + 'LISTEN 0      511    127.0.0.1:9550      0.0.0.0:*     users:(("node",pid=1234,fd=20))\n';
+    expect(parseSsOwnerPid(out)).toBe(1234);
+  });
+
+  it('ss: 无 pid=(无权限)或空输出 → null(调用方 lsof 回落)', async () => {
+    const { parseSsOwnerPid } = await import('../../src/web-gui/server.js');
+    expect(parseSsOwnerPid('LISTEN 0 511 127.0.0.1:9550 0.0.0.0:*\n')).toBeNull();
+    expect(parseSsOwnerPid('')).toBeNull();
+  });
+
+  it('lsof: 纯 pid 列表取首行', async () => {
+    const { parseLsofOwnerPid } = await import('../../src/web-gui/server.js');
+    expect(parseLsofOwnerPid('1234\n5678\n')).toBe(1234);
+  });
+
+  it('lsof: 空输出/非数字 → null', async () => {
+    const { parseLsofOwnerPid } = await import('../../src/web-gui/server.js');
+    expect(parseLsofOwnerPid('')).toBeNull();
+    expect(parseLsofOwnerPid('not-a-pid')).toBeNull();
+  });
+});
