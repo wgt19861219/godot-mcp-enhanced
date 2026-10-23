@@ -183,7 +183,7 @@ jobs:
           name: score-report-html
           path: coverage/score-report.html
           if-no-files-found: warn
-      - uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5  # L-28: SHA 固定(tag 重指不可变)
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5  # L-28: SHA 固定(tag 重指不可变)
         with:
           files: ./coverage/lcov.info
           fail_ci_if_error: false

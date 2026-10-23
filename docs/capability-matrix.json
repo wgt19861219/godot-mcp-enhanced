@@ -2415,8 +2415,8 @@
       "guarded": true,
       "securityLevel": "guarded",
       "riskDistribution": {
-        "read": 12,
-        "write": 6,
+        "read": 10,
+        "write": 8,
         "destructive": 0,
         "process": 2
       },
