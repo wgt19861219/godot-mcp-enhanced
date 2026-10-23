@@ -350,6 +350,36 @@ describe('批5-T12: 轮转与流式读', () => {
     }
   });
 
+  // L-14(2026-10-22 审查第二轮): 跨进程轮转锁——持锁者存活则跳过本轮轮转,
+  // 死亡 pid 的陈旧锁被覆盖;轮转后锁文件释放。
+  it('rotateIfNeeded L-14: 活 pid 持锁跳过轮转;陈旧锁(死 pid)覆盖后正常轮转并释放锁', async () => {
+    const { rotateIfNeeded, AUDIT_ROTATE_SIZE } = await import('../../src/core/audit-log.js');
+    const rotDir = mkdtempSync(join(tmpdir(), 'gme-rot-l14-'));
+    try {
+      const main = join(rotDir, 'audit.jsonl');
+      const big = 'x'.repeat(AUDIT_ROTATE_SIZE + 1);
+      writeFileSync(main, big, 'utf8');
+
+      // ① 活 pid 持锁(用本进程 pid 模拟"他人存活"路径之外的真持有者:找系统存活进程
+      //    —— Windows 上 pid 4(System)恒活;POSIX 上 pid 1(init)恒活)
+      const liveForeignPid = process.platform === 'win32' ? 4 : 1;
+      writeFileSync(`${main}.lock`, String(liveForeignPid), 'utf8');
+      await rotateIfNeeded(main);
+      expect(existsSync(main)).toBe(true);            // 未轮转(他人持锁)
+      expect(existsSync(`${main}.1`)).toBe(false);
+
+      // ② 陈旧锁(死 pid):Windows 上大数值 pid 几乎必不存在;POSIX 用负相邻规避
+      const deadPid = process.platform === 'win32' ? 99999999 : -999999;
+      writeFileSync(`${main}.lock`, String(deadPid), 'utf8');
+      await rotateIfNeeded(main);
+      expect(existsSync(`${main}.1`)).toBe(true);     // 覆盖陈旧锁完成轮转
+      expect(existsSync(main)).toBe(false);
+      expect(existsSync(`${main}.lock`)).toBe(false); // 锁已释放
+    } finally {
+      rmSync(rotDir, { recursive: true, force: true });
+    }
+  });
+
   it('readAuditLog: rotatedFiles 计数主文件旁轮转代(流式读回归由既有统计用例覆盖)', async () => {
     await appendAuditLine(tmpDir, makeEntry());
     // 手工造一个轮转代文件(模拟历史轮转产物)

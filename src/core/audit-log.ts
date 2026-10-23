@@ -12,7 +12,7 @@
  * - 默认开(本地 .godot/ 落盘,无外传风险),GODOT_MCP_AUDIT=false 可关
  */
 
-import { appendFile, mkdir, readFile, stat, rename, rm } from 'fs/promises';
+import { appendFile, mkdir, readFile, stat, rename, rm, writeFile } from 'fs/promises';
 import { existsSync, createReadStream } from 'fs';
 import { join, dirname, relative } from 'path';
 import { homedir } from 'os';
@@ -177,9 +177,20 @@ export async function appendAuditLine(projectPath: string, entry: AuditEntry): P
 export const AUDIT_ROTATE_SIZE = 10 * 1024 * 1024;
 export const AUDIT_ROTATE_KEEP = 3;
 
+/** 跨进程 pid 探活(EISRCH=死,其余含 EPERM=活)——轮转锁陈旧判定用。 */
+function isPidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
 /** 超 AUDIT_ROTATE_SIZE 时链式轮转:.3 删(最老)→.2→.3→.1→.2→主文件→.1。
  *  文件不存在/小于阈值 no-op;轮转失败不阻断追加(best-effort——追加是主路径,
- *  轮转失败仅意味着继续增长,下次再试)。 */
+ *  轮转失败仅意味着继续增长,下次再试)。
+ *  L-14(2026-10-22 审查):stat+rm/rename 无跨进程锁——多 server 实例并发轮转同一
+ *  文件(同项目多实例的项目内副本 / home 外置副本)可交错 rename 丢审计行。补 per-file
+ *  轮转锁(`<file>.lock`,内容=持有 pid):wx 独占创建获锁;已存在且持有者存活则本轮
+ *  跳过(他人正转,下次 append 再试——丢失的只是轮转时机不是审计行);持有者死亡视为
+ *  陈旧锁覆盖抢占。[诚实残余]陈旧锁覆盖的 check-then-write 窗口仍存在极窄交错面,
+ *  fs 级无原子 CAS,发生前提=同机多实例同时轮转同一文件且旧持有者恰在窗口内死亡。 */
 export async function rotateIfNeeded(filePath: string): Promise<void> {
   let size: number;
   try {
@@ -188,7 +199,21 @@ export async function rotateIfNeeded(filePath: string): Promise<void> {
     return; // 文件不存在(首条)——无轮转对象
   }
   if (size < AUDIT_ROTATE_SIZE) return;
+  const lockPath = `${filePath}.lock`;
+  let locked = false;
   try {
+    try {
+      await writeFile(lockPath, String(process.pid), { flag: 'wx' });
+      locked = true;
+    } catch {
+      // 锁已存在:持有者存活→跳过本轮;死亡/非整数→陈旧锁,覆盖抢占
+      try {
+        const holder = Number((await readFile(lockPath, 'utf8')).trim());
+        if (Number.isInteger(holder) && holder !== process.pid && isPidAlive(holder)) return;
+      } catch { /* 锁文件不可读(半写)——按陈旧处理 */ }
+      await writeFile(lockPath, String(process.pid), 'utf8');
+      locked = true;
+    }
     await rm(`${filePath}.${AUDIT_ROTATE_KEEP}`, { force: true });
     for (let i = AUDIT_ROTATE_KEEP - 1; i >= 1; i--) {
       try {
@@ -199,6 +224,10 @@ export async function rotateIfNeeded(filePath: string): Promise<void> {
   } catch (e) {
     recordAuditWriteFailure(e);
     getLogger().warn('audit', `rotate failed for ${relative(homedir(), filePath) || filePath}: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    if (locked) {
+      try { await rm(lockPath, { force: true }); } catch { /* best-effort */ }
+    }
   }
 }
 
