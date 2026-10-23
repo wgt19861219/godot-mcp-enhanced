@@ -517,8 +517,16 @@ export async function pollWaitCondition(
 
 const defaultSleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
-/** 确保项目目录已设置：优先用 ctx.projectDir，回退到 args.project_path */
+/** 确保项目目录已设置:显式 args.project_path 优先,回退 ctx.projectDir,最后既有 bridge 目录。
+ *  L-7(2026-10-22 审查):显式 project_path 此前被 ctx.projectDir 静默覆盖,用户指定的目标
+ *  项目可能被忽略(请求打到活动项目)。现显式参数优先;显式路径非法则抛错——打到用户
+ *  没想要的项目比报错更糟。 */
 function ensureProjectDir(ctx: ToolContext, args: Record<string, unknown>): void {
+  const explicit = args.project_path;
+  if (typeof explicit === 'string' && explicit.length > 0) {
+    setBridgeProjectDir(requireProjectPath({ project_path: explicit }));
+    return;
+  }
   if (ctx.projectDir) {
     setBridgeProjectDir(ctx.projectDir);
   } else if (!getBridgeProjectDir()) {
@@ -1211,7 +1219,9 @@ export const TOOL_META: Record<
     long_running: false,
     actionRisks: {
       game_query: 'read',
-      game_input: 'read',
+      // L-6(2026-10-22 审查):game_input/click_button 会向运行中的游戏注入输入/点击,
+      // 实际改变运行态——此前标 read 与"只读"语义不符,提级 write。
+      game_input: 'write',
       game_wait: 'read',
       monitor_start: 'read',
       monitor_stop: 'read',
@@ -1220,7 +1230,7 @@ export const TOOL_META: Record<
       watch_stop: 'read',
       watch_poll: 'read',
       find_ui_elements: 'read',
-      click_button: 'read',
+      click_button: 'write',
       game_bridge_install: 'write',
       game_bridge_uninstall: 'write',
       install_override: 'write',
