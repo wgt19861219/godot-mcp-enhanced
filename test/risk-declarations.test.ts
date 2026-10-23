@@ -150,8 +150,9 @@ describe('physics actionRisks', () => {
 
 describe('game actionRisks', () => {
   const cases = {
-    game_query:'read', game_input:'read', game_wait:'read', monitor_start:'read', monitor_stop:'read', monitor_poll:'read',
-    watch_start:'read', watch_stop:'read', watch_poll:'read', find_ui_elements:'read', click_button:'read',
+    // L-6(2026-10-22 审查):game_input/click_button 注入输入改变运行态,read→write
+    game_query:'read', game_input:'write', game_wait:'read', monitor_start:'read', monitor_stop:'read', monitor_poll:'read',
+    watch_start:'read', watch_stop:'read', watch_poll:'read', find_ui_elements:'read', click_button:'write',
     game_bridge_install:'write', game_bridge_uninstall:'write', game_write:'process',
   } as const;
   for (const [a, r] of Object.entries(cases)) it(`game.${a}→${r}`, () => expect(getActionRisk('game', a)).toBe(r));

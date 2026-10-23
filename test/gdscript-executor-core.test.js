@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { expect, describe, it, afterEach } from 'vitest';
 import {
   wrapSnippet,
@@ -784,5 +785,29 @@ describe('scanGdscriptSandbox extra patterns (env-injected)', () => {
     ]);
     const warnings = scanGdscriptSandbox('# HTTPRequest.request mentioned in comment');
     expect(warnings.filter(w => w.includes('HTTP policy'))).toEqual([]);
+  });
+});
+
+// ─── L-3(2026-10-22 审查第二轮):10MB 截断显式失败标记 ──────────────────────
+// executeGdscript 的 spawn 全路径需真 Godot 输出 >10MB,不可直驱;按 router.test.ts
+// M-2 先例以源码契约锁定接线:截断标志必须参与 success/run_success/run_error 判定,
+// 且接口暴露 truncated 字段。行为级验证依赖真实超限进程(人工/CI 场景)。
+describe('L-3 输出截断契约:outputExceeded 参与成功判定', () => {
+  const src = readFileSync(new URL('../src/gdscript-executor.ts', import.meta.url), 'utf-8');
+
+  it('接口暴露 truncated 可选字段', () => {
+    expect(src).toMatch(/truncated\?: boolean/);
+  });
+
+  it('marker 命中分支:success 与 run_success 均受 outputExceeded 抑制,run_error 提示截断', () => {
+    expect(src).toContain('success: isSuccess && !hasCompileError && !outputExceeded');
+    expect(src).toContain('run_success: isSuccess && !outputExceeded');
+    expect(src).toContain("'Output exceeded 10MB limit; process killed (captured output is partial)'");
+  });
+
+  it('无 marker 分支同样落 truncated 标记', () => {
+    // 两个 resolve 处均有条件展开 truncated
+    const hits = src.match(/\.\.\.\(outputExceeded \? \{ truncated: true \} : \{\}\)/g) ?? [];
+    expect(hits.length).toBeGreaterThanOrEqual(3);
   });
 });

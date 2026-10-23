@@ -238,3 +238,25 @@ describe('H-2 frame_sequence 归档链路与 acceptance 帧错误', () => {
     }
   });
 });
+
+// ── L-5(2026-10-22 审查第二轮): waitMs(0) 显式零延迟不再被 `|| 100` 折成 100ms ──
+describe('L-5 DSL waitMs(0) 语义', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('waitMs(0) 立即通过,总耗时远低于 100ms(修复前恒 ≥100ms)', async () => {
+    const { sendToBridge } = await import('../../src/tools/game-bridge.js');
+    (sendToBridge as unknown as Mock).mockResolvedValue({ result: {} });
+    const { handleTool } = await import('../../src/tools/workflow.js');
+    type WfCtx = Parameters<typeof handleTool>[2];
+    const ctx = { findGodot: async () => '/fake/godot' } as unknown as WfCtx;
+    const t0 = Date.now();
+    const result: any = await handleTool('workflow', { action: 'dev_loop', code: 'waitMs(0)', project_path: '/p' }, ctx);
+    const elapsed = Date.now() - t0;
+    // 修复前 `(ms as number) || 100` 把显式 0 折成 100ms;修复后 0ms 即过,80ms 窗口留 mock/IO 余量
+    expect(elapsed).toBeLessThan(80);
+    const text = JSON.parse(result?.content?.[0]?.text ?? '{}');
+    expect(text.dsl_results ?? text.steps ?? text).toBeTruthy();
+  });
+});

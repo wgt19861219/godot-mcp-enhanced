@@ -198,6 +198,10 @@ export class EditorConnection {
     const gen = ++this.connectGeneration;  // ipc P1-4: 本轮 connect 的 generation
     // C-06: Clean up stale WebSocket before creating new one
     if (this.ws) {
+      // L-9(2026-10-22 审查):removeAllListeners 把 close handler 一并摘掉,旧 ws 上
+      // 的 pending 请求收不到 close 触发的 reject,要挂满 30s requestTimeout。terminate
+      // 前主动 fail 全部 pending(code=CONNECTION_LOST,Executor do_not_retry 分流同款)。
+      this.failAllPending('Connection superseded by new connect');
       this.ws.removeAllListeners();
       if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
         this.ws.terminate();
@@ -317,11 +321,7 @@ export class EditorConnection {
         this.ws = null;
         // Reject all pending requests — they will never receive a response
         // B4: 挂 err.code='CONNECTION_LOST' 供 Executor 分流(do_not_retry),不依赖字符串匹配
-        for (const [, pending] of this.pending) {
-          clearTimeout(pending.timer);
-          pending.reject(Object.assign(new Error('Connection lost'), { code: 'CONNECTION_LOST' }));
-        }
-        this.pending.clear();
+        this.failAllPending('Connection lost');
         // Don't clear notificationHandlers — they need to survive reconnect
         // C-02: Only reconnect if we were fully authenticated — don't reconnect on auth failure
         const wasConnected = !this.connectAttempt && this.authenticated && !this.authFailed;  // IMP-8: authFailed 时不算 wasConnected,防重连
@@ -330,6 +330,16 @@ export class EditorConnection {
         this.connectAttempt = false;
       });
     });
+  }
+
+  /** L-9(2026-10-22 审查):统一 fail 全部 pending 请求。close handler 与 connect 入口
+   *  的 supersede 清理共用;code 固定 CONNECTION_LOST(Executor do_not_retry 分流)。 */
+  private failAllPending(message: string): void {
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(Object.assign(new Error(message), { code: 'CONNECTION_LOST' }));
+    }
+    this.pending.clear();
   }
 
   private setupMessageHandler(): void {

@@ -74,6 +74,8 @@ export interface ExecuteGdscriptResult {
   executionId?: string;
   /** C-AUDIT: 原始用户 code 的字节级 SHA-256（hex），不含原始 code 本身（对齐 I-10） */
   scriptSha256?: string;
+  /** L-3(2026-10-22 审查第二轮):输出超 10MB 被截断强杀时为 true;此时 run_success 必为 false */
+  truncated?: boolean;
 }
 
 export interface ExecuteGdscriptOptions {
@@ -1000,20 +1002,24 @@ export async function executeGdscript(
         // Detect compile errors from Godot output
         const compileError = extractCompileError(rawOutput);
         const hasCompileError = compileError.length > 0;
-
+        // L-3(2026-10-22 审查):10MB 截断强杀后 marker 可能已在截断前输出,此前仍
+        // run_success:true——半截输出被当完整成功。截断即 run 失败并显式标记。
         resolve({
-          success: isSuccess && !hasCompileError,
+          success: isSuccess && !hasCompileError && !outputExceeded,
           compile_success: !hasCompileError,
           compile_error: compileError,
           errors: analysis.errors,
-          run_success: isSuccess,
-          run_error: parsed.error || '',
+          run_success: isSuccess && !outputExceeded,
+          run_error: outputExceeded
+            ? 'Output exceeded 10MB limit; process killed (captured output is partial)'
+            : parsed.error || '',
           outputs: (parsed.outputs || []) as OutputEntry[],
           raw_output: logLines.join('\n'),
           duration_ms: duration,
           autoload_detected: autoloadDetected,
           executionId,
           scriptSha256,
+          ...(outputExceeded ? { truncated: true } : {}),
         });
       } else {
         // No marker found — likely a compile error or crash
@@ -1037,6 +1043,7 @@ export async function executeGdscript(
               autoload_detected: autoloadDetected,
               executionId,
               scriptSha256,
+              ...(outputExceeded ? { truncated: true } : {}),
             });
             return;
           }
@@ -1047,13 +1054,16 @@ export async function executeGdscript(
           compile_error: compileError,
           errors: analysis.errors,
           run_success: false,
-          run_error: exitCode !== 0 ? `Process exited with code ${exitCode}` : 'No structured output found',
+          run_error: outputExceeded
+            ? 'Output exceeded 10MB limit; process killed (captured output is partial)'
+            : exitCode !== 0 ? `Process exited with code ${exitCode}` : 'No structured output found',
           outputs: [],
           raw_output: logLines.join('\n'),
           duration_ms: duration,
           autoload_detected: autoloadDetected,
           executionId,
           scriptSha256,
+          ...(outputExceeded ? { truncated: true } : {}),
         });
       }
     });

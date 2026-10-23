@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseSubcommand, isCliInvocation, isUnknownCommand, SUBCOMMANDS } from '../../src/cli/router.js';
+import { parseSubcommand, isCliInvocation, isUnknownCommand, findUnknownFlag, SUBCOMMANDS } from '../../src/cli/router.js';
 
 describe('router', () => {
   describe('parseSubcommand', () => {
@@ -89,6 +89,26 @@ describe('router', () => {
       expect(isUnknownCommand([])).toBe(false);
       expect(isUnknownCommand(['--profile=full'])).toBe(false);
       expect(isUnknownCommand(['--unknown-flag'])).toBe(false);
+    });
+  });
+
+  describe('findUnknownFlag(L-1 2026-10-22 审查第二轮:堵未知 flag 静默挂起)', () => {
+    it('未知 flag 被检出(含非首位)', () => {
+      expect(findUnknownFlag(['--bogus'])).toBe('--bogus');
+      expect(findUnknownFlag(['--minimal', '--wat'])).toBe('--wat');
+      expect(findUnknownFlag(['-x'])).toBe('-x');
+    });
+
+    it('已知 MCP flag 全集放行', () => {
+      expect(findUnknownFlag(['--minimal'])).toBeUndefined();
+      expect(findUnknownFlag(['--lite'])).toBeUndefined();
+      expect(findUnknownFlag(['--profile=full'])).toBeUndefined();
+      expect(findUnknownFlag(['--overrides=/a/b.gd', '--overrides=/c.gd'])).toBeUndefined();
+    });
+
+    it('help/version 与非 flag 参数放行', () => {
+      expect(findUnknownFlag(['--help', '-h', '--version', '-v'])).toBeUndefined();
+      expect(findUnknownFlag([])).toBeUndefined();
     });
   });
 

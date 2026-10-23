@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync, utimesSync, readdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { registerAllModules } from '../src/module-loader.js';
@@ -102,6 +102,30 @@ describe('P4-3: inflight 孤儿记录(真实文件系统,env 隔离目录)', () 
     clearAllInflight();
     delete process.env.GODOT_MCP_INFLIGHT_DIR;
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // L-13(2026-10-22 审查第二轮): writeOwn 原子化(临时文件+rename)后,目标文件
+  // 在任意 mark/clear 交错后都必须是完整可 parse 的 JSON——防半截写致 readOwn 恒返 []。
+  // 自包含:进出均 clearAllInflight,不污染同 describe 既有用例的独立前提。
+  it('INF-L13: mark/clear 交错后文件始终完整可 parse,且无 .tmp 残留', () => {
+    clearAllInflight();
+    const file = join(tmpDir, `inflight-${process.pid}.json`);
+    // 交错 10 轮(受 MAX_ENTRIES=16 约束取 10,验证无撕裂/无 parse 失败/条目守恒)
+    for (let i = 0; i < 10; i++) {
+      markInflight('ping');
+      markInflight('pong');
+      clearInflight('ping');
+    }
+    const raw = readFileSync(file, 'utf-8');
+    expect(() => JSON.parse(raw)).not.toThrow();
+    const parsed = JSON.parse(raw) as { entries: Array<{ tool: string }> };
+    expect(parsed.entries.filter(e => e.tool === 'ping')).toHaveLength(0);
+    expect(parsed.entries.filter(e => e.tool === 'pong')).toHaveLength(10);
+    // clearAllInflight 后无主文件、无 tmp 残留
+    clearAllInflight();
+    expect(existsSync(file)).toBe(false);
+    const leftovers = readdirSync(tmpDir).filter(f => f.includes(String(process.pid)));
+    expect(leftovers).toEqual([]);
   });
 
   it('INF-a: mark 登记 → clear 移除 → 全空删文件', () => {

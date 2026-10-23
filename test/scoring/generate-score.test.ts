@@ -83,6 +83,19 @@ describe('generateScore', () => {
     expect(md).toContain(String(s.total));
   });
 
+  // L-24(2026-10-22 审查第二轮): outPath 非 score.json 结尾时报告曾反向覆盖 JSON 输入。
+  it('L-24: outPath 自定义名(custom.json)→ 报告落旁侧 score-report.md,JSON 不被覆盖', () => {
+    writeFileSync(LCOV, ['SF:src/a.ts', 'DA:1,1', 'DA:2,1', 'end_of_record'].join('\n'));
+    const CUSTOM = resolve(TMP, 'custom.json');
+    generateScore({ lcovPath: LCOV, outPath: CUSTOM });
+    // JSON 输入仍为 JSON(未被 Markdown 覆盖)
+    const onDisk = JSON.parse(readFileSync(CUSTOM, 'utf8'));
+    expect(typeof onDisk.total).toBe('number');
+    // 报告固定落在同目录 score-report.md
+    const md = readFileSync(resolve(TMP, 'score-report.md'), 'utf8');
+    expect(md).toContain('质量评分报告');
+  });
+
   it('有 gdscript report → gdscript 维度有值,incomplete→fail', () => {
     writeFileSync(LCOV, ['SF:src/a.ts', 'DA:1,1', 'DA:2,1', 'end_of_record'].join('\n'));
     const GD = resolve(TMP, 'gd.json');

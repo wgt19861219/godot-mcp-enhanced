@@ -16,8 +16,8 @@ jobs:
       matrix:
         node-version: [24]  # Node 22 在 Linux 未验证,保守单版本;engines>=20(package.json)声明不变(2026-09-20 可移植性 P2:原注释 >=18 与实际声明漂移,更正)
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -42,8 +42,10 @@ jobs:
           npm run gen:tool-docs
           git diff --exit-code docs/capability-matrix.json docs/capability-matrix.md docs/tools
       - name: Check token budget (spec §E 体积预算)
-        # warn-only 基线：error 阈值极高（当前 0 触发）。读 committed json 快照，
-        # 不重算（drift step 已保证 json 是最新契约）。size 不进 diff-matrix drift。
+        # warn-only 基线：error 阈值极高（当前 0 触发）。
+        # L-28(2026-10-22 审查)时序订正：本步在 H-5 gate 的 build-matrix 重生成之后,
+        # 读到的 docs/capability-matrix.json 即最新产物(非陈旧 committed)——"即时校验"
+        # 已由 H-5 步前置达成。size 维度 L-28 起同时进 diff-matrix drift(双护栏)。
         run: node scripts/check-token-budget.mjs
       - name: Check tool count consistency（报告④：README/manifest/规则文件 vs matrix 工具数）
         # 校验手写工具数/action 数与 capability-matrix.json 一致；漂移 exit 1。
@@ -104,8 +106,9 @@ jobs:
         # type 前缀匹配,不再限定 fix(security|reliability|correctness) scope)
         # 是否登记在 CHANGELOG.md [Unreleased] 段。CHANGELOG 全手动无自动化，人肉易漏。
         # advisory(warn-only)让 CI 可见漏登，不阻断。STRICT=1 升 error。
+        # L-28(2026-10-22 审查):升阻断——advisory 首版(2026-10-22 D1)已过观察期,
+        # P2/P3 批连续登记无漏账,漏登 CHANGELOG 直接红。
         run: npm run check:changelog-sync
-        continue-on-error: true  # advisory：首版非阻断，团队习惯后考虑 STRICT
       - name: Check path param coverage (2026-10-22 审查 Low-1：M-1 路径参数守护接线 CI)
         # 静态扫描:声明 FS 路径参数的工具必须 import path-utils / 满足 AUTO_OK / 入 ALLOWLIST。
         # 首轮人工核对 9 条豁免均已回填理由,差集清零 --strict 接线条件成熟(脚本注释原观察期)。
@@ -168,19 +171,19 @@ jobs:
       # score:pr-comment npm 生成 + 上传 artifact,仅失去 PR 自动贴评论(可后续换 action)。
       - name: Upload score.json
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           name: score-json
           path: coverage/score.json
           if-no-files-found: warn
       - name: Upload score-report.html
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           name: score-report-html
           path: coverage/score-report.html
           if-no-files-found: warn
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5  # L-28: SHA 固定(tag 重指不可变)
         with:
           files: ./coverage/lcov.info
           fail_ci_if_error: false
@@ -209,8 +212,8 @@ jobs:
             url: "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
             bin: "Godot_v4.7.2-stable_linux.x86_64"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           node-version: 24
           cache: 'npm'
@@ -263,7 +266,7 @@ jobs:
         run: node -e "const r=require('./coverage/e2e-report-${{ matrix.name }}.json'); const t=r.numTotalTests??0, p=r.numPendingTests??0; if(!(t>0&&p<t)){console.error('e2e non-empty gate FAIL, numTotalTests='+t+' numPendingTests='+p+' (all skipped or empty)'); process.exit(1)} console.log('e2e non-empty gate PASS, '+t+' tests, '+p+' pending')"
       - name: Upload e2e-report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           name: e2e-report-${{ matrix.name }}
           path: coverage/e2e-report-${{ matrix.name }}.json
@@ -279,8 +282,8 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           node-version: 24
           cache: 'npm'
@@ -301,7 +304,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
       - name: Build image
         run: docker build -f Dockerfile -t godot-mcp-smoke .
       - name: stdio initialize handshake

@@ -247,7 +247,7 @@ function isMainModule(): boolean {
 }
 if (isMainModule()) {
   (async () => {
-  const { isCliInvocation, isUnknownCommand, showHelp, showVersion, routeCommand } = await import('./cli/router.js');
+  const { isCliInvocation, isUnknownCommand, findUnknownFlag, showHelp, showVersion, routeCommand } = await import('./cli/router.js');
 
   if (args.includes('--help') || args.includes('-h')) {
     showHelp();
@@ -267,6 +267,15 @@ if (isMainModule()) {
     console.error(`Unknown command: ${args[0]!}`);
     console.error('Run "godot-mcp-enhanced --help" for usage.');
     process.exit(1);
+  }
+  // L-1(2026-10-22 审查第二轮):未知 --flag 同族漏网——isCliInvocation/isUnknownCommand
+  // 对 flag 形态一律放行,--bogus 落入 stdio server 挂起。已知 MCP flag
+  // (--minimal/--lite/--profile=/--overrides=)之外报错退出。
+  const unknownFlag = findUnknownFlag(args);
+  if (unknownFlag) {
+    console.error(`Unknown option: ${unknownFlag}`);
+    showHelp();
+    process.exit(2);
   }
 
   // 易用性批3 (2026-09-19):人类在终端直跑(非 MCP 客户端 spawn)时,stdio 挂起像死机。

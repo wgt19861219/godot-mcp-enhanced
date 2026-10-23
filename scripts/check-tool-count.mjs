@@ -198,4 +198,10 @@ function main() {
     RULES.reduce((s, r) => s + r.checks.length, 0), pkgVersion);
 }
 
-main();
+// L-26(2026-10-22 审查):import 即执行 main——测试 import 本模块做断言时,若工具
+// 清单漂移会 process.exit(1) 直接杀掉测试进程(表现为 runner 消失而非断言红)。
+// 直接执行(npm script / node scripts/...)时 argv[1] 解析后与本文件同源才跑 main。
+import { pathToFileURL } from 'node:url';
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

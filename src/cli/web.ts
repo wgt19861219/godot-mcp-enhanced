@@ -15,7 +15,16 @@ import { opt } from './args.js';
 export async function runWeb(args: string[]): Promise<void> {
   const serveOnly = opt(args, 'serve-only');
   const portArg = opt(args, 'port');
-  const port = portArg !== undefined && /^\d+$/.test(portArg) ? Number(portArg) : 0;
+  // L-2(2026-10-22 审查):非法 --port 值此前静默转 0(随机端口),用户指定被吞。
+  // 显式给了 --port 就必须是 1-65535 整数,否则报错退出。
+  let port = 0;
+  if (portArg !== undefined) {
+    if (!/^\d+$/.test(portArg) || Number(portArg) < 1 || Number(portArg) > 65535) {
+      console.error(`✗ 无效 --port 值:"${portArg}"(需 1-65535 整数)`);
+      process.exit(2);
+    }
+    port = Number(portArg);
+  }
 
   if (serveOnly) {
     const dir = resolve(serveOnly);

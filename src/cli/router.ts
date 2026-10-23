@@ -140,6 +140,23 @@ export function isUnknownCommand(args: string[]): boolean {
   return !(SUBCOMMANDS as readonly string[]).includes(first);
 }
 
+/**
+ * 未知 --flag 检测:返回首个不认识的 flag;全为已知 MCP flag 时返回 undefined。
+ * L-1(2026-10-22 审查第二轮):未知 flag(如 --bogus)此前落入 stdio MCP server
+ * 挂起等 stdin(终端像死机、CI 静默挂起)。分流处(index.ts)先调本函数报错退出。
+ * 已知 MCP flag 全集 = --minimal / --lite / --profile=<name> / --overrides=<path>
+ * (消费点 src/index.ts startMcpServer);--help/-h/--version/-v 由更早分支处理,
+ * 此处排除仅为纯函数自含性。
+ */
+export function findUnknownFlag(args: string[]): string | undefined {
+  const knownExact = new Set(['--minimal', '--lite', '--help', '-h', '--version', '-v']);
+  return args.find(a =>
+    a.startsWith('-')
+    && !knownExact.has(a)
+    && !a.startsWith('--profile=')
+    && !a.startsWith('--overrides='));
+}
+
 export function showHelp(): void {
   console.log(`
 godot-mcp-enhanced — Godot AI 开发环境

@@ -1,4 +1,5 @@
 import { writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import type { DimensionName, DimensionResult, ScoreJson } from './types.js';
 import { computeScore } from './aggregate.js';
 import { collectCoverage } from './collectors/coverage.js';
@@ -51,7 +52,10 @@ export function generateScore(opts: GenerateScoreOptions): ScoreJson {
     generatedAt: new Date().toISOString(),
   });
   writeFileSync(opts.outPath, JSON.stringify(score, null, 2) + '\n', 'utf8');
-  const reportPath = opts.outPath.replace(/score\.json$/, 'score-report.md');
+  // L-24(2026-10-22 审查):outPath 非 score.json 结尾时,原 replace 不命中 →
+  // reportPath === outPath,Markdown 报告反向覆盖刚写的 JSON。改固定落在输入旁的
+  // score-report.md(报告路径与输入文件名解耦)。
+  const reportPath = join(dirname(opts.outPath), 'score-report.md');
   writeFileSync(reportPath, renderScoreReport(score), 'utf8');
   return score;
 }

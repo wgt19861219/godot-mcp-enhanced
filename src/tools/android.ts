@@ -39,10 +39,16 @@ function resolveAdb(): string {
   return 'adb';
 }
 
-/** 跑 adb,捕获 exit/stdout。ENOENT(adb 不存在)标记 notFound。 */
+const ADB_TIMEOUT_MS = 20_000;
+
+/** 跑 adb,捕获 exit/stdout。ENOENT(adb 不存在)标记 notFound。
+ *  2026-10-23 P3 批收尾发现(审查外顺手修,与 L-17 installer fetch 超时同族):adb 在
+ *  多版本/daemon 病态环境下可无限挂起——execFileSync 同步阻塞事件循环,连测试的
+ *  testTimeout 都无法触发,实测拖死整个全量(worker 卡在 android list_devices)。
+ *  补 timeout;超时进 catch 按非零退出处理(上层 expectAnyOutcome 语义下错误结果可过)。 */
 function runAdb(adb: string, args: string[]): { stdout: string; exitCode: number; notFound: boolean } {
   try {
-    const stdout = execFileSync(adb, args, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
+    const stdout = execFileSync(adb, args, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv(), timeout: ADB_TIMEOUT_MS });
     return { stdout, exitCode: 0, notFound: false };
   } catch (err) {
     const e = err as { code?: string; stdout?: string; status?: number };

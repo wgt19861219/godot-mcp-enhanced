@@ -39,8 +39,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           node-version: 24
           cache: 'npm'
@@ -149,7 +149,7 @@ jobs:
 
       - name: Upload editor-e2e reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4  # L-28: SHA 固定(tag 重指不可变)
         with:
           name: editor-e2e-report
           path: coverage/editor-e2e-*.json
@@ -159,7 +159,7 @@ jobs:
       # 防 weekly 失败仅 GitHub 默认邮件被忽略。去重：查同标题 open issue，有则 comment 不新建。
       - name: Create issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7  # L-28: SHA 固定(tag 重指不可变)
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |

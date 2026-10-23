@@ -5,13 +5,23 @@ import { registerAllModules } from '../module-loader.js';
 import { extractCapabilities } from './extract.js';
 import type { SecurityLevel, ToolCapability } from './schema.js';
 
-/** 漂移报告：对比基线与当前矩阵的五维差异。 */
+/** 漂移报告：对比基线与当前矩阵的差异。
+ *  L-28(2026-10-22 审查第二轮):原五维不查描述/可选参数/size——description 措辞
+ *  随 npm 分发(docs/tools),optionalParams 与 requiredParams 同为契约面,inputSchema
+ *  内部变化(enum/default 等,params 集合不变时)唯一可观测信号是 size。扩三维补齐。 */
 export interface DriftReport {
   added: string[];
   removed: string[];
   contractChanges: string[]; // requiredParams 增减
   securityLevelDowngrades: { name: string; from: SecurityLevel; to: SecurityLevel }[];
   annotationChanges: { name: string; field: 'readOnlyHint' | 'destructiveHint' | 'idempotentHint'; from: boolean; to: boolean }[];
+  /** L-28: description 文本变化(随 npm 分发,措辞漂移即发布物漂移) */
+  descriptionChanges: string[];
+  /** L-28: optionalParams 集合变化(与 requiredParams 同为契约面) */
+  optionalParamChanges: string[];
+  /** L-28: totalBytes 变化——兜住 inputSchema 内部变化(enum/default/嵌套 description,
+ *   params 集合不变时其余维度不可见,唯一信号是 size) */
+  sizeChanges: { name: string; from: number; to: number }[];
   hasDrift: boolean;
 }
 
@@ -37,6 +47,9 @@ export function diffMatrices(prev: ToolCapability[], curr: ToolCapability[]): Dr
   const contractChanges: string[] = [];
   const securityLevelDowngrades: { name: string; from: SecurityLevel; to: SecurityLevel }[] = [];
   const annotationChanges: DriftReport['annotationChanges'] = [];
+  const descriptionChanges: string[] = [];
+  const optionalParamChanges: string[] = [];
+  const sizeChanges: DriftReport['sizeChanges'] = [];
 
   const HINT_FIELDS = ['readOnlyHint', 'destructiveHint', 'idempotentHint'] as const;
 
@@ -47,6 +60,15 @@ export function diffMatrices(prev: ToolCapability[], curr: ToolCapability[]): Dr
     const pReq = [...p.requiredParams].sort().join(',');
     const cReq = [...c.requiredParams].sort().join(',');
     if (pReq !== cReq) contractChanges.push(name);
+    // L-28: optionalParams 集合同款比对;description 逐字比对;
+    // size.totalBytes 比对(兜 inputSchema 内部变化,params 集合不可见时)
+    const pOpt = [...p.optionalParams].sort().join(',');
+    const cOpt = [...c.optionalParams].sort().join(',');
+    if (pOpt !== cOpt) optionalParamChanges.push(name);
+    if (p.description !== c.description) descriptionChanges.push(name);
+    if (p.size.totalBytes !== c.size.totalBytes) {
+      sizeChanges.push({ name, from: p.size.totalBytes, to: c.size.totalBytes });
+    }
     // 安全降级：危险度排名升高
     if (LEVEL_RANK[c.securityLevel] > LEVEL_RANK[p.securityLevel]) {
       securityLevelDowngrades.push({ name, from: p.securityLevel, to: c.securityLevel });
@@ -62,9 +84,10 @@ export function diffMatrices(prev: ToolCapability[], curr: ToolCapability[]): Dr
   }
 
   const hasDrift =
-    added.length + removed.length + contractChanges.length + securityLevelDowngrades.length + annotationChanges.length > 0;
+    added.length + removed.length + contractChanges.length + securityLevelDowngrades.length
+    + annotationChanges.length + descriptionChanges.length + optionalParamChanges.length + sizeChanges.length > 0;
 
-  return { added, removed, contractChanges, securityLevelDowngrades, annotationChanges, hasDrift };
+  return { added, removed, contractChanges, securityLevelDowngrades, annotationChanges, descriptionChanges, optionalParamChanges, sizeChanges, hasDrift };
 }
 
 /** 从 git HEAD 读取已提交的基线矩阵；无基线（首次/未提交）返回 null，不阻断。 */

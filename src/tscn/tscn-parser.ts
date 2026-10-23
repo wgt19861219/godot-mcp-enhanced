@@ -656,7 +656,18 @@ export function parseTscnSummary(content: string): string {
 
   // Nodes
   const roots = parsed.nodes.filter(n => !n.parent);
+  // L-25(2026-10-22 审查):printNode 递归加环防护——恶意 parent 环可致无限递归
+  // 栈溢出。实测当前 nodeMap 键构造(键含完整 parent 路径)下互指环挂不进 children,
+  // 环实际不可达;此防护为纵深防御(键逻辑演进/children 外部构造时兜底)。
+  // visited 按对象引用 + 深度上限 64 双保险,触顶时打提示行不静默截断。
+  const printed = new Set<ParsedNode>();
   function printNode(node: ParsedNode, indent: number): void {
+    if (printed.has(node)) return;
+    printed.add(node);
+    if (indent > 64) {
+      lines.push(`${'  '.repeat(indent)}… (depth limit 64 reached — cycle suspected)`);
+      return;
+    }
     const pad = '  '.repeat(indent);
     const inst = node.instance ? ` (instance: ExtResource(${node.instance}))` : '';
     lines.push(`${pad}${node.name} [${node.type}]${inst}`);

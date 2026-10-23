@@ -5,7 +5,7 @@
 ## 概览
 - 工具总数：46
 - securityLevel：danger-api 11 / guarded 24 / safe 11
-- risk：read 133 / write 113 / destructive 10 / process 16
+- risk：read 131 / write 115 / destructive 10 / process 16
 - L2 覆盖：covered 0 / partial 0 / none 46
   - ⚠ 占位说明：L2 列为提取器占位（`src/capability/extract.ts` 硬编码 `l2:'none'`），未接线 CI e2e 映射，**不代表真实覆盖为零**（CI 实际跑 16 个 L2 e2e 文件，见 `scripts/check-e2e-l2-coverage.mjs`）；relatedDefects 同为占位。
 - token 预算：tools/list ≈ 116520B / ~29130 tokens（description 16431B / schema 100089B，schema 占 86%）

@@ -412,14 +412,13 @@ export class GodotServer {
       // bridge addon → server 的 TCP push 链路不受影响,仅 server→client 转发加过滤。
       // 客户端订阅 bridge://events 后,事件到达即推送(无需轮询 watch_poll/monitor_poll)。
       if (!this.resourceSubscriptions.has('bridge://events')) return;
-      try {
-        this.server.notification({
-          method: 'notifications/resources/updated',
-          params: { uri: 'bridge://events', ...params },
-        });
-      } catch {
-        // notification 发送可能因 client 断连而抛 SdkError,吞掉不中断
-      }
+      // L-8(2026-10-22 审查):notification 返回 Promise,同步 try/catch 抓不到异步
+      // send rejection(unhandledRejection 风险)。对齐 setTerminalNotifier 先例:
+      // Promise.resolve 包装(兼容测试 stub 返回非 Promise)+ catch 吞 transport 失败。
+      void Promise.resolve(this.server.notification({
+        method: 'notifications/resources/updated',
+        params: { uri: 'bridge://events', ...params },
+      })).catch(() => { /* best-effort:推送失败不中断 bridge 事件循环 */ });
     });
 
     // Phase 2b: Multi-instance initialization moved to initMultiInstance() (async fs)
@@ -540,9 +539,12 @@ export class GodotServer {
 
     /** Send tools/list_changed notification to client. Called when active groups change. */
   sendToolListChanged(): void {
-    this.server.notification({
+    // L-8(2026-10-22 审查):notification 返回 Promise,此前零 catch——客户端断连时
+    // rejection 成 unhandledRejection。Promise.resolve 包装(兼容非 Promise 返回)
+    // + catch 吞掉(与 bridge push 转发同款)。
+    void Promise.resolve(this.server.notification({
       method: 'notifications/tools/list_changed',
-    });
+    })).catch(() => { /* best-effort:tools 列表变更通知失败不影响主流程 */ });
   }
 
   

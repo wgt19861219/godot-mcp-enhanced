@@ -307,7 +307,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (!cmd) continue;
           ctx.progress?.(i + 1, dslTotal, cmd.method); // Task 4: 每命令前推
           if (cmd.method === '_sleep') {
-            await new Promise<void>(r => setTimeout(r, (cmd.params.ms as number) || 100));
+            // L-5(2026-10-22 审查):显式 waitMs(0) 此前被 `|| 100` 折成 100ms。
+            // ?? 语义 + 数值校验;非有限数/负数回落 100(DSL 层已限 0-60000,此处防御)。
+            const msRaw = cmd.params.ms;
+            const waitMsDelay = typeof msRaw === 'number' && Number.isFinite(msRaw) && msRaw >= 0 ? msRaw : 100;
+            await new Promise<void>(r => setTimeout(r, waitMsDelay));
             dslResults.push({ command: `waitMs(${cmd.params.ms})`, success: true });
             continue;
           }

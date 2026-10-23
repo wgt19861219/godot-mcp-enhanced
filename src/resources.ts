@@ -61,6 +61,10 @@ const BINARY_EXTENSIONS = new Set([
 
 const MAX_RESOURCES = 200;
 
+/** L-27(2026-10-22 审查):project.godot 读取大小上限(10MB 级)。正常配置远小于此;
+ *  畸形/被顶替的巨型文件会在 readProjectInfo 的逐行解析里放大内存与时间。 */
+const MAX_PROJECT_FILE_SIZE = 10 * 1024 * 1024;
+
 function isSafePath(projectPath: string, filePath: string): boolean {
   // Resolve real paths to defeat symlinks and junction points
   const resolved = safeRealPath(resolve(projectPath, filePath));
@@ -316,6 +320,10 @@ async function readProjectInfo(projectPath: string): Promise<McpResourceContent>
   if (!existsSync(projectFile)) {
     return { uri: 'godot://project/info', mimeType: 'text/plain', text: 'ERROR: project.godot not found' };
   }
+  // L-27:读取前大小上限(错误返回,非崩溃)
+  if ((await stat(projectFile)).size > MAX_PROJECT_FILE_SIZE) {
+    return { uri: 'godot://project/info', mimeType: 'text/plain', text: `ERROR: project.godot too large (limit 10MB)` };
+  }
 
   const content = await readFile(projectFile, 'utf-8');
   const lines = content.replace(/\r\n/g, '\n').split('\n');
@@ -347,6 +355,10 @@ async function readProjectConfig(projectPath: string): Promise<McpResourceConten
   const projectFile = join(projectPath, 'project.godot');
   if (!existsSync(projectFile)) {
     return { uri: 'godot://project/config', mimeType: 'text/plain', text: 'ERROR: project.godot not found' };
+  }
+  // L-27:读取前大小上限(错误返回,非崩溃)
+  if ((await stat(projectFile)).size > MAX_PROJECT_FILE_SIZE) {
+    return { uri: 'godot://project/config', mimeType: 'text/plain', text: 'ERROR: project.godot too large (limit 10MB)' };
   }
   return {
     uri: 'godot://project/config',

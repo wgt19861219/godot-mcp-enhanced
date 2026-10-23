@@ -24,6 +24,7 @@ const cap = (name: string, extra: Partial<ToolCapability> = {}): ToolCapability 
   },
   relatedDefects: [],
   verification: { l1: 'extracted', l2: 'none', l3: 'unverified', lastRun: null },
+  size: { descBytes: 0, schemaBytes: 0, totalBytes: 100 },  // L-28: size 参与 diff 后必填
   ...extra,
 });
 
@@ -49,6 +50,31 @@ describe('diffMatrices', () => {
     const curr = [cap('a', { requiredParams: ['x', 'y'] })];
     const r = diffMatrices(prev, curr);
     expect(r.contractChanges).toContain('a');
+  });
+
+  // L-28(2026-10-22 审查第二轮): 描述/可选参数/size 三维漂移
+  it('L-28: detects description change', () => {
+    const prev = [cap('a', { description: 'old text' })];
+    const curr = [cap('a', { description: 'new text' })];
+    const r = diffMatrices(prev, curr);
+    expect(r.descriptionChanges).toEqual(['a']);
+    expect(r.hasDrift).toBe(true);
+  });
+
+  it('L-28: detects optionalParams change', () => {
+    const prev = [cap('a', { optionalParams: ['x'] })];
+    const curr = [cap('a', { optionalParams: ['x', 'y'] })];
+    const r = diffMatrices(prev, curr);
+    expect(r.optionalParamChanges).toEqual(['a']);
+    expect(r.hasDrift).toBe(true);
+  });
+
+  it('L-28: detects size change(params 集合不变时兜 inputSchema 内部变化)', () => {
+    const prev = [cap('a', { size: { descBytes: 10, schemaBytes: 90, totalBytes: 100 } })];
+    const curr = [cap('a', { size: { descBytes: 20, schemaBytes: 180, totalBytes: 200 } })];
+    const r = diffMatrices(prev, curr);
+    expect(r.sizeChanges).toEqual([{ name: 'a', from: 100, to: 200 }]);
+    expect(r.hasDrift).toBe(true);
   });
 
   it('no drift when identical', () => {
