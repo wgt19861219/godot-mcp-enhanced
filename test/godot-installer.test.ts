@@ -193,6 +193,20 @@ describe('fetchLatestStableTag(GODOT_MCP_INSTALL_TAG pin)', () => {
     vi.stubEnv('GODOT_MCP_INSTALL_TAG', 'evil');
     await expect(m.fetchLatestStableTag()).rejects.toThrow(/stable only/);
   });
+
+  it('L-17: 版本查询带 AbortSignal 超时,失败重试 1 次后成功(不再永久挂起)', async () => {
+    vi.stubEnv('GODOT_MCP_INSTALL_TAG', '');  // 空串 falsy → 走联网路径
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('TimeoutError: signal timed out'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ tag_name: '4.7.2-stable' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await m.fetchLatestStableTag()).toBe('4.7.2-stable');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 两次尝试都必须带 AbortSignal(弱网挂起不再无限等待)
+    expect((fetchMock.mock.calls[0] as unknown[])[1]).toHaveProperty('signal');
+    expect((fetchMock.mock.calls[1] as unknown[])[1]).toHaveProperty('signal');
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('confirmYesNo(CLI 交互确认)', () => {
@@ -270,6 +284,18 @@ describe('extractZip(零依赖 zip reader)', () => {
       await expect(m.extractZip(zip, dir)).rejects.toThrow(/traversal|reserved/i);
     }
     expect(readdirSync(dir).length).toBe(evilNames.length);  // 只有 zip,无解压产物
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('L-16: 目录条目(尾 /)同样拒穿越——../evil-dir/ 不再跳过校验', async () => {
+    // 原实现只对非目录条目过 assertSafeEntryName,`../evil-dir/` 的目录条目
+    // 直达 mkdirSync(join(destDir, name)),在解压根外建目录(2026-10-22 审查 L-16)。
+    const { buildZipWithEntryName } = await import('./godot-installer.test-helper.js');
+    const dir = mkdtempSync(join(tmpdir(), 'gme-unzip-direvil-'));
+    const evilZip = join(dir, 'evil-dir.zip');
+    buildZipWithEntryName(evilZip, '../evil-dir/', Buffer.alloc(0));
+    await expect(m.extractZip(evilZip, dir)).rejects.toThrow(/traversal|escapes/i);
+    expect(existsSync(join(dir, '..', 'evil-dir'))).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

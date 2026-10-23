@@ -1,9 +1,8 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { existsSync } from 'fs';
 import { join } from 'path';
 import type { ClientAdapter } from './types.js';
-import { readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
+import { backupJsoncBeforeRewrite, readJsonConfigForUnconfigure, readJsonConfigWithBackup, readJsonForCheck, writeFileAtomicWithMode, buildEnv } from './json-config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -56,16 +55,18 @@ export class OpenCodeAdapter implements ClientAdapter {
     writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
   }
 
-  /** uninstall 反向操作:删 opencode.json 的 mcp.godot(容器保留,损坏 JSON 抛错不动文件)。 */
+  /** uninstall 反向操作:删 opencode.json 的 mcp.godot(容器保留,损坏 JSON 抛错不动文件)。
+   *  M-8(2026-10-22 审查): JSONC 注释重写前落 .jsonc 备份;Nit-2 时机修正——
+   *  确认存在 godot entry(将重写)才备份,未配置零副作用。 */
   async unconfigure(projectDir: string): Promise<boolean> {
     const configPath = join(projectDir, 'opencode.json');
-    if (!existsSync(configPath)) return false;
-    const config = readJsonForCheck(configPath);
-    if (!config) throw new Error(`config parse error: ${configPath}`);
-    const mcp = config.mcp as Record<string, unknown> | undefined;
+    const read = readJsonConfigForUnconfigure(configPath);
+    if (!read) return false;
+    const mcp = read.config.mcp as Record<string, unknown> | undefined;
     if (!mcp?.godot) return false;
+    backupJsoncBeforeRewrite(read.raw, configPath);
     delete mcp.godot;
-    writeFileAtomicWithMode(configPath, JSON.stringify(config, null, 2) + '\n');
+    writeFileAtomicWithMode(configPath, JSON.stringify(read.config, null, 2) + '\n');
     return true;
   }
 }

@@ -185,4 +185,53 @@ describe('project_replace atomic write', () => {
     expect(result).toBeTruthy();
     expect(result.isError).toBe(true);
   });
+
+  // M-4(2026-10-22 审查): dry-run 绝不产生删除副作用;真实写入路径的残留清理
+  // 收窄到 matchedFiles 同路径的 .bak/.tmp(工具可证命名空间),命名空间外不动。
+  it('M-4: dry-run 不删除任何 .bak 文件(含用户自备份)', async () => {
+    const { writeFileSync, existsSync } = await import('node:fs');
+    // 用户手动备份 + 工具命名空间内历史残留,dry-run 都必须存活
+    writeFileSync(join(dirRef.path, 'scripts', 'a.gd.bak'), 'user backup');
+    writeFileSync(join(dirRef.path, 'root.bak'), 'user root backup');
+
+    await script.handleTool('script', {
+      project_path: dirRef.path,
+      action: 'project_replace',
+      search: 'old_name',
+      replace: 'new_name',
+      extensions: ['.gd'],
+      dry_run: true,
+    }, ctx);
+
+    expect(existsSync(join(dirRef.path, 'scripts', 'a.gd.bak'))).toBe(true);
+    expect(existsSync(join(dirRef.path, 'root.bak'))).toBe(true);
+  });
+
+  it('M-4: 真实写入仅清 pendingWrites 命名空间内 .bak/.tmp 残留,命名空间外用户 .bak 不动', async () => {
+    const { writeFileSync, existsSync, readFileSync: rf } = await import('node:fs');
+    // a.gd 含 old_name → 进 pendingWrites → a.gd.bak 是工具中断残留形态,应清
+    writeFileSync(join(dirRef.path, 'scripts', 'a.gd.bak'), 'interrupted residual');
+    // c.gd matched-but-unchanged(不含 old_name,不进 pendingWrites)→ 其 .bak 是
+    // 用户手动备份,必须保留(审查 Nit-3:清理范围收窄到 pendingWrites)
+    writeFileSync(join(dirRef.path, 'scripts', 'c.gd.bak'), 'user manual backup');
+    // 根目录 other.bak 不在工具命名空间,必须保留
+    writeFileSync(join(dirRef.path, 'other.bak'), 'user backup keep me');
+
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path,
+      action: 'project_replace',
+      search: 'old_name',
+      replace: 'new_name',
+      extensions: ['.gd'],
+      dry_run: false,
+    }, ctx);
+
+    expect(result.isError).toBeFalsy();
+    expect(existsSync(join(dirRef.path, 'scripts', 'a.gd.bak'))).toBe(false);
+    expect(existsSync(join(dirRef.path, 'scripts', 'c.gd.bak'))).toBe(true);
+    expect(existsSync(join(dirRef.path, 'other.bak'))).toBe(true);
+    expect(rf(join(dirRef.path, 'other.bak'), 'utf-8')).toBe('user backup keep me');
+    // 替换本体仍生效
+    expect(readFileSync(join(dirRef.path, 'scripts', 'a.gd'), 'utf-8')).toContain('new_name');
+  });
 });

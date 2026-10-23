@@ -15,7 +15,7 @@
  * 内存占用与 zip 大小无关。
  */
 import { openSync, readSync, closeSync, statSync, mkdirSync, writeFileSync, createReadStream, createWriteStream } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve, sep } from 'path';
 import { createInflateRaw } from 'zlib';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
@@ -190,8 +190,16 @@ export async function extractZip(zipPath: string, destDir: string): Promise<void
     const cd = readAt(cdOffset, cdSize);
     const entries = readCentralDirectory(cd, entryCount);
     // 先全量校验条目名(任一恶意 → 整包拒绝,不落半解压状态)
+    // L-16(2026-10-22 审查): 目录条目(尾 /)此前跳过 assertSafeEntryName——
+    // `../evil/` 形态的目录条目可在解压根外建目录。现条目名全量校验(目录去尾 /
+    // 后同规则);并加 resolve 前缀硬验(纵深防御:join 产物必须仍在 destDir 内)。
+    const destRoot = resolve(destDir);
     for (const e of entries) {
-      if (!e.name.endsWith('/')) assertSafeEntryName(e.name);  // 目录条目无数据,跳过
+      assertSafeEntryName(e.name.endsWith('/') ? e.name.replace(/\/+$/, '') : e.name);
+      const target = resolve(destDir, e.name);
+      if (target !== destRoot && !target.startsWith(destRoot + sep)) {
+        throw new InternalError(`zip entry escapes dest dir: ${e.name}`);
+      }
     }
     mkdirSync(destDir, { recursive: true });
     // 4) 条目数据逐个流式解压(createReadStream 按路径独立开流,fd 仅用于元数据)

@@ -17,8 +17,14 @@ export function detectMcpCommand(): { command: string; args: string[] } {
 
   // IMPORTANT-7: 原路径段启发式(npm pack 解压临时目录、CI 本地 node_modules)会误判为全局安装。
   // 改进:优先 npm_config_global 强信号;路径段匹配时排除 npm pack 的隐藏临时段(.package/.staging 等)。
+  // M-6(2026-10-22 审查): 原「任何 . 开头路径段都算临时」的点目录启发式会把
+  // ~/.npm/_npx/<hash>/node_modules/... 与 ~/.npm-global/... 误判为临时安装 → 写死
+  // node 绝对路径进客户端配置,npx 缓存被清后配置即损坏(README 推荐的 npx 试用方式)。
+  // 改为显式临时段集合:仅 npm pack 真实使用过的解压临时段;npx 缓存/_npx/npm-global
+  // 判为全局 → 输出 npx godot-mcp-enhanced(可随缓存清理自愈)。
+  const TEMP_PATH_SEGMENTS = new Set(['.package', '.staging', '.package-tmp']);
   const pathSegments = entryPath.replace(/\\/g, '/').split('/');
-  const hasTempSegment = pathSegments.some(seg => seg.startsWith('.') && seg !== '.');
+  const hasTempSegment = pathSegments.some(seg => TEMP_PATH_SEGMENTS.has(seg));
   const inGlobalNodeModules = (process.env.npm_config_global === 'true' ||
       (pathSegments.includes('node_modules') && pathSegments.includes('godot-mcp-enhanced'))) &&
     !hasTempSegment;
@@ -66,6 +72,9 @@ export async function runSetup(_args: string[]): Promise<void> {
   console.log(`\n📁 Project: ${projectDir}\n`);
 
   let configured = 0;
+  // M-5(2026-10-22 审查): 配置失败必须反映到退出码——原实现 catch 只打印 ✗,
+  // 全部失败仍 exit 0,CI/脚本无法区分「已完成」「全部失败」「无可做」。
+  let failed = 0;
   for (const adapter of ALL_ADAPTERS) {
     const installed = await adapter.detect();
     if (!installed) {
@@ -87,6 +96,7 @@ export async function runSetup(_args: string[]): Promise<void> {
       auditClientConfigured('cli:setup', adapter.name, adapter.scope, projectDir);
     } catch (err) {
       console.error(`  ✗ ${adapter.name} (${adapter.scope}): ${getErrorMessage(err)}`);
+      failed++;
     }
   }
 
@@ -96,9 +106,15 @@ export async function runSetup(_args: string[]): Promise<void> {
     console.log(`\n✓ ${configured} client(s) configured.`);
     console.log('  重启 AI 客户端会话后生效(MCP 配置仅在会话启动时加载)。');
     console.log('  验证:客户端里让 AI 调用 get_godot_version,或运行 npx godot-mcp-enhanced doctor。');
-  } else {
+  } else if (failed === 0) {
+    // M-5 审查 Nit-1: 无可做(configured=0 且 failed=0)才走该出口;有失败时只报失败,
+    // 不再先打印 "No new clients to configure"(语义矛盾)。
     console.log('\nNo new clients to configure.');
     console.log('  支持的全部客户端:npx godot-mcp-enhanced configure --list(15 个)');
     console.log('  客户端装在非默认位置/已配置想重写:configure <客户端名> --force');
+  }
+  if (failed > 0) {
+    console.error(`\n✗ ${failed} client(s) failed to configure (see ✗ lines above).`);
+    process.exitCode = 1;
   }
 }

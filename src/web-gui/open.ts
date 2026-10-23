@@ -3,7 +3,7 @@
 // App 窗口模式(2026-09-16):`--app` 时优先 Edge/Chrome `--app=<url>` 开独立窗口
 // (无地址栏/无标签页,任务栏独立图标可固定);探测不到 Edge/Chrome 降级普通标签页。
 
-import { exec, execFile } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { listRegistrations, type WebGuiRegistration } from './registry.js';
 import { ensurePortalPage } from './portal.js';
 import { findAppBrowserPath, buildFileUrl } from './app-window.js';
@@ -39,13 +39,23 @@ export function defaultOpener(url: string, appWindow = false): void {
     }
     console.log('未找到支持独立窗口的浏览器(Edge/Chrome),按普通标签页打开。');
   }
-  const platform = process.platform;
-  const cmd = platform === 'win32' ? `start "" "${url}"`
-    : platform === 'darwin' ? `open "${url}"`
-    : `xdg-open "${url}"`;
-  exec(cmd, () => {
-    /* 失败降级:调用方已打印 URL,手动点 */
-  });
+  // L-23(2026-10-22 审查): 普通 tab 模式同样改 execFile 参数数组——原 exec 拼接
+  // shell 字符串,url 虽经 registry token 格式校验([A-Za-z0-9_-]+)无注入面,但拼接
+  // 形态本身是审计关注点;Windows `start` 是 cmd 内建,须经 cmd /c 调用。失败降级
+  // 不变:调用方已打印 URL,手动点。
+  if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, () => {
+      /* 失败降级:调用方已打印 URL,手动点 */
+    });
+  } else if (process.platform === 'darwin') {
+    execFile('open', [url], () => {
+      /* 失败降级:调用方已打印 URL,手动点 */
+    });
+  } else {
+    execFile('xdg-open', [url], () => {
+      /* 失败降级:调用方已打印 URL,手动点 */
+    });
+  }
 }
 
 /** 菜单行文本 → 选择编号:trim → parseInt → 整数且 1..count 返回数字,否则 null(空行取消/无效输入)。 */

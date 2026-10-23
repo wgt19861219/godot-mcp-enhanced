@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, mkdtempSync, existsSync, readFileSync, readdirSync } from 'fs';
+import { mkdirSync, rmSync, writeFileSync, mkdtempSync, existsSync, readFileSync, readdirSync, cpSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
@@ -225,8 +225,13 @@ const PROJECT_GODOT = [
 ].join('\n');
 
 function makeProject(dir: string, opts?: { bridgeScriptContent?: string }): void {
-  mkdirSync(join(dir, 'addons', 'godot_mcp_server'), { recursive: true });
-  writeFileSync(join(dir, 'addons', 'godot_mcp_server', 'plugin.cfg'), '[plugin]\nname="MCP Server"\nversion="0.0.0"\n');
+  // L-18(2026-10-22 审查): addon fixture 改为整目录拷贝本仓分发(install-plugin 的
+  // 真实行为)——uninstall 现按分发清单逐文件比对删除,假 plugin.cfg 会被判"用户改过"。
+  cpSync(
+    resolve(process.cwd(), 'addons', 'godot_mcp_server'),
+    join(dir, 'addons', 'godot_mcp_server'),
+    { recursive: true },
+  );
   writeFileSync(join(dir, 'project.godot'), PROJECT_GODOT);
   if (opts?.bridgeScriptContent !== undefined) {
     writeFileSync(join(dir, 'mcp_bridge.gd'), opts.bridgeScriptContent);
@@ -390,6 +395,32 @@ describe('uninstall — runUninstall(命令层)', () => {
     const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
     expect(out).toContain('用户自管');
     expect(existsSync(join(testDir, 'mcp_bridge.gd'))).toBe(true);
+  });
+
+  // L-18(2026-10-22 审查): addon 目录整删连坐用户文件——现按分发清单比对,
+  // 工具自资产删除、用户改过/自加文件保留并警告。
+  it('L-18: addon 含用户改过/自加文件时,自资产删除、用户文件保留并警告', async () => {
+    makeProject(testDir, { bridgeScriptContent: bundledBridgeContent() });
+    // 用户改过分发文件 + 自加非分发文件 + 引擎生成的 .uid 伴生
+    writeFileSync(join(testDir, 'addons', 'godot_mcp_server', 'plugin.cfg'), '[plugin]\nname="user edited"\n');
+    writeFileSync(join(testDir, 'addons', 'godot_mcp_server', 'my_notes.txt'), 'user file');
+    writeFileSync(join(testDir, 'addons', 'godot_mcp_server', 'plugin.gd.uid'), 'uid://abc123');
+    const { runUninstall } = await import('../../src/cli/uninstall.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runUninstall(['--project', testDir, '--yes']);
+    const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+    expect(out).toContain('用户文件保留');
+    // 用户改过/自加的保留
+    expect(existsSync(join(testDir, 'addons', 'godot_mcp_server', 'plugin.cfg'))).toBe(true);
+    expect(existsSync(join(testDir, 'addons', 'godot_mcp_server', 'my_notes.txt'))).toBe(true);
+    // 工具自资产(含引擎伴生 .uid)已删
+    expect(existsSync(join(testDir, 'addons', 'godot_mcp_server', 'plugin.gd.uid'))).toBe(false);
+    expect(existsSync(join(testDir, 'addons', 'godot_mcp_server', 'command_handler.gd'))).toBe(false);
+  });
+
+  it('L-18: diffAddonForRemoval 纯函数——dist 不存在返回 null(调用方保守跳过)', async () => {
+    const { diffAddonForRemoval } = await import('../../src/cli/uninstall.js');
+    expect(diffAddonForRemoval(join(testDir, 'addons', 'godot_mcp_server'), join(testDir, 'no-such-dist'))).toBeNull();
   });
 
   it('空项目(无 addon 无引用)→ ⊘ 提示,不报错', async () => {

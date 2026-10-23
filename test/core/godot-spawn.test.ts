@@ -5,8 +5,8 @@ import { EventEmitter } from 'events';
 // 对称 test/core/blender-spawn.test.ts FakeProc + vi.hoisted + vi.mock importOriginal 保留 execFile 模式。
 // 加 spawn error 用例（godot-spawn 特有 reject，blender 未测）。
 class FakeProc extends EventEmitter {
-  stdout = new EventEmitter();
-  stderr = new EventEmitter();
+  stdout = Object.assign(new EventEmitter(), { destroy: vi.fn() });
+  stderr = Object.assign(new EventEmitter(), { destroy: vi.fn() });
   pid = 12345;
 }
 
@@ -46,15 +46,35 @@ it('累积 stdout/stderr，close 时 resolve exitCode', async () => {
   expect(r).toEqual({ exitCode: 0, stdout: 'out1-out2', stderr: 'err' });
 });
 
-it('超时 forceKillTree + resolve exitCode null（防 CI Godot 卡留僵尸）', async () => {
+it('超时 forceKillTree,等真实 close 才 resolve exitCode null（L-15:不裸 resolve,流句柄不悬空）', async () => {
   vi.useFakeTimers();
   const proc = new FakeProc();
   mockSpawn.mockReturnValue(proc);
   const p = runGodotHeadless(['--headless'], '/fake/godot', 1000);
   vi.advanceTimersByTime(1001);
+  expect(mockForceKillTree).toHaveBeenCalledWith(proc);
+  // L-15(2026-10-22 审查): 超时分支不再裸 resolve——kill 发出后等真实 close
+  // (被杀场景 code=null)。close 未到前 Promise 仍 pending。
+  const pending = Promise.race([p.then(() => 'settled'), new Promise((r) => setTimeout(() => r('pending'), 0))]);
+  vi.advanceTimersByTime(10);
+  expect(await pending).toBe('pending');
+  proc.emit('close', null);
   const r = await p;
   expect(r.exitCode).toBeNull();
-  expect(mockForceKillTree).toHaveBeenCalledWith(proc);
+  vi.useRealTimers();
+});
+
+it('L-15: 超时 + kill 失败(close 永不到来)→ 5s failsafe destroy 流后 resolve', async () => {
+  vi.useFakeTimers();
+  const proc = new FakeProc();
+  mockSpawn.mockReturnValue(proc);
+  const p = runGodotHeadless(['--headless'], '/fake/godot', 1000);
+  vi.advanceTimersByTime(1001);
+  vi.advanceTimersByTime(5000);
+  const r = await p;
+  expect(r.exitCode).toBeNull();
+  expect(proc.stdout.destroy).toHaveBeenCalled();
+  expect(proc.stderr.destroy).toHaveBeenCalled();
   vi.useRealTimers();
 });
 

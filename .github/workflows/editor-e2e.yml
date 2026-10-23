@@ -27,7 +27,10 @@ on:
   workflow_dispatch: {}  # 手动触发
 
 # P2-G: issue 创建需 issues: write 权限（默认 GITHUB_TOKEN 只读）
+# M-9(2026-10-22 审查): 显式声明 permissions 后未列出的权限全部收为 none——
+# 缺 contents: read 时私有 fork/受限环境 checkout 失败,依赖缓存/artifact 同样受限。
 permissions:
+  contents: read
   issues: write
 
 jobs:

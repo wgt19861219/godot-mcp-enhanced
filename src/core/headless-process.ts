@@ -24,12 +24,23 @@ export function runHeadlessCollector(
     proc.stderr?.on('data', (d: Buffer) => stderrChunks.push(d));
 
     const timer = setTimeout(() => {
+      // L-15(2026-10-22 审查): 不在此处裸 resolve——超时被杀的进程若尚未 close,
+      // stdout/stderr 流句柄悬空、尾部输出未 flush。等真实 close 事件(由外层
+      // handler resolve,被杀场景 code=null 语义不变);kill 失败(权限/僵尸)时
+      // 5s 兜底 destroy 流强收,防 Promise 永悬。
       forceKillTree(proc);
-      resolve({
-        exitCode: null,
-        stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
-        stderr: Buffer.concat(stderrChunks).toString('utf-8'),
-      });
+      const failSafe = setTimeout(() => {
+        // 可选调用防御:非标准流形态(测试桩/已销毁)不因 destroy 缺失抛 uncaught
+        proc.stdout?.destroy?.();
+        proc.stderr?.destroy?.();
+        resolve({
+          exitCode: null,
+          stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+        });
+      }, 5_000);
+      failSafe.unref?.();
+      proc.once('close', () => clearTimeout(failSafe));
     }, timeoutMs);
 
     proc.on('error', (err) => {

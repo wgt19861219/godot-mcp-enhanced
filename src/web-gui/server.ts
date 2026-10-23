@@ -107,7 +107,8 @@ export interface WebGuiServerOptions {
   /** 实例管理批(2026-09-30):registry pid 探活注入(测试 mock);缺省 process.kill(pid,0)。 */
   isPidAlive?: (pid: number) => boolean;
   /** 2026-10-22 审查 Low-2:端口 Listening owner PID 查询注入(测试 mock)。
-   *  缺省 = 生产实现(Windows Get-NetTCPConnection / 其他平台 null=无法判定)。
+   *  缺省 = 生产实现(Windows Get-NetTCPConnection;L-21 后 POSIX 走 ss→lsof,
+   *  工具缺失/查询失败返 null=无法判定,调用方回落纯探活语义)。
    *  构造器注入,不新增模块级 setter(对齐 isPidAlive 先例)。 */
   probePortOwner?: (port: number) => Promise<number | null>;
   /** daemon 批 A(2026-09-30 spec §3.4/M-2):严格端口。true = 只试 portStart 一个端口,
@@ -217,6 +218,24 @@ const JSON_BODY_MAX_BYTES = 64 * 1024;
 /** 会话输出端点尾部行数上限(2026-10-08 输出查看批):内存桶上限 5000 行
  *  (process-state MAX_OUTPUT_BUFFER_SIZE),面板查看取尾部 500 行足够定位报错。 */
 const SESSION_OUTPUT_TAIL_LINES = 500;
+
+/** L-21(2026-10-22 审查): `ss -tlnpH` 输出解析——监听行含 `users:(("node",pid=1234,fd=20))`,
+ *  取首个 pid=;无 pid=(无权限看进程名)或输出空 → null。纯函数,跨平台可单测。 */
+export function parseSsOwnerPid(stdout: string): number | null {
+  const m = /pid=(\d+)/.exec(stdout);
+  if (!m) return null;
+  const n = parseInt(m[1]!, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** L-21: `lsof -ti tcp:<port> -sTCP:LISTEN` 输出解析——纯 pid 列表(每行一个),
+ *  取首行;空输出 → null。纯函数,跨平台可单测。 */
+export function parseLsofOwnerPid(stdout: string): number | null {
+  const first = stdout.trim().split('\n')[0] ?? '';
+  if (!first) return null;
+  const n = parseInt(first, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 
 // 模块级激活标志:只读查询导出(launcher guard 消费),由本类 start/stop 驱动——
 // 非依赖注入 setter,不违反 AGENTS.md 模块级 setter 红线(设计 §3.1)。
@@ -726,24 +745,49 @@ export class WebGuiServer {
   /** Low-2(2026-10-22 审查): 端口 Listening owner PID(端口-PID 身份绑定,kill 前与
    *  登记 pid 比对)。TCP 探活只证"端口有服务",不证"服务属于登记 PID"——server 崩溃
    *  登记 + Windows PID 回收 + 端口恰被无关进程绑定三条件同时满足时仍会误杀无辜进程树。
-   *  返回 null = 非 Windows / 查询失败 / 无监听者(调用方回落纯探活语义,威胁模型内低危)。
-   *  port 先过整数+范围校验再进命令行(登记 JSON 解析值不可信);execFile 数组形式无 shell。 */
+   *  L-21(2026-10-22 审查): POSIX 补探测(Low-2 原仅 Windows)——linux 先 ss
+   *  (iproute2 基本必装)再 lsof 回落;darwin 直 lsof(macOS 无 ss)。
+   *  返回 null = 查询失败 / 工具缺失 / 无监听者(调用方回落纯探活语义,与 Windows
+   *  失败分支对称,威胁模型内低危)。port 先过整数+范围校验再进命令行(登记 JSON
+   *  解析值不可信);execFile 数组形式无 shell。 */
   private probePortOwnerPidDefault(port: number): Promise<number | null> {
     return new Promise((resolve) => {
-      if (process.platform !== 'win32') return resolve(null);
       const safePort = Number(port);
       if (!Number.isInteger(safePort) || safePort <= 0 || safePort > 65535) return resolve(null);
-      execFile(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command',
-          `Get-NetTCPConnection -LocalPort ${safePort} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`],
-        { timeout: 3_000 },
-        (err, stdout) => {
-          if (err) return resolve(null);
-          const n = parseInt(String(stdout ?? '').trim(), 10);
-          resolve(Number.isInteger(n) && n > 0 ? n : null);
-        },
-      );
+      if (process.platform === 'win32') {
+        execFile(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command',
+            `Get-NetTCPConnection -LocalPort ${safePort} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess`],
+          { timeout: 3_000 },
+          (err, stdout) => {
+            if (err) return resolve(null);
+            const n = parseInt(String(stdout ?? '').trim(), 10);
+            resolve(Number.isInteger(n) && n > 0 ? n : null);
+          },
+        );
+        return;
+      }
+      if (process.platform === 'linux') {
+        execFile('ss', ['-tlnpH', `sport = :${safePort}`], { timeout: 3_000 }, (err, stdout) => {
+          if (!err) {
+            const owner = parseSsOwnerPid(String(stdout ?? ''));
+            if (owner !== null) return resolve(owner);
+          }
+          // ss 输出无 pid= 或 ss 本身不可用 → lsof 回落
+          this.probePortOwnerViaLsof(safePort, resolve);
+        });
+        return;
+      }
+      this.probePortOwnerViaLsof(safePort, resolve);  // darwin / 其他 POSIX
+    });
+  }
+
+  /** L-21: lsof 回落通道(ss 缺失的 Linux 容器 / macOS)。lsof 也不可用 → null。 */
+  private probePortOwnerViaLsof(port: number, resolve: (v: number | null) => void): void {
+    execFile('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { timeout: 3_000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      resolve(parseLsofOwnerPid(String(stdout ?? '')));
     });
   }
 
@@ -865,7 +909,7 @@ export class WebGuiServer {
         }
         // Low-2(2026-10-22 审查): 端口-PID 身份绑定——TCP 探活只证端口有服务,不证
         // 服务属于登记 PID;Windows 下比对 Get-NetTCPConnection 的 OwningProcess,
-        // 不匹配 = 登记陈旧且端口被无关进程占用,拒绝 kill。null(非 Windows/查询失败)
+        // 不匹配 = 登记陈旧且端口被无关进程占用,拒绝 kill。null(探测工具缺失/查询失败)
         // 回落纯探活语义。注入优先(测试 mock),对齐 isPidAlive 先例。
         const ownerPid = await (this.opts.probePortOwner
           ? this.opts.probePortOwner(target.port)

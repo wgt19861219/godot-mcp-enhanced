@@ -101,12 +101,27 @@ export async function fetchLatestStableTag(): Promise<string> {
   }
   const url = 'https://api.github.com/repos/godotengine/godot/releases/latest';
   assertAllowedDownloadUrl(url);
-  const res = await fetch(url, { headers: { 'User-Agent': 'godot-mcp-enhanced-installer' } });
-  if (!res.ok) throw new InternalError(`github api request failed: HTTP ${res.status}`);
-  const data = await res.json() as { tag_name?: unknown };
-  if (typeof data.tag_name !== 'string') throw new InternalError('github api response missing tag_name');
-  assertStableVersionTag(data.tag_name);
-  return data.tag_name;
+  // L-17(2026-10-22 审查): 版本查询补 10s 超时 + 1 次重试(上限 2 次尝试)——
+  // 原裸 fetch 无 AbortSignal,弱网/被墙环境网络挂起会永久卡住安装。
+  const API_ATTEMPTS = 2;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= API_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'godot-mcp-enhanced-installer' },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new InternalError(`github api request failed: HTTP ${res.status}`);
+      const data = await res.json() as { tag_name?: unknown };
+      if (typeof data.tag_name !== 'string') throw new InternalError('github api response missing tag_name');
+      assertStableVersionTag(data.tag_name);
+      return data.tag_name;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < API_ATTEMPTS) await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+  throw lastErr;
 }
 
 /** 流式下载到 destPath;onProgress 收到累计字节数。 */
@@ -119,9 +134,15 @@ export async function downloadWithProgress(url: string, destPath: string, onProg
     try {
       // 断点续传:重试时带 Range(GitHub assets 支持);首次 received=0 无 Range。
       // 断连残留文件保留,retry 以 append 续写;服务器忽略 Range(回 200)则从头重写。
+      // L-17(2026-10-22 审查): 补 300s 整体超时——裸 fetch 无 AbortSignal,弱网下
+      // 单流挂起会永久卡住;超时按普通失败走既有断点续传重试链(MAX_ATTEMPTS=3)。
       const headers: Record<string, string> = {};
       if (received > 0) headers['range'] = `bytes=${received}-`;
-      const res = await fetch(url, { redirect: 'follow', headers });
+      const res = await fetch(url, {
+        redirect: 'follow',
+        headers,
+        signal: AbortSignal.timeout(300_000),
+      });
       if (!res.ok && res.status !== 206 || !res.body) {
         throw new InternalError(`download failed: HTTP ${res.status}`);
       }

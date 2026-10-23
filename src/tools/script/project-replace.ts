@@ -33,36 +33,6 @@ export async function projectReplace(args: Record<string, unknown>): Promise<Too
   const normalizedSearch = search.replace(/\r\n/g, '\n');
   const normalizedReplace = replace.replace(/\r\n/g, '\n');
 
-  // I-01, I-03: Clean up residual .bak / .mcp-tmp files from interrupted atomic writes
-  // Scan all top-level subdirectories (not just . and src) since project_replace can affect any location
-  const cleanedResiduals: string[] = [];
-  for (const suffix of ['.bak', '.mcp-tmp']) {
-    try {
-      const rootEntries = readdirSync(p, { withFileTypes: true });
-      for (const rootEntry of rootEntries) {
-        const absDir = join(p, rootEntry.name);
-        // Only scan directories that aren't excluded and the root itself
-        const isExcluded = excludeDirs.includes(rootEntry.name) || rootEntry.name.startsWith('.');
-        const targets = isExcluded ? [] : (rootEntry.isDirectory() ? [absDir] : rootEntry.isFile() && rootEntry.name.endsWith(suffix) ? [absDir] : []);
-        // Also check root-level files matching suffix
-        if (rootEntry.isFile() && rootEntry.name.endsWith(suffix)) {
-          try { unlinkSync(absDir); cleanedResiduals.push(rootEntry.name); } catch { /* best effort */ }
-          continue;
-        }
-        for (const targetDir of targets) {
-          if (!existsSync(targetDir)) continue;
-          const entries = readdirSync(targetDir, { withFileTypes: true });
-          for (const entry of entries) {
-            if (entry.isFile() && entry.name.endsWith(suffix)) {
-              const residualPath = join(targetDir, entry.name);
-              try { unlinkSync(residualPath); cleanedResiduals.push(join(rootEntry.name, entry.name)); } catch { /* best effort */ }
-            }
-          }
-        }
-      }
-    } catch { /* non-critical cleanup */ }
-  }
-
   // Collect files
   const MAX_FILES = 500;
   const matchedFiles: string[] = [];
@@ -131,6 +101,25 @@ export async function projectReplace(args: Record<string, unknown>): Promise<Too
     }
 
     changedFiles.push(relOf(filePath));
+  }
+
+  // M-4(2026-10-22 审查): 残留清理收窄为「真实写入路径 + 工具可证命名空间」。原实现
+  // 无条件扫项目根与一级子目录删 *.bak/*.mcp-tmp——dry-run 也删用户自备份(如手动
+  // save.gd.bak);且写入实际产生的后缀是 .tmp(Phase 2 Step 1)与 .bak(Step 2),
+  // `.mcp-tmp` 从未存在过(原注释命名空间失实)。现仅清 pendingWrites 同路径的
+  // .bak/.tmp 历史残留——工具写入只会发生在 pendingWrites 上,中断残留不可能出现在
+  // 其他位置;matched-but-unchanged 文件的手动备份不受牵连(审查 Nit-3 的收窄)。
+  // dry-run 下 pendingWrites 恒空,天然零删除零写入。
+  const cleanedResiduals: string[] = [];
+  if (!dryRun) {
+    for (const pw of pendingWrites) {
+      for (const suffix of ['.bak', '.tmp']) {
+        const residual = pw.filePath + suffix;
+        if (existsSync(residual)) {
+          try { unlinkSync(residual); cleanedResiduals.push(relOf(residual)); } catch { /* best effort */ }
+        }
+      }
+    }
   }
 
   // P1-2 FileGuard: 拒写插件自资产——整批原子检查(任一命中全拒,保持批量原子性)
