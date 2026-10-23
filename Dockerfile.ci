@@ -3,20 +3,17 @@
 # 与生产 Dockerfile 的差异:生产版从 registry 安装 godot-mcp-enhanced@<version>(Glama
 # 目录验证形态),版本未 npm publish 前必 ETARGET——CI 门禁若依赖它,在两次 publish 之间
 # 永远红(2026-10-23 CI 红根因之一)。CI smoke 的验证对象应是**当前 commit** 的 stdio 链路,
-# 故此处用本地 pack 等价形态:npm install -g ./ 按 files 字段打包本地目录安装。
+# 故此处安装宿主 `npm pack --ignore-scripts` 产出的 tarball——与 registry 形态完全同构
+# (tarball 是成品,安装无 lifecycle;曾试 `npm install -g --ignore-scripts ./` 本地目录
+# 形态,npm 对本地目录安装仍强制执行 prepare(容器无 devDeps 的 tsc → exit 127),弃用)。
 #
-# --ignore-scripts:跳过 prepare(npm run build)——build 产物由 CI 宿主构建后 COPY 进来,
-# 容器内不重编(容器无 devDeps,重编也会失败);runtime dependencies 照常安装。
-# 握手验证面与生产版一致:ENTRYPOINT 相同,initialize 响应含 serverInfo。
-# ⚠️ 边界:镜像仅 COPY package.json+build,files 字段中的 docs/api、addons/、scripts/、
-# skills/ 未带入(npm pack 静默落空)——覆盖 initialize/tools/list 握手面,不覆盖 docs
-# 类工具调用面(其依赖 docs/api/extension_api.json,缺失时 throw);smoke 扩面时需补 COPY。
+# 覆盖面:initialize/tools/list 握手(ENTRYPOINT 与生产一致)。files 字段内容齐备
+# (宿主 pack 按 files 裁剪,docs/addons/skills 在包内),工具调用面理论上可用。
+# ⚠️ 宿主必须先 `npm run build` 再 `npm pack --ignore-scripts`(产物进 tgz),见 ci.yml。
 
 FROM node:20-slim
 
-COPY package.json ./
-COPY build ./build
-
-RUN npm install -g --ignore-scripts ./
+COPY godot-mcp-enhanced-*.tgz /tmp/pkg.tgz
+RUN npm install -g /tmp/pkg.tgz && rm -f /tmp/pkg.tgz
 
 ENTRYPOINT ["godot-mcp-enhanced"]

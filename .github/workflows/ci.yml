@@ -317,6 +317,9 @@ jobs:
           cache: 'npm'
       - run: npm ci --ignore-scripts
       - run: npm run build
+      # tarball 形态与 registry 安装同构(成品无 lifecycle);--ignore-scripts 跳过
+      # prepack/prepare——产物已由上一步 build,pack 只按 files 字段裁剪(2026-10-23)
+      - run: npm pack --ignore-scripts
       - name: Build image
         run: docker build -f Dockerfile.ci -t godot-mcp-smoke .
       - name: stdio initialize handshake
