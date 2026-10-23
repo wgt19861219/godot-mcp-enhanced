@@ -1,0 +1,11 @@
+# 2026-10-23:docker build context 瘦身(Dockerfile.ci 引入本地 COPY 后补)。
+# 生产 Dockerfile 无 COPY 指令,本文件对其零副作用;Dockerfile.ci 只需 package.json+build/
+# 在 context 内,其余全部排除(尤其 node_modules 数百 MB,审查 N-4)。
+node_modules
+.git
+.github
+test
+docs
+coverage
+tmp
+*.md

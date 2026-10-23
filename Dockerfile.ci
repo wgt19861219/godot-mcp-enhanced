@@ -8,6 +8,9 @@
 # --ignore-scripts:跳过 prepare(npm run build)——build 产物由 CI 宿主构建后 COPY 进来,
 # 容器内不重编(容器无 devDeps,重编也会失败);runtime dependencies 照常安装。
 # 握手验证面与生产版一致:ENTRYPOINT 相同,initialize 响应含 serverInfo。
+# ⚠️ 边界:镜像仅 COPY package.json+build,files 字段中的 docs/api、addons/、scripts/、
+# skills/ 未带入(npm pack 静默落空)——覆盖 initialize/tools/list 握手面,不覆盖 docs
+# 类工具调用面(其依赖 docs/api/extension_api.json,缺失时 throw);smoke 扩面时需补 COPY。
 
 FROM node:20-slim
 

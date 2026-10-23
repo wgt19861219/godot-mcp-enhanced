@@ -117,6 +117,9 @@ jobs:
       # 在 Linux 稳定失效(诊断步实测 issue #15:单文件 113/120/138 行同败 → 非全量隔离,vitest 配置无救)。
       # 平台敏感(Linux 败/Windows 全过),版本无关(4.1.7/4.1.9 双版本 Windows 全过)。
       # 非生产/测试逻辑 bug。T-2 守护 + game-bridge.ts 覆盖率退本地(Windows game-bridge.test.ts 全过)。
+      # 2026-10-23:真实排除防线已移入 vitest.config.ts(unit project exclude 平台条件)——
+      # CLI --exclude 在 vitest test.projects 模式下不透传 project 文件收集(实测单次 exclude +
+      # 显式点名文件仍被收集执行),下方两个 --exclude 仅防御 vitest 未来行为变化,当前无效。
       # 详见 https://github.com/wgt19861219/godot-mcp-enhanced/issues/15
       - name: Install Godot 4.6.3 (M3c, job-isolated)
         # P0-4（2026-08-10）：Godot 安装前置到 vitest 之前，让主 vitest 拿到 GODOT_PATH。
