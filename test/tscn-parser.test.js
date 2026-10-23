@@ -319,3 +319,24 @@ describe('parseTscn input size limit', () => {
     expect(() => parseTscn(hugeContent)).toThrow('tscn input too large');
   });
 });
+
+// ── L-25(2026-10-22 审查第二轮): 摘要递归环防护(纵深防御) ──
+// 实测当前 nodeMap 键构造下互指 parent 环挂不进 children(键含完整 parent 路径,
+// 查找键不对称),环不可达——本用例固化该输入形态的安全行为(不炸、可产出摘要),
+// 并为键逻辑演进时 printNode 的 visited/深度防护兜底。
+describe('parseTscnSummary cycle safety (L-25)', () => {
+  it('互指 parent 环(C↔D)输入不抛异常,产出有限摘要', () => {
+    const cyclic = `[gd_scene format=3]
+
+[node name="Root" type="Node2D"]
+
+[node name="C" type="Node2D" parent="D"]
+
+[node name="D" type="Node2D" parent="C"]
+`;
+    const summary = parseTscnSummary(cyclic);
+    expect(typeof summary).toBe('string');
+    expect(summary.length).toBeLessThan(100_000);  // 无限递归会先栈溢出,长度上限双保险
+    expect(summary).toContain('Root');
+  });
+});
