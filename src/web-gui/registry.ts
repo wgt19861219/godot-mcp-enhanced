@@ -187,7 +187,12 @@ export async function removeRegistrationVerified(pid: number, expectedStartedAt:
 export async function parseRegistrationFile(dir: string, fileName: string): Promise<WebGuiRegistration | null> {
   try {
     const raw = JSON.parse(await readFile(join(dir, fileName), 'utf-8')) as WebGuiRegistration;
-    if (typeof raw.pid !== 'number' || typeof raw.port !== 'number' || typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) return null;
+    // L-22(2026-10-22 审查):typeof number 接受 NaN/负数/小数——pid 用 NaN 参与
+    // process.kill 探活恒 throw,负数 pid 语义非法。改整数+范围校验
+    // (pid 1..2^31-1,port 1..65535,与 web-gui 面向的注册面一致)。
+    if (!Number.isInteger(raw.pid) || raw.pid < 1 || raw.pid > 0x7fffffff) return null;
+    if (!Number.isInteger(raw.port) || raw.port < 1 || raw.port > 65535) return null;
+    if (typeof raw.token !== 'string' || !/^[A-Za-z0-9_-]+$/.test(raw.token)) return null;
     return raw;
   } catch {
     return null;

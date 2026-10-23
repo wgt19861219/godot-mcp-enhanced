@@ -148,6 +148,24 @@ describe('web-gui per-pid 登记(设计 §3.1)', () => {
     await expect(parseRegistrationFile(dir, 'bad5.json')).resolves.toBeNull();
   });
 
+  // L-22(2026-10-22 审查第二轮): typeof number 接受 NaN/负数/小数——改整数+范围校验。
+  it('parseRegistrationFile L-22: NaN/负数/小数/超界 pid/port → null', async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { pid: NaN, port: 9550, token: 't' },
+      { pid: -1, port: 9550, token: 't' },
+      { pid: 1.5, port: 9550, token: 't' },
+      { pid: 1, port: NaN, token: 't' },
+      { pid: 1, port: 0, token: 't' },
+      { pid: 1, port: 65536, token: 't' },
+      { pid: 1, port: 80.5, token: 't' },
+      { pid: 0x80000000, port: 9550, token: 't' },  // pid 超 2^31-1
+    ];
+    for (let i = 0; i < cases.length; i++) {
+      writeFileSync(join(dir, `l22bad${i}.json`), JSON.stringify(cases[i]), 'utf-8');
+      await expect(parseRegistrationFile(dir, `l22bad${i}.json`)).resolves.toBeNull();
+    }
+  });
+
   // ── 实例管理批(2026-09-30):version 可选字段——面板区分新旧代码实例的判据 ──
   it('version 可选字段:writeRegistration 落盘带 version 读回一致;无 version 旧登记照常读回(向后兼容)', async () => {
     await writeRegistration({ pid: 5001, port: 9550, token: 'tok_v1', startedAt: 't1', version: '0.33.9' }, { dir, isPidAlive: () => true });
