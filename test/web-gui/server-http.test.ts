@@ -11,6 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach, afterAll, beforeAll, vi } from 'vitest';
+import { request } from 'node:http';
 import { WebGuiServer, isWebGuiActive, WEB_GUI_CSP, type WebGuiServerOptions, type ProjectsApi } from '../../src/web-gui/server.js';
 import { rotateSharedToken, writeRegistration } from '../../src/web-gui/registry.js';
 import { INDEX_HTML } from '../../src/web-gui/html.js';
@@ -1145,5 +1146,44 @@ describe('parseSsOwnerPid / parseLsofOwnerPid(L-21 POSIX 端口归属探测)', (
     const { parseLsofOwnerPid } = await import('../../src/web-gui/server.js');
     expect(parseLsofOwnerPid('')).toBeNull();
     expect(parseLsofOwnerPid('not-a-pid')).toBeNull();
+  });
+
+  // ── L-20(2026-10-22 审查第二轮): Host 校验防 DNS rebinding ──
+  describe('L-20 Host 校验', () => {
+    let l20srv: WebGuiServer | null = null;
+    afterEach(async () => { if (l20srv) { await l20srv.stop(); l20srv = null; } });
+
+    it('非 loopback Host(evil.com)→ 403,含未鉴权的 / 与 /api/health', async () => {
+      const t = await startTestServer(); l20srv = t.srv;
+      // fetch/undici 禁止覆盖 Host 头(forbidden header),用原生 http.request 注入
+      const reqWithHost = (path: string, host: string): Promise<number> => new Promise((resolve, reject) => {
+        const r = request(`http://127.0.0.1:${t.srv.port}${path}`, { headers: { host } }, (resp) => {
+          resp.resume();
+          resolve(resp.statusCode ?? 0);
+        });
+        r.on('error', reject);
+        r.end();
+      });
+      for (const path of ['/', '/api/health']) {
+        expect(await reqWithHost(path, 'evil.example.com')).toBe(403);
+      }
+    });
+
+    it('loopback Host(127.0.0.1 / localhost,任意端口)放行', async () => {
+      const t = await startTestServer(); l20srv = t.srv;
+      for (const host of [`127.0.0.1:${t.srv.port}`, `localhost:${t.srv.port}`, '127.0.0.1', 'localhost', '[::1]']) {
+        const res = await fetch(`${t.base}/api/health`, { headers: { host } });
+        expect(res.status).toBeLessThan(400);
+      }
+    });
+
+    it('无 Origin 的写请求(带 token,curl 形态)仍可用——不破坏 REST API 兼容', async () => {
+      const t = await startTestServer(); l20srv = t.srv;
+      const res = await fetch(`${t.base}/api/sessions`, {
+        method: 'POST',
+        headers: { 'x-gui-token': t.token },   // 无 Origin 头(undici 不自动加)
+      });
+      expect(res.status).toBeLessThan(500);   // 未被 Host/Origin 门 403/401 拒(业务语义另断)
+    });
   });
 });

@@ -478,6 +478,19 @@ export class WebGuiServer {
     return origin === `http://127.0.0.1:${this.portValue}` || origin === `http://localhost:${this.portValue}`;
   }
 
+  /** L-20(2026-10-22 审查):Host 校验——防 DNS rebinding(攻击者域名解析到 127.0.0.1
+   *  后,浏览器导航 GET 不带 Origin,originAllowed 拦不住;此类请求 Host 恒是攻击者
+   *  域名)。仅放行 loopback 主机名(任意端口);无 Host(HTTP/1.0)拒绝。
+   *  注意:有意不做「无 Origin 写请求拒绝」——浏览器跨站写必带 Origin 已被
+   *  originAllowed 拦,无 Origin 的写请求是 curl/工具带 token 的合法通道,一刀切
+   *  拒绝破坏 REST API 兼容(plan 字面项的偏离,理由见 P3 批审查文档)。 */
+  private hostAllowed(req: IncomingMessage): boolean {
+    const host = req.headers.host;
+    if (typeof host !== 'string' || host === '') return false;
+    const bare = host.toLowerCase().replace(/:\d+$/, '');
+    return bare === '127.0.0.1' || bare === 'localhost' || bare === '[::1]';
+  }
+
   private authorized(req: IncomingMessage, url: URL): boolean {
     return this.tokenEquals(this.extractToken(req, url)) && this.originAllowed(req);
   }
@@ -487,6 +500,13 @@ export class WebGuiServer {
   private handle(req: IncomingMessage, res: ServerResponse): void {
     try {
       const url = new URL(req.url ?? '/', `http://127.0.0.1:${this.portValue}`);
+      // L-20:Host 校验先于一切路由(含未鉴权的 / 与 /api/health——rebinding 读面);
+      // /mcp 例外(daemon 注入的 MCP 端点,鉴权与部署形态归 handler 自理,本类对其零假设)。
+      if (url.pathname !== '/mcp' && !this.hostAllowed(req)) {
+        res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden: non-loopback Host header');
+        return;
+      }
       // daemon 批 A(2026-09-30 spec §3.2,Task 3):POST/GET/DELETE /mcp 三方法
       // (Streamable HTTP transport 方法面)路由到注入的 mcpHandler。必须先于 POST
       // 白名单分发注册——否则 POST /mcp 落未知路径 405、GET /mcp 落面板 token 鉴权,
