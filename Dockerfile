@@ -6,7 +6,7 @@
 FROM node:20-slim
 
 # 安装已发布的 npm 包（含 bin: godot-mcp-enhanced -> build/index.js）
-RUN npm install -g godot-mcp-enhanced@0.35.0
+RUN npm install -g godot-mcp-enhanced@0.36.0
 
 # Glama check 只发 initialize/tools/list,不调工具,无需任何安全旁路 env。
 # B-1(2026-10-22 审查):曾设 GODOT_MCP_UNRESTRICTED=true,与 index.ts runStartupSequence
