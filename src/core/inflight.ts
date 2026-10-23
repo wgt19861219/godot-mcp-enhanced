@@ -9,7 +9,7 @@
 // 报丧走 stderr——stdout 是 MCP transport,绝不能混(BuildersGate 同款约束)。
 // 本进程正常退出(GodotServer.close)清自己的文件;异常死亡留文件 → 下个启动报丧。
 // 开关:GODOT_MCP_INFLIGHT_LOG=0 关闭(默认开)。
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -47,7 +47,12 @@ function readOwn(): InflightEntry[] {
 function writeOwn(entries: InflightEntry[]): void {
   try {
     mkdirSync(inflightDir(), { recursive: true });
-    writeFileSync(ownFile(), JSON.stringify({ pid: process.pid, entries }), 'utf8');
+    // L-13(2026-10-22 审查):写临时文件 + 原子 rename——裸 writeFileSync 非原子,
+    // 进程在写一半被 kill 留半截 JSON → readOwn parse 失败恒返 [] → 本进程后续
+    // in-flight 诊断失忆。temp 名含本 pid(同进程同步串行无碰撞,跨进程文件本就独立)。
+    const tmp = `${ownFile()}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ pid: process.pid, entries }), 'utf8');
+    renameSync(tmp, ownFile());
   } catch {
     // best-effort:登记失败不影响工具调用(诊断设施不反噬主路径)
   }
@@ -79,6 +84,9 @@ export function clearInflight(toolName: string): void {
 /** 本进程全部 in-flight 清除(正常退出路径)。 */
 export function clearAllInflight(): void {
   try { rmSync(ownFile(), { force: true }); } catch { /* best-effort */ }
+  // L-13: 顺手清原子写的中断残留 tmp(rename 失败路径产物;reportOrphaned 的
+  // .endsWith('.json') filter 不会误扫 tmp,此处防长期堆积)
+  try { rmSync(`${ownFile()}.${process.pid}.tmp`, { force: true }); } catch { /* best-effort */ }
 }
 
 /**
