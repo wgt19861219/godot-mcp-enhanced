@@ -1,0 +1,19 @@
+# godot-mcp-enhanced — CI stdio smoke 专用变体(非分发物)
+#
+# 与生产 Dockerfile 的差异:生产版从 registry 安装 godot-mcp-enhanced@<version>(Glama
+# 目录验证形态),版本未 npm publish 前必 ETARGET——CI 门禁若依赖它,在两次 publish 之间
+# 永远红(2026-10-23 CI 红根因之一)。CI smoke 的验证对象应是**当前 commit** 的 stdio 链路,
+# 故此处用本地 pack 等价形态:npm install -g ./ 按 files 字段打包本地目录安装。
+#
+# --ignore-scripts:跳过 prepare(npm run build)——build 产物由 CI 宿主构建后 COPY 进来,
+# 容器内不重编(容器无 devDeps,重编也会失败);runtime dependencies 照常安装。
+# 握手验证面与生产版一致:ENTRYPOINT 相同,initialize 响应含 serverInfo。
+
+FROM node:20-slim
+
+COPY package.json ./
+COPY build ./build
+
+RUN npm install -g --ignore-scripts ./
+
+ENTRYPOINT ["godot-mcp-enhanced"]

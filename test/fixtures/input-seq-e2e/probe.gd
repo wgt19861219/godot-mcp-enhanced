@@ -9,6 +9,12 @@ var frames_run := 0
 var press_count := 0
 
 func _ready() -> void:
+	# 2026-10-23 CI 红修复:headless 主循环无 vsync 不限帧,CI 快机上帧率可远超 60fps,
+	# wall_timeout 用例(at_frame=600 + 1s wall 预算)的"600 帧 ≈ 10s ≫ 1s 必截断"假设失效
+	# (实测 4.7.2 job:1s 内跑完 600 帧 → success=true 红)。限主循环 60fps 使 process 帧
+	# (at_frame 对齐 Engine.get_process_frames())与 physics 帧同速,截断语义在任意机型稳定。
+	# freeze/step 用例不受影响(冻结态帧由 playtest.step 驱动,不走真实时间节流)。
+	Engine.max_fps = 60
 	if not InputMap.has_action("jump"):
 		InputMap.add_action("jump")
 	var ev := InputEventKey.new()

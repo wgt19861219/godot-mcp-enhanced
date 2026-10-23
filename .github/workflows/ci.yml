@@ -299,14 +299,23 @@ jobs:
   # B-1(2026-10-22 审查): Dockerfile 曾设 GODOT_MCP_UNRESTRICTED=true,与生产模式 FATAL
   # 检查冲突致容器启动即 exit 1(Glama 等基于 Dockerfile 的分发入口不可用)。此 job 构建
   # 镜像并做 stdio initialize 握手,堵容器启动回归。
+  # 2026-10-23: 改用 Dockerfile.ci(本地 pack 等价形态)——生产 Dockerfile 从 registry 装
+  # godot-mcp-enhanced@<version>,版本未 publish 前必 ETARGET,两次 publish 之间本 job 永红;
+  # CI 门禁验证对象改为当前 commit(宿主 build 后 COPY 进镜像,握手面与生产 ENTRYPOINT 一致)。
   docker-smoke:
     name: Docker stdio smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
       - name: Build image
-        run: docker build -f Dockerfile -t godot-mcp-smoke .
+        run: docker build -f Dockerfile.ci -t godot-mcp-smoke .
       - name: stdio initialize handshake
         run: |
           printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.0"}}}\n' \
