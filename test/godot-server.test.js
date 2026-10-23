@@ -599,3 +599,26 @@ describe('GodotServer', () => {
   // (独立文件)——本文件 vi.mock('fs', {...actual, existsSync}) 的展开副本使所有真实
   // fs/promises 写入静默无副作用(实测直调 node:fs/promises appendFile 也零落盘),无法断言。
 });
+
+// ── L-8(2026-10-22 审查第二轮): 通知 handler 必须吞异步 rejection ──────────
+// sendToolListChanged 此前裸调 server.notification(返回 Promise)零 catch——客户端
+// 断连时 rejection 成 unhandledRejection。修复后 void + .catch 吞掉。
+describe('L-8 sendToolListChanged 吞异步 rejection', () => {
+  it('notification reject 时不产生 unhandledRejection 且不抛', async () => {
+    const server = new GodotServer('/fake/ops.gd');
+    const unhandled = [];
+    const onUnhandled = (e) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      server.server.notification =
+        vi.fn().mockRejectedValue(new Error('client disconnected mid-send'));
+      expect(() => server.sendToolListChanged()).not.toThrow();
+      // flush 微任务链,让潜在 unhandledRejection 有机会浮现
+      await new Promise(r => setImmediate(r));
+      await new Promise(r => setImmediate(r));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+});
