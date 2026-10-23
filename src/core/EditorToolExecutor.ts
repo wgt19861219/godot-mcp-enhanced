@@ -52,6 +52,10 @@ export class EditorToolExecutor {
   destroy(): void {
     this.conn.removeOnDisconnectHandler(this._disconnectHandler);
     this.conn.removeOnReconnectHandler(this._reconnectHandler);
+    // L-12(2026-10-22 审查):sync 中途销毁时残留 scene_tree_changed handler——
+    // 旧 executor 的 handleTreeChange 仍消费 ring buffer,新 executor 再注册即双重消费。
+    // offNotification 幂等(未注册时无操作),sync 正常停止路径不受影响。
+    this.conn.offNotification('scene_tree_changed', this.handleTreeChange);
   }
 
   async execute(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
