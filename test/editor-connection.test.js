@@ -417,6 +417,47 @@ describe('EditorConnection', () => {
     conn.disconnect();
   });
 
+  // L-9(2026-10-22 审查第二轮): connect 入口 supersede 旧 ws 时,removeAllListeners
+  // 把 close handler 一并摘掉——旧 ws 上的 pending 只能挂满 requestTimeout(默认 30s)。
+  // 修复:terminate 前主动 fail 全部 pending(同 CONNECTION_LOST code)。
+  it('L-9: connect() supersede 旧连接时 pending 立即 reject,不等 requestTimeout', { timeout: 8_000 }, async () => {
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(data.toString());
+        // 只响应 auth(id=-1),业务 request 不响应 → 保持 pending
+        if (msg.method === 'auth_begin') {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: 'Authentication required' } }));
+          return;
+        }
+        if (msg.id === -1) {
+          ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { status: 'ok' } }));
+        }
+      });
+    });
+
+    const conn = new EditorConnection({
+      port,
+      reconnect: false,
+      secret: 'test-secret',
+      requestTimeout: 30_000,  // 远长于本用例耗时——若走 timeout 路径用例必超时失败
+    });
+    await conn.connect();
+    expect(conn.connected).toBe(true);
+
+    const req = conn.request('slow_method', { n: 1 });
+    await new Promise((r) => setTimeout(r, 100));  // 让 request 进 pending
+
+    // 二次 connect → 触发入口 supersede 清理(旧 ws terminate,close handler 已被摘)
+    const t0 = Date.now();
+    await conn.connect();
+    const settled = await Promise.allSettled([req]);
+    expect(settled[0].status).toBe('rejected');
+    expect(settled[0].reason.code).toBe('CONNECTION_LOST');
+    expect(Date.now() - t0).toBeLessThan(5_000);  // 立即 reject,而非等 30s timeout
+
+    conn.disconnect();
+  });
+
   // A-1 (2026-08-14 finding :937): backoff 挂起期手动 connect 成功后必须清掉遗留 reconnectTimer。
   // bug: scheduleReconnect 的 timer 回调(:516-526)不检查 connected——手动 connect 成功后 timer 照样
   // 触发 connect(),而 connect 入口(:164-169)无条件 terminate 现有 ws → 弹跳健康连接,
