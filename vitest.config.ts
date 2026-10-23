@@ -27,6 +27,12 @@ export default defineConfig({
             'test/integration/**',
             'test/tools/*integration*.test.ts',
             'test/e2e-full-tool-verification.test.ts',
+            // issue #15:game-bridge.test.ts 的 vi.mock('fs'/'net') 在非 Windows 平台存在
+            // 隔离缺陷(实测 Linux CI fs mock 未接管,secret 读取走真 fs → 全文件 38 失败短路),
+            // 设计上由 CI 命令行 --exclude 排除;但 M-7 引入 projects 结构后 CLI --exclude
+            // 不透传进 project 的文件收集,排除静默失效(2026-10-23 CI 红根因)。
+            // 平台条件内置进 config:Windows 本地全量仍跑(保 game-bridge 覆盖),非 Windows 排除。
+            ...(process.platform === 'win32' ? [] : ['test/game-bridge.test.ts']),
           ],
         },
       },

@@ -117,6 +117,9 @@ jobs:
       # 在 Linux 稳定失效(诊断步实测 issue #15:单文件 113/120/138 行同败 → 非全量隔离,vitest 配置无救)。
       # 平台敏感(Linux 败/Windows 全过),版本无关(4.1.7/4.1.9 双版本 Windows 全过)。
       # 非生产/测试逻辑 bug。T-2 守护 + game-bridge.ts 覆盖率退本地(Windows game-bridge.test.ts 全过)。
+      # 2026-10-23:真实排除防线已移入 vitest.config.ts(unit project exclude 平台条件)——
+      # CLI --exclude 在 vitest test.projects 模式下不透传 project 文件收集(实测单次 exclude +
+      # 显式点名文件仍被收集执行),下方两个 --exclude 仅防御 vitest 未来行为变化,当前无效。
       # 详见 https://github.com/wgt19861219/godot-mcp-enhanced/issues/15
       - name: Install Godot 4.6.3 (M3c, job-isolated)
         # P0-4（2026-08-10）：Godot 安装前置到 vitest 之前，让主 vitest 拿到 GODOT_PATH。
@@ -299,14 +302,26 @@ jobs:
   # B-1(2026-10-22 审查): Dockerfile 曾设 GODOT_MCP_UNRESTRICTED=true,与生产模式 FATAL
   # 检查冲突致容器启动即 exit 1(Glama 等基于 Dockerfile 的分发入口不可用)。此 job 构建
   # 镜像并做 stdio initialize 握手,堵容器启动回归。
+  # 2026-10-23: 改用 Dockerfile.ci(本地 pack 等价形态)——生产 Dockerfile 从 registry 装
+  # godot-mcp-enhanced@<version>,版本未 publish 前必 ETARGET,两次 publish 之间本 job 永红;
+  # CI 门禁验证对象改为当前 commit(宿主 build 后 COPY 进镜像,握手面与生产 ENTRYPOINT 一致)。
   docker-smoke:
     name: Docker stdio smoke
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4  # L-28: SHA 固定(tag 重指不可变)
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4  # L-28: SHA 固定(tag 重指不可变)
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      # tarball 形态与 registry 安装同构(成品无 lifecycle);--ignore-scripts 跳过
+      # prepack/prepare——产物已由上一步 build,pack 只按 files 字段裁剪(2026-10-23)
+      - run: npm pack --ignore-scripts
       - name: Build image
-        run: docker build -f Dockerfile -t godot-mcp-smoke .
+        run: docker build -f Dockerfile.ci -t godot-mcp-smoke .
       - name: stdio initialize handshake
         run: |
           printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.0"}}}\n' \
