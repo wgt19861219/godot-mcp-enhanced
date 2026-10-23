@@ -9,8 +9,12 @@ const projectIndex = args.indexOf('--project');
 const isVerify = args.includes('--verify');
 
 if (projectIndex === -1 || !args[projectIndex + 1]) {
-  console.error('Usage: npx godot-mcp-enhanced install-plugin --project /path/to/godot/project');
-  console.error('       npx godot-mcp-enhanced install-plugin --verify --project /path/to/godot/project');
+  // L-19(2026-10-22 审查):原文案提示 `npx godot-mcp-enhanced install-plugin`,但 CLI
+  // 路由表(SUBCOMMANDS)无此子命令——照抄会静默落入 stdio server 挂起。改为本脚本的
+  // 真实调用形态(node 直跑脚本文件)。
+  console.error('Usage: node scripts/install-plugin.js --project /path/to/godot/project');
+  console.error('       node scripts/install-plugin.js --verify --project /path/to/godot/project');
+  console.error('(npm 包内: node node_modules/godot-mcp-enhanced/scripts/install-plugin.js --project ...)');
   process.exit(1);
 }
 
