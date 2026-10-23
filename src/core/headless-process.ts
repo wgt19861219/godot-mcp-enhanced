@@ -30,8 +30,9 @@ export function runHeadlessCollector(
       // 5s 兜底 destroy 流强收,防 Promise 永悬。
       forceKillTree(proc);
       const failSafe = setTimeout(() => {
-        proc.stdout?.destroy();
-        proc.stderr?.destroy();
+        // 可选调用防御:非标准流形态(测试桩/已销毁)不因 destroy 缺失抛 uncaught
+        proc.stdout?.destroy?.();
+        proc.stderr?.destroy?.();
         resolve({
           exitCode: null,
           stdout: Buffer.concat(stdoutChunks).toString('utf-8'),

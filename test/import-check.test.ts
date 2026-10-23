@@ -286,16 +286,25 @@ describe('import-check', () => {
         stdout: { on: vi.fn() },
         stderr: { on: vi.fn() },
         on: vi.fn(),
+        once: vi.fn(),  // L-15 failsafe 的 close 清理监听
         killed: false,
         pid: 12348,
       };
 
       mockedSpawn.mockReturnValue(mockProc as any);
 
-      // Don't trigger any events — let it timeout
-      mockProc.on.mockImplementation(() => {});
+      // L-15(2026-10-22 审查): 超时分支改为等真实 close 才 resolve——mock 语义对齐
+      // 真实进程:forceKillTree 发出后被杀进程才 close(null)。注册时记录 close 回调,
+      // killTree mock 触发之(注册即触发会早于 100ms 超时,kill 反而不被调用)。
+      let closeCb: ((code: number | null) => void) | undefined;
+      mockProc.on.mockImplementation((event: string, cb: (code: number | null) => void) => {
+        if (event === 'close') closeCb = cb;
+      });
       mockProc.stdout.on.mockImplementation(() => {});
       mockProc.stderr.on.mockImplementation(() => {});
+      mockedKillTree.mockImplementation(() => {
+        setImmediate(() => closeCb?.(null));
+      });
 
       await expect(
         runImport(TEST_PROJECT, '/path/to/godot', 100),
