@@ -922,6 +922,10 @@ export function resetBridgeState(): void {
   _failedPorts.clear();
   // 批次2: 桥身份快照一并清(重连后重新经 auth 协商)
   _bridgeIdentity = null;
+  // L-11(2026-10-22 审查):legacy 明文认证记忆一并清——不清则状态重置后仍按 TTL 内
+  // 已降级记忆继续明文重试(_bridgeLegacyAuth/_bridgeLegacyAuthSince 定义处 :263-264)。
+  _bridgeLegacyAuth = false;
+  _bridgeLegacyAuthSince = 0;
 }
 
 // ─── Bridge readiness probe (M4) ────────────────────────────────────────────
@@ -1110,6 +1114,8 @@ export function _testBridgeCacheState(): {
   projectDir: string | null;
   cachedSecret: string | null;
   socketNotNull: boolean;
+  /** L-11(2026-10-22 审查):legacy 明文认证降级记忆可见性(测试断言 resetBridgeState 清零) */
+  bridgeLegacyAuth: boolean;
 } {
-  return { projectDir: _projectDir, cachedSecret: _cachedSecret, socketNotNull: _socket !== null };
+  return { projectDir: _projectDir, cachedSecret: _cachedSecret, socketNotNull: _socket !== null, bridgeLegacyAuth: _bridgeLegacyAuth };
 }
