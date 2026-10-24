@@ -571,7 +571,7 @@ editor_sync_start(project_path="D:/projects/my-game")
 `,
 
   'godot-mcp-ui.md': `---
-description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中"
+description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中 迁移 PanelContainer clip_contents 圆角 对齐"
 alwaysApply: false
 ---
 
@@ -584,6 +584,29 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 - **三种入口**：单节点操作（ui_create_control）/ 批量布局（ui_build_layout）/ HTML 原型还原（ui_import_prototype，几何 JSON 一次调用，固定持久化）
 - **运行时工具**：操作在 headless 进程中执行，默认不持久化到 .tscn（例外：\`ui_build_layout\` 支持 \`persist=true\` 原子写；\`ui_import_prototype\` 无 persist 参数、固定持久化）。详见 godot-mcp-core.md "运行时 vs 持久化"。
 - **互补关系**：ui_import_prototype 适合"HTML 原型→Godot"还原（原型是唯一真源）；ui_build_layout 适合手写树整体布局；ui_create_control + ui_set_layout 适合精确定位
+- **迁移/搭建 UI 的默认闭环（任何构建路径都适用，含 add_node/手写 tscn）**：读源 → 声明结构（视觉组判定，见下节） → 构建（按「布局收敛闭环」persist=true） → **必验**：数值优先 \`ui_measure_layout\`（**必须传 expect_tree 含 rect**——不传只得到原始 rect 清单，没有 diff/overlaps/out_of_bounds 判定）→ 视觉兜底 \`screenshot(action=capture)\`（窗口模式；headless 无渲染截图空白）或 \`ui_pixel_verify\`（**窗口模式专属、非 headless**；输入为已 persist 落盘的场景 + geometry，独立 spawn 不经 bridge、无需游戏运行；定位是几何/样式全绿后的终验，非迭代反馈）→ 修 → 复验。**搭完不验=未完成**。
+  - 数值审计的已知边界：父不在测量集时该条 diff 为 NaN、\`stalled\` 未收敛、2px 容差、overlaps 只看兄弟、out_of_bounds 只看直接父——数值全过≠视觉必对；圆角畸变/光学对齐**只能**靠截图或像素对比暴露。不要用截图替代几何数值校验，也不要用数值全过否认视觉检查。
+  - 深度审计（需 bridge）：\`dump_layout_tree\` 导出坐标表 → \`analysis layout_compare\` 与基准 JSON 比对；\`get_font_report\` 查字体居中。基准 JSON 来源：原型几何（expect_tree/geometry）或迁移前先导出的基准快照。
+
+## 跨引擎迁移 UI 构建策略（从 Unity/Cocos/Egret/Web 等迁移时必读）
+
+### 1. 整体性判定：视觉组必须容器化（治"拆散"与"内容超出背景框"）
+
+源引擎 UI 多为绝对坐标平铺。迁移时先做视觉组识别：一个背景 + 其内文案/图标/交互件（卡片、面板、按钮、条目），必须重构为容器子树，禁止平铺成兄弟节点 + 手动 rect 还原。
+
+**按构建路径选容器方案**：
+
+- **ui_build_layout / 手写 tscn（容器布局子节点）**：背景自适应首选 \`PanelContainer\`——它本身是 Container，尺寸随子内容最小尺寸自动撑开，背景=内容边界。多向排布用 \`PanelContainer > MarginContainer > VBox/HBox\`。注意：\`Panel\` 继承 Control **不是** Container，不会被子节点最小尺寸撑开——放进 VBox 拿到的是自身最小尺寸（常为 0），子内容照样溢出；要 Panel 视觉样式又想自适应，外包一层 PanelContainer。
+- **ui_import_prototype（绝对 rect 子节点）**：背景仍用 \`Panel\`（翻译器样式槽位仅映射 Panel/ProgressBar/Button/Label，PanelContainer 的 bg/border 会触发 "无该控件的样式槽位,已忽略" warning）；容器排布靠原型 \`flow\` 字段；**绝对 rect 子节点永远不要放在 Container 父下**（rect/anchors 会被容器重排覆盖，见「扁平列表，视口绝对坐标」rect 求解段）。
+- 同款条目重复出现 → 建成独立场景（组合控件）再 instance，不做兄弟复制。
+- 固定 size 的 Panel 仅用于纯装饰层（无动态内容）；有内容的一律走容器自适应。
+
+### 2. 对齐三原则（治"对齐乱"）
+
+- 容器内对齐 → 交给 \`size_flags\`（SIZE_FILL/SIZE_EXPAND 搭配 SIZE_SHRINK_CENTER/SIZE_SHRINK_END 预设）+ Box 容器的 \`alignment\`
+- 跨控件对齐 → 交给共同父容器（把要对齐的控件放进同一个 Box/Flow）
+- 绝对坐标/锚点定位 → 仅限 overlay、特效层、全屏装饰；禁止逐控件手算 x/y 模拟对齐（字体行盒差异会让手算必错，见下条）
+- **嵌套圆角**：外层圆角 = 内层圆角 + 内边距（Concentric Radius）才视觉协调；padding 大时视为分离表面不强套公式。**光学对齐**：图标/三角形等非对称图形几何居中后需 1~2px 级偏移修正；文本行盒与字形 ink 高度差异致跨引擎"文字不居中"，第一步诊断用 \`game_query get_font_report\`（ink_center_shift 字段；**需 bridge、游戏运行中**——构建期无游戏时先用 \`ui_measure_layout\` 量行盒尺寸做粗判，精确诊断留到运行期）——换字体可能缩小偏差但不改变行盒居中算法，先看诊断再决定。
 
 ## 工具清单
 
@@ -670,9 +693,12 @@ Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VS
 
 非 wrap 非 grid 的 row/column 下，\`space-between/around/evenly\` 通过注入 \`_spacer_N\` Control 节点实现（SIZE_EXPAND + stretch_ratio），**不再是近似映射**。\`wrap: "wrap"\` 时 justify 被忽略（FlowContainer 无对齐）、\`grid\` 方向时同样忽略——这两种情况**不注入 spacer、也不发 spacer 注入 warning**。与子节点 \`flex.grow\` 并存时，spacer 与 grow 子节点瓜分剩余空间，分配语义与 CSS 不同，会有 warning。
 
-### 布局收敛闭环
+### 布局收敛闭环（v2）
 
-\`ui_build_layout(tree 含 rect)\` → \`ui_measure_layout(expect_tree=同一棵 tree，**不带 node_path**)\` → 按 \`data.layout_verify.diff\` 的 Δ 数值修 tree → 循环至全绿 → \`ui_build_layout(persist=true)\` 原子写 .tscn（pack → tmp → rename）。
+\`ui_build_layout(tree 含 rect, **persist=true 写盘**)\` → \`ui_measure_layout(expect_tree=同一棵 tree 含 rect，**不带 node_path**)\` → 按 \`data.layout_verify.diff\` 的 Δ 数值修 tree → 重新 \`ui_build_layout(persist=true)\` → 循环至全绿。
+
+- **每一轮验证循环都以 persist=true 落盘为默认**——measure 是独立进程，从磁盘加载场景；persist=false 的运行时树测不到（进程退出即丢）。
+- 不想污染目标场景时：先把 \`scene_path\` 指向临时场景路径（如 \`res://tmp/ui_verify.tscn\`）走完循环，全绿后把 \`scene_path\` 换成目标场景再 build 一次 persist=true（persist 写盘为 pack → tmp → rename 覆盖写）。**前置：临时场景文件与所在目录须先存在**——build 脚本首行 \`_mcp_load_scene\` 对不存在的场景直接 "Failed to load scene" 退出，persist 无从执行；先用 scene 工具创建空场景（或复制目标场景）再进循环。
 
 - \`layout_verify\` 结构：\`targets\`（期望 rect 清单）/ \`diff\`（逐节点 Δ，容差默认 2px）/ \`overlaps\`（兄弟节点重叠）/ \`out_of_bounds\`（溢出父边界）/ \`viewport\`（measure 输出的根参照系透传）。
 - **坐标系语义（v0.30.3）**：rect 相对父节点左上角；\`diff\` 的 actual 为**父相对坐标**（measured 子 global − 父 global，与 target 同构可直接比 Δ）；根级 target（树根自身 rect）以视口原点为参照；父不在测量集（未渲染/不可见）时该条目 delta 为 NaN。
@@ -699,7 +725,7 @@ Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VS
 \`\`\`
 
 - **扁平列表，视口绝对坐标**（rect 为浏览器/原型视口绝对值）；树由翻译器按 rect 包含关系自动推导（容差 1px，≤500 节点）；**两节点 rect 交叉重叠（互不包含）或完全相等 → INVALID_PARAMS**（不静默落平级）。
-- 字段全可选（除 name/rect）：\`type\`（CONTROL_TYPES 白名单）/\`text\`/\`fontSize\`（px）/\`color\`/\`bg\`/\`fill\`（ProgressBar fill 槽色，取 \`[data-fill]\` 子元素背景）/\`borderRadius\`（统一四角 number 或 \`{tl,tr,br,bl}\` 对象）/\`border\`（\`{width,color}\` 统一四边，CSS 四边不同时取 top；**四边各异不单独 warning**——生产者仅取 top，其余三边差异静默；style_verify 无法暴露该差异（期望与实测同源于同一翻译产出，恒绿），真暴露渠道是 ui_pixel_verify 像素采样）/\`align\`（left|center|right，缺省 center）/\`value\`（0-1，ProgressBar）/\`flow\`（row|column，容器排布语义）/\`justify\`/\`interactive\`（text+interactive→Button）。
+- 字段全可选（除 name/rect）：\`type\`（CONTROL_TYPES 白名单）/\`text\`/\`fontSize\`（px）/\`color\`/\`bg\`/\`fill\`（ProgressBar fill 槽色，取 \`[data-fill]\` 子元素背景）/\`borderRadius\`（统一四角 number 或 \`{tl,tr,br,bl}\` 对象）/\`border\`（\`{width,color}\` 统一四边 + 可选 \`perSides:{top,right,bottom,left}\` 四边各异信息——提取脚本在 top>0 且四边各异时附上，width 恒取 top；**四边各异时翻译器发 warning**（border sides differ...; using top），仍取 top 渲染、行为不变；top=0 其余边>0 时不产 border spec（防「有 border 无 bg」被设 draw_center=false 全透明），提取脚本以 \`borderNotice\` 提示字段透传成 warning；style_verify 无法暴露该差异（期望与实测同源于同一翻译产出，恒绿），ui_pixel_verify 采样点不采边框本身、只能间接暴露）/\`align\`（left|center|right，缺省 center）/\`value\`（0-1，ProgressBar）/\`flow\`（row|column，容器排布语义）/\`justify\`/\`interactive\`（text+interactive→Button）。
 - **颜色仅三种格式**：\`#rrggbb\` / \`[r,g,b]\` 0-255 / \`[r,g,b,a]\` 0-1。CSS \`rgb()/rgba()\` 字符串**不支持**——evaluate 模板已内置转换（见下节）。
 - **bg 缺省 = 透明壳契约（责任归 JSON 生产者）**：推断为布局壳 Panel（无显式 type、无 text、无 bg、无 value 的纯布局节点，及 flow 壳）→ \`self_modulate:[1,1,1,0]\`（禁 modulate，级联陷阱见 godot-mcp-engine-quirks.md）。**该有背景的面板务必在原型侧显式填 bg**，否则被当透明壳（build_warnings 会提示 "set bg or type to keep it visible"）。**自带视觉控件不会被设透明壳**：ProgressBar（推断或显式）、Button（推断或显式）、任何显式 type（含显式 Panel）——显式 type 说明有意为之，一律保留可见性。
 - **翻译规则要点**（12+1 条）：类型推断（显式 type > flow > value→ProgressBar > text+interactive→Button > text→Label > Panel）；视口坐标逐层减父原点转相对父 rect（进锚点求解链）；Label 全部 \`vertical_alignment:1\`；bg/fill/borderRadius/border→StyleBoxFlat（槽位映射（\`add_theme_stylebox_override\` API；override 属性名为 \`theme_override_styles/<slot>\`，注意 \`node.set()\` 该路径 pack 落盘会丢 override，勿手写）：Panel→panel、ProgressBar→background+fill、Button/Label→normal；其余控件 warning+忽略；bg 缺省而 border/radius 存在→\`draw_center=false\` 保 CSS 透明底）；非白名单 type 降级 Panel + warning；深度 cap 10；name 非法字符清洗。
@@ -769,10 +795,18 @@ HTML 原型侧约定：每个待还原元素标 \`data-name\`（=Godot 节点名
     if (tl || tr || br || bl) {
       node.borderRadius = (tl === tr && tr === br && br === bl) ? tl : { tl, tr, br, bl };
     }
-    const bw = parseFloat(cs.borderTopWidth);              // CSS 四边不同时取 top(简单;border-color 同)
-    if (Number.isFinite(bw) && bw > 0) {
+    const bTop = parseFloat(cs.borderTopWidth) || 0, bRight = parseFloat(cs.borderRightWidth) || 0,
+          bBottom = parseFloat(cs.borderBottomWidth) || 0, bLeft = parseFloat(cs.borderLeftWidth) || 0;
+    if (bTop > 0) {                                          // top>0 才产 border spec;width 恒取 top(border-color 同)
       const bc = toRgba(cs.borderTopColor);
-      if (bc) node.border = { width: bw, color: bc };
+      if (bc) {
+        node.border = { width: bTop, color: bc };
+        if (bTop !== bRight || bRight !== bBottom || bBottom !== bLeft) {
+          node.border.perSides = { top: bTop, right: bRight, bottom: bBottom, left: bLeft };  // 四边各异透传,翻译器发 warning
+        }
+      }
+    } else if (bRight > 0 || bBottom > 0 || bLeft > 0) {     // top=0 其余边>0(仅下边框/分隔线):不产 border spec
+      node.borderNotice = \`CSS border top=0 而其余边>0 (top/right/bottom/left = \${bTop}/\${bRight}/\${bBottom}/\${bLeft});Godot StyleBoxFlat 无按边 border,已不产 border spec——改为独立装饰线节点或源侧统一边框\`;
     }
     const fillEl = el.querySelector('[data-fill]');        // ProgressBar fill 色:原型约定内层标 data-fill
     if (fillEl) {
@@ -786,7 +820,7 @@ HTML 原型侧约定：每个待还原元素标 \`data-name\`（=Godot 节点名
 }
 \`\`\`
 
-要点：**bg 只在 \`getComputedStyle().backgroundColor\` 非透明时填**（透明壳契约由翻译器兜底）；**颜色经 toRgba 转 \`[r,g,b,a]\` 0-1 数组**（保留 alpha，替代旧 toHex 的丢 alpha；翻译器三种颜色格式均认）；\`viewport\` 取 \`[data-viewport]\` 容器或窗口尺寸，**必须与 Godot 项目 \`display/window/size\` 及后续 \`screenshot(capture)\` 的 viewport 参数一致**（不一致则几何比例全错）。
+要点：**bg 只在 \`getComputedStyle().backgroundColor\` 非透明时填**（透明壳契约由翻译器兜底）；**颜色经 toRgba 转 \`[r,g,b,a]\` 0-1 数组**（保留 alpha，替代旧 toHex 的丢 alpha；翻译器三种颜色格式均认）；**border 四边语义**——top>0 才产 border spec（width 恒取 top），四边各异时附 \`border.perSides\` 由翻译器 warning 消静默（渲染仍取 top），top=0 其余边>0 时改发 \`borderNotice\` 提示字段（不产 border spec，防全透明回归）；\`viewport\` 取 \`[data-viewport]\` 容器或窗口尺寸，**必须与 Godot 项目 \`display/window/size\` 及后续 \`screenshot(capture)\` 的 viewport 参数一致**（不一致则几何比例全错）。
 
 ### draw_recipe 声明式绘图
 
@@ -980,7 +1014,7 @@ runtime(action="record_start", project_path="D:/game")
 `,
 
   'godot-mcp-engine-quirks.md': `---
-description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原 EditorInterface parse-safe singleton get_editor_interface 版本兼容 4.7"
+description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原 EditorInterface parse-safe singleton get_editor_interface 版本兼容 4.7 StyleBoxFlat corner_radius clip_contents"
 alwaysApply: false
 ---
 
@@ -1048,6 +1082,8 @@ alwaysApply: false
 - **★ Label 垂直对齐默认 TOP，CSS line-height 居中惯用法失效**：CSS \`line-height = height\` 的文本垂直居中在 Godot 不成立——Label 默认 \`vertical_alignment=0\`(TOP)，单行文本会贴顶。需显式 \`vertical_alignment=1\`(CENTER)。\`ui_import_prototype\` 翻译器对全部 Label 已固定 \`vertical_alignment:1\`；手写 properties 时勿漏。关联：ui_build_layout/ui_create_control 文本节点、ui_import_prototype 翻译规则 3。
 - **Control 高度被字体最小行高钳制（minimum_size 顶开）**：Label/Button 的 rect.h 小于字体行高时，引擎 \`Control.minimum_size\` 把高度顶开到行高——**无警告静默变高**，verify 的 \`dh\` 会暴露（实际比目标高）。文本控件 rect.h 需 ≥ fontSize*1.5，或显式调小字号。\`ui_import_prototype\` 翻译器对 rect.h < fontSize*1.5 发 warning（"可能被字体最小行高钳制"）。关联：ui_import_prototype 行高预警、ui_measure_layout(layout_verify.diff 的 dh)。
 - **★ ProgressBar 默认主题最小高 27px（Godot 4.7，实测）**：默认主题 stylebox 把 ProgressBar 的 \`Control.minimum_size\` 顶到约 27px——原型 rect.h=16 落地实测 27px（2026-08-16 RTS HUD fixture HpBar 集成验收，dh=+11）。这是主题硬约束非 bug；处置：原型侧把 rect.h 调到 ≥27，或换自定义 Theme stylebox。\`ui_import_prototype\` 翻译器对 rect.h < 27 发 "will be clamped" warning（具名常量 PROGRESS_BAR_MIN_HEIGHT=27，**无条件**——实测 Godot 4.7.1 h=16：无 override→27、bg-only→23、fill-only→27、bg+fill→23，全组合被钳，override 只改变钳制值不消除钳制）。同类：Button 默认主题也有最小高约束。关联：ui_import_prototype 引擎下限预警、ui_set_theme。
+- **★ StyleBoxFlat 圆角是固定像素半径，不随 Control resize 重算**：控件被拉伸时半径不变、比例失真；非等比 \`scale\` 更会让圆角变椭圆。变通：① 容器自适应避免拉伸（ui.md「跨引擎迁移 UI 构建策略」） ② 四角独立用 \`corner_radius_top_left\` 等属性 ③ 需随尺寸等比缩放的圆角背景改 \`StyleBoxTexture\`/\`NinePatchRect\` 九宫格。
+- **★ Control 默认 \`clip_contents=false\`，不裁剪子树溢出**：内容超出背景框（跨引擎迁移症状②）的引擎侧根因之一；解法优先级：容器自适应（首选）> \`clip_contents=true\`（滚动区/动画溢出场景的兜底；静态布局开 clip 是掩盖布局错误）。
 
 ## 多人联机与弱网测试（network_conditioner / ENet peer / 多人 e2e）
 
@@ -1060,6 +1096,7 @@ alwaysApply: false
 - **★ 缺失的 engine class 方法在 parse 期即失败，has_method 守卫救不了**：GDScript 对 \`EditorInterface.get_unsaved_scenes()\` 这类**直接调用**做静态查找——方法在所用 Godot 构建里不存在时**整个 .gd 文件 parse 失败**（不是运行时才报错），\`if EditorInterface.has_method(...)\` 守卫写在同一文件里也一起死。新增 4.6+/4.7+ 才有的 API 调用必须改 \`Object.call("...")\` 字符串形式（parse-safe，运行时才解析）+ \`has_method\` 守卫做运行时优雅降级（yanhuifair v1.12.3 教训：\`EditorInterface.call("get_unsaved_scenes")\`）。支持矩阵 4.5–4.7：新增 API 先确认 4.5 已存在。
 - **EditorInterface 两种获取路径语义不同**：GDScript 全局名 \`EditorInterface.xxx\`（类型表达式路径，4.x 全版本可用）≠ \`Engine.get_singleton("EditorInterface")\`（运行时查找路径，**4.7 起返回 null**——不再注册为 Engine singleton）。插件内获取一律走 \`EditorPlugin.get_editor_interface()\`（本项目 \`_get_ei()\` 模式）；两者混用是 4.7 兼容 bug 的常见根源。
 - **改 addons 后必须跑 \`npm run check:gdscript\`（项目级完整编译）**：\`validate_scripts\` 是逐文件 parse，漏结构性 bug（缩进/块体）；跨版本验证跑双端 \`GODOT_PATH=<4.5.x>\` 与 \`GODOT_PATH=<4.7.x>\` 各一次。
+- **API/属性不确定存在性时先查再写**：用 docs 工具（find_method / get_class_info / search_classes）验证；docs 查不到 = 标 unverified 并告知用户，不凭训练记忆断言。需要钉版本时用 execute_gdscript 跑 Engine.get_version_info() 取实际引擎版本号再对照写法。项目自定义脚本类离线查询 fallback：execute_gdscript 里 load("res://...").new() 配 get_property_list()/get_script_method_list() 枚举。
 `,
 
   'godot-mcp-workflow-bridge-e2e.md': `---
