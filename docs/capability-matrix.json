@@ -2519,7 +2519,7 @@
     {
       "name": "godot_get_context",
       "group": "core",
-      "description": "一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能），减少反复探路。headless 模式 scene=null。",
+      "description": "一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能/server 进程身份 version/startedAt/pid），减少反复探路。headless 模式 scene=null。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2575,9 +2575,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 175,
-        "schemaBytes": 1138,
-        "totalBytes": 1313
+        "descBytes": 217,
+        "schemaBytes": 1303,
+        "totalBytes": 1520
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5406,7 +5406,7 @@
     {
       "name": "self_update",
       "group": "selfupdate",
-      "description": "检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移（只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。",
+      "description": "检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移 + 规则分发状态（含 content-drift 毒化检测,只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -5465,9 +5465,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 182,
+        "descBytes": 234,
         "schemaBytes": 361,
-        "totalBytes": 543
+        "totalBytes": 595
       },
       "annotations": {
         "readOnlyHint": false,

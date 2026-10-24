@@ -681,6 +681,24 @@ setup_project_rules(project_path="你的项目路径")
 
 如果已有配置想更新，使用 `force=true` 覆盖。如只需其中一项，用 `hooks=false` 或 `claude_md=false` 跳过。
 
+### 升级两步走（npm update 后必读）
+
+`npm update` 更新了磁盘上的包，但 **MCP server 进程不热重载**——客户端里连着的还是旧进程（模板/规则内容是旧的，版本号却读磁盘新值）。直接在旧进程上跑 `setup_project_rules` 会写出"新版本号 + 旧内容"的不一致规则文件，且之后按版本行判"已是新版"永久跳过更新（服务端已加拦截：进程落后于包时拒绝分发并报 `SERVER_STALE`，重启即恢复）。
+
+正确姿势（两步）：
+
+1. **重启 MCP 客户端**（或重连 MCP）——进程换新，模板与版本恢复同源。可用 `godot_get_context` 的 `server.version` 对照磁盘包版本确认进程新旧。
+2. **重跑规则分发**——AI 会话 `setup_project_rules(rules_mode="update")`，或终端批量：
+
+```bash
+# CLI 每次新起进程（天然免疫旧进程问题），一次分发 ALLOWED_PROJECT_PATHS 全部项目
+npx godot-mcp-enhanced rules --all
+# 或显式指定项目（支持 monorepo 父目录，自动探测 project.godot）
+npx godot-mcp-enhanced rules --paths "D:/proj/A;D:/proj/B"
+```
+
+`doctor` 的 Rules distribution 段与 `self_update(action="check")` 可随时检查分发状态（含 `content-drift` 毒化检测——版本行与内容指纹不符的历史文件会被识别并可在 update 模式覆盖修复）。
+
 ### 环境变量
 
 | 变量 | 说明 | 默认值 |

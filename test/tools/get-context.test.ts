@@ -65,6 +65,24 @@ describe('godot_get_context', () => {
     expect(Array.isArray(payload.data.workflows)).toBe(true);
   });
 
+  it('P1-1: server 进程身份字段 version/startedAt/pid（毒化根因可见化）', async () => {
+    const result = await handleTool('godot_get_context', {}, mockCtx({ connectionMode: 'headless' }));
+    const payload = JSON.parse((result!.content[0] as { text: string }).text);
+    const server = payload.data.server;
+    expect(server).toBeDefined();
+    expect(server.version).toMatch(/^\d+\.\d+\.\d+/);  // PKG_VERSION 固化值
+    expect(server.pid).toBe(process.pid);
+    expect(() => new Date(server.startedAt as string).toISOString()).not.toThrow();
+    // startedAt 是 uptime 回推的 ISO 时间,不晚于现在、不早于进程真实起点太久
+    const started = new Date(server.startedAt as string).getTime();
+    expect(started).toBeLessThanOrEqual(Date.now());
+    // outputSchema 声明同步（B4 typed outputs 契约）
+    const schema = getToolDefinitions()[0].outputSchema as unknown as {
+      properties: { data: { properties: { server: { required: string[] } } } };
+    };
+    expect(schema.properties.data.properties.server.required).toEqual(['version', 'startedAt', 'pid']);
+  });
+
   it('include_scene=false skips scene', async () => {
     const result = await handleTool('godot_get_context', { include_scene: false }, mockCtx());
     const payload = JSON.parse((result!.content[0] as { text: string }).text);

@@ -34,6 +34,9 @@ tsconfig.tsbuildinfo
 
 # E2E test generated files
 test/e2e-scene/.godot/
+test/e2e-scene/.claude/
+test/e2e-scene/AGENTS.md
+test/e2e-scene/CLAUDE.md
 test/e2e-scene/*.png
 # M-2: E2E fixture 运行时产物(Godot 编辑器/导入缓存/截图)—— 保留 project.godot 等源文件
 test/fixtures/**/.godot/

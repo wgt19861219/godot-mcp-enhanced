@@ -1,6 +1,6 @@
 # godot_get_context
 
-> 一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能），减少反复探路。headless 模式 scene=null。
+> 一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能/server 进程身份 version/startedAt/pid），减少反复探路。headless 模式 scene=null。
 
 | 属性 | 值 |
 |------|-----|

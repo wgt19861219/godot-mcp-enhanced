@@ -11,6 +11,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { structuredResult } from '../types.js';
 import { opsSuccess } from './shared.js';
 import { getCallRecorder } from '../core/call-recorder.js';
+import { PKG_VERSION } from '../core/update-checker.js';
 import { listPromptDefs } from '../prompts.js';
 import { TOOL_GROUPS, getActiveGroups } from '../core/tool-registry.js';
 import { sendToBridge, setBridgeProjectDir } from './game-bridge.js';
@@ -47,7 +48,7 @@ export function setEditorSceneProvider(provider: (() => Promise<SceneSnapshot | 
 export function getToolDefinitions(): Tool[] {
   return [{
     name: 'godot_get_context',
-    description: '一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能），减少反复探路。headless 模式 scene=null。',
+    description: '一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能/server 进程身份 version/startedAt/pid），减少反复探路。headless 模式 scene=null。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -69,6 +70,17 @@ export function getToolDefinitions(): Tool[] {
             status: { type: 'string', enum: ['ok', 'partial'] },
             failedFields: { type: 'array', items: { type: 'string' } },
             mode: { type: ['string', 'null'], enum: ['headless', 'editor', 'bridge', null] },
+            // P1-1（2026-10-24 可靠性批）：server 进程身份——version 是模块加载时固化值
+            //（与规则模板同岁），与磁盘包版本比对可判定进程新旧（毒化根因可见化）。
+            server: {
+              type: 'object',
+              properties: {
+                version: { type: 'string' },
+                startedAt: { type: 'string' },
+                pid: { type: 'number' },
+              },
+              required: ['version', 'startedAt', 'pid'],
+            },
             project: { type: ['object', 'null'] },
             connections: { type: 'object' },
             scene: { type: ['object', 'null'] },
@@ -139,6 +151,13 @@ async function handleGetContext(args: Record<string, unknown>, ctx: ToolContext)
   return structuredResult(opsSuccess({
     status: failedFields.length === 0 ? 'ok' : 'partial',
     failedFields,
+    // P1-1：进程身份（进程内常量,不走 safe wrapper 永不降级）。
+    // startedAt 由 uptime 回推（Node 无直接进程启动时间 API,标准近似）。
+    server: {
+      version: PKG_VERSION,
+      startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+      pid: process.pid,
+    },
     mode,
     project,
     connections,

@@ -7,14 +7,13 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { opsSuccess, opsErrorResult } from './shared.js';
-import { checkForUpdateCached, compareVersion } from '../core/update-checker.js';
+import { checkForUpdateCached, compareVersion, PKG_VERSION, readInstalledPkgVersion, checkServerFresh } from '../core/update-checker.js';
 import { readAddonVersion, updateAddon } from '../core/addon-version.js';
 import { getAllowedProjectPaths } from '../core/path-utils.js';
-import { createRequire } from 'module';
+import { inspectRulesDistribution } from './project.js';
 
-const require = createRequire(import.meta.url);
-// src/tools/ → 上两级包根 → package.json（与 update-checker.ts:11 同款 idiom）
-const pkgVersion: string = require('../../package.json').version;
+// P0-1（2026-10-24）：本地 createRequire 副本已删，PKG_VERSION 单一来源化到 core/update-checker.ts
+// （src/tools/ → 上两级包根 → package.json，与模板同源同岁的固化值）。
 
 const ACTIONS = ['check', 'update'] as const;
 
@@ -34,7 +33,7 @@ export const TOOL_META = {
 export function getToolDefinitions(): Tool[] {
   return [{
     name: 'self_update',
-    description: '检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移（只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。',
+    description: '检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移 + 规则分发状态（含 content-drift 毒化检测,只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -76,8 +75,8 @@ async function handleCheck(args: Record<string, unknown>): Promise<ToolResult> {
       return {
         project_path: p,
         installed_version: version,
-        expected_version: installed ? pkgVersion : null,
-        matches: installed ? version === pkgVersion : false,
+        expected_version: installed ? PKG_VERSION : null,
+        matches: installed ? version === PKG_VERSION : false,
         installed,
       };
     } catch (e) {
@@ -86,8 +85,24 @@ async function handleCheck(args: Record<string, unknown>): Promise<ToolResult> {
         error: e instanceof Error ? e.message : String(e) };
     }
   });
+  // P1-3（2026-10-24 可靠性批）：规则分发状态巡检——与 addons 漂移同列报告。
+  // status: current=已分发当前版本 / stale=版本过时 / content-drift=版本行与内容指纹不符
+  //（疑似旧进程毒化,重跑 setup_project_rules(update) 可修复）/ missing=未分发。
+  // 注意判定用进程固化 PKG_VERSION + 进程内模板 hash,旧进程上 stale 会反向误报
+  //（实际需重启客户端）——与 npm.current 同龄问题,报告值仅供参考,godot_get_context
+  // 的 server.version 才是进程年龄的权威读数。
+  const rules = targetPaths.map(p => {
+    try {
+      return { project: p, ...inspectRulesDistribution(p) };
+    } catch (e) {
+      return {
+        project: p, status: 'missing' as const, installed_version: null, files: 0,
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
+  });
   // M7：spec §4.3 — 无 project_path 参数 且 ALLOWED_PROJECT_PATHS 未配置时返提示
-  const data: Record<string, unknown> = { npm, addons };
+  const data: Record<string, unknown> = { npm, addons, rules };
   if (!hasProjectArg && targetPaths.length === 0) {
     data.hint = '未配置 ALLOWED_PROJECT_PATHS，无法扫描项目 addon。配置 ALLOWED_PROJECT_PATHS=/path1;/path2 或传 project_path 参数指定单个项目';
   }
@@ -95,6 +110,13 @@ async function handleCheck(args: Record<string, unknown>): Promise<ToolResult> {
 }
 
 async function handleUpdate(args: Record<string, unknown>): Promise<ToolResult> {
+  // P0-3（2026-10-24 毒化拦截）：旧进程上 update 会把 addon 装到旧版本（addon 脚本
+  // 内容同样来自进程内存的 build/scripts）——与规则分发同族缺陷，同款拦截。
+  const diskVersion = readInstalledPkgVersion();
+  if (diskVersion != null) {
+    const fresh = checkServerFresh(PKG_VERSION, diskVersion);
+    if (!fresh.ok) return opsErrorResult(fresh.errorCode, fresh.message, { retryable: true });
+  }
   const projectPath = args.project_path;
   if (typeof projectPath !== 'string' || !projectPath) {
     return opsErrorResult('INVALID_PARAMS', 'update action 需要 project_path 参数');
@@ -109,9 +131,9 @@ async function handleUpdate(args: Record<string, unknown>): Promise<ToolResult> 
   } catch (e) {
     return opsErrorResult('PATH_NOT_ALLOWED', e instanceof Error ? e.message : String(e));
   }
-  if (isInstalled && installed != null && compareVersion(installed, pkgVersion) > 0) {
+  if (isInstalled && installed != null && compareVersion(installed, PKG_VERSION) > 0) {
     return opsErrorResult('DOWNGRADE_REFUSED',
-      `项目 addon 版本 ${installed} 比包版本 ${pkgVersion} 新，疑似降级，拒绝`);
+      `项目 addon 版本 ${installed} 比包版本 ${PKG_VERSION} 新，疑似降级，拒绝`);
   }
   try {
     const { dest, verifyOk } = updateAddon(projectPath);
@@ -121,7 +143,7 @@ async function handleUpdate(args: Record<string, unknown>): Promise<ToolResult> 
     return textResult(JSON.stringify(opsSuccess({
       project_path: projectPath,
       updated_from: installed,
-      updated_to: pkgVersion,
+      updated_to: PKG_VERSION,
       verifyOk,
       dest,
     })));

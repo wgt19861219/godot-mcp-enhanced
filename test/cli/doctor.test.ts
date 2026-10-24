@@ -376,3 +376,39 @@ describe('doctor addons sync — 集成检查', () => {
     }
   });
 });
+
+// ─── Rules distribution 报告行(2026-10-24 可靠性批 P1-4) ──
+
+describe('doctor rules distribution — formatRulesDist 纯函数', () => {
+  it('current → ok 标记 + 版本与文件数', async () => {
+    const { formatRulesDist } = await import('../../src/cli/doctor.js');
+    const r = formatRulesDist({ status: 'current', installed_version: '0.36.1', files: 10 }, '0.36.1');
+    expect(r.mark).toBe('ok');
+    expect(r.line).toContain('0.36.1');
+    expect(r.line).toContain('10');
+  });
+
+  it('stale → warn 标记 + 两侧版本 + 修复指引', async () => {
+    const { formatRulesDist } = await import('../../src/cli/doctor.js');
+    const r = formatRulesDist({ status: 'stale', installed_version: '0.35.0', files: 10 }, '0.36.1');
+    expect(r.mark).toBe('warn');
+    expect(r.line).toContain('0.35.0');
+    expect(r.line).toContain('0.36.1');
+    expect(r.line).toContain('rules --paths');
+  });
+
+  it('content-drift → warn 标记 + 毒化提示', async () => {
+    const { formatRulesDist } = await import('../../src/cli/doctor.js');
+    const r = formatRulesDist({ status: 'content-drift', installed_version: '0.36.1', files: 10 }, '0.36.1');
+    expect(r.mark).toBe('warn');
+    expect(r.line).toContain('CONTENT-DRIFT');
+    expect(r.line).toContain('毒化');
+  });
+
+  it('missing → na 标记 + 原因(detail 透传)', async () => {
+    const { formatRulesDist } = await import('../../src/cli/doctor.js');
+    const r = formatRulesDist({ status: 'missing', installed_version: null, files: 0, detail: 'manifest 不存在' }, '0.36.1');
+    expect(r.mark).toBe('na');
+    expect(r.line).toContain('manifest 不存在');
+  });
+});

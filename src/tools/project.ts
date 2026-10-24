@@ -1,8 +1,7 @@
-import { join, basename, dirname } from 'path';
+import { join, basename } from 'path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, mkdirSync } from 'fs';
 import { writeFileAtomicWithMode } from '../core/fs-atomic.js';
 import { randomUUID } from 'crypto';
-import { fileURLToPath } from 'url';
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import type { RiskLevel } from '../core/tool-registry.js';
@@ -16,10 +15,11 @@ import {
 import { buildAgentsMdSections, mergeAgentsMd, AGENTS_SECTION_IDS as AGENTS_SECTIONS } from './agentsmd-builder.js';
 import { DETAILED_RULE_TEMPLATES } from './rule-templates.js';
 import {
-  buildAdoptManifest, planReconcile, hashContent, countDeviations,
+  buildAdoptManifest, planReconcile, hashContent, countDeviations, summarizeDistStatus,
   type RulesManifest, type RulesMode,
 } from './rules-manifest.js';
 import { validatePath, resolveWithinRoot, relPathOf } from '../core/path-utils.js';
+import { PKG_VERSION, readInstalledPkgVersion, checkServerFresh } from '../core/update-checker.js';
 import { requireString, requireProjectPath } from '../core/args-validation.js';
 import { scanFiles } from '../core/file-scanner.js';
 import type { GodotConfig } from '../core/config-parser.js';
@@ -300,332 +300,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     }
 
     case 'setup_project_rules': {
-      const p = requireProjectPath(args);
-      const doHooks = args.hooks !== false;
-      const doClaudeMd = args.claude_md !== false;
-      const doAgentsMd = args.agents_md !== false;
-      const force = args.force === true;
-      // mcpPkgPath 提升到 case 顶部：doClaudeMd 与 doAgentsMd 块共用
-      const mcpPkgPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
-
-      if (!existsSync(join(p, 'project.godot'))) {
-        return textResult(`Error: No project.godot found at ${p}. Not a Godot project.`);
+      // P2-1：主体外提 distributeRules（CLI rules 子命令共用）；本壳只做参数解析与 wire 包装
+      const report = await distributeRules(requireProjectPath(args), {
+        hooks: args.hooks !== false,
+        claude_md: args.claude_md !== false,
+        agents_md: args.agents_md !== false,
+        force: args.force === true,
+        rules_mode: (args.rules_mode as RulesMode) || 'check',
+        ci: args.ci === true,
+        godot_version: args.godot_version,
+      }, ctx);
+      if (typeof report.error_code === 'string') {
+        return opsErrorResult(report.error_code, String(report.error), { retryable: true });
       }
-
-      const report: Record<string, unknown> = { project_path: p };
-      const actions: string[] = [];
-
-      // ── Hooks: .claude/settings.json ──
-      if (doHooks) {
-        const claudeDir = join(p, '.claude');
-        const settingsPath = join(claudeDir, 'settings.json');
-
-        // PostToolUse hooks for different file types
-        const hookEntries: HookEntry[] = [
-          {
-            matcher: 'mcp__godot__edit_script|mcp__godot__write_script',
-            hooks: [{
-              type: 'command',
-              command: "echo '>>> GDScript file modified — you MUST call validate_scripts now to verify syntax.'",
-            }],
-          },
-          {
-            matcher: 'mcp__godot__scene|mcp__godot__batch',
-            hooks: [{
-              type: 'command',
-              command: "echo '>>> Scene/resource file modified — you SHOULD call save_scene to persist changes.'",
-            }],
-          },
-          {
-            matcher: 'mcp__godot__material',
-            hooks: [{
-              type: 'command',
-              command: "echo '>>> Shader/material modified — consider calling validate_scripts to verify.'",
-            }],
-          },
-        ];
-
-        // SessionStart hook
-        const sessionStartEntry: SessionStartEntry = {
-          hooks: [{
-            type: 'command',
-            command: "echo '>>> Session started — ensure Godot 4.4+ is installed and GODOT_MCP_NO_FALLBACK is set if needed.'",
-          }],
-        };
-
-        let existing: ClaudeSettings | null = null;
-        if (existsSync(settingsPath)) {
-          try {
-            existing = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-          } catch {
-            actions.push('hooks: ERROR — existing settings.json is invalid JSON. Fix manually or delete it first.');
-            existing = null;
-          }
-        }
-
-        if (existing) {
-          const postHooks = existing.hooks?.PostToolUse;
-          // Check if all PostToolUse matchers are already present
-          const existingMatchers = new Set((postHooks ?? []).map(h => h.matcher));
-          const allConfigured = hookEntries.every(he => existingMatchers.has(he.matcher));
-          // Check if SessionStart is already configured
-          const ssConfigured = (existing.hooks?.SessionStart ?? []).some(
-            e => (e.hooks[0]?.command ?? '') === sessionStartEntry.hooks[0]!.command,
-          );
-
-          if (allConfigured && ssConfigured && !force) {
-            actions.push('hooks: skipped (already configured, use force=true to overwrite)');
-          } else {
-            let current = existing;
-            // Merge/replace each PostToolUse hookEntry
-            for (const he of hookEntries) {
-              const hasMatcher = existingMatchers.has(he.matcher);
-              current = (force && hasMatcher) ? replaceHookEntry(current, he) : mergeHooks(current, he);
-            }
-            // Merge/replace SessionStart entry
-            if (ssConfigured && force) {
-              current = replaceSessionStart(current, sessionStartEntry);
-            } else if (!ssConfigured) {
-              current = mergeSessionStart(current, sessionStartEntry);
-            }
-            writeAtomic(settingsPath, JSON.stringify(current, null, 2));
-            actions.push(force ? 'hooks: updated .claude/settings.json (force)' : 'hooks: updated .claude/settings.json');
-          }
-        } else if (existing === null && existsSync(settingsPath)) {
-          // JSON parse failed — don't touch the file
-        } else {
-          mkdirSync(claudeDir, { recursive: true });
-          writeAtomic(settingsPath, JSON.stringify({
-            hooks: {
-              PostToolUse: hookEntries,
-              SessionStart: [sessionStartEntry],
-            },
-          }, null, 2));
-          actions.push('hooks: created .claude/settings.json');
-        }
-      }
-
-      // ── CLAUDE.md rules ──
-      if (doClaudeMd) {
-        const claudeMdPath = join(p, 'CLAUDE.md');
-
-        // Parse project.godot for metadata
-        const cfgPath = join(p, 'project.godot');
-        let config: GodotConfig | null = null;
-        try {
-          const cfgContent = readFileSync(cfgPath, 'utf-8');
-          config = ctx.parseGodotConfig(cfgContent) as GodotConfig;
-        } catch {
-          actions.push('CLAUDE.md: warning — project.godot parse failed, using minimal rules');
-        }
-
-        // Build sections
-        const sections: Array<[string, string]> = [];
-        const builders: Array<[string, () => string | null]> = [
-          ['## 引擎版本', () => buildEngineVersion(config)],
-          ['## 渲染器', () => buildRenderer(config)],
-          ['## 项目关键路径', () => buildKeyPaths(p)],
-          ['## 主场景', () => buildMainScene(config)],
-          ['## Autoload', () => buildAutoloads(config)],
-          ['## Input Map', () => buildInputMap(config)],
-          ['## 物理设置', () => buildPhysics(config)],
-          ['## 层级名称', () => buildLayerNames(config)],
-          ['## MCP 规则映射', () => buildMcpMapping()],
-          ['## GDScript 类型规范', () => buildTypeGuide()],
-          ['## 代码最佳实践', () => buildBestPractices()],
-        ];
-
-        for (const [header, builder] of builders) {
-          const body = builder();
-          if (body !== null) {
-            sections.push([header, body]);
-          }
-        }
-
-        if (existsSync(claudeMdPath)) {
-          if (!force) {
-            // Check if MCP sections already present (idempotency)
-            const existing = readFileSync(claudeMdPath, 'utf-8');
-            const hasMcpSections = SECTION_ORDER.some(h => existing.includes(h));
-            if (hasMcpSections) {
-              actions.push('CLAUDE.md: skipped (already configured, use force=true to update)');
-            } else {
-              const merged = mergeSections(existing, sections);
-              writeAtomic(claudeMdPath, merged);
-              actions.push('CLAUDE.md: merged new sections into existing file');
-            }
-          } else {
-            // force: still merge (preserves user sections) but skip idempotency check
-            const existing = readFileSync(claudeMdPath, 'utf-8');
-            const merged = mergeSections(existing, sections);
-            writeAtomic(claudeMdPath, merged);
-            actions.push('CLAUDE.md: updated (force)');
-          }
-        } else {
-          const content = sections.map(([h, b]) => `${h}\n${b}`).join('\n\n') + '\n';
-          const projectName = config
-            ? (config.application as Record<string, unknown>)?.['config/name'] || basename(p)
-            : basename(p);
-          writeAtomic(claudeMdPath, `# ${projectName}\n\n${content}`);
-          actions.push('CLAUDE.md: created with project metadata');
-        }
-
-        // ── rules files ──
-        const rulesDir = join(p, '.claude', 'rules');
-        mkdirSync(rulesDir, { recursive: true });
-
-        // Read MCP version from package.json for template substitution
-        //（base 与详细规则统一走 {{MCP_VERSION}} 插值，放在 base 段之前避免 TDZ）
-        //（mcpPkgPath 已在 case 顶部声明，此处与 doAgentsMd 块共用）
-        let mcpVersion = '0.16.0';
-        try { mcpVersion = JSON.parse(readFileSync(mcpPkgPath, 'utf-8')).version || mcpVersion; } catch { /* fallback */ }
-
-        // ── 规则文件 manifest 驱动（spec §3.6）──
-        const manifestPath = join(rulesDir, '.godot-mcp-manifest.json');
-        const rulesMode: RulesMode = (args.rules_mode as RulesMode) || 'check';
-
-        // 当前模板内容（插值后），用于覆盖与偏离判断
-        const baseContent = GODOT_MCP_RULES.replace(/\{\{MCP_VERSION\}\}/g, mcpVersion);
-        const currentTemplates: Record<string, string> = { 'godot-mcp.md': baseContent };
-        for (const [filename, tpl] of Object.entries(DETAILED_RULE_TEMPLATES)) {
-          currentTemplates[filename] = tpl.replace(/\{\{MCP_VERSION\}\}/g, mcpVersion);
-        }
-
-        // 读现有 manifest（损坏当无 manifest，spec §6：不覆盖任何规则文件）
-        let manifest: RulesManifest | null = null;
-        if (existsSync(manifestPath)) {
-          try {
-            manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as RulesManifest;
-          } catch {
-            actions.push('rules-manifest: 损坏，按无 manifest 处理（adopt，不覆盖任何规则文件）');
-            manifest = null;
-          }
-        }
-
-        // 确保所有规则文件存在（任意 rules_mode 都先创建缺失文件）
-        const allFilenames = ['godot-mcp.md', ...Object.keys(DETAILED_RULE_TEMPLATES)].sort();
-        const diskFiles: { filename: string; content: string; source: 'base' | 'detail' }[] = [];
-        for (const filename of allFilenames) {
-          const filePath = join(rulesDir, filename);
-          const source: 'base' | 'detail' = filename === 'godot-mcp.md' ? 'base' : 'detail';
-          if (!existsSync(filePath)) {
-            const tpl = currentTemplates[filename]!;
-            writeAtomic(filePath, tpl);
-            actions.push(`rules: created .claude/rules/${filename}`);
-            diskFiles.push({ filename, content: tpl, source });
-          } else {
-            diskFiles.push({ filename, content: readFileSync(filePath, 'utf-8'), source });
-          }
-        }
-
-        if (manifest === null) {
-          // adopt（spec §5）：固化当前磁盘状态为基线
-          const adopted = buildAdoptManifest({
-            serverVersion: mcpVersion,
-            now: new Date().toISOString(),
-            files: diskFiles.map(f => ({ filename: f.filename, content: f.content, source: f.source })),
-          });
-          writeAtomic(manifestPath, JSON.stringify(adopted, null, 2));
-          const dev = countDeviations(adopted, Object.fromEntries(
-            diskFiles.map(f => [f.filename, hashContent(currentTemplates[f.filename]!)]),
-          ));
-          actions.push(`rules-manifest: 已采纳 ${diskFiles.length} 个文件（版本 ${mcpVersion}）`);
-          if (dev > 0) {
-            actions.push(`rules-manifest: ${dev} 个文件与当前模板不符（历史遗留或本地修改无法区分），如需对齐调 rules_mode=overwrite`);
-          }
-        } else {
-          // reconcile（spec §3.6）：按二维判定 + mode 决策
-          const plan = planReconcile({
-            manifest,
-            serverVersion: mcpVersion,
-            diskFiles: diskFiles.map(f => ({ filename: f.filename, content: f.content })),
-            currentTemplates,
-            mode: rulesMode,
-            now: new Date().toISOString(),
-          });
-          const written: string[] = [];
-          const warned: string[] = [];
-          for (const [filename, fp] of Object.entries(plan.actions)) {
-            if (fp.action === 'write' && fp.newContent !== undefined) {
-              writeAtomic(join(rulesDir, filename), fp.newContent);
-              written.push(filename);
-            } else if (fp.action === 'warn-keep') {
-              warned.push(filename);
-            }
-          }
-          if (plan.shouldWriteFiles) {
-            writeAtomic(manifestPath, JSON.stringify(plan.newManifest, null, 2));
-            if (written.length > 0) actions.push(`rules: 更新 ${written.length} 个文件（${written.join(', ')}）`);
-            if (warned.length > 0) actions.push(`rules: 保留 ${warned.length} 个用户动过的文件（${warned.join(', ')}）— 版本过时但本地有修改，未覆盖；如需强制对齐调 rules_mode=overwrite`);
-          } else {
-            // check 模式：报告分类
-            const byClass: Record<string, string[]> = {};
-            for (const [fn, fp] of Object.entries(plan.actions)) {
-              (byClass[fp.classification] ??= []).push(fn);
-            }
-            if (byClass['pure-upgrade']) actions.push(`rules: ${byClass['pure-upgrade'].length} 个文件可更新（版本过时）— 传 rules_mode=update 更新`);
-            if (byClass['stale-and-modified']) actions.push(`rules: ${byClass['stale-and-modified'].length} 个文件版本过时且本地已修改 — update 会保留，overwrite 会覆盖`);
-            if (byClass['local-modified']) actions.push(`rules: ${byClass['local-modified'].length} 个文件本地已修改（版本最新）`);
-            if (byClass['latest'] && Object.keys(byClass).length === 1) actions.push('rules: 全部最新');
-          }
-        }
-      }
-
-      // ── AGENTS.md rules（ZCode 等遵循 AGENTS.md 标准的客户端）──
-      if (doAgentsMd) {
-        const agentsMdPath = join(p, 'AGENTS.md');
-
-        // 独立 parse config（不引用 doClaudeMd 块内的 config：claude_md=false 时该块不执行）
-        let configForAgents: GodotConfig | null;
-        try {
-          configForAgents = ctx.parseGodotConfig(readFileSync(join(p, 'project.godot'), 'utf-8')) as GodotConfig;
-        } catch { configForAgents = null; }
-
-        // 独立解析 mcpVersion（不引用 doClaudeMd 块内的 mcpVersion）
-        let agentsMcpVersion = '0.16.0';
-        try { agentsMcpVersion = JSON.parse(readFileSync(mcpPkgPath, 'utf-8')).version || agentsMcpVersion; } catch { /* fallback */ }
-
-        const sectionsVersioned = buildAgentsMdSections(configForAgents, p, agentsMcpVersion);
-        const projectName = configForAgents
-          ? (configForAgents.application as Record<string, unknown>)?.['config/name'] || basename(p)
-          : basename(p);
-
-        if (existsSync(agentsMdPath)) {
-          const existing = readFileSync(agentsMdPath, 'utf-8');
-          const hasMcpSections = [...AGENTS_SECTIONS].some(h => existing.includes(h));
-          if (hasMcpSections && !force) {
-            actions.push('AGENTS.md: skipped (already configured, use force=true to update)');
-          } else {
-            writeAtomic(agentsMdPath, mergeAgentsMd(existing, sectionsVersioned));
-            actions.push(force ? 'AGENTS.md: updated (force)' : 'AGENTS.md: merged new sections into existing file');
-          }
-        } else {
-          const body = sectionsVersioned.map(([h, b]) => `${h}\n${b}`).join('\n\n');
-          writeAtomic(agentsMdPath, `# ${projectName}\n\n${body}\n`);
-          actions.push('AGENTS.md: created with project metadata');
-        }
-      }
-
-      // ── CI workflow ──
-      if (args.ci === true) {
-        // B-1 fix round 1: godot_version 拼进 wget URL/文件名,注入面同 create_project
-        const godotVersion = parseGodotVersionArg(args);
-        if (godotVersion === null) return invalidGodotVersionResult(args.godot_version);
-        const githubDir = join(p, '.github', 'workflows');
-        const ciPath = join(githubDir, 'godot-ci.yml');
-
-        if (existsSync(ciPath) && !force) {
-          actions.push('ci: skipped (.github/workflows/godot-ci.yml exists, use force=true to overwrite)');
-        } else {
-          mkdirSync(githubDir, { recursive: true });
-          writeAtomic(ciPath, generateCiTemplate(godotVersion));
-          actions.push(`ci: created .github/workflows/godot-ci.yml (Godot ${godotVersion})`);
-        }
-      }
-
-      report.actions = actions;
       return textResult(JSON.stringify(report, null, 2));
     }
+
 
     case 'write_config': {
       const p = requireProjectPath(args);
@@ -676,6 +366,369 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
     default:
       return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
   }
+}
+
+
+// ─── 规则分发核心（P2-1 外提：MCP setup_project_rules 与 CLI rules 子命令共用）───
+
+export interface DistributeRulesOpts {
+  /** 写 .claude/settings.json hooks */
+  hooks: boolean;
+  /** 写 CLAUDE.md + .claude/rules/* + manifest */
+  claude_md: boolean;
+  /** 写 AGENTS.md */
+  agents_md: boolean;
+  /** force 语义（跳过幂等检查/强制覆盖 hook 条目） */
+  force: boolean;
+  /** 规则 reconcile 模式 */
+  rules_mode: RulesMode;
+  /** 生成 CI workflow（CLI 不传） */
+  ci?: boolean;
+  /** CI 用的 Godot 版本（仅 ci=true 消费） */
+  godot_version?: unknown;
+}
+
+/**
+ * 分发项目规则到目标 Godot 项目（setup_project_rules 的可编程核心，P2-1 自 case
+ * 体外提，纯外提不改逻辑）。返回 report 对象；失败路径 report 带 error 字段
+ * （拦截/CI 参数错误另带 error_code），MCP 壳与 CLI 壳各自转 wire 形态。
+ * SERVER_STALE 拦截在函数入口：MCP 与 CLI 两通道共用（CLI 进程恒新理论不触发，
+ * 保留防线防未来常驻形态）。
+ */
+export async function distributeRules(p: string, opts: DistributeRulesOpts, ctx: ToolContext): Promise<Record<string, unknown>> {
+  // P0-2（2026-10-24 毒化拦截）：版本行（此前磁盘运行时读）与模板内容（import 进进程
+  // 内存）两源不一致 = server 进程落后于磁盘包，分发会写出"新版本号+旧内容"毒化文件，
+  // 且 reconcile 之后按版本行判"已是新版"永久跳过更新——拒绝分发并指引重启。
+  {
+    const diskVersion = readInstalledPkgVersion();
+    if (diskVersion != null) {
+      const fresh = checkServerFresh(PKG_VERSION, diskVersion);
+    if (!fresh.ok) return { project_path: p, error: fresh.message, error_code: fresh.errorCode };
+    }
+  }
+const { hooks: doHooks, claude_md: doClaudeMd, agents_md: doAgentsMd, force } = opts;
+
+  if (!existsSync(join(p, 'project.godot'))) {
+  return { project_path: p, error: `Error: No project.godot found at ${p}. Not a Godot project.` };
+  }
+
+  const report: Record<string, unknown> = { project_path: p };
+  const actions: string[] = [];
+
+  // ── Hooks: .claude/settings.json ──
+  if (doHooks) {
+    const claudeDir = join(p, '.claude');
+    const settingsPath = join(claudeDir, 'settings.json');
+
+    // PostToolUse hooks for different file types
+    const hookEntries: HookEntry[] = [
+      {
+        matcher: 'mcp__godot__edit_script|mcp__godot__write_script',
+        hooks: [{
+          type: 'command',
+          command: "echo '>>> GDScript file modified — you MUST call validate_scripts now to verify syntax.'",
+        }],
+      },
+      {
+        matcher: 'mcp__godot__scene|mcp__godot__batch',
+        hooks: [{
+          type: 'command',
+          command: "echo '>>> Scene/resource file modified — you SHOULD call save_scene to persist changes.'",
+        }],
+      },
+      {
+        matcher: 'mcp__godot__material',
+        hooks: [{
+          type: 'command',
+          command: "echo '>>> Shader/material modified — consider calling validate_scripts to verify.'",
+        }],
+      },
+    ];
+
+    // SessionStart hook
+    const sessionStartEntry: SessionStartEntry = {
+      hooks: [{
+        type: 'command',
+        command: "echo '>>> Session started — ensure Godot 4.4+ is installed and GODOT_MCP_NO_FALLBACK is set if needed.'",
+      }],
+    };
+
+    let existing: ClaudeSettings | null = null;
+    if (existsSync(settingsPath)) {
+      try {
+        existing = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      } catch {
+        actions.push('hooks: ERROR — existing settings.json is invalid JSON. Fix manually or delete it first.');
+        existing = null;
+      }
+    }
+
+    if (existing) {
+      const postHooks = existing.hooks?.PostToolUse;
+      // Check if all PostToolUse matchers are already present
+      const existingMatchers = new Set((postHooks ?? []).map(h => h.matcher));
+      const allConfigured = hookEntries.every(he => existingMatchers.has(he.matcher));
+      // Check if SessionStart is already configured
+      const ssConfigured = (existing.hooks?.SessionStart ?? []).some(
+        e => (e.hooks[0]?.command ?? '') === sessionStartEntry.hooks[0]!.command,
+      );
+
+      if (allConfigured && ssConfigured && !force) {
+        actions.push('hooks: skipped (already configured, use force=true to overwrite)');
+      } else {
+        let current = existing;
+        // Merge/replace each PostToolUse hookEntry
+        for (const he of hookEntries) {
+          const hasMatcher = existingMatchers.has(he.matcher);
+          current = (force && hasMatcher) ? replaceHookEntry(current, he) : mergeHooks(current, he);
+        }
+        // Merge/replace SessionStart entry
+        if (ssConfigured && force) {
+          current = replaceSessionStart(current, sessionStartEntry);
+        } else if (!ssConfigured) {
+          current = mergeSessionStart(current, sessionStartEntry);
+        }
+        writeAtomic(settingsPath, JSON.stringify(current, null, 2));
+        actions.push(force ? 'hooks: updated .claude/settings.json (force)' : 'hooks: updated .claude/settings.json');
+      }
+    } else if (existing === null && existsSync(settingsPath)) {
+      // JSON parse failed — don't touch the file
+    } else {
+      mkdirSync(claudeDir, { recursive: true });
+      writeAtomic(settingsPath, JSON.stringify({
+        hooks: {
+          PostToolUse: hookEntries,
+          SessionStart: [sessionStartEntry],
+        },
+      }, null, 2));
+      actions.push('hooks: created .claude/settings.json');
+    }
+  }
+
+  // ── CLAUDE.md rules ──
+  if (doClaudeMd) {
+    const claudeMdPath = join(p, 'CLAUDE.md');
+
+    // Parse project.godot for metadata
+    const cfgPath = join(p, 'project.godot');
+    let config: GodotConfig | null = null;
+    try {
+      const cfgContent = readFileSync(cfgPath, 'utf-8');
+      config = ctx.parseGodotConfig(cfgContent) as GodotConfig;
+    } catch {
+      actions.push('CLAUDE.md: warning — project.godot parse failed, using minimal rules');
+    }
+
+    // Build sections
+    const sections: Array<[string, string]> = [];
+    const builders: Array<[string, () => string | null]> = [
+      ['## 引擎版本', () => buildEngineVersion(config)],
+      ['## 渲染器', () => buildRenderer(config)],
+      ['## 项目关键路径', () => buildKeyPaths(p)],
+      ['## 主场景', () => buildMainScene(config)],
+      ['## Autoload', () => buildAutoloads(config)],
+      ['## Input Map', () => buildInputMap(config)],
+      ['## 物理设置', () => buildPhysics(config)],
+      ['## 层级名称', () => buildLayerNames(config)],
+      ['## MCP 规则映射', () => buildMcpMapping()],
+      ['## GDScript 类型规范', () => buildTypeGuide()],
+      ['## 代码最佳实践', () => buildBestPractices()],
+    ];
+
+    for (const [header, builder] of builders) {
+      const body = builder();
+      if (body !== null) {
+        sections.push([header, body]);
+      }
+    }
+
+    if (existsSync(claudeMdPath)) {
+      if (!force) {
+        // Check if MCP sections already present (idempotency)
+        const existing = readFileSync(claudeMdPath, 'utf-8');
+        const hasMcpSections = SECTION_ORDER.some(h => existing.includes(h));
+        if (hasMcpSections) {
+          actions.push('CLAUDE.md: skipped (already configured, use force=true to update)');
+        } else {
+          const merged = mergeSections(existing, sections);
+          writeAtomic(claudeMdPath, merged);
+          actions.push('CLAUDE.md: merged new sections into existing file');
+        }
+      } else {
+        // force: still merge (preserves user sections) but skip idempotency check
+        const existing = readFileSync(claudeMdPath, 'utf-8');
+        const merged = mergeSections(existing, sections);
+        writeAtomic(claudeMdPath, merged);
+        actions.push('CLAUDE.md: updated (force)');
+      }
+    } else {
+      const content = sections.map(([h, b]) => `${h}\n${b}`).join('\n\n') + '\n';
+      const projectName = config
+        ? (config.application as Record<string, unknown>)?.['config/name'] || basename(p)
+        : basename(p);
+      writeAtomic(claudeMdPath, `# ${projectName}\n\n${content}`);
+      actions.push('CLAUDE.md: created with project metadata');
+    }
+
+    // ── rules files ──
+    const rulesDir = join(p, '.claude', 'rules');
+    mkdirSync(rulesDir, { recursive: true });
+
+    // Read MCP version for template substitution
+    // P0-2：切换为 PKG_VERSION（进程固化值，与模板同源同岁）——拦截通过时与磁盘值
+    // 相等；结构性同源防未来绕过拦截的调用点写出版本行与内容不一致的文件。
+    const mcpVersion = PKG_VERSION;
+
+    // ── 规则文件 manifest 驱动（spec §3.6）──
+    const manifestPath = join(rulesDir, '.godot-mcp-manifest.json');
+    const rulesMode: RulesMode = opts.rules_mode;
+
+    // 当前模板内容（插值后），用于覆盖与偏离判断
+    const baseContent = GODOT_MCP_RULES.replace(/\{\{MCP_VERSION\}\}/g, mcpVersion);
+    const currentTemplates: Record<string, string> = { 'godot-mcp.md': baseContent };
+    for (const [filename, tpl] of Object.entries(DETAILED_RULE_TEMPLATES)) {
+      currentTemplates[filename] = tpl.replace(/\{\{MCP_VERSION\}\}/g, mcpVersion);
+    }
+
+    // 读现有 manifest（损坏当无 manifest，spec §6：不覆盖任何规则文件）
+    let manifest: RulesManifest | null = null;
+    if (existsSync(manifestPath)) {
+      try {
+        manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as RulesManifest;
+      } catch {
+        actions.push('rules-manifest: 损坏，按无 manifest 处理（adopt，不覆盖任何规则文件）');
+        manifest = null;
+      }
+    }
+
+    // 确保所有规则文件存在（任意 rules_mode 都先创建缺失文件）
+    const allFilenames = ['godot-mcp.md', ...Object.keys(DETAILED_RULE_TEMPLATES)].sort();
+    const diskFiles: { filename: string; content: string; source: 'base' | 'detail' }[] = [];
+    for (const filename of allFilenames) {
+      const filePath = join(rulesDir, filename);
+      const source: 'base' | 'detail' = filename === 'godot-mcp.md' ? 'base' : 'detail';
+      if (!existsSync(filePath)) {
+        const tpl = currentTemplates[filename]!;
+        writeAtomic(filePath, tpl);
+        actions.push(`rules: created .claude/rules/${filename}`);
+        diskFiles.push({ filename, content: tpl, source });
+      } else {
+        diskFiles.push({ filename, content: readFileSync(filePath, 'utf-8'), source });
+      }
+    }
+
+    if (manifest === null) {
+      // adopt（spec §5）：固化当前磁盘状态为基线
+      const adopted = buildAdoptManifest({
+        serverVersion: mcpVersion,
+        now: new Date().toISOString(),
+        files: diskFiles.map(f => ({ filename: f.filename, content: f.content, source: f.source })),
+      });
+      writeAtomic(manifestPath, JSON.stringify(adopted, null, 2));
+      const dev = countDeviations(adopted, Object.fromEntries(
+        diskFiles.map(f => [f.filename, hashContent(currentTemplates[f.filename]!)]),
+      ));
+      actions.push(`rules-manifest: 已采纳 ${diskFiles.length} 个文件（版本 ${mcpVersion}）`);
+      if (dev > 0) {
+        actions.push(`rules-manifest: ${dev} 个文件与当前模板不符（历史遗留或本地修改无法区分），如需对齐调 rules_mode=overwrite`);
+      }
+    } else {
+      // reconcile（spec §3.6）：按二维判定 + mode 决策
+      const plan = planReconcile({
+        manifest,
+        serverVersion: mcpVersion,
+        diskFiles: diskFiles.map(f => ({ filename: f.filename, content: f.content })),
+        currentTemplates,
+        mode: rulesMode,
+        now: new Date().toISOString(),
+      });
+      const written: string[] = [];
+      const driftFixed: string[] = [];
+      const warned: string[] = [];
+      for (const [filename, fp] of Object.entries(plan.actions)) {
+        if (fp.action === 'write' && fp.newContent !== undefined) {
+          writeAtomic(join(rulesDir, filename), fp.newContent);
+          if (fp.classification === 'content-drift') driftFixed.push(filename);
+          else written.push(filename);
+        } else if (fp.action === 'warn-keep') {
+          warned.push(filename);
+        }
+      }
+      if (plan.shouldWriteFiles) {
+        writeAtomic(manifestPath, JSON.stringify(plan.newManifest, null, 2));
+        if (written.length > 0) actions.push(`rules: 更新 ${written.length} 个文件（${written.join(', ')}）`);
+        // P1-2：content-drift 单列——版本行与内容指纹同源关系已恢复,区别于常规版本推进
+        if (driftFixed.length > 0) actions.push(`rules: content-drift 修复 ${driftFixed.length} 个文件（${driftFixed.join(', ')}）— 内容指纹不符（疑似旧进程毒化或跨版本同号），已覆盖修复`);
+        if (warned.length > 0) actions.push(`rules: 保留 ${warned.length} 个用户动过的文件（${warned.join(', ')}）— 版本过时但本地有修改，未覆盖；如需强制对齐调 rules_mode=overwrite`);
+      } else {
+        // check 模式：报告分类
+        const byClass: Record<string, string[]> = {};
+        for (const [fn, fp] of Object.entries(plan.actions)) {
+          (byClass[fp.classification] ??= []).push(fn);
+        }
+        if (byClass['pure-upgrade']) actions.push(`rules: ${byClass['pure-upgrade'].length} 个文件可更新（版本过时）— 传 rules_mode=update 更新`);
+        if (byClass['stale-and-modified']) actions.push(`rules: ${byClass['stale-and-modified'].length} 个文件版本过时且本地已修改 — update 会保留，overwrite 会覆盖`);
+        if (byClass['content-drift']) actions.push(`rules: ${byClass['content-drift'].length} 个文件版本行与内容指纹不符（content-drift，疑似旧进程毒化或跨版本同号）— 传 rules_mode=update 覆盖修复`);
+        if (byClass['local-modified']) actions.push(`rules: ${byClass['local-modified'].length} 个文件本地已修改（版本最新）`);
+        if (byClass['latest'] && Object.keys(byClass).length === 1) actions.push('rules: 全部最新');
+      }
+    }
+  }
+
+  // ── AGENTS.md rules（ZCode 等遵循 AGENTS.md 标准的客户端）──
+  if (doAgentsMd) {
+    const agentsMdPath = join(p, 'AGENTS.md');
+
+    // 独立 parse config（不引用 doClaudeMd 块内的 config：claude_md=false 时该块不执行）
+    let configForAgents: GodotConfig | null;
+    try {
+      configForAgents = ctx.parseGodotConfig(readFileSync(join(p, 'project.godot'), 'utf-8')) as GodotConfig;
+    } catch { configForAgents = null; }
+
+    // 独立取 mcpVersion（不引用 doClaudeMd 块内的 mcpVersion：claude_md=false 时该块不执行）
+    // P0-2：同款切换为 PKG_VERSION 固化值（原磁盘运行时读已随毒化拦截退役）
+    const agentsMcpVersion = PKG_VERSION;
+
+    const sectionsVersioned = buildAgentsMdSections(configForAgents, p, agentsMcpVersion);
+    const projectName = configForAgents
+      ? (configForAgents.application as Record<string, unknown>)?.['config/name'] || basename(p)
+      : basename(p);
+
+    if (existsSync(agentsMdPath)) {
+      const existing = readFileSync(agentsMdPath, 'utf-8');
+      const hasMcpSections = [...AGENTS_SECTIONS].some(h => existing.includes(h));
+      if (hasMcpSections && !force) {
+        actions.push('AGENTS.md: skipped (already configured, use force=true to update)');
+      } else {
+        writeAtomic(agentsMdPath, mergeAgentsMd(existing, sectionsVersioned));
+        actions.push(force ? 'AGENTS.md: updated (force)' : 'AGENTS.md: merged new sections into existing file');
+      }
+    } else {
+      const body = sectionsVersioned.map(([h, b]) => `${h}\n${b}`).join('\n\n');
+      writeAtomic(agentsMdPath, `# ${projectName}\n\n${body}\n`);
+      actions.push('AGENTS.md: created with project metadata');
+    }
+  }
+
+  // ── CI workflow ──
+  if (opts.ci === true) {
+    // B-1 fix round 1: godot_version 拼进 wget URL/文件名,注入面同 create_project
+    const godotVersion = parseGodotVersionArg({ godot_version: opts.godot_version });
+    if (godotVersion === null) return { project_path: p, error: invalidGodotVersionMessage(opts.godot_version), error_code: 'INVALID_PARAMS' };
+    const githubDir = join(p, '.github', 'workflows');
+    const ciPath = join(githubDir, 'godot-ci.yml');
+
+    if (existsSync(ciPath) && !force) {
+      actions.push('ci: skipped (.github/workflows/godot-ci.yml exists, use force=true to overwrite)');
+    } else {
+      mkdirSync(githubDir, { recursive: true });
+      writeAtomic(ciPath, generateCiTemplate(godotVersion));
+      actions.push(`ci: created .github/workflows/godot-ci.yml (Godot ${godotVersion})`);
+    }
+  }
+
+  report.actions = actions;
+  return report;
 }
 
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean; actionRisks: Record<string, RiskLevel> }> = {
@@ -753,13 +806,16 @@ function parseGodotVersionArg(args: Record<string, unknown>): string | null {
   return raw;
 }
 
-/** godot_version 非法时的统一错误结果(create_project 与 setup_project_rules CI 共用)。 */
+/** godot_version 非法时的统一错误文案（create_project 与 setup_project_rules CI 共用；
+ *  P2-1 拆出纯文案版供 distributeRules 的 report.error 复用）。 */
+function invalidGodotVersionMessage(raw: unknown): string {
+  return `Invalid godot_version ${JSON.stringify(raw ?? null)}: must be "X.Y", "X.Y.Z" or "X.Y.Z-pre" pre-release format (e.g. 4.4, 4.7.1, 4.4.1-rc1; suffix charset: letters/digits/dots only). ` +
+    'The value is embedded into generated main.gd and CI workflow files, so only strict numeric formats are accepted.';
+}
+
+/** godot_version 非法时的统一错误结果。 */
 function invalidGodotVersionResult(raw: unknown): ToolResult {
-  return opsErrorResult(
-    'INVALID_PARAMS',
-    `Invalid godot_version ${JSON.stringify(raw ?? null)}: must be "X.Y", "X.Y.Z" or "X.Y.Z-pre" pre-release format (e.g. 4.4, 4.7.1, 4.4.1-rc1; suffix charset: letters/digits/dots only). ` +
-    'The value is embedded into generated main.gd and CI workflow files, so only strict numeric formats are accepted.',
-  );
+  return opsErrorResult('INVALID_PARAMS', invalidGodotVersionMessage(raw));
 }
 
 interface HookEntry { matcher: string; hooks: Array<{ type: string; command: string }> }
@@ -811,4 +867,68 @@ function writeAtomic(filePath: string, content: string): void {
   // A-ATOMIC (2026-09-01): 实现上移至 src/core/fs-atomic.ts(三份重复实现合并,并集
   // 语义另含 mode 保持与随机 tmp 后缀),此处保留签名薄委托。
   writeFileAtomicWithMode(filePath, content);
+}
+
+// ─── 规则分发状态巡检（P1-3/P1-4，只读）──────────────────────────────────────
+
+export interface RulesDistInfo {
+  /** current=已分发当前版本 / stale=版本过时 / content-drift=版本行与内容指纹不符 /
+   *  missing=无有效分发状态（未分发、manifest 损坏或规则文件全缺） */
+  status: 'current' | 'stale' | 'content-drift' | 'missing';
+  /** manifest 记录的安装时版本（无 manifest 时为 null） */
+  installed_version: string | null;
+  /** 参与判定的在盘规则文件数 */
+  files: number;
+  /** 补充说明（missing 态的原因等） */
+  detail?: string;
+}
+
+/**
+ * 单项目规则分发状态巡检（只读，不写任何文件）。self_update(check) / doctor /
+ * CLI rules 共用。判定与 setup_project_rules 分发同源：PKG_VERSION + 当前进程
+ * 模板渲染 hash → planReconcile(check) → summarizeDistStatus 聚合。
+ * 路径合法性由调用方语义决定（MCP 工具面走白名单遍历/参数，CLI 走 env 白名单）。
+ */
+export function inspectRulesDistribution(projectPath: string): RulesDistInfo {
+  const rulesDir = join(projectPath, '.claude', 'rules');
+  const manifestPath = join(rulesDir, '.godot-mcp-manifest.json');
+  if (!existsSync(manifestPath)) {
+    return { status: 'missing', installed_version: null, files: 0, detail: '未分发（manifest 不存在）' };
+  }
+  let manifest: RulesManifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as RulesManifest;
+  } catch {
+    // 分发侧对损坏 manifest 走 adopt 不覆盖；巡检侧如实报 missing + 原因
+    return { status: 'missing', installed_version: null, files: 0, detail: 'manifest 损坏（JSON 解析失败）' };
+  }
+  const currentTemplates: Record<string, string> = {
+    'godot-mcp.md': GODOT_MCP_RULES.replace(/\{\{MCP_VERSION\}\}/g, PKG_VERSION),
+  };
+  for (const [filename, tpl] of Object.entries(DETAILED_RULE_TEMPLATES)) {
+    currentTemplates[filename] = tpl.replace(/\{\{MCP_VERSION\}\}/g, PKG_VERSION);
+  }
+  const diskFiles: { filename: string; content: string }[] = [];
+  for (const filename of ['godot-mcp.md', ...Object.keys(DETAILED_RULE_TEMPLATES)].sort()) {
+    const filePath = join(rulesDir, filename);
+    if (existsSync(filePath)) {
+      diskFiles.push({ filename, content: readFileSync(filePath, 'utf-8') });
+    }
+  }
+  if (diskFiles.length === 0) {
+    return { status: 'missing', installed_version: manifest.rules_installed_at_version, files: 0, detail: 'manifest 存在但规则文件均缺失' };
+  }
+  const plan = planReconcile({
+    manifest,
+    serverVersion: PKG_VERSION,
+    diskFiles,
+    currentTemplates,
+    mode: 'check',
+    now: new Date().toISOString(),
+  });
+  return {
+    status: summarizeDistStatus(Object.values(plan.actions).map(a => a.classification)),
+    installed_version: manifest.rules_installed_at_version,
+    files: diskFiles.length,
+  };
 }
