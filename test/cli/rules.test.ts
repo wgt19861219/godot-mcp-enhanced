@@ -107,6 +107,28 @@ describe('runRules 参数校验(usage 严格,退出码 2)', () => {
   });
 });
 
+describe('runRules 目标解析失败路径', () => {
+  it('--paths 指向非 Godot 目录 → 无目标 + exit 1(OPERATION_FAILED)', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'cli-rules-none-'));
+    try {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+        throw new Error('EXIT_CALLED');
+      }) as never);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await expect(runRules(['--paths', empty])).rejects.toThrow('EXIT_CALLED');
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(logSpy.mock.calls.flat().join('\n')).toContain('未探测到 project.godot');
+      } finally {
+        exitSpy.mockRestore(); errSpy.mockRestore(); logSpy.mockRestore();
+      }
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('runRules 端到端(--paths 显式项目,update 模式)', () => {
   let project: string;
   beforeEach(() => {

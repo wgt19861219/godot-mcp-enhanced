@@ -222,4 +222,47 @@ describe('handleTool check — rules 分发状态三态 + 毒化检测', () => {
     const parsed = parse(r);
     expect(parsed.data.rules[0].status).toBe('missing');
   });
+
+  it('审查 Important-1:manifest 记录的文件部分缺失 → missing(不误报 current)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    // fixture:manifest 记录 2 个文件,磁盘只留 1 个
+    mkdirSync(join(tmpProject, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(tmpProject, '.claude', 'rules', 'godot-mcp.md'), tplContent);
+    writeFileSync(join(tmpProject, '.claude', 'rules', '.godot-mcp-manifest.json'), JSON.stringify({
+      manifest_version: 1,
+      rules_installed_at_version: pkgVersion,
+      installed_at: '2026-10-24T00:00:00Z',
+      rules: {
+        'godot-mcp.md': { source: 'base', hash: hashContent(tplContent) },
+        'core.md': { source: 'detail', hash: hashContent('x') },
+      },
+    }));
+    const r = await handleTool('self_update', { action: 'check', project_path: tmpProject }, anyCtx);
+    const parsed = parse(r);
+    expect(parsed.data.rules[0].status).toBe('missing');
+    expect(parsed.data.rules[0].detail).toContain('部分缺失');
+  });
+
+  it('审查 Important-2:显式 project_path 白名单外 → error 记录(防文件系统结构探测)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    const savedUnrestricted = process.env.GODOT_MCP_UNRESTRICTED;
+    const savedAllowed = process.env.ALLOWED_PROJECT_PATHS;
+    delete process.env.GODOT_MCP_UNRESTRICTED;
+    process.env.ALLOWED_PROJECT_PATHS = tmpProject;  // 只放行 tmpProject
+    try {
+      const outside = mkdtempSync(join(tmpdir(), 'outside-'));
+      try {
+        const r = await handleTool('self_update', { action: 'check', project_path: outside }, anyCtx);
+        const parsed = parse(r);
+        expect(parsed.data.rules[0].status).toBe('missing');
+        expect(parsed.data.rules[0].error).toContain('白名单');
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    } finally {
+      process.env.GODOT_MCP_UNRESTRICTED = savedUnrestricted;
+      if (savedAllowed === undefined) delete process.env.ALLOWED_PROJECT_PATHS;
+      else process.env.ALLOWED_PROJECT_PATHS = savedAllowed;
+    }
+  });
 });

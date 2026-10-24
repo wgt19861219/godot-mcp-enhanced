@@ -37,7 +37,7 @@
 | `renderer` | enum: forward_plus | mobile | gl_compatibility |  | 渲染器："forward_plus"（默认）、"mobile"、"gl_compatibility" |
 | `template` | string |  | 项目脚手架模板：2d-platformer / 3d-fps / visual-novel（默认空） |
 | `hooks` | boolean |  | 创建 .claude/settings.json 的 PostToolUse hook（默认 true） |
-| `rules_mode` | enum: check | update | overwrite |  | 规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时且未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改） |
+| `rules_mode` | enum: check | update | overwrite |  | 规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时与 content-drift 指纹不符且用户未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改） |
 | `claude_md` | boolean |  | 创建/追加 CLAUDE.md 验证规则（默认 true） |
 | `agents_md` | boolean |  | 创建/追加 AGENTS.md 项目规则（ZCode/Codex/Cursor 等遵循 AGENTS.md 标准的客户端读取，默认 true） |
 | `ci` | boolean |  | 生成 GitHub Actions CI workflow（默认 false） |

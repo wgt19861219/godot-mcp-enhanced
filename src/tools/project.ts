@@ -68,7 +68,7 @@ export function getToolDefinitions(): Tool[] {
           rules_mode: {
             type: 'string',
             enum: ['check', 'update', 'overwrite'],
-            description: '规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时且未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改）',
+            description: '规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时与 content-drift 指纹不符且用户未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改）',
             default: 'check',
           },
           claude_md: { type: 'boolean', description: '创建/追加 CLAUDE.md 验证规则（默认 true）', default: true },
@@ -311,7 +311,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         godot_version: args.godot_version,
       }, ctx);
       if (typeof report.error_code === 'string') {
-        return opsErrorResult(report.error_code, String(report.error), { retryable: true });
+        // retryable 只标环境态错误（SERVER_STALE 重启即恢复）；INVALID_PARAMS 类参数错重试必再败
+        return opsErrorResult(report.error_code, String(report.error),
+          report.error_code === 'SERVER_STALE' ? { retryable: true } : undefined);
       }
       return textResult(JSON.stringify(report, null, 2));
     }
@@ -399,17 +401,15 @@ export async function distributeRules(p: string, opts: DistributeRulesOpts, ctx:
   // P0-2（2026-10-24 毒化拦截）：版本行（此前磁盘运行时读）与模板内容（import 进进程
   // 内存）两源不一致 = server 进程落后于磁盘包，分发会写出"新版本号+旧内容"毒化文件，
   // 且 reconcile 之后按版本行判"已是新版"永久跳过更新——拒绝分发并指引重启。
-  {
-    const diskVersion = readInstalledPkgVersion();
-    if (diskVersion != null) {
-      const fresh = checkServerFresh(PKG_VERSION, diskVersion);
+  const diskVersion = readInstalledPkgVersion();
+  if (diskVersion != null) {
+    const fresh = checkServerFresh(PKG_VERSION, diskVersion);
     if (!fresh.ok) return { project_path: p, error: fresh.message, error_code: fresh.errorCode };
-    }
   }
-const { hooks: doHooks, claude_md: doClaudeMd, agents_md: doAgentsMd, force } = opts;
+  const { hooks: doHooks, claude_md: doClaudeMd, agents_md: doAgentsMd, force } = opts;
 
   if (!existsSync(join(p, 'project.godot'))) {
-  return { project_path: p, error: `Error: No project.godot found at ${p}. Not a Godot project.` };
+    return { project_path: p, error: `Error: No project.godot found at ${p}. Not a Godot project.` };
   }
 
   const report: Record<string, unknown> = { project_path: p };
@@ -917,6 +917,17 @@ export function inspectRulesDistribution(projectPath: string): RulesDistInfo {
   }
   if (diskFiles.length === 0) {
     return { status: 'missing', installed_version: manifest.rules_installed_at_version, files: 0, detail: 'manifest 存在但规则文件均缺失' };
+  }
+  // 审查 Important-1（2026-10-24）：manifest 记录的文件部分缺失时，缺失文件不参与
+  // 分类会把"分发劣化"误报为 current——缺失即无有效分发状态，如实报 missing。
+  const expectedCount = Object.keys(manifest.rules).length;
+  if (diskFiles.length < expectedCount) {
+    return {
+      status: 'missing',
+      installed_version: manifest.rules_installed_at_version,
+      files: diskFiles.length,
+      detail: `manifest 记录 ${expectedCount} 个文件，磁盘仅存 ${diskFiles.length} 个（部分缺失）— 重跑 setup_project_rules(update) 补齐`,
+    };
   }
   const plan = planReconcile({
     manifest,

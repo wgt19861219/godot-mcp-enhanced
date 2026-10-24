@@ -9,7 +9,7 @@ import { textResult } from '../types.js';
 import { opsSuccess, opsErrorResult } from './shared.js';
 import { checkForUpdateCached, compareVersion, PKG_VERSION, readInstalledPkgVersion, checkServerFresh } from '../core/update-checker.js';
 import { readAddonVersion, updateAddon } from '../core/addon-version.js';
-import { getAllowedProjectPaths } from '../core/path-utils.js';
+import { getAllowedProjectPaths, isPathInAllowedRoots } from '../core/path-utils.js';
 import { inspectRulesDistribution } from './project.js';
 
 // P0-1（2026-10-24）：本地 createRequire 副本已删，PKG_VERSION 单一来源化到 core/update-checker.ts
@@ -91,8 +91,13 @@ async function handleCheck(args: Record<string, unknown>): Promise<ToolResult> {
   // 注意判定用进程固化 PKG_VERSION + 进程内模板 hash,旧进程上 stale 会反向误报
   //（实际需重启客户端）——与 npm.current 同龄问题,报告值仅供参考,godot_get_context
   // 的 server.version 才是进程年龄的权威读数。
+  // 审查 Important-2：显式 project_path 是 AI 可控参数,巡检前过白名单（对齐同函数
+  // addons 段 readAddonVersion 的 isPathInAllowedRoots 校验语义,防文件系统结构探测）。
   const rules = targetPaths.map(p => {
     try {
+      if (!isPathInAllowedRoots(p)) {
+        throw new Error(`路径不在 ALLOWED_PROJECT_PATHS 白名单内: ${p}`);
+      }
       return { project: p, ...inspectRulesDistribution(p) };
     } catch (e) {
       return {
