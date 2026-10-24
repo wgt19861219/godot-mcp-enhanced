@@ -202,3 +202,122 @@ describe('planReconcile', () => {
     expect(plan.newManifest.rules['pure.md'].hash).toBe(hashContent('新模板内容'));
   });
 });
+
+// ─── P1-2（2026-10-24 可靠性批）：content-drift 第五分类 + 项目级聚合 ─────────
+
+import { summarizeDistStatus } from '../../src/tools/rules-manifest.js';
+
+describe('classifyFile content-drift 维度（P1-2）', () => {
+  const disk = 'sha256:aaa';       // 磁盘内容 hash
+  const manifestHash = 'sha256:aaa'; // 与磁盘一致 → 用户未动过
+  const templateHash = 'sha256:bbb'; // 与 manifest 不同 → 内容指纹漂移
+
+  it('版本同 + 未动过 + manifest hash ≠ 模板 hash → content-drift（毒化指纹）', () => {
+    expect(classifyFile({
+      installedVersion: '0.36.1', serverVersion: '0.36.1',
+      diskHash: disk, manifestHash, templateHash,
+    })).toBe('content-drift');
+  });
+
+  it('版本同 + 未动过 + manifest hash = 模板 hash → latest（正常安装永不误报）', () => {
+    expect(classifyFile({
+      installedVersion: '0.36.1', serverVersion: '0.36.1',
+      diskHash: disk, manifestHash, templateHash: manifestHash,
+    })).toBe('latest');
+  });
+
+  it('templateHash 缺省 → 跳过 content-drift 维度（兼容旧调用,版本同+未动过=latest）', () => {
+    expect(classifyFile({
+      installedVersion: '0.36.1', serverVersion: '0.36.1',
+      diskHash: disk, manifestHash,
+    })).toBe('latest');
+  });
+
+  it('版本同 + 用户动过（disk ≠ manifest）→ local-modified 优先（用户改动不被毒化判定吞）', () => {
+    expect(classifyFile({
+      installedVersion: '0.36.1', serverVersion: '0.36.1',
+      diskHash: 'sha256:zzz', manifestHash, templateHash,
+    })).toBe('local-modified');
+  });
+
+  it('版本过时优先于 content-drift（版本推进是更强信号）', () => {
+    expect(classifyFile({
+      installedVersion: '0.36.0', serverVersion: '0.36.1',
+      diskHash: disk, manifestHash, templateHash,
+    })).toBe('pure-upgrade');
+  });
+});
+
+describe('planReconcile content-drift 行为（P1-2）', () => {
+  // 毒化场景复现:manifest 版本行 0.36.1,但安装时内容是 0.36.0 旧模板(旧进程写入)
+  const poisonedManifest = manifestAt('0.36.1', { 'ui.md': hashContent('0.36.0 旧模板') });
+
+  it('update 模式:content-drift → write 覆盖修复,hash/版本恢复与模板同源', () => {
+    const plan = planReconcile({
+      manifest: poisonedManifest,
+      serverVersion: '0.36.1',
+      diskFiles: [{ filename: 'ui.md', content: '0.36.0 旧模板' }],  // 磁盘==manifest → 用户未动过
+      currentTemplates: { 'ui.md': '0.36.1 新模板' },
+      mode: 'update',
+      now: '2026-10-24T12:00:00Z',
+    });
+    expect(plan.actions['ui.md'].classification).toBe('content-drift');
+    expect(plan.actions['ui.md'].action).toBe('write');
+    expect(plan.actions['ui.md'].newContent).toBe('0.36.1 新模板');
+    expect(plan.newManifest.rules['ui.md'].hash).toBe(hashContent('0.36.1 新模板'));
+  });
+
+  it('check 模式:content-drift 只报告不写(shouldWriteFiles=false)', () => {
+    const plan = planReconcile({
+      manifest: poisonedManifest,
+      serverVersion: '0.36.1',
+      diskFiles: [{ filename: 'ui.md', content: '0.36.0 旧模板' }],
+      currentTemplates: { 'ui.md': '0.36.1 新模板' },
+      mode: 'check',
+      now: '2026-10-24T12:00:00Z',
+    });
+    expect(plan.actions['ui.md'].classification).toBe('content-drift');
+    expect(plan.actions['ui.md'].action).toBe('keep');
+    expect(plan.shouldWriteFiles).toBe(false);
+  });
+
+  it('四种旧分类行为不变（回归锚点）', () => {
+    // 同一 manifest 下四文件分别落入四旧分类,行为与 P1-2 之前一致
+    const m = manifestAt('0.36.1', {
+      'latest.md': hashContent('模板 A'),
+      'local.md': hashContent('模板 A'),
+    });
+    m.rules_installed_at_version = '0.36.0';  // 过时态给 pure/stale 用 → 拆两个 manifest
+    const plan = planReconcile({
+      manifest: m,
+      serverVersion: '0.36.1',
+      diskFiles: [
+        { filename: 'latest.md', content: '模板 A' },    // 版本过时+未动 → pure-upgrade
+        { filename: 'local.md', content: '用户改过' },     // 版本过时+动过 → stale-and-modified
+      ],
+      currentTemplates: { 'latest.md': '模板 A', 'local.md': '模板 A' },
+      mode: 'update',
+      now: '2026-10-24T12:00:00Z',
+    });
+    expect(plan.actions['latest.md'].classification).toBe('pure-upgrade');
+    expect(plan.actions['latest.md'].action).toBe('write');
+    expect(plan.actions['local.md'].classification).toBe('stale-and-modified');
+    expect(plan.actions['local.md'].action).toBe('warn-keep');
+  });
+});
+
+describe('summarizeDistStatus 项目级聚合（P1-3/P1-4）', () => {
+  it('任一版本过时分类 → stale（优先级最高）', () => {
+    expect(summarizeDistStatus(['latest', 'pure-upgrade'])).toBe('stale');
+    expect(summarizeDistStatus(['stale-and-modified'])).toBe('stale');
+  });
+
+  it('无版本过时 + 任一 content-drift → content-drift', () => {
+    expect(summarizeDistStatus(['latest', 'content-drift'])).toBe('content-drift');
+  });
+
+  it('latest/local-modified 混合 → current（用户本地修改不算分发层过时）', () => {
+    expect(summarizeDistStatus(['latest', 'local-modified'])).toBe('current');
+    expect(summarizeDistStatus([])).toBe('current');
+  });
+});

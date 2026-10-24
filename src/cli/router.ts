@@ -9,7 +9,7 @@ const __cliDir = dirname(fileURLToPath(import.meta.url));
 const __rootDir = join(__cliDir, '..', '..');
 
 /** CLI 子命令清单(export 供 test/cli/router.test.ts 单一真相源引用,防硬编码漂移) */
-export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'uninstall', 'gif', 'web', 'daemon'] as const;
+export const SUBCOMMANDS = ['setup', 'configure', 'skills', 'doctor', 'init', 'dashboard', 'qa', 'install', 'uninstall', 'gif', 'web', 'daemon', 'rules'] as const;
 export type Subcommand = typeof SUBCOMMANDS[number];
 
 export function parseSubcommand(args: string[]): { subcommand: Subcommand; rest: string[] } | null {
@@ -111,6 +111,12 @@ export async function routeCommand(args: string[]): Promise<void> {
       await runUninstall(parsed.rest);
       break;
     }
+    case 'rules': {
+      // 2026-10-24 规则分发可靠性批 P2-1:批量分发(每次新起进程,免疫 MCP 旧进程毒化)
+      const { runRules } = await import('./rules.js');
+      await runRules(parsed.rest);
+      break;
+    }
   }
 }
 
@@ -178,6 +184,8 @@ godot-mcp-enhanced — Godot AI 开发环境
                                      --open 开面板,status --show-token 显示全量 token)。
                                      区分:web=单项目 Web 导出试玩;dashboard=stdio server 的监控面板;
                                      daemon=独立后台进程,面板与 /mcp 端点常驻
+  godot-mcp-enhanced rules --all    批量分发项目规则(--all 白名单 / --paths "a;b;c";
+                                     --mode check|update|overwrite;CLI 进程恒新,免疫旧进程毒化)
 
 MCP 参数:
   --profile=<name>  工具 profile (full/minimal/lite)

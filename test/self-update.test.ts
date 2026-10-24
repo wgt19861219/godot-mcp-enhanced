@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { getToolDefinitions, handleTool, TOOL_META } from '../src/tools/self-update.js';
+import { GODOT_MCP_RULES } from '../src/tools/claudemd-builder.js';
+import { hashContent } from '../src/tools/rules-manifest.js';
 import { _resetPathAllowWarned } from '../src/core/path-utils.js';
 import { isReadOnly } from '../src/core/tool-registry.js';
 import { registerAllModules } from '../src/module-loader.js';
@@ -168,5 +170,56 @@ describe('handleTool check hint（M7）', () => {
 describe('self_update 注册 + readOnly 锚点', () => {
   it('isReadOnly(self_update)===false（未误标 readonly:true，避免 update 绕过 readOnly 保护）', () => {
     expect(isReadOnly('self_update')).toBe(false);
+  });
+});
+
+// ─── P1-3（2026-10-24 可靠性批）：check 的规则分发状态巡检 ──
+
+describe('handleTool check — rules 分发状态三态 + 毒化检测', () => {
+  const tplContent = GODOT_MCP_RULES.replace(/\{\{MCP_VERSION\}\}/g, pkgVersion);
+
+  /** 造 fixture：.claude/rules/godot-mcp.md + manifest（给定安装版本与文件内容） */
+  function makeRulesFixture(installedVersion: string, fileContent: string): void {
+    mkdirSync(join(tmpProject, '.claude', 'rules'), { recursive: true });
+    writeFileSync(join(tmpProject, '.claude', 'rules', 'godot-mcp.md'), fileContent);
+    writeFileSync(join(tmpProject, '.claude', 'rules', '.godot-mcp-manifest.json'), JSON.stringify({
+      manifest_version: 1,
+      rules_installed_at_version: installedVersion,
+      installed_at: '2026-10-24T00:00:00Z',
+      rules: { 'godot-mcp.md': { source: 'base', hash: hashContent(fileContent) } },
+    }));
+  }
+
+  it('版本同 + 内容指纹一致 → current', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    makeRulesFixture(pkgVersion, tplContent);
+    const r = await handleTool('self_update', { action: 'check', project_path: tmpProject }, anyCtx);
+    const parsed = parse(r);
+    expect(parsed.data.rules[0].status).toBe('current');
+    expect(parsed.data.rules[0].installed_version).toBe(pkgVersion);
+  });
+
+  it('manifest 版本旧 → stale', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    makeRulesFixture('0.35.0', tplContent);
+    const r = await handleTool('self_update', { action: 'check', project_path: tmpProject }, anyCtx);
+    const parsed = parse(r);
+    expect(parsed.data.rules[0].status).toBe('stale');
+  });
+
+  it('版本行同但内容指纹不符 → content-drift（毒化检测）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    // 复现毒化形态：manifest 版本行 = 当前版本，但安装内容是旧模板（磁盘与 manifest 一致 → 用户未动过）
+    makeRulesFixture(pkgVersion, '0.36.0 旧模板内容');
+    const r = await handleTool('self_update', { action: 'check', project_path: tmpProject }, anyCtx);
+    const parsed = parse(r);
+    expect(parsed.data.rules[0].status).toBe('content-drift');
+  });
+
+  it('无 manifest → missing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ version: '0.36.1' }) }));
+    const r = await handleTool('self_update', { action: 'check', project_path: tmpProject }, anyCtx);
+    const parsed = parse(r);
+    expect(parsed.data.rules[0].status).toBe('missing');
   });
 });

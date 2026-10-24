@@ -4,11 +4,44 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, statSync, chmodSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
 // src/core/ → 上两级包根 → package.json
-const pkgVersion: string = require('../../package.json').version;
+// P0-1（2026-10-24 规则分发可靠性批）：固化版本单一来源化——模块加载时固化（与模板
+// GODOT_MCP_RULES/DETAILED_RULE_TEMPLATES 同源同岁），export 供 tools/cli 复用。
+// 毒化拦截的两侧读数之一（另一侧 readInstalledPkgVersion 运行时读磁盘）。
+export const PKG_VERSION: string = require('../../package.json').version;
+
+/** 运行时读磁盘包根 package.json 的 version（总反映"已安装的最新包"，与 PKG_VERSION
+ *  的进程固化值构成毒化拦截的两侧读数）。读失败返回 null（调用方跳过拦截，不阻断）。 */
+export function readInstalledPkgVersion(): string | null {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+    const v = JSON.parse(readFileSync(pkgPath, 'utf-8')).version;
+    return typeof v === 'string' && v ? v : null;
+  } catch { return null; }
+}
+
+/**
+ * P0 毒化拦截判定（纯函数，注入两侧值便于测试）：server 进程固化版本与磁盘包版本
+ * 不一致 = 进程启动早于包更新（npm update 后客户端未重启），此时分发规则/更新 addon
+ * 会写出"新版本号 + 旧内容"的毒化文件。不一致时返回用户可操作的修复指引。
+ */
+export function checkServerFresh(
+  residentVersion: string,
+  diskVersion: string,
+): { ok: true } | { ok: false; errorCode: 'SERVER_STALE'; message: string } {
+  if (residentVersion === diskVersion) return { ok: true };
+  return {
+    ok: false,
+    errorCode: 'SERVER_STALE',
+    message:
+      `MCP server 进程(${residentVersion})落后于已安装的包(${diskVersion})——进程启动早于包更新，` +
+      `此时操作会写入"新版本号+旧内容"的不一致文件。请重启 MCP 客户端(或重连 MCP)后重试。`,
+  };
+}
 
 const REGISTRY_URL = 'https://registry.npmjs.org/godot-mcp-enhanced/latest';
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -85,8 +118,8 @@ export async function checkForUpdateCached(opts?: { force?: boolean; cacheDir?: 
   const isUpdateCheckDisabled = /^(false|0|no|off)$/i.test(updateCheckEnv);
   if (!opts?.force && isUpdateCheckDisabled) {
     return {
-      current: pkgVersion,
-      latest: pkgVersion,
+      current: PKG_VERSION,
+      latest: PKG_VERSION,
       updateAvailable: false,
       fromCache: false,
     };
@@ -96,9 +129,9 @@ export async function checkForUpdateCached(opts?: { force?: boolean; cacheDir?: 
     const cached = readCache(cachePath);
     if (cached && Date.now() - cached.lastCheck < CACHE_TTL_MS) {
       return {
-        current: pkgVersion,
+        current: PKG_VERSION,
         latest: cached.latest,
-        updateAvailable: compareVersion(cached.latest, pkgVersion) > 0,
+        updateAvailable: compareVersion(cached.latest, PKG_VERSION) > 0,
         fromCache: true,
       };
     }
@@ -118,13 +151,13 @@ export async function checkForUpdateCached(opts?: { force?: boolean; cacheDir?: 
     }
   } catch { /* 网络/超时/解析失败静默 */ }
   if (latest == null) {
-    return { current: pkgVersion, latest: pkgVersion, updateAvailable: false, fromCache: false };
+    return { current: PKG_VERSION, latest: PKG_VERSION, updateAvailable: false, fromCache: false };
   }
   writeCache(cachePath, { lastCheck: Date.now(), latest });
   return {
-    current: pkgVersion,
+    current: PKG_VERSION,
     latest,
-    updateAvailable: compareVersion(latest, pkgVersion) > 0,
+    updateAvailable: compareVersion(latest, PKG_VERSION) > 0,
     fromCache: false,
   };
 }

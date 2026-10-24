@@ -1,6 +1,6 @@
 # self_update
 
-> 检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移（只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。
+> 检查/更新 enhanced 自身。check：查 npm 最新版 + 各项目 addon 版本漂移 + 规则分发状态（含 content-drift 毒化检测,只读）。update：更新指定项目 addon 到包版本（覆盖安装，需确认）。
 
 | 属性 | 值 |
 |------|-----|

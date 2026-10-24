@@ -26,12 +26,13 @@ export interface RulesManifest {
   rules: Record<string, RuleManifestEntry>;
 }
 
-/** 逐文件二维判定的四种分类（见 spec §3.3） */
+/** 逐文件二维判定的分类（原四种见 spec §3.3；第五种 content-drift 为 2026-10-24 可靠性批新增） */
 export type FileClassification =
   | 'pure-upgrade'          // 版本过时 + 用户未动过 → update 应覆盖
   | 'stale-and-modified'    // 版本过时 + 用户动过 → update 保留并警告
   | 'latest'                // 版本同 + 未动过 → 不动
-  | 'local-modified';       // 版本同 + 动过 → 保留并报告
+  | 'local-modified'        // 版本同 + 动过 → 保留并报告
+  | 'content-drift';        // 版本同 + 未动过 + manifest hash ≠ 当前进程模板 hash → 毒化指纹,update 覆盖修复
 
 /** reconcile 执行模式 */
 export type RulesMode = 'check' | 'update' | 'overwrite';
@@ -112,19 +113,27 @@ export interface ClassifyParams {
   diskHash: string;
   /** manifest 记录的安装时 hash */
   manifestHash: string;
+  /** 当前进程模板渲染内容的 hash（P1-2 content-drift 维度）。缺省时跳过该维度
+   *  （版本同+未动过 → latest），兼容不关心内容指纹的旧调用点。 */
+  templateHash?: string;
 }
 
 /**
  * 逐文件二维判定。版本与"是否动过"是两个独立维度，做笛卡尔积，不级联。
  * 级联会吞用户修改（见 spec §3.3 "为什么二维而非级联"）。
+ *
+ * P1-2（2026-10-24）：在"版本同 + 用户未动过"象限内细分 content-drift——manifest
+ * 记录的安装时 hash 与当前进程模板 hash 不符 = 版本行与内容同源关系断裂（旧进程毒化
+ * 写入，或跨版本同号）。该象限用户未动过，覆盖修复无吞改风险。
  */
 export function classifyFile(p: ClassifyParams): FileClassification {
   const versionStale = p.installedVersion !== p.serverVersion;
   const userModified = p.diskHash !== p.manifestHash;
   if (versionStale && !userModified) return 'pure-upgrade';
   if (versionStale && userModified) return 'stale-and-modified';
-  if (!versionStale && !userModified) return 'latest';
-  return 'local-modified';
+  if (!versionStale && userModified) return 'local-modified';
+  if (p.templateHash !== undefined && p.manifestHash !== p.templateHash) return 'content-drift';
+  return 'latest';
 }
 
 // ─── reconcile 规划（spec §3.3 + §3.4 + §3.6）─────────────────────────────────
@@ -163,11 +172,13 @@ export interface ReconcilePlan {
  *
  * 集成 classifyFile 的二维判定，按 mode 决策每个文件的动作：
  * - check：所有文件 action=keep，shouldWriteFiles=false
- * - update：pure-upgrade → write；stale-and-modified/local-modified → warn-keep（保留并警告）；latest → keep
+ * - update：pure-upgrade / content-drift → write；stale-and-modified/local-modified → warn-keep（保留并警告）；latest → keep
  * - overwrite：除 latest 外都 write（全覆盖）
  *
- * 关键不变式：update 模式下 stale-and-modified（版本过时 + 用户动过）的文件
- * 必须 warn-keep（保留 + 警告），绝不能 write —— 否则吞用户修改。
+ * 关键不变式：update 模式下 stale-and-modified（版本过时 + 用户动过）与
+ * local-modified（版本同 + 用户动过）的文件必须 warn-keep（保留 + 警告），
+ * 绝不能 write —— 否则吞用户修改。content-drift 只在"用户未动过"象限触发，
+ * 覆盖修复不与该不变式冲突（P1-2）。
  */
 export function planReconcile(p: PlanReconcileParams): ReconcilePlan {
   const actions: Record<string, FilePlan> = {};
@@ -178,18 +189,19 @@ export function planReconcile(p: PlanReconcileParams): ReconcilePlan {
     // manifest 没记录的文件（用户新增？）→ 视为 local-modified，保守不动
     const manifestHash = entry?.hash ?? '';
     const installedVersion = entry ? p.manifest.rules_installed_at_version : p.serverVersion;
+    const templateContent = p.currentTemplates?.[disk.filename];
     const classification = classifyFile({
       installedVersion,
       serverVersion: p.serverVersion,
       diskHash: hashContent(disk.content),
       manifestHash,
+      templateHash: templateContent !== undefined ? hashContent(templateContent) : undefined,
     });
 
     let action: FileAction = 'keep';
     let newContent: string | undefined;
     let resolvedHash = entry?.hash ?? hashContent(disk.content);
 
-    const templateContent = p.currentTemplates?.[disk.filename];
     if (p.mode === 'overwrite') {
       // 全覆盖（不管分类，除 latest 外都写；latest 写也无害但跳过省 IO）
       if (classification !== 'latest' && templateContent !== undefined) {
@@ -199,6 +211,12 @@ export function planReconcile(p: PlanReconcileParams): ReconcilePlan {
       }
     } else if (p.mode === 'update') {
       if (classification === 'pure-upgrade' && templateContent !== undefined) {
+        action = 'write';
+        newContent = templateContent;
+        resolvedHash = hashContent(templateContent);
+      } else if (classification === 'content-drift' && templateContent !== undefined) {
+        // P1-2：版本行相同但内容指纹不符（旧进程毒化写入/跨版本同号），用户未动过
+        // → 覆盖修复（等价 pure-upgrade 的覆盖行为），版本行与内容恢复同源。
         action = 'write';
         newContent = templateContent;
         resolvedHash = hashContent(templateContent);
@@ -229,4 +247,20 @@ export function planReconcile(p: PlanReconcileParams): ReconcilePlan {
     shouldWriteFiles: p.mode === 'update' || p.mode === 'overwrite',
     newManifest,
   };
+}
+
+// ─── 项目级分发状态聚合（P1-3/P1-4，2026-10-24 可靠性批）──────────────────────
+
+/** 项目级规则分发状态（self_update check / doctor / CLI rules 共用的报告粒度） */
+export type DistStatus = 'current' | 'stale' | 'content-drift';
+
+/**
+ * 由文件级分类聚合为项目单值状态。优先级：版本过时 > content-drift > current。
+ * local-modified（版本同 + 用户动过）计入 current——用户本地修改不影响
+ * "已分发到当前版本"的分发层事实，分发状态与用户改动是两个维度。
+ */
+export function summarizeDistStatus(classifications: FileClassification[]): DistStatus {
+  if (classifications.some(c => c === 'pure-upgrade' || c === 'stale-and-modified')) return 'stale';
+  if (classifications.some(c => c === 'content-drift')) return 'content-drift';
+  return 'current';
 }

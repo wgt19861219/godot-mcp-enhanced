@@ -1,9 +1,17 @@
-/** doctor 命令 — 环境诊断 */
+/** doctor 命令 — 环境诊断
+ *
+ * 领域壳合法例外（AGENTS.md「分层约束与全局状态规则」）：Rules distribution 段复用
+ * tools/project.ts 的 inspectRulesDistribution 巡检（与 server 分发同源判定），
+ * 先例 cli/qa.ts 之于 tools/qa/。CLI 每次新起进程,读到的模板/版本恒为磁盘最新
+ * （免疫 MCP 旧进程毒化）。
+ */
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { join, dirname, relative } from 'path';
 import { fileURLToPath } from 'url';
 import { findGodot, detectGodotVersion } from '../core/godot-finder.js';
+import { PKG_VERSION } from '../core/update-checker.js';
+import { inspectRulesDistribution, type RulesDistInfo } from '../tools/project.js';
 import { ALL_ADAPTERS } from './clients/index.js';
 import { readJsonForCheck } from './clients/json-config.js';
 
@@ -80,6 +88,32 @@ async function checkClientConfig(adapter: { name: string; isConfigured(projectDi
   } catch {
     return { ok: false, detail: 'config parse error (file may be corrupted)' };
   }
+}
+
+// ─── Rules distribution 报告行纯函数(2026-10-24 可靠性批,可单测) ─────────────
+
+/** 由 RulesDistInfo 生成报告行。mark 语义与 runDoctor 标记惯例对齐:
+ *  ok=✓(正常) / warn=!(non-blocking 提示) / na=⊘(不适用)。 */
+export function formatRulesDist(
+  dist: RulesDistInfo,
+  currentVersion: string,
+): { mark: 'ok' | 'warn' | 'na'; line: string } {
+  if (dist.status === 'current') {
+    return { mark: 'ok', line: `rules distribution current (v${dist.installed_version ?? '?'}, ${dist.files} files)` };
+  }
+  if (dist.status === 'stale') {
+    return {
+      mark: 'warn',
+      line: `rules STALE (installed ${dist.installed_version ?? '?'}, current ${currentVersion}) — 修复: npx godot-mcp-enhanced rules --paths <项目> 或 AI 会话 setup_project_rules(rules_mode=update)`,
+    };
+  }
+  if (dist.status === 'content-drift') {
+    return {
+      mark: 'warn',
+      line: `rules CONTENT-DRIFT (版本行 ${dist.installed_version ?? '?'} 但内容与模板指纹不符 — 疑似旧进程毒化写入) — 修复: AI 会话 setup_project_rules(rules_mode=update)`,
+    };
+  }
+  return { mark: 'na', line: `rules not distributed (${dist.detail ?? '未分发'}) — AI 会话 setup_project_rules 可生成` };
 }
 
 // ─── Bridge 脚本指纹检查纯函数(批次3 2026-10-04,可单测) ──────────────────────
@@ -236,6 +270,18 @@ export async function runDoctor(_args: string[]): Promise<void> {
       for (const f of result.missing) console.log(`      - ${f} (missing in project)`);
       for (const f of result.differing) console.log(`      ~ ${f} (content differs from upstream)`);
     }
+  }
+
+  // 5.7 Rules distribution(2026-10-24 可靠性批)——CLI 进程新起(读磁盘最新模板,
+  // 免疫 MCP 旧进程毒化),三态 + content-drift 毒化检测。warn 不 fail(对齐 Addons
+  // sync 语义:分发漂移是修复提示,非环境错误)。
+  console.log('\nRules distribution:');
+  try {
+    const dist = inspectRulesDistribution(projectDir);
+    const f = formatRulesDist(dist, PKG_VERSION);
+    console.log(f.mark === 'ok' ? status(true, f.line) : f.mark === 'warn' ? warn(f.line) : na(f.line));
+  } catch (e) {
+    console.log(na(`rules distribution check skipped (${e instanceof Error ? e.message : String(e)})`));
   }
 
   // 5.5 Bridge 脚本指纹(批次3 2026-10-04)——项目根 mcp_bridge.gd 与包内 bundled 的字节级
