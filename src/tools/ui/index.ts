@@ -163,7 +163,7 @@ export function getToolDefinitions(): Tool[] {
           expect_tree: { type: 'object', description: 'ui_measure_layout: 可选目标树(同 ui_build_layout tree,含 rect);提供时输出逐节点 diff/重叠/越界', additionalProperties: true },
           geometry: {
             type: 'object',
-            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline,{viewport,nodes},扁平视口坐标;与 geometry_path 二选一,同时给时本参优先;样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位(Panel/ProgressBar/Button/Label))',
+            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline,{viewport,nodes},扁平视口坐标;与 geometry_path 二选一,同时给时本参优先;样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color}+可选 perSides:{top,right,bottom,left} 四边各异信息→翻译器 warning,渲染仍取 top;top=0 其余边>0 时用 borderNotice 提示字段替代 border)→StyleBoxFlat 四控件槽位(Panel/ProgressBar/Button/Label))',
             additionalProperties: true,
           },
           geometry_path: { type: 'string', description: 'ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res:// 前缀;与 geometry 二选一)' },

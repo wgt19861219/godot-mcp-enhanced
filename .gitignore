@@ -91,3 +91,6 @@ test/fixtures/real-project/GeneratedAssets/
 
 # MCP 审计中间件在本仓根运行时的落盘(audit after-hook 产物),运行时生成不进 git
 .godot/
+
+# 集成测试运行时落盘目录(磁盘卫生规则:测试数据放项目内,收尾清理)
+test-output/

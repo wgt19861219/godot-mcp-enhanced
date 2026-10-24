@@ -1,5 +1,5 @@
 ---
-description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原 EditorInterface parse-safe singleton get_editor_interface 版本兼容 4.7"
+description: "godot-mcp 引擎陷阱 物理查询 碰撞体 ConcavePolygonShape3D CollisionLayer Mask ArrayMesh GenerateNormals GLB headless RID leak _Ready Free QueueFree Camera2D screenshot 截图 导航 bake shader compile_success MaterialOverride MultiMesh modulate self_modulate 级联 Label 垂直对齐 vertical_alignment 行高钳制 minimum_size ProgressBar 最小高 原型还原 EditorInterface parse-safe singleton get_editor_interface 版本兼容 4.7 StyleBoxFlat corner_radius clip_contents"
 alwaysApply: false
 ---
 
@@ -67,6 +67,8 @@ alwaysApply: false
 - **★ Label 垂直对齐默认 TOP，CSS line-height 居中惯用法失效**：CSS `line-height = height` 的文本垂直居中在 Godot 不成立——Label 默认 `vertical_alignment=0`(TOP)，单行文本会贴顶。需显式 `vertical_alignment=1`(CENTER)。`ui_import_prototype` 翻译器对全部 Label 已固定 `vertical_alignment:1`；手写 properties 时勿漏。关联：ui_build_layout/ui_create_control 文本节点、ui_import_prototype 翻译规则 3。
 - **Control 高度被字体最小行高钳制（minimum_size 顶开）**：Label/Button 的 rect.h 小于字体行高时，引擎 `Control.minimum_size` 把高度顶开到行高——**无警告静默变高**，verify 的 `dh` 会暴露（实际比目标高）。文本控件 rect.h 需 ≥ fontSize*1.5，或显式调小字号。`ui_import_prototype` 翻译器对 rect.h < fontSize*1.5 发 warning（"可能被字体最小行高钳制"）。关联：ui_import_prototype 行高预警、ui_measure_layout(layout_verify.diff 的 dh)。
 - **★ ProgressBar 默认主题最小高 27px（Godot 4.7，实测）**：默认主题 stylebox 把 ProgressBar 的 `Control.minimum_size` 顶到约 27px——原型 rect.h=16 落地实测 27px（2026-08-16 RTS HUD fixture HpBar 集成验收，dh=+11）。这是主题硬约束非 bug；处置：原型侧把 rect.h 调到 ≥27，或换自定义 Theme stylebox。`ui_import_prototype` 翻译器对 rect.h < 27 发 "will be clamped" warning（具名常量 PROGRESS_BAR_MIN_HEIGHT=27，**无条件**——实测 Godot 4.7.1 h=16：无 override→27、bg-only→23、fill-only→27、bg+fill→23，全组合被钳，override 只改变钳制值不消除钳制）。同类：Button 默认主题也有最小高约束。关联：ui_import_prototype 引擎下限预警、ui_set_theme。
+- **★ StyleBoxFlat 圆角是固定像素半径，不随 Control resize 重算**：控件被拉伸时半径不变、比例失真；非等比 `scale` 更会让圆角变椭圆。变通：① 容器自适应避免拉伸（ui.md「跨引擎迁移 UI 构建策略」） ② 四角独立用 `corner_radius_top_left` 等属性 ③ 需随尺寸等比缩放的圆角背景改 `StyleBoxTexture`/`NinePatchRect` 九宫格。
+- **★ Control 默认 `clip_contents=false`，不裁剪子树溢出**：内容超出背景框（跨引擎迁移症状②）的引擎侧根因之一；解法优先级：容器自适应（首选）> `clip_contents=true`（滚动区/动画溢出场景的兜底；静态布局开 clip 是掩盖布局错误）。
 
 ## 多人联机与弱网测试（network_conditioner / ENet peer / 多人 e2e）
 
@@ -79,3 +81,4 @@ alwaysApply: false
 - **★ 缺失的 engine class 方法在 parse 期即失败，has_method 守卫救不了**：GDScript 对 `EditorInterface.get_unsaved_scenes()` 这类**直接调用**做静态查找——方法在所用 Godot 构建里不存在时**整个 .gd 文件 parse 失败**（不是运行时才报错），`if EditorInterface.has_method(...)` 守卫写在同一文件里也一起死。新增 4.6+/4.7+ 才有的 API 调用必须改 `Object.call("...")` 字符串形式（parse-safe，运行时才解析）+ `has_method` 守卫做运行时优雅降级（yanhuifair v1.12.3 教训：`EditorInterface.call("get_unsaved_scenes")`）。支持矩阵 4.5–4.7：新增 API 先确认 4.5 已存在。
 - **EditorInterface 两种获取路径语义不同**：GDScript 全局名 `EditorInterface.xxx`（类型表达式路径，4.x 全版本可用）≠ `Engine.get_singleton("EditorInterface")`（运行时查找路径，**4.7 起返回 null**——不再注册为 Engine singleton）。插件内获取一律走 `EditorPlugin.get_editor_interface()`（本项目 `_get_ei()` 模式）；两者混用是 4.7 兼容 bug 的常见根源。
 - **改 addons 后必须跑 `npm run check:gdscript`（项目级完整编译）**：`validate_scripts` 是逐文件 parse，漏结构性 bug（缩进/块体）；跨版本验证跑双端 `GODOT_PATH=<4.5.x>` 与 `GODOT_PATH=<4.7.x>` 各一次。
+- **API/属性不确定存在性时先查再写**：用 docs 工具（find_method / get_class_info / search_classes）验证；docs 查不到 = 标 unverified 并告知用户，不凭训练记忆断言。需要钉版本时用 execute_gdscript 跑 Engine.get_version_info() 取实际引擎版本号再对照写法。项目自定义脚本类离线查询 fallback：execute_gdscript 里 load("res://...").new() 配 get_property_list()/get_script_method_list() 枚举。

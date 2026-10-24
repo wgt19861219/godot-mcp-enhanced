@@ -33,7 +33,14 @@ export interface GeometryNode {
   bg?: string | number[];
   fill?: string | number[];                                                    // PR-1:ProgressBar fill 槽色
   borderRadius?: number | { tl?: number; tr?: number; br?: number; bl?: number };  // PR-1:四角
-  border?: { width: number; color: string | number[] };                        // PR-1:统一四边
+  border?: {
+    width: number;
+    color: string | number[];
+    /** B1(2026-10-24):CSS 四边各异时由提取脚本附上(width 恒取 top 兼容);翻译器据此发 warning 消静默。 */
+    perSides?: { top: number; right: number; bottom: number; left: number };
+  };
+  /** B1(2026-10-24):top=0 且其余边>0 时提取脚本的提示字段(不产 border spec,防 draw_center=false 全透明回归),翻译器透传成 warning。 */
+  borderNotice?: string;
   align?: ProtoAlign;
   value?: number;
   flow?: 'row' | 'column';
@@ -107,9 +114,20 @@ const NodeSchema = z.strictObject({
     }),
   ]).optional(),
   border: z.strictObject({
-    width: z.number().finite().min(0),
+    // B1 I-1(审查回偿):width=0 语义即无边框(应省略 border 字段),positive 拒绝——
+    // 否则手写 geometry 显式 width:0 + 无 bg 会走 hasBorderish → draw_center=false 全透明(静默回归)
+    width: z.number().finite().positive(),
     color: ProtoColor,
+    // B1(2026-10-24):四边各异信息透传通道(strict schema 未知字段拒绝,须显式声明)
+    perSides: z.strictObject({
+      top: z.number().finite().min(0),
+      right: z.number().finite().min(0),
+      bottom: z.number().finite().min(0),
+      left: z.number().finite().min(0),
+    }).optional(),
   }).optional(),
+  // B1(2026-10-24):top=0 其余边>0 的提取侧提示字段(不产 border spec),翻译器透传 warning
+  borderNotice: z.string().optional(),
   align: z.enum(['left', 'center', 'right']).optional(),
   value: z.number().finite().min(0).max(1).optional(),
   flow: z.enum(['row', 'column']).optional(),
@@ -307,6 +325,18 @@ function buildSpec(
     if (rel.h < nd.fontSize * 1.5) {
       warnings.push(`节点 "${node.cleanName}": rect.h=${rel.h} < fontSize*1.5=${nd.fontSize * 1.5},可能被字体最小行高钳制`);
     }
+  }
+  // B1(border 四边各异消静默,2026-10-24):perSides 四边不全等时发 warning(仍取 top,
+  // 渲染行为不变,只消静默);top=0 其余边>0 时提取侧不发 border spec(防「有 border 无
+  // bg」分支 draw_center=false 全透明回归),borderNotice 提示在此透传成 warning。
+  if (nd.border?.perSides !== undefined) {
+    const ps = nd.border.perSides;
+    if (!(ps.top === ps.right && ps.right === ps.bottom && ps.bottom === ps.left)) {
+      warnings.push(`节点 "${node.cleanName}": border sides differ (top/right/bottom/left = ${ps.top}/${ps.right}/${ps.bottom}/${ps.left}); using top — fix source or verify visually`);
+    }
+  }
+  if (nd.borderNotice !== undefined) {
+    warnings.push(`节点 "${node.cleanName}": ${nd.borderNotice}`);
   }
   // PR-1 规则 9v2:样式三件套 → StyleBoxFlat(modulate 近似通道删除)。
   // (规则 7 曾依赖本段产出的 styleboxes 变量做条件预警,2026-08-17 实测后恢复无条件,不再依赖。)

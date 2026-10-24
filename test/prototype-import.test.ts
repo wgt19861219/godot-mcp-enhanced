@@ -618,6 +618,68 @@ describe('StyleBox 通道翻译(PR-1)', () => {
   });
 });
 
+// ─── B1: border 四边各异消静默(2026-10-24 UI 迁移构建侧整改方案 §四) ───────
+
+describe('border 四边各异消静默(B1)', () => {
+  it('perSides 四边各异 → warning 存在且 border_width 仍取 top(渲染行为不变)', () => {
+    const { tree, warnings } = tr(geo([n('BD', 0, 0, 60, 30, {
+      type: 'Panel', bg: '#111111',
+      border: { width: 2, color: '#7a8aab', perSides: { top: 2, right: 4, bottom: 6, left: 4 } },
+    })]));
+    const box = findNode(tree, 'BD')!.styleboxes![0]!.box;
+    expect(box.border_width).toBe(2);
+    expect(warnings.some(w => w.includes('BD') && w.includes('border sides differ')
+      && w.includes('2/4/6/4') && w.includes('using top'))).toBe(true);
+  });
+
+  it('perSides 四边全等 → 无 border sides differ warning', () => {
+    const { warnings } = tr(geo([n('BE', 0, 0, 60, 30, {
+      type: 'Panel', bg: '#111111',
+      border: { width: 2, color: '#7a8aab', perSides: { top: 2, right: 2, bottom: 2, left: 2 } },
+    })]));
+    expect(warnings.some(w => w.includes('border sides differ'))).toBe(false);
+  });
+
+  it('不带 perSides → 零变化(回归:border_width 正常产出、无 border warning)', () => {
+    const { tree, warnings } = tr(geo([n('BR', 0, 0, 60, 30, {
+      type: 'Panel', bg: '#111111', border: { width: 3, color: '#7a8aab' },
+    })]));
+    expect(findNode(tree, 'BR')!.styleboxes![0]!.box.border_width).toBe(3);
+    expect(warnings.some(w => w.includes('border sides differ'))).toBe(false);
+  });
+
+  it('top=0 其余边>0:borderNotice 透传成 warning,且不触发任何 stylebox override(防 draw_center=false 全透明回归)', () => {
+    // 无 bg + 仅 borderNotice(无 border/borderRadius)→ 不进 hasBorderish 分支 → 零 override;
+    // 若翻译器误把 borderNotice 算进 hasBorderish,将产出 draw_center=false 的 override,本断言变红
+    const { tree, warnings } = tr(geo([n('BN', 0, 0, 60, 30, {
+      type: 'Panel',
+      borderNotice: 'CSS border top=0 而其余边>0 (top/right/bottom/left = 0/0/2/0);Godot StyleBoxFlat 无按边 border,已不产 border spec——改为独立装饰线节点或源侧统一边框',
+    })]));
+    expect(findNode(tree, 'BN')!.styleboxes).toBeUndefined();
+    expect(warnings.some(w => w.includes('BN') && w.includes('top=0') && w.includes('不产 border spec'))).toBe(true);
+  });
+
+  it('显式 width:0 → schema 拒绝(I-1 防线:防「有 border 无 bg」走 draw_center=false 全透明静默回归)', () => {
+    expect(() => parseGeometry(geo([n('W0', 0, 0, 10, 10, {
+      type: 'Panel', border: { width: 0, color: '#ffffff' },
+    })]))).toThrow(/INVALID_PARAMS/);
+  });
+
+  it('parseGeometry:perSides 缺边/负值 → INVALID_PARAMS;borderNotice 非串 → INVALID_PARAMS', () => {
+    expect(() => parseGeometry(geo([n('M1', 0, 0, 10, 10, {
+      type: 'Panel',
+      border: { width: 1, color: '#ffffff', perSides: { top: 1, right: 1, bottom: 1 } as unknown as { top: number; right: number; bottom: number; left: number } },
+    })]))).toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('M2', 0, 0, 10, 10, {
+      type: 'Panel',
+      border: { width: 1, color: '#ffffff', perSides: { top: -1, right: 1, bottom: 1, left: 1 } },
+    })]))).toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('M3', 0, 0, 10, 10, {
+      type: 'Panel', borderNotice: 42 as unknown as string,
+    })]))).toThrow(/INVALID_PARAMS/);
+  });
+});
+
 // ─── PR-2 Task 2: flow_expect 产出 + fill-only 灰底 warning ────────────────
 
 describe('flow_expect(PR-2,spec §4.2)', () => {
