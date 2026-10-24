@@ -281,7 +281,7 @@ describe('planReconcile content-drift 行为（P1-2）', () => {
     expect(plan.shouldWriteFiles).toBe(false);
   });
 
-  it('四种旧分类行为不变（回归锚点）', () => {
+  it('pure-upgrade/stale-and-modified 旧行为不变（回归锚点;latest/local-modified 已在上文覆盖）', () => {
     // 同一 manifest 下四文件分别落入四旧分类,行为与 P1-2 之前一致
     const m = manifestAt('0.36.1', {
       'latest.md': hashContent('模板 A'),

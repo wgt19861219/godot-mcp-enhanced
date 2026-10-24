@@ -38,7 +38,9 @@ export function checkServerFresh(
     ok: false,
     errorCode: 'SERVER_STALE',
     message:
-      `MCP server 进程(${residentVersion})落后于已安装的包(${diskVersion})——进程启动早于包更新，` +
+      // 中性表述(审查 Nit-4):双向不等都拒绝,常见形态是进程旧于磁盘,但磁盘降级
+      // (resident > disk)时"落后"措辞与事实相反
+      `MCP server 进程固化版本(${residentVersion})与磁盘已安装的包(${diskVersion})不一致——` +
       `此时操作会写入"新版本号+旧内容"的不一致文件。请重启 MCP 客户端(或重连 MCP)后重试。`,
   };
 }

@@ -4091,7 +4091,7 @@
               "update",
               "overwrite"
             ],
-            "description": "规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时且未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改）",
+            "description": "规则文件 reconcile 模式：check（默认，只检测报告）/ update（覆盖版本过时与 content-drift 指纹不符且用户未动过的文件，保留用户动过的）/ overwrite（全覆盖含本地修改）",
             "default": "check"
           },
           "claude_md": {
@@ -4215,8 +4215,8 @@
       },
       "size": {
         "descBytes": 109,
-        "schemaBytes": 3071,
-        "totalBytes": 3180
+        "schemaBytes": 3107,
+        "totalBytes": 3216
       },
       "annotations": {
         "readOnlyHint": false,

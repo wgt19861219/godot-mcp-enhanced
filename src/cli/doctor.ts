@@ -272,18 +272,6 @@ export async function runDoctor(_args: string[]): Promise<void> {
     }
   }
 
-  // 5.7 Rules distribution(2026-10-24 可靠性批)——CLI 进程新起(读磁盘最新模板,
-  // 免疫 MCP 旧进程毒化),三态 + content-drift 毒化检测。warn 不 fail(对齐 Addons
-  // sync 语义:分发漂移是修复提示,非环境错误)。
-  console.log('\nRules distribution:');
-  try {
-    const dist = inspectRulesDistribution(projectDir);
-    const f = formatRulesDist(dist, PKG_VERSION);
-    console.log(f.mark === 'ok' ? status(true, f.line) : f.mark === 'warn' ? warn(f.line) : na(f.line));
-  } catch (e) {
-    console.log(na(`rules distribution check skipped (${e instanceof Error ? e.message : String(e)})`));
-  }
-
   // 5.5 Bridge 脚本指纹(批次3 2026-10-04)——项目根 mcp_bridge.gd 与包内 bundled 的字节级
   // 比对,与运行时 ping 的 scriptFingerprint 同源。版本号比对的盲区(手改/损坏但版本串未动)
   // 在此可见;warn 不 fail(同 Addons sync 语义)。
@@ -301,6 +289,18 @@ export async function runDoctor(_args: string[]): Promise<void> {
     console.log(warn('mcp_bridge.gd differs from bundled only by line endings (CRLF) — 解析无影响,但运行时 ping 指纹比对会报 fingerprintWarning;game_bridge_install force: true 可恢复字节一致'));
   } else {
     console.log(warn(`mcp_bridge.gd MODIFIED vs bundled (project sha256=${String(bridgeCheck.projectSha256).slice(0, 12)}…, bundled ${String(bridgeCheck.bundledSha256).slice(0, 12)}…) — 手改/损坏/旧版;game_bridge_install force: true + 重启游戏恢复发行版`));
+  }
+
+  // 5.7 Rules distribution(2026-10-24 可靠性批)——CLI 进程新起(读磁盘最新模板,
+  // 免疫 MCP 旧进程毒化),三态 + content-drift 毒化检测。warn 不 fail(对齐 Addons
+  // sync 语义:分发漂移是修复提示,非环境错误)。
+  console.log('\nRules distribution:');
+  try {
+    const dist = inspectRulesDistribution(projectDir);
+    const f = formatRulesDist(dist, PKG_VERSION);
+    console.log(f.mark === 'ok' ? status(true, f.line) : f.mark === 'warn' ? warn(f.line) : na(f.line));
+  } catch (e) {
+    console.log(na(`rules distribution check skipped (${e instanceof Error ? e.message : String(e)})`));
   }
 
   // 易用性批4:结尾一行下一步(两出口共享,弥补此前"满屏 ✗ 却不知道怎么办")
