@@ -7,6 +7,7 @@ import type { Tool, ServerContext } from "@modelcontextprotocol/server";
 import { inputRequired, acceptedContent } from "@modelcontextprotocol/server";
 import type { EditorToolExecutor } from './EditorToolExecutor.js';
 import { executeMiddleware, createRateLimitMiddleware, createElicitationMiddleware } from './middleware.js';
+import { createCircuitBreakerMiddleware } from './tool-circuit-breaker.js';
 import { createElicitFn, type ElicitFn } from './elicit.js';
 import { getCallRecorder, extractErrorMessage } from './call-recorder.js';
 import { HealthMonitor } from './health-monitor.js';
@@ -626,6 +627,13 @@ export class ToolDispatcher {
     mw.push(this._auditMiddleware());
 
     mw.push(createRateLimitMiddleware());
+
+    // 批 B3 (2026-10-26): 工具级失败熔断——同参数连续 3 败拒绝(rate-limit 之后:
+    // 频次超限的调用不该再被计入/触发熔断;elicitation 之前:缺参调用不是工具失败)。
+    // risk 查询接 tool-registry 的 getActionRisk,仅 write/destructive/process 生效。
+    mw.push(createCircuitBreakerMiddleware({
+      getActionRisk: (toolName, action) => getActionRisk(toolName, action),
+    }));
 
     // B2: 接线 elicitation 强制顶层 required 校验。elicitFn=createElicitFn()(GodotServer
     //     注入 server 后经 MCP elicitInput 协议问用户;未注入时降级纯 required 强制→
