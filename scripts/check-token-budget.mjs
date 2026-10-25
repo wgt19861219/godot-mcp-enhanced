@@ -32,7 +32,12 @@ export const THRESHOLDS = {
   // 同前例接受水位,warn 线校准至 116*1024=118784B(余量 3610B,二进制口径——注释里的
   // KB 一律按 1024 换算,防十进制误读);B4 outputSchema(+1350B,extract 口径含 outputSchema
   // 后实测 116524B)同批并入此水位。error 硬线不动。回弹语义保留。
-  totalSum:      { warn: 116 * 1024, error: 120 * 1024 },
+  // 批 A (2026-10-26, 竞品综述建议1): 描述压缩治理(全库 3 通用句式 61 处 + ui/game/qa/runtime/
+  // script/scene/workflow/validation/profiler/cpp/screenshot/animation/load-skill/data-import 等
+  // 顶层描述与 action 枚举导航瘦身,深层语义归规则文档)116975B→111778B(-5.2KB);剩余体积大头为
+  // schema 结构形状(enum/嵌套 properties,SSOT 防线不可砍)。warn 校准至 112*1024(余量 ~1.2KB,
+  // 沿瘦身即校准惯例);error 120KB 硬线不动。回弹语义保留。
+  totalSum:      { warn: 112 * 1024, error: 120 * 1024 },
 };
 
 /** @typedef {{name:string,size:{descBytes:number,schemaBytes:number,totalBytes:number}}} CapLike */
@@ -78,6 +83,7 @@ function main() {
   for (const t of top5) {
     console.log('  %s: desc %dB / schema %dB / total %dB', t.name, t.size.descBytes, t.size.schemaBytes, t.size.totalBytes);
   }
+  void printProfileExposure(projectRoot, tools);
 
   for (const w of warnings) console.warn('[token-budget] WARN: ' + w);
   for (const e of errors) console.error('[token-budget] ERROR: ' + e);
@@ -87,6 +93,31 @@ function main() {
     process.exit(1);
   }
   console.log('[token-budget] %d warning(s), 0 error — 通过', warnings.length);
+}
+
+/**
+ * 批 A (2026-10-26): per-profile 暴露量统计——按 PROFILES 展开组得到各 profile 实际暴露的
+ * tools/list 字节数(默认会话上下文成本可见,与 manage_tools profilePriceTags() 口径对齐)。
+ * matrix 仅含注册模块工具;dispatcher 内联推送的 confirm_and_execute 等 ALWAYS_ALLOWED 工具
+ * 不在 matrix,按 0B 计并在输出中注明。build 产物缺失时降级提示(先 npm run build)。
+ */
+async function printProfileExposure(projectRoot, tools) {
+  let registry;
+  try {
+    registry = await import(`file://${join(projectRoot, 'build', 'core', 'tool-registry.js').replace(/\\/g, '/')}`);
+  } catch {
+    console.log('[token-budget] per-profile: 跳过(build/core/tool-registry.js 不存在,先 npm run build)');
+    return;
+  }
+  const byName = new Map(tools.map(t => [t.name, t.size.totalBytes]));
+  console.log('[token-budget] per-profile 暴露量(仅注册模块工具,内联工具按 0B):');
+  for (const [profile, groups] of Object.entries(registry.PROFILES)) {
+    const toolNames = registry.expandGroups(groups);
+    let bytes = 0;
+    for (const n of toolNames) bytes += byName.get(n) ?? 0;
+    const known = [...toolNames].filter(n => byName.has(n)).length;
+    console.log('  %s %dB (~%d tokens), %d 工具(组: %s)', profile.padEnd(10), bytes, Math.round(bytes / 4), known, groups.join(','));
+  }
 }
 
 main();

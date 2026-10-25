@@ -297,7 +297,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -364,7 +364,7 @@ export function getToolDefinitions(): Tool[] {
             required: ['x', 'y', 'z'],
           },
           navigation_region: { type: 'string', description: 'query_path: NavigationRegion3D 节点路径（可选）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           // 2026-08-06 审查 P2：bake_mesh timeout 改可配（原硬编码 120s，大场景 bake 会超时 false-negative）
           timeout: { type: 'number', description: 'bake_mesh 烘焙超时秒数（默认 120，大场景可调至 600）' },
         },

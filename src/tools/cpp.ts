@@ -20,7 +20,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'cpp',
-      description: 'GDExtension (C++) 脚手架生成。scaffold_gdextension: 在 project_path 下生成完整可编译的 godot-cpp GDExtension 工程骨架（src/类.cpp/.h + register_types + SConstruct + .gdextension + .gitignore + README），不联网/不编译，对齐 godot-cpp 官方 example。',
+      description: 'GDExtension (C++) 脚手架生成。scaffold_gdextension: 在 project_path 下生成可编译的 godot-cpp GDExtension 工程骨架(src/类.cpp/.h + register_types + SConstruct + .gdextension + README),不联网/不编译。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -34,7 +34,7 @@ export function getToolDefinitions(): Tool[] {
           parent_class: { type: 'string', description: '父类（Godot 内置类白名单，默认 Node）', default: 'Node' },
           godot_version: {
             type: 'string',
-            description: 'Godot 版本（4.4–4.7。决定 godot-cpp clone ref 与 SConstruct api_version、.gdextension compatibility_minimum；4.6/4.7 走 godot-cpp master(v10)+api_version（无 godot-4.x-stable ref），4.4/4.5 用 godot-4.x-stable 分支。默认 4.7）',
+            description: 'Godot 版本(4.4–4.7,决定 godot-cpp clone ref 与 api_version/compatibility_minimum;4.6/4.7 走 godot-cpp master,4.4/4.5 用 godot-4.x-stable。默认 4.7)',
             default: '4.7',
             enum: ['4.4', '4.5', '4.6', '4.7'],
           },

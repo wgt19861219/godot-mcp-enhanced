@@ -91,11 +91,11 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'workflow',
-      description: '开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量脚本验证。create_files: 批量创建文件(支持自动验证 .gd)。run_verify: 批量运行 headless 验证场景。diff_scenes: 比较两个场景文件差异。',
+      description: '开发工作流工具。dev_loop: 执行 GDScript+可选验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 场景树快照。batch_validate: 批量脚本验证。create_files: 批量建文件(自动验证 .gd)。run_verify: 批量 headless 验证。diff_scenes: 场景差异。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -205,7 +205,7 @@ export function getToolDefinitions(): Tool[] {
           // SSOT-DELEGATE: src/tools/batch-tools.ts —— 声明这些参数的 handler 读取发生在
           // 被委托文件(check-ssot-params.mjs 按此标记把目标文件键池并入本文件对账)。
           ...BATCH_ACTION_PARAMS,
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },

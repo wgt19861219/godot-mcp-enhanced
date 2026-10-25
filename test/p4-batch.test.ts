@@ -52,12 +52,14 @@ describe('P4-1: game 描述瘦身', () => {
     expect(BRIDGE_RULES).toContain('button_mask 1=left/2=right/4=middle');
   });
 
-  it('SLIM-c: 守卫收紧——totalSum warn 线(B1 校准 116KB)+ SLIM_CONFIG 死配置标注', () => {
+  it('SLIM-c: 守卫收紧——totalSum warn 线(批 A 校准 112KB)+ SLIM_CONFIG 死配置标注', () => {
     // P4 定 95KB(瘦身后 ~90KB);P8(热加载/SSOT 描述)+P9(dap 工具 3.4KB)正当增量推至
     // ~103.9KB 越线——P9 (2026-09-12) 校准 105KB(审查 N-5 记录);易用性批 1 (2026-09-19)
     // action 描述补全等正当增量推至 ~110.8KB——校准 112KB;B1 (2026-10-19) find_ui_elements
     // role/match 参数增量推至 ~112.5KB——校准 116KB,回弹语义保留
-    expect(BUDGET_MJS).toContain('warn: 116 * 1024');
+    // 批 A (2026-10-26, 竞品综述建议1) 描述压缩治理 116975→~111.8KB(-5.2KB)——
+    // 校准 116→112KB(瘦身即校准惯例),回弹语义保留
+    expect(BUDGET_MJS).toContain('warn: 112 * 1024');
     // B-1 勘误锚:slim 对 ui 实际生效(阈值判断在变换前),防"产物值当触发输入"口径错误回潮
     expect(MODULE_LOADER).toContain('slim 对 ui **实际生效**');
   });

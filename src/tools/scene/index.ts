@@ -32,15 +32,15 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'scene',
-      description: '场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源: save_scene, load_sprite。查询: query_scene_tree, inspect_node。实例: instance_scene, set_instance_property, detach_instance。详细用法: help 工具。',
+      description: '场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源/查询/实例: save_scene, load_sprite, query_scene_tree, inspect_node, instance_scene 等。详见 help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。read_scene/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit_node/remove_node=编辑删除, save_scene/open_scene=保存打开, instance_scene/set_instance_property/detach_instance=实例化, load_sprite=贴图加载, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交',
+            description: '操作类型。read/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit/remove_node=编辑删除, save/open_scene=保存打开, instance_*=实例化, load_sprite=贴图, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交',
           },
           scene_path: { type: 'string', description: '场景路径（read_scene 用绝对路径，其余用相对项目路径）' },
           summary_only: { type: 'boolean', description: 'read_scene: 返回摘要而非完整 JSON' },
@@ -75,7 +75,7 @@ export function getToolDefinitions(): Tool[] {
           instance_path: { type: 'string', description: '要实例化的场景（res://…tscn）' },
           property: { type: 'string', description: 'set_instance_property: 属性名' },
           value: { description: '属性值（set_instance_property）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           // create_3d_node 参数
           type: { type: 'string', description: '类型（create_3d_node，白名单）' },
           name: { type: 'string', description: '名称（create_3d_node）' },
@@ -115,7 +115,7 @@ export function getToolDefinitions(): Tool[] {
           },
           save: { type: 'boolean', description: 'commit: 是否保存到文件（默认 true）' },
           stop_on_error: { type: 'boolean', description: '遇错是否停止（默认 true;false 时失败不阻止后续与 .tres 写盘）' },
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },

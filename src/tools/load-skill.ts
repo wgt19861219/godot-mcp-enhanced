@@ -10,7 +10,7 @@ export function getToolDefinitions(): Tool[] {
     {
       name: 'load_skill',
       description:
-        '从本地知识库(GodotPrompter/gd-agentic 等)按关键词检索 SKILL.md。两级检索:name/description 高精度→全文 fallback。返回带来源标注(source/path)和相关性 score 的匹配。缺失库进 missing_libraries 不报错。',
+        '从本地知识库(GodotPrompter/gd-agentic 等)按关键词检索 SKILL.md。两级检索:name/description 高精度→全文 fallback;返回带来源标注(source/path)与 score;缺失库进 missing_libraries 不报错。',
       inputSchema: {
         type: 'object' as const,
         properties: {

@@ -30,18 +30,18 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'ui',
-      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set_layout, ui_get_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;bg/fill/borderRadius/border→StyleBoxFlat,落盘 theme_override_styles/<slot>;返回 style_verify 逐槽位样式 diff/flow_verify flow 直接子层 rect diff)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗,几何+style_verify 全绿后跑一次)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。${NON_PERSIST}`,
+      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。${NON_PERSIST}`,
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。ui_build_layout=CSS 布局翻译构建(推荐), ui_import_prototype=原型导入, ui_pixel_verify=像素验证, ui_create_control/container_add/anchor_preset=控件, ui_set/get/measure_layout=布局, ui_draw_recipe=绘制, theme_*=主题',
+            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, draw_recipe=绘制, theme_*=主题',
           },
-          scene_path: { type: 'string', description: '场景路径（相对项目路径）。ui_set_theme/theme_set_property 可选;ui_pixel_verify: 必填,已构建场景(ui_import_prototype persist 产物)' },
-          node_path: { type: 'string', description: '节点路径（ui_set_layout/ui_get_layout/ui_anchor_preset/ui_set_theme/ui_container_add/ui_draw_recipe）' },
+          scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景)' },
+          node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe）' },
           node_type: {
             type: 'string',
             enum: [...CONTROL_TYPES],
@@ -163,15 +163,15 @@ export function getToolDefinitions(): Tool[] {
           expect_tree: { type: 'object', description: 'ui_measure_layout: 可选目标树(同 ui_build_layout tree,含 rect);提供时输出逐节点 diff/重叠/越界', additionalProperties: true },
           geometry: {
             type: 'object',
-            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline,{viewport,nodes},扁平视口坐标;与 geometry_path 二选一,同时给时本参优先;样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color}+可选 perSides:{top,right,bottom,left} 四边各异信息→翻译器 warning,渲染仍取 top;top=0 其余边>0 时用 borderNotice 提示字段替代 border)→StyleBoxFlat 四控件槽位(Panel/ProgressBar/Button/Label))',
+            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;perSides 单边差异等细节见规则文档',
             additionalProperties: true,
           },
-          geometry_path: { type: 'string', description: 'ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res:// 前缀;与 geometry 二选一)' },
+          geometry_path: { type: 'string', description: 'ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一)' },
           tolerance: { type: 'number', description: 'ui_import_prototype: layout_verify 容差(px,默认 2)' },
-          parent_path: { type: 'string', description: 'ui_build_layout: 父节点路径;ui_import_prototype: 须为原点对齐(global_position≈0,0)的节点,默认 root——非原点挂载时 layout_verify 根级条目期望按视口原点求解,根级 diff 恒误报' },
+          parent_path: { type: 'string', description: 'ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报' },
           tree: {
             type: 'object',
-            description: 'ui_build_layout: UI 节点树（最大深度 10）;节点可带 styleboxes: [{slot: panel|normal|background|fill|hover|pressed|disabled, box: {bg_color:[r,g,b,a]0-1, corner_radius: 数值或{tl,tr,br,bl}, border_width, border_color, draw_center}}]→add_theme_stylebox_override(StyleBoxFlat)',
+            description: 'ui_build_layout: UI 节点树(最大深度 10);节点可带 styleboxes:[{slot: panel|normal|background|fill|hover|pressed|disabled, box: {bg_color:[r,g,b,a]0-1, corner_radius: 数值或{tl,tr,br,bl}, border_width, border_color, draw_center}}]→add_theme_stylebox_override',
             properties: {
               type: { type: 'string', enum: [...CONTROL_TYPES], description: 'Control 子类' },
               name: { type: 'string', description: '节点名称' },
@@ -215,10 +215,10 @@ export function getToolDefinitions(): Tool[] {
             },
             required: ['type', 'name'],
           },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           viewport: {
             type: 'object',
-            description: 'ui_build_layout: 根节点 rect 的求解基准 {w, h}(默认 1280x720,须为正数;与项目 display/window/size 一致时根 rect 即视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport',
+            description: 'ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport',
             properties: { w: { type: 'number', description: '宽(px)' }, h: { type: 'number', description: '高(px)' } },
           },
           persist: { type: 'boolean', description: 'ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）' },

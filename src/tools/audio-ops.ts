@@ -134,7 +134,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -148,7 +148,7 @@ export function getToolDefinitions(): Tool[] {
           from_position: { type: 'number', description: 'play: 从指定位置开始播放（秒）' },
           param: { type: 'string', enum: ['volume_db', 'pitch_scale', 'bus'], description: 'set_param: 参数名' },
           value: { description: 'set_param: 参数值（number for volume_db/pitch_scale, string for bus）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

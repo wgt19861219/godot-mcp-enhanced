@@ -107,7 +107,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'runtime',
-      description: '启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project 关键参数: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=预览模式窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详细用法: help 工具。',
+      description: '启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详见 help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -116,20 +116,20 @@ export function getToolDefinitions(): Tool[] {
             enum: ['launch_editor', 'run_project', 'stop_project', 'get_debug_output', 'run_tests', 'get_godot_version', 'record_start', 'record_stop', 'record_save', 'record_load', 'record_play'],
             description: '操作类型。launch_editor=开编辑器, run_project/stop_project=运行/停止游戏, get_debug_output=取调试输出, run_tests=跑测试, get_godot_version=查版本, record_*=录制回放(start/stop/save/load/play)',
           },
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶' },
-          timeout: { type: 'number', description: '自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）', default: 30 },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）。多项目并行按项目分桶(同项目重跑互杀,跨项目并存);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他会话桶' },
+          timeout: { type: 'number', description: '自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)', default: 30 },
           wait_for_bridge: { type: 'boolean', default: false, description: 'true 时 spawn 后轮询 bridge 就绪(默认 false,向后兼容)' },
-          profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置;之后用 profiler 工具 action=capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
+          profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置,之后用 profiler capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
           bridge_timeout: { type: 'number', default: 10, description: 'wait_for_bridge 轮询总预算(秒,默认 10)' },
-          preview: { type: 'boolean', default: false, description: '预览模式:禁用自动停止,游戏窗口常驻,用户关闭窗口即结束验证。适用于 AI 改完代码/场景后的人工视觉验证(替代打开编辑器)。默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则说明)' },
+          preview: { type: 'boolean', default: false, description: '预览模式:禁用自动停止,游戏窗口常驻,用户关窗即结束(AI 改完代码/场景后的人工视觉验证);默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则)' },
           test_script: { type: 'string', description: '测试脚本或目录路径（默认 res://test/）', default: 'res://test/' },
           quit_flag: { type: 'string', enum: ['gquit', 'gexit'], default: 'gquit', description: 'run_tests 的 GUT 退出标志。默认 gquit(GUT ≤9.5);GUT 9.6+ 移除 -gquit(报 Unknown arguments: -gquit)时切 gexit' },
           // ── Recording parameters (merged, v0.18.0) ──
           events_json: { type: 'string', description: '录制：JSON 格式的事件序列字符串' },
           file_name: { type: 'string', description: '录制保存:始终自动命名 recording_YYYYMMDD_HHmmss.json(file_name 入参被忽略);但 file_name 须匹配 recording_*.json 格式(否则 INVALID_FILE_NAME),禁止含 / \\\\ ..' },
           speed: { type: 'number', description: '录制：回放速度倍率（默认 1.0）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },
