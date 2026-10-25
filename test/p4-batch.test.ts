@@ -37,7 +37,8 @@ describe('P4-1: game 描述瘦身', () => {
     // TMXYH5 反馈落地)后实测 9004——锚校准 9200(同款正当功能增量)
     // B1 (2026-10-19) find_ui_elements 加 role/match 两参数(语义查询增强)后实测 9699——
     // 锚校准 9800(同款正当功能增量,描述已精简一轮)
-    expect(schemaBytes).toBeLessThan(9800);
+    // 批 A (2026-10-26) 描述压缩治理(竞品综述建议1)后实测 8000——锚校准 8200(瘦身即校准惯例)
+    expect(schemaBytes).toBeLessThan(8200);
     expect(def!.description).toContain('见规则文档');
     const methodDesc = (def!.inputSchema as { properties: { method: { description: string } } }).properties.method.description;
     const paramsDesc = (def!.inputSchema as { properties: { params: { description: string } } }).properties.params.description;
