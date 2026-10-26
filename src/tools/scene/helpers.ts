@@ -14,6 +14,8 @@ export const ACTIONS = [
   'health_check',
   'merge_scene',
   'create_3d_node', 'commit',
+  // 批 B2 (2026-10-26): commit 的 restore point 作用域回滚(对标 Unreal_mcp 685e59cd)
+  'commit_restore', 'commit_restore_list',
 ] as const;
 
 /** Validate that a value is a non-empty string; returns opsErrorResult if not. */

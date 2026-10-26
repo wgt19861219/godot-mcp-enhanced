@@ -915,3 +915,128 @@ function serializeGdValue(value: unknown): string {
 
   return String(value);
 }
+
+// ─── 批 B1 (2026-10-26): dry_run 只读探测生成器 ──────────────────────────────
+// 对标 Unreal_mcp 8dd2cbc5 "checks every step before running one":commit 的
+// dry_run=true 走本生成器——headless load 场景后逐 op 只读探测(节点存在性/
+// TileSet 资源存在性/layer 索引越界),不 set 不 save 不写盘;执行计划与问题
+// 清单经 VALIDATE_RESULT marker 返回,handler 侧解析并附 would_write 文件清单。
+// 探测面与执行侧守卫链互补:TS 静态校验(validateCommitOperations,类型/形状)
+// + 本探测(引擎级存在性/越界)+ 执行守卫(逐 op 精确错误)。探测不追求覆盖
+// 全部执行守卫分支(如 source/atlas/has_tile 级检查),只做高价值三类。
+
+export const VALIDATE_RESULT_MARKER = 'VALIDATE_RESULT: ';
+
+const TILE_NODE_OPS: ReadonlySet<string> = new Set(['tile_set', 'tile_fill', 'tile_erase', 'tile_clear', 'tileset_assign']);
+
+/** layer 越界探测映射:op → { 索引字段, TileSet 层计数方法, 标签 }。 */
+const LAYER_PROBES: Record<string, { field: string; countMethod: string; label: string }> = {
+  tileset_physics_layer_set:    { field: 'layer',            countMethod: 'get_physics_layers_count',      label: 'physics layer' },
+  tileset_physics_layer_remove: { field: 'layer',            countMethod: 'get_physics_layers_count',      label: 'physics layer' },
+  tile_collision_set:           { field: 'physics_layer',    countMethod: 'get_physics_layers_count',      label: 'physics layer' },
+  tile_collision_clear:         { field: 'physics_layer',    countMethod: 'get_physics_layers_count',      label: 'physics layer' },
+  tile_navigation_set:          { field: 'navigation_layer', countMethod: 'get_navigation_layers_count',   label: 'navigation layer' },
+  tile_custom_data_set:         { field: 'layer',            countMethod: 'get_custom_data_layers_count',  label: 'custom data layer' },
+};
+
+export function generateValidateScript(scenePath: string, operations: CommitOperation[]): string {
+  const sp = escapeForGdLiteral(scenePath);
+  const blocks: string[] = [];
+  for (let i = 0; i < operations.length; i++) {
+    blocks.push(generateProbeBlock(i, operations[i]!));
+  }
+  return `extends SceneTree
+
+var _issues = []
+
+func _probe(i: int, code: String, msg: String):
+\t_issues.append({"op_index": i, "code": code, "message": msg})
+
+func _initialize():
+\tvar scene = load("${sp}")
+\tif scene == null:
+\t\t_probe(-1, "SCENE_LOAD_FAILED", "Failed to load scene: ${sp}")
+\t\tprint("VALIDATE_RESULT: " + JSON.stringify({"ok": false, "issues": _issues}))
+\t\tquit()
+\t\treturn
+\tvar inst = scene.instantiate()
+${blocks.join('\n')}
+\tprint("VALIDATE_RESULT: " + JSON.stringify({"ok": _issues.is_empty(), "issues": _issues}))
+\tquit()
+`;
+}
+
+function generateProbeBlock(idx: number, op: CommitOperation): string {
+  // CommitOperation 是 discriminated union;探测面跨类型访问经 Record 视图
+  // (字段存在性/类型已由 validateCommitOperations 的 F-5 守卫保证)。
+  const o = op as unknown as Record<string, unknown>;
+  const parts: string[] = [];
+  const v = `_${idx}`;
+
+  // 1) tile 操作的节点存在性 + 类型
+  if (TILE_NODE_OPS.has(op.op) && typeof o.node_path === 'string' && o.node_path) {
+    const np = escapeForGdLiteral(o.node_path);
+    parts.push(
+`	# --- probe ${idx}: ${op.op} node ---
+	var ${v}n = inst.get_node_or_null("${np}")
+	if ${v}n == null:
+		_probe(${idx}, "NODE_NOT_FOUND", "op=${op.op}: node not found: ${np}")
+	elif not (${v}n is TileMap or ${v}n is TileMapLayer):
+		_probe(${idx}, "NODE_TYPE_MISMATCH", "op=${op.op}: node is " + str(${v}n.get_class()) + ", expected TileMap/TileMapLayer")`,
+    );
+  }
+
+  // 2) TileSet 资源存在性(+ 可选 layer 越界)
+  const layerProbe = LAYER_PROBES[op.op];
+  const needsTileset = TILESET_RESOURCE_OPS.has(op.op) || op.op === 'tileset_assign';
+  if (needsTileset && typeof o.tileset_path === 'string' && o.tileset_path) {
+    const tsp = escapeForGdLiteral(o.tileset_path);
+    const idxExpr = layerProbe ? o[layerProbe.field] : undefined;
+    const layerCheck = (layerProbe && typeof idxExpr === 'number')
+      ? `
+		else:
+			if ${v}ts.${layerProbe.countMethod}() <= ${idxExpr}:
+				_probe(${idx}, "LAYER_OUT_OF_RANGE", "op=${op.op}: ${layerProbe.label} ${idxExpr} >= count " + str(${v}ts.${layerProbe.countMethod}()))`
+      : '';
+    parts.push(
+`	# --- probe ${idx}: ${op.op} tileset ---
+	if not ResourceLoader.exists("${tsp}"):
+		_probe(${idx}, "TILESET_NOT_FOUND", "op=${op.op}: tileset resource not found: ${tsp}")
+	else:
+		var ${v}ts = load("${tsp}")
+		if ${v}ts == null:
+			_probe(${idx}, "TILESET_LOAD_FAILED", "op=${op.op}: tileset failed to load: ${tsp}")${layerCheck}`,
+    );
+  }
+
+  // 3) node_add 的父节点存在性('root'/'.' 语义与执行侧一致,'.' 命中根)
+  if (op.op === 'node_add' && typeof o.parent === 'string' && o.parent) {
+    const pp = escapeForGdLiteral(o.parent);
+    if (o.parent !== '.' && o.parent !== 'root') {
+      parts.push(
+`	# --- probe ${idx}: node_add parent ---
+	var ${v}p = inst.get_node_or_null("${pp}")
+	if ${v}p == null:
+		_probe(${idx}, "PARENT_NOT_FOUND", "op=node_add: parent not found: ${pp}")`,
+      );
+    }
+  }
+
+  // 4) node_property 的目标节点存在性
+  if (op.op === 'node_property' && typeof o.path === 'string' && o.path) {
+    const np = escapeForGdLiteral(o.path);
+    parts.push(
+`	# --- probe ${idx}: node_property path ---
+	var ${v}t = inst.get_node_or_null("${np}")
+	if ${v}t == null:
+		_probe(${idx}, "NODE_NOT_FOUND", "op=node_property: node not found: ${np}")`,
+    );
+  }
+
+  if (parts.length === 0) {
+    // 无探测面的 op(如 *_add 类无索引)显式标注已过探测,保持逐 op 对齐
+    return `	# --- probe ${idx}: ${op.op} (no probeable preconditions) ---`;
+  }
+  return parts.join('\n');
+}
+

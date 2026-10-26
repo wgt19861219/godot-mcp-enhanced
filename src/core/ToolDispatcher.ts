@@ -622,18 +622,20 @@ export class ToolDispatcher {
       },
     });
 
+    // 批 B3 (2026-10-26): 工具级失败熔断——同参数连续 3 败拒绝。插位约束(顺序锁
+    // ToolDispatcher.test.ts「audit 是最后一个带 after 的 hook」):本 middleware 带
+    // after(记录成败),必须在 audit 之前;且在 healthSample 之后(其 after 会把逻辑
+    // 失败补打 isError,熔断判定依赖)。before 链序:熔断检查先于 audit/rate-limit——
+    // 频次超限或熔断拒绝的调用仍会进 audit(失败可审计)。
+    mw.push(createCircuitBreakerMiddleware({
+      getActionRisk: (toolName, action) => getActionRisk(toolName, action),
+    }));
+
     // IMPORTANT-5: 全局 rate limit(防 AI 失控循环耗尽资源)。默认 60 次/秒软限。
     // W6 批3: audit middleware 抽 _auditMiddleware 工厂(纯搬移;顺序约定见其 docstring)
     mw.push(this._auditMiddleware());
 
     mw.push(createRateLimitMiddleware());
-
-    // 批 B3 (2026-10-26): 工具级失败熔断——同参数连续 3 败拒绝(rate-limit 之后:
-    // 频次超限的调用不该再被计入/触发熔断;elicitation 之前:缺参调用不是工具失败)。
-    // risk 查询接 tool-registry 的 getActionRisk,仅 write/destructive/process 生效。
-    mw.push(createCircuitBreakerMiddleware({
-      getActionRisk: (toolName, action) => getActionRisk(toolName, action),
-    }));
 
     // B2: 接线 elicitation 强制顶层 required 校验。elicitFn=createElicitFn()(GodotServer
     //     注入 server 后经 MCP elicitInput 协议问用户;未注入时降级纯 required 强制→

@@ -107,6 +107,9 @@ export function createCircuitBreakerMiddleware(opts: CircuitBreakerOptions = {})
   /** 熔断只关心写类 action;action 缺失时用 '_' 占位保持 key 形状稳定。 */
   const isBreakable = (ctx: DispatchContext): boolean => {
     if (!isFeatureEnabled('TOOL_CIRCUIT_BREAKER')) return false;
+    // 批 B1 (2026-10-26): dry_run 只读预检不熔(与 guard.ts requiresConfirmation 的
+    // 同款豁免对齐)——预检就是要反复试探的场景。
+    if (ctx.args?.dry_run === true) return false;
     const action = typeof ctx.args?.action === 'string' ? ctx.args.action
       : typeof ctx.args?.method === 'string' ? ctx.args.method
       : '_';

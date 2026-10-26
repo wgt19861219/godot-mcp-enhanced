@@ -1,5 +1,5 @@
 {
-  "version": "0.36.1",
+  "version": "0.36.2",
   "tools": [
     {
       "name": "analysis",
@@ -4665,9 +4665,11 @@
               "health_check",
               "merge_scene",
               "create_3d_node",
-              "commit"
+              "commit",
+              "commit_restore",
+              "commit_restore_list"
             ],
-            "description": "操作类型。read/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit/remove_node=编辑删除, save/open_scene=保存打开, instance_*=实例化, load_sprite=贴图, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交"
+            "description": "操作类型。read/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit/remove_node=编辑删除, save/open_scene=保存打开, instance_*=实例化, load_sprite=贴图, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交, commit_restore(_list)=提交还原点恢复/列表"
           },
           "scene_path": {
             "type": "string",
@@ -4918,6 +4920,15 @@
             "type": "boolean",
             "description": "遇错是否停止（默认 true;false 时失败不阻止后续与 .tres 写盘）"
           },
+          "dry_run": {
+            "type": "boolean",
+            "description": "commit: 只读预检（默认 false）——不执行变更不写盘,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan/issues/would_write;免确认",
+            "default": false
+          },
+          "restore_point_id": {
+            "type": "string",
+            "description": "commit_restore: 目标还原点 id(来自 commit 结果的 restore_point 字段或 commit_restore_list)"
+          },
           "godot_path": {
             "type": "string",
             "description": "Godot 路径覆盖（可选，优先于配置/env）"
@@ -4959,6 +4970,8 @@
         "operations",
         "save",
         "stop_on_error",
+        "dry_run",
+        "restore_point_id",
         "godot_path"
       ],
       "readonly": false,
@@ -4966,8 +4979,8 @@
       "guarded": true,
       "securityLevel": "danger-api",
       "riskDistribution": {
-        "read": 4,
-        "write": 13,
+        "read": 5,
+        "write": 14,
         "destructive": 2,
         "process": 0
       },
@@ -4994,8 +5007,8 @@
       },
       "size": {
         "descBytes": 258,
-        "schemaBytes": 6263,
-        "totalBytes": 6521
+        "schemaBytes": 6730,
+        "totalBytes": 6988
       },
       "annotations": {
         "readOnlyHint": false,

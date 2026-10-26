@@ -5,10 +5,10 @@
 ## 概览
 - 工具总数：46
 - securityLevel：danger-api 11 / guarded 24 / safe 11
-- risk：read 131 / write 115 / destructive 10 / process 16
+- risk：read 132 / write 116 / destructive 10 / process 16
 - L2 覆盖：covered 0 / partial 0 / none 46
   - ⚠ 占位说明：L2 列为提取器占位（`src/capability/extract.ts` 硬编码 `l2:'none'`），未接线 CI e2e 映射，**不代表真实覆盖为零**（CI 实际跑 16 个 L2 e2e 文件，见 `scripts/check-e2e-l2-coverage.mjs`）；relatedDefects 同为占位。
-- token 预算：tools/list ≈ 111923B / ~27981 tokens（description 15688B / schema 96235B，schema 占 86%）
+- token 预算：tools/list ≈ 112390B / ~28098 tokens（description 15688B / schema 96702B，schema 占 86%）
 - annotations：readOnly 10 / destructive 5 / idempotent 13
 > 注：标 read 但实际启进程/有副作用(项目有意信任不确认): `validation.run_and_verify`, `validation.verify_delivery`
 
@@ -85,6 +85,6 @@
 ## token 预算 TOP 5
 - `ui` (ui): desc 561B / schema 11095B / total 11656B
 - `game` (bridge): desc 339B / schema 8000B / total 8339B
-- `scene` (core): desc 258B / schema 6263B / total 6521B
+- `scene` (core): desc 258B / schema 6730B / total 6988B
 - `workflow` (profiler): desc 297B / schema 5326B / total 5623B
 - `tilemap` (tilemap): desc 352B / schema 3650B / total 4002B

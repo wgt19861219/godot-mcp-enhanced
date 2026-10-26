@@ -7,7 +7,8 @@ import { textResult } from '../../types.js';
 import { requireProjectPath } from '../../core/args-validation.js';
 import { resolveWithinRoot, normalizeUserProjectPath } from '../../core/path-utils.js';
 import { executeGdscriptRuntime as executeGdscript } from '../../gdscript-executor.js';
-import { generateCommitScript, validateCommitOperations, TILESET_RESOURCE_OPS, type CommitOperation } from './scene-commit.js';
+import { generateCommitScript, generateValidateScript, collectTilesetPaths, validateCommitOperations, VALIDATE_RESULT_MARKER, TILESET_RESOURCE_OPS, type CommitOperation } from './scene-commit.js';
+import { createRestorePoint } from './commit-restore.js';
 import { acquireShortRunningSlot, releaseShortRunningSlot } from '../../core/process-state.js';
 import { opsErrorResult } from '../shared.js';
 import { existsSync } from 'fs';
@@ -58,6 +59,7 @@ export function getToolDefinitions(): Tool[] {
         },
         save: { type: 'boolean', description: '是否保存到文件（默认 true）', default: true },
         stop_on_error: { type: 'boolean', description: '遇错是否停止（默认 true）', default: true },
+        dry_run: { type: 'boolean', description: '只读预检（默认 false）:不执行变更不写盘,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan+issues+would_write', default: false },
       },
       required: ['scene_path', 'operations'],
     },
@@ -117,8 +119,56 @@ export async function handleCommitAction(
     if (sceneGuard.blocked) return opsErrorResult('EDITOR_SCENE_OPEN', sceneGuard.message ?? `Scene open in editor: ${absPath}`);
   }
 
+  // 批 B1 (2026-10-26): dry_run 只读预检(对标 Unreal_mcp dryRun)——不生成变更脚本、
+  // 不写盘,headless load 场景后逐 op 只读探测(节点存在性/TileSet 资源/layer 越界),
+  // 返回执行计划 + 问题清单 + 实际执行时的 would_write 文件清单。risk 侧免确认/免熔断
+  // (guard.ts requiresConfirmation 与 tool-circuit-breaker 的同款 dry_run 豁免)。
+  if (args.dry_run === true) {
+    const vResPath = `res://${scenePath.replace(/\\/g, '/')}`;
+    const vScript = generateValidateScript(vResPath, operations as unknown as CommitOperation[]);
+    if (!acquireShortRunningSlot()) {
+      return opsErrorResult('CONCURRENCY_LIMIT', 'too many concurrent headless operations (max 3). Please wait and retry.');
+    }
+    try {
+      const godot = await ctx.findGodot();
+      const result = await executeGdscript({
+        godotPath: godot, projectPath: p, code: vScript, timeout: 120, loadAutoloads: false,
+      });
+      const raw = result.raw_output || result.run_error || '';
+      const vr = parseValidateResult(raw);
+      const ops = operations as unknown as CommitOperation[];
+      const plan = ops.map((o, i) => {
+        const rec = o as unknown as Record<string, unknown>;
+        const target = rec.node_path ?? rec.path ?? rec.parent ?? rec.tileset_path ?? rec.name;
+        return { op_index: i, op: o.op, target: typeof target === 'string' ? target : undefined };
+      });
+      const wouldWrite = save
+        ? [scenePath.replace(/\\/g, '/'), ...collectTilesetPaths(ops)]
+        : [];
+      return textResult(JSON.stringify({
+        dry_run: true,
+        ok: vr?.ok === true,
+        issues: vr?.issues ?? [{ op_index: -1, code: 'VALIDATE_RESULT_MISSING', message: raw.slice(0, 300) }],
+        plan,
+        would_write: [...new Set(wouldWrite)],
+      }, null, 2));
+    } finally {
+      releaseShortRunningSlot();
+    }
+  }
+
   // Generate GDScript
   const resPath = `res://${scenePath.replace(/\\/g, '/')}`;
+
+  // 批 B2 (2026-10-26): restore point——写盘前对将写文件做文件级备份(作用域=本次
+  // commit 触及的文件,对标 Unreal_mcp 685e59cd"只回滚本 server 步骤");纯新建
+  // (全部文件不存在)无备份面返回 null。结果 attach 到 COMMIT_RESULT 供 commit_restore。
+  let restorePoint: ReturnType<typeof createRestorePoint> = null;
+  if (save) {
+    const relTilesets = collectTilesetPaths(operations as unknown as CommitOperation[])
+      .map(t => t.replace(/^res:\/\//, ''));
+    restorePoint = createRestorePoint(p, [scenePath.replace(/\\/g, '/'), ...relTilesets]);
+  }
   const script = generateCommitScript(
     resPath,
     operations as unknown as CommitOperation[],
@@ -149,14 +199,21 @@ export async function handleCommitAction(
     // 含 save=false 的中止——原 save && saved===false 条件把该 corner 误排除)/load 失败。
     // save=false 正常完成的 saved:false 伴随 success:true,不触发;commitResult 为 null
     // (GDScript 崩溃无 COMMIT_RESULT)时短路走 fallback,行为不变。
+    // 批 B2: restore_point 字段注入两条返回路径(成功与失败都带——失败后回滚正是主场景)。
+    const rpField = restorePoint
+      ? { restore_point: { id: restorePoint.id, files: restorePoint.files } }
+      : {};
     if (commitResult?.success === false) {
-      return { content: [{ type: 'text', text: JSON.stringify(commitResult, null, 2) }], isError: true };
+      return { content: [{ type: 'text', text: JSON.stringify({ ...commitResult, ...rpField }, null, 2) }], isError: true };
     }
-    return textResult(JSON.stringify(commitResult || {
-      success: result.run_success,
-      raw_output: result.raw_output,
-      errors: result.errors,
-    }, null, 2));
+    return textResult(JSON.stringify(commitResult
+      ? { ...commitResult, ...rpField }
+      : {
+        success: result.run_success,
+        raw_output: result.raw_output,
+        errors: result.errors,
+        ...rpField,
+      }, null, 2));
   } finally {
     releaseShortRunningSlot();
   }
@@ -173,7 +230,15 @@ export async function handleTool(
 
 /** Parse COMMIT_RESULT JSON from GDScript output. */
 export function parseCommitResult(output: string): Record<string, unknown> | null {
-  const marker = 'COMMIT_RESULT: ';
+  return parseMarkedJson(output, 'COMMIT_RESULT: ');
+}
+
+/** Parse VALIDATE_RESULT JSON from dry_run probe output(批 B1)。 */
+export function parseValidateResult(output: string): Record<string, unknown> | null {
+  return parseMarkedJson(output, VALIDATE_RESULT_MARKER);
+}
+
+function parseMarkedJson(output: string, marker: string): Record<string, unknown> | null {
   const idx = output.lastIndexOf(marker);
   if (idx === -1) return null;
   try {

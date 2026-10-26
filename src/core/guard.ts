@@ -64,6 +64,9 @@ function ensureCleanupTimer(): void {
 export function requiresConfirmation(toolName: string, args?: Record<string, unknown>): boolean {
   const action = (args?.action ?? args?.method) as string | undefined;
   if (action == null) return false;
+  // 批 B1 (2026-10-26): dry_run 只读预检不产生持久变更,免确认(与 tool-circuit-breaker
+  // 的同款豁免对齐)。语义约定:声明 dry_run=true 的调用即承诺不写盘。
+  if (args?.dry_run === true) return false;
   const risk = getActionRisk(toolName, action);
   return risk !== undefined && risk !== 'read';
 }

@@ -94,6 +94,14 @@ describe('circuit breaker(批 B3:同参数连续 N 败拒绝,写类专属)', () 
     expect((r.content?.[0] as { text: string }).text).not.toContain('TOOL_CIRCUIT_OPEN');
   });
 
+  it('批 B1:dry_run 只读预检不熔(与 guard.ts 同款豁免)', async () => {
+    const mw = mkMw();
+    const dryCtx = (): DispatchContext => ({ toolName: 'scene', args: { action: 'commit', dry_run: true }, startTime: fakeNow, phase: 'before', traceId: 't' });
+    for (let i = 0; i < 5; i++) await runOnce(mw, dryCtx(), failResult());
+    const r = await runOnce(mw, dryCtx(), failResult());
+    expect((r.content?.[0] as { text: string }).text).not.toContain('TOOL_CIRCUIT_OPEN');
+  });
+
   it('risk 未知(undefined)不熔——防御层不因元数据缺失误伤', async () => {
     const mw = mkMw();
     for (let i = 0; i < 5; i++) await runOnce(mw, mkCtx('other', 'unknown_action'), failResult());
