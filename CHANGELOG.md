@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- **docs(adr): 批 C——bridge 运行时执行安全评估 ADR(维持「无任意 GDScript 执行」决策,2026-10-25 竞品综述建议3,用户拍板)**:新增 `docs/adr/2026-10-26-bridge-runtime-script-execution.md`——对标 IvanMurzak #421(游戏内 Roslyn 执行,双重 opt-in)论证 enhanced 的等价物(三层白名单 ALLOWED_METHODS/EXTRA_METHODS/GDA_CALLABLE + EXTRA_METHODS_BLOCKLIST 硬底线 + install_override 双门通道)、Expression Tier 1 规避依据(Erodenn 规则表)、**审计覆盖勘误**(原计划给 EXTRA_METHODS 放行加 GD 侧审计,核查确认 G3 audit after middleware 对 game_write.call_method(risk=write)已自动落盘含 method 名的审计条目——代码零改动,简约原则)、重评估触发条件三条。纯文档批:零代码改动、不触发任何门禁、不 bump。
+
 ## [0.36.2] - 2026-10-26
 
 > 本版含批 A/B(2026-10-25 竞品综述修复方案前四批中的 P0 两批;方案批准于同日)。规则模板工具表 action 数 272→274 触发 `check-rules-version-bump` 硬门禁,按 2026-08-20 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。
