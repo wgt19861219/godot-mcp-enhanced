@@ -61,12 +61,18 @@ function ensureCleanupTimer(): void {
 // 无 is_parent_class 检查，构成零确认 RCE 复合链。豁免已删，edit_script 整体
 // 恢复 TOOL_META 声明的 'write' risk，search_and_replace 正常需确认令牌。
 
+// 批 B1 (2026-10-26): dry_run 只读预检不产生持久变更,免确认(与 tool-circuit-breaker
+// 的同款豁免对齐)。批 B 审查 B-1 清偿:豁免收敛到「handler 真实实现 dry_run 语义」的
+// action 白名单——全局布尔短路会让任意写/删 action 传 dry_run:true 绕过确认令牌
+// (2026-07-12 dynamicRiskOverride 同型教训复发:豁免不得信任调用方承诺,须验证可兑现)。
+// 白名单维护:新增实现 dry_run 的 handler 时同步加条目。
+const DRY_RUN_IMPLEMENTED = new Set(['scene.commit', 'script.project_replace']);
+export { DRY_RUN_IMPLEMENTED };
+
 export function requiresConfirmation(toolName: string, args?: Record<string, unknown>): boolean {
   const action = (args?.action ?? args?.method) as string | undefined;
   if (action == null) return false;
-  // 批 B1 (2026-10-26): dry_run 只读预检不产生持久变更,免确认(与 tool-circuit-breaker
-  // 的同款豁免对齐)。语义约定:声明 dry_run=true 的调用即承诺不写盘。
-  if (args?.dry_run === true) return false;
+  if (args?.dry_run === true && DRY_RUN_IMPLEMENTED.has(`${toolName}.${action}`)) return false;
   const risk = getActionRisk(toolName, action);
   return risk !== undefined && risk !== 'read';
 }

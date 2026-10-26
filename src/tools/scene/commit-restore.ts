@@ -24,6 +24,7 @@ import {
   copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
   rmSync, statSync, writeFileSync,
 } from 'node:fs';
+import { resolveWithinRoot } from '../../core/path-utils.js';
 
 const KEEP_POINTS = 10;
 
@@ -105,9 +106,16 @@ export function listRestorePoints(projectPath: string): RestorePoint[] {
 
 /**
  * 按 id 恢复:备份覆盖回项目原路径。
- * @returns restored=已恢复文件;missing=manifest 记录但备份文件缺失(目录被清理/手删)。
+ * 批 B 审查 I-1 清偿——双层路径校验:id 须匹配 newRunId 形态(防 join 规范化 `..`
+ * 指向 restore-points 根外);manifest.files 是磁盘上的可变 JSON 而非创建时内存值,
+ * 每条 rel 恢复前复核 resolveWithinRoot(逃逸项进 missing 拒拷贝,与 commit 入口
+ * tileset_path 的纵深校验同标准)。
+ * @returns restored=已恢复文件;missing=备份缺失或安全校验拒绝的文件。
  */
 export function restoreFromPoint(projectPath: string, id: string): { restored: string[]; missing: string[] } {
+  if (!/^\d{13}-[a-z0-9]{1,8}$/.test(id)) {
+    throw new Error(`invalid restore point id: ${id}(须为 newRunId 形态;用 commit_restore_list 查看)`);
+  }
   const mPath = join(pointsRoot(projectPath), id, 'manifest.json');
   if (!existsSync(mPath)) {
     throw new Error(`restore point not found: ${id}(用 commit_restore_list 查看可用点)`);
@@ -120,10 +128,14 @@ export function restoreFromPoint(projectPath: string, id: string): { restored: s
     const rel = m.files[i]!;
     const backupAbs = join(dir, m.backups[i]!);
     if (!existsSync(backupAbs)) { missing.push(rel); continue; }
-    const abs = join(projectPath, rel);
-    mkdirSync(join(abs, '..'), { recursive: true });
-    copyFileSync(backupAbs, abs);
-    restored.push(rel);
+    try {
+      const abs = resolveWithinRoot(projectPath, rel);
+      mkdirSync(join(abs, '..'), { recursive: true });
+      copyFileSync(backupAbs, abs);
+      restored.push(rel);
+    } catch {
+      missing.push(`${rel} [SECURITY: escapes project root, restore refused]`);
+    }
   }
   return { restored, missing };
 }

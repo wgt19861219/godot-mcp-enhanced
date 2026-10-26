@@ -151,13 +151,18 @@ export function createCircuitBreakerMiddleware(opts: CircuitBreakerOptions = {})
       (ctx as DispatchContext & { [CB_PASSED]?: boolean })[CB_PASSED] = true;
       return { passed: true };
     },
-    after: async (ctx, result) => {
-      const passedThrough = (ctx as DispatchContext & { [CB_PASSED]?: boolean })[CB_PASSED] === true;
-      if (!passedThrough) return result; // 本请求未通过熔断 before(middleware 早拒/非工具执行),不计
-      if (isBreakable(ctx)) {
-        const key = keyOf(ctx);
-        const failed = result.isError === true && !NON_TOOL_ERROR_CODES.has(parseOpsErrorCode(result) ?? '');
-        if (failed) {
+  after: async (ctx, result) => {
+    const passedThrough = (ctx as DispatchContext & { [CB_PASSED]?: boolean })[CB_PASSED] === true;
+    if (!passedThrough) return result; // 本请求未通过熔断 before(middleware 早拒/非工具执行),不计
+    if (isBreakable(ctx)) {
+      const key = keyOf(ctx);
+      // 批 B 审查 Nit-1 清偿:middleware 层拒绝码(RATE_LIMIT/MISSING_PARAM 等)既不累计
+      // 也不清零——工具未执行,真实失败计数应保留(原实现无条件 delete 削弱防御)。
+      if (result.isError === true && NON_TOOL_ERROR_CODES.has(parseOpsErrorCode(result) ?? '')) {
+        return result;
+      }
+      const failed = result.isError === true;
+      if (failed) {
           const st = breakers.get(key) ?? { count: 0, firstError: extractErrorBrief(result) };
           st.count += 1;
           if (st.count >= threshold && st.openedAt === undefined) {

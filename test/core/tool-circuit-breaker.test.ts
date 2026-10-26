@@ -135,6 +135,18 @@ describe('circuit breaker(批 B3:同参数连续 N 败拒绝,写类专属)', () 
     expect(r.isError).toBe(true); // 工具真执行,未熔断
   });
 
+  it('批 B 审查 Nit-1:middleware 层拒绝不清零真实失败计数(1 败 + MISSING_PARAM + 2 败 → 开路)', async () => {
+    const mw = mkMw();
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 1
+    const ctx = mkCtx();
+    await mw.before(ctx);
+    await mw.after!(ctx, opsErrorResult('MISSING_PARAM', '缺参')); // 非工具失败,不应清零
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 2
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 3 → 开路
+    const blocked = await runOnce(mw, mkCtx(), okResult());
+    expect((blocked.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+  });
+
   it('GODOT_MCP_TOOL_CIRCUIT_BREAKER=0 关闭(默认开)', async () => {
     const mw = mkMw();
     for (let i = 0; i < 5; i++) await runOnce(mw, mkCtx(), failResult());

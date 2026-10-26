@@ -61,7 +61,8 @@ describe('listRestorePoints / restoreFromPoint', () => {
     const rp2 = createRestorePoint(proj, ['scenes/a.tscn'])!;
     const list = listRestorePoints(proj);
     expect(list.map(p => p.id)).toEqual([rp2.id, rp1.id]);
-    expect(() => restoreFromPoint(proj, 'nonexistent-id')).toThrow(/not found/);
+    expect(() => restoreFromPoint(proj, '1234567890123-abcd12')).toThrow(/not found/); // 格式合法但不存在的 id
+    expect(() => restoreFromPoint(proj, 'nonexistent-id')).toThrow(/invalid restore point id/); // I-1:格式白名单先拦
 
     // 手工删掉一份备份文件 → missing 明细
     const backupDir = join(ROOT, projHash(proj), rp1.id);
@@ -69,6 +70,26 @@ describe('listRestorePoints / restoreFromPoint', () => {
     const r = restoreFromPoint(proj, rp1.id);
     expect(r.restored).toEqual([]);
     expect(r.missing).toEqual(['scenes/a.tscn']);
+  });
+
+  it('批 B 审查 I-1:id 穿越形态拒绝;manifest.files 含 ../ 的 rel 拒恢复(双层校验)', () => {
+    // 1) id 格式白名单(join 规范化 .. 指向根外的向量)
+    expect(() => restoreFromPoint(proj, '../../evil')).toThrow(/invalid restore point id/);
+    expect(() => restoreFromPoint(proj, '123')).toThrow(/invalid restore point id/);
+
+    // 2) 伪造 manifest:files 含逃逸路径 → 恢复拒拷,进 missing 带 SECURITY 标注
+    const ts = Date.now();
+    const evilId = `${ts}-evil1`;
+    const evilDir = join(ROOT, projHash(proj), evilId);
+    mkdirSync(join(evilDir), { recursive: true });
+    writeFileSync(join(evilDir, '0_x.tscn'), 'EVIL');
+    writeFileSync(join(evilDir, 'manifest.json'), JSON.stringify({
+      id: evilId, ts, project: proj, files: ['../escape.txt'], backups: ['0_x.tscn'],
+    }));
+    const r = restoreFromPoint(proj, evilId);
+    expect(r.restored).toEqual([]);
+    expect(r.missing[0]).toContain('[SECURITY: escapes project root');
+    expect(r.missing[0]).toContain('../escape.txt');
   });
 });
 
