@@ -1,0 +1,8 @@
+{
+  "name": "ui-contract",
+  "description": "批 D 首批契约:screen_text 引擎裁决——渲染树中可见 AUDIT-FIXTURE 文本(Label 渲染链路)",
+  "steps": [
+    { "type": "wait", "label": "wait-label", "method": "wait_for_node", "params": { "path": "/root/Main/AuditLabel" } },
+    { "type": "assert", "label": "screen-text", "assert": "screen_text", "text": "AUDIT-FIXTURE", "present": true }
+  ]
+}

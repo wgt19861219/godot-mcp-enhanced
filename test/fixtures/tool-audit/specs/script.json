@@ -1,0 +1,8 @@
+{
+  "name": "script-contract",
+  "description": "批 D 首批契约:node_state 引擎裁决——audit_label.gd 的 _ready 实跑后 text=AUDIT-FIXTURE(脚本挂载与执行链路)",
+  "steps": [
+    { "type": "wait", "label": "wait-label", "method": "wait_for_node", "params": { "path": "/root/Main/AuditLabel" } },
+    { "type": "assert", "label": "text-by-script", "assert": "node_state", "path": "/root/Main/AuditLabel", "expect": { "text": "AUDIT-FIXTURE" } }
+  ]
+}

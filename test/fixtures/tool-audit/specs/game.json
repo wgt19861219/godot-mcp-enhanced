@@ -1,0 +1,8 @@
+{
+  "name": "game-contract",
+  "description": "批 D 首批契约:errors 引擎裁决——fixture 启动+脚本执行全程零新增运行时错误(脚本健康基线)",
+  "steps": [
+    { "type": "wait", "label": "wait-main", "method": "wait_for_node", "params": { "path": "/root/Main" } },
+    { "type": "assert", "label": "no-errors", "assert": "errors", "max_count": 0 }
+  ]
+}

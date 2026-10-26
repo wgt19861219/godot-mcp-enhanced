@@ -54,6 +54,7 @@
     "score:pr-comment": "node build/scoring/cli.js pr-comment",
     "score:html": "node build/scoring/cli.js html",
     "check:gdscript": "node build/scoring/check-gdscript.js",
+    "audit:tools": "node build/index.js qa nightly test/fixtures/tool-audit/specs --project test/fixtures/gdscript-check",
     "audit:json": "npm audit --json --registry=https://registry.npmjs.org",
     "test:integration": "vitest run --project godot-integration",
     "test:all": "vitest run",
