@@ -101,14 +101,17 @@ jobs:
         # it 内赋值但无 afterEach 还原的真 footgun）。advisory 让 CI 可见防止新增，不阻断现有。
         run: node scripts/check-env-isolation.mjs
         continue-on-error: true  # advisory：62 条历史 violation 待逐批迁移 stubEnv 后升 error
-      - name: Check changelog sync (治理：fix/feat/BREAKING commit 漏登 [Unreleased] 检测，advisory)
+      - name: Check changelog sync (治理：fix/feat/BREAKING commit 漏登 [Unreleased] 检测，STRICT 阻断)
         # 检测最近版本日期后的 feat/fix/BREAKING commit(2026-10-22 审查 Medium-D1 放宽为
         # type 前缀匹配,不再限定 fix(security|reliability|correctness) scope)
         # 是否登记在 CHANGELOG.md [Unreleased] 段。CHANGELOG 全手动无自动化，人肉易漏。
-        # advisory(warn-only)让 CI 可见漏登，不阻断。STRICT=1 升 error。
         # L-28(2026-10-22 审查):升阻断——advisory 首版(2026-10-22 D1)已过观察期,
         # P2/P3 批连续登记无漏账,漏登 CHANGELOG 直接红。
+        # H-2 清偿(2026-10-29 审查):L-28 commit 曾声称阻断但漏传 env STRICT=1,
+        # 实际仍是 advisory——名实不符的门禁比没有更糟。本步补 STRICT env 落地阻断声明。
         run: npm run check:changelog-sync
+        env:
+          STRICT: '1'
       - name: Check path param coverage (2026-10-22 审查 Low-1：M-1 路径参数守护接线 CI)
         # 静态扫描:声明 FS 路径参数的工具必须 import path-utils / 满足 AUTO_OK / 入 ALLOWLIST。
         # 首轮人工核对 9 条豁免均已回填理由,差集清零 --strict 接线条件成熟(脚本注释原观察期)。

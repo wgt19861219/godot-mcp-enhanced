@@ -4,7 +4,7 @@
 > 「系统化安全防护 + 三层架构 + 运行时控制」的开源方案。
 
 给 AI(Claude Code、Cursor、CodeBuddy 等 MCP 客户端)一个能真正读、写、跑、验证 Godot 项目的
-工具层:46 个 MCP 工具(merged,共 274 个 action;完整清单见 [capability-matrix](docs/capability-matrix.md))覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出/3D 参数化资产(asset:11 shape + 路径阵列 + batch 原子 undo),三层架构
+工具层:46 个 MCP 工具(merged,共 274 个 action;完整清单见 [capability-matrix](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/capability-matrix.md))覆盖场景/脚本/UI/动画/物理/粒子/导航/音频/测试/导出/3D 参数化资产(asset:11 shape + 路径阵列 + batch 原子 undo),三层架构
 (headless + editor + game bridge)+ 路径白名单 / 注入防御 / sandbox 安全体系。
 赛道竞品普遍押注「生成」(authoring),本项目押注「验证」(verification)——QA 编排、回归 diff、操作审计与确定性 playtest 共同构成 **AI 游戏开发的持续验证管线**(CI for AI-assisted game development)。
 
@@ -64,7 +64,7 @@ npx godot-mcp-enhanced web .            # 自动装 export templates(首次 ~1GB
 
 headless `--export-release` 官方路径导出 + `127.0.0.1` 防穿越静态服务器,打印 `http://127.0.0.1:<port>/` 即可浏览器游玩;之后可用 `web --serve-only <导出目录>` 直接重玩。
 
-已在用 [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) 工作室模板?见 **[CCGS × 本项目集成指南](docs/guides/ccgs-integration.md)**——它管设计流程,本项目管真实运行验证。
+已在用 [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) 工作室模板?见 **[CCGS × 本项目集成指南](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/guides/ccgs-integration.md)**——它管设计流程,本项目管真实运行验证。
 
 **不知道从哪开始?** 一条龙向导 skill(`game-wizard`):四档分诊(没想法/模糊/清晰/已有项目)→ 阶段机(环境→造→改玩法→**qa 硬门**→导出→分享),每个 gate 以 qa 退出码为准——「不问文档写了吗,问游戏跑通了吗」:
 
@@ -86,7 +86,7 @@ npx godot-mcp-enhanced skills install    # 装入 game-wizard(及另外 6 个技
 |---|:---:|:---:|:---:|:---:|:---:|
 | 价格 | **免费** | $15 买断 [^p1] | $19 买断 [^p2] | 免费 [^p3] | 免费 [^p4] |
 | 开源 | **✅ MIT** | ❌ server 预编译闭源 [^p1] | ❌ [^p2] | ✅ [^p3] | ✅ [^p4] |
-| 工具数 | **46** ([matrix](docs/capability-matrix.md)) | 175 [^p1] | ~30 [^p1] | 13 [^p1] | 386 [^p4] |
+| 工具数 | **46** ([matrix](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/capability-matrix.md)) | 175 [^p1] | ~30 [^p1] | 13 [^p1] | 386 [^p4] |
 | 安全特性 | **✅ 路径白名单 / 注入防御 / sandbox / 确认令牌 / 输出防伪** | — | — | — | 部分(TCP token) [^p4] |
 | 架构 | **三层 headless + editor + bridge** | 单 editor WS [^p1] | stdio [^p1] | headless CLI [^p1] | TS server + 编辑器插件 TCP [^p4] |
 | **运行时控制（engine-level）** | **✅ game bridge：读运行时状态 / 输入模拟 / 录制回放 / frame-verify** | ❌ 仅文件·编辑器层 | ❌ | ❌ | ✅ 11 个 runtime 工具 [^p4] |
@@ -116,7 +116,7 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 >
 > 本项目三层齐备。截至 2026-08-20,已知竞品最高仅达 L1(freeze/固定帧 step,无 RNG 锁定)或 L2(帧定时输入,无暂停、无 seed)。「AI 测试 AI 写的游戏」要可复现,至少需要 L3。
 
-> **从 [Coding-Solo/godot-mcp](https://github.com/Coding-Solo/godot-mcp) 升级?** 见 **[迁移指南](docs/migration-from-coding-solo.md)** —— 核心能力零丢失,获得三层架构 / 安全 / 验证门禁 / 跨版本矩阵增强。
+> **从 [Coding-Solo/godot-mcp](https://github.com/Coding-Solo/godot-mcp) 升级?** 见 **[迁移指南](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/migration-from-coding-solo.md)** —— 核心能力零丢失,获得三层架构 / 安全 / 验证门禁 / 跨版本矩阵增强。
 
 ## 安全体系
 
@@ -157,11 +157,11 @@ _"—" 表示该项目公开 README 未披露相应能力,不代表必然缺失;
 - **install UUID 存哪**:`~/.godot-mcp/telemetry-uuid.txt`(POSIX 0o600)
 - **CI 强制关闭**:`CI=true` 时即使 opt-in 也忽略,防 CI 触发合成事件
 
-> **⚠️ 诚实披露 update-checker 外传点**:本仓库每次 MCP server 启动时,`src/core/update-checker.ts` 的 `fetch(REGISTRY_URL)` 会**被动 fetch** `https://registry.npmjs.org/godot-mcp-enhanced/latest`(24h 缓存)。此行为与遥测无关但涉及「数据离开本机」。**v0.25.7 起支持 `GODOT_MCP_UPDATE_CHECK=false`(或 `0`/`no`/`off`,大小写不敏感)关闭启动外传**;`self_update` check action 经 `force:true` 短路此门控,且 risk='read' 不经确认令牌,**AI 可自主调用触发外传**(IP/UA 泄漏 npmjs.org)。严格零外传需防火墙或 readOnly 模式拒整工具。CLI 下载链(`install`/`web` 的 GitHub releases 下载,用户主动触发)是另一独立出网点,详见 [`docs/telemetry.md`](docs/telemetry.md#-诚实披露既有的非遥测外传点)。
+> **⚠️ 诚实披露 update-checker 外传点**:本仓库每次 MCP server 启动时,`src/core/update-checker.ts` 的 `fetch(REGISTRY_URL)` 会**被动 fetch** `https://registry.npmjs.org/godot-mcp-enhanced/latest`(24h 缓存)。此行为与遥测无关但涉及「数据离开本机」。**v0.25.7 起支持 `GODOT_MCP_UPDATE_CHECK=false`(或 `0`/`no`/`off`,大小写不敏感)关闭启动外传**;`self_update` check action 经 `force:true` 短路此门控,且 risk='read' 不经确认令牌,**AI 可自主调用触发外传**(IP/UA 泄漏 npmjs.org)。严格零外传需防火墙或 readOnly 模式拒整工具。CLI 下载链(`install`/`web` 的 GitHub releases 下载,用户主动触发)是另一独立出网点,详见 [`docs/telemetry.md`](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/telemetry.md#-诚实披露既有的非遥测外传点)。
 >
-> **代理环境变量(实测口径)**:Node 原生 fetch(undici)**默认不读** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` 环境变量(Node ≥24 可设 `NODE_USE_ENV_PROXY=1` 启用)。实测设必拒代理端口后 fetch registry.npmjs.org 仍直连 200。企业代理环境下更新检查**实际直连**(可能被防火墙静默拦截);`NO_PROXY` **不是**零外传的有效手段。详见 [`docs/telemetry.md`](docs/telemetry.md) 代理环境变量节。
+> **代理环境变量(实测口径)**:Node 原生 fetch(undici)**默认不读** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` 环境变量(Node ≥24 可设 `NODE_USE_ENV_PROXY=1` 启用)。实测设必拒代理端口后 fetch registry.npmjs.org 仍直连 200。企业代理环境下更新检查**实际直连**(可能被防火墙静默拦截);`NO_PROXY` **不是**零外传的有效手段。详见 [`docs/telemetry.md`](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/telemetry.md) 代理环境变量节。
 >
-> **⚠️ 诚实披露 vision-router 外传点**: `screenshot` analyze action 设 `vision_route=true` + `GODOT_MCP_VISION_KEY` 时，截图 base64+prompt 外传到 `https://api.groq.com`（groq 视觉模型）。**双重 opt-in 默认零外传**（不传 `vision_route` 或不设 key → fallback 本地 detail 分层，零外传）。可设 `GODOT_MCP_VISION_BASE_URL` 指向自建/ollama/国内中转避免外传到 groq。详见 [`docs/telemetry.md`](docs/telemetry.md)。
+> **⚠️ 诚实披露 vision-router 外传点**: `screenshot` analyze action 设 `vision_route=true` + `GODOT_MCP_VISION_KEY` 时，截图 base64+prompt 外传到 `https://api.groq.com`（groq 视觉模型）。**双重 opt-in 默认零外传**（不传 `vision_route` 或不设 key → fallback 本地 detail 分层，零外传）。可设 `GODOT_MCP_VISION_BASE_URL` 指向自建/ollama/国内中转避免外传到 groq。详见 [`docs/telemetry.md`](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/telemetry.md)。
 
 ## Blender 建模（execute_bpy）安全模型
 
@@ -229,13 +229,13 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 ## 工具一览
 
-> 共 46 个 MCP 工具(merged tool definition,共 274 个 action),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](docs/capability-matrix.md)。
+> 共 46 个 MCP 工具(merged tool definition,共 274 个 action),以下按 action 逐项展开全部操作;权威清单见 [capability-matrix](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/capability-matrix.md)。
 >
 > **怎么按名找到工具**:下表「工具」列绝大多数是 **action 名**(如 `read_scene`),实际调用时作为对应**顶层工具**的 `action` 参数传入——`read_scene`/`quick_scene` 走 `scene` 工具,`read_script`/`write_script` 走 `script` 工具,以此类推(顶层工具名 = 域名词:`scene`/`script`/`runtime`/`validation`/`game` 等 46 个)。action 命名存在三种历史语序(`read_scene`/`tilemap_read`/裸 `read`),不确定时让 AI 先查 `help` 工具(46 工具全覆盖 + 拼写纠错)。
 >
 > **默认 profile 可见性**:默认 `basic` profile 的 `tools/list` 返回 **26/46** 个工具(2026-10-01 真实 stdio 冒烟实测,与 `setActiveGroups` 静态展开一致;此前文档写 29/46 系把 ALWAYS_ALLOWED 恒可调用项误计入可见数——`manage_tools`/`testing`/`csv_to_resources` 恒允许**调用**但不在默认 `tools/list` 列表,语义见 `src/core/tool-registry.ts` 的 `isToolAllowed`);`ui`/`tilemap`/`physics`/`nav`/`editor`/`debug`/`dap`/`asset`/`blender`/`engine`/实例管理(`godot_list_instances` 等)/`android`/`translation`/`uid` 等域默认不可见,用 `GODOT_MCP_PROFILE=full` 启动或 AI 运行时 `manage_tools activate <组>` 动态开启(详见环境变量表与 G7 说明)。
 >
-> **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](docs/使用指南.md)**。
+> **每个工具的完整文档**(参数逐个说明/示例)在 [docs/tools/](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/tools/) 目录(46 篇,随 npm 分发);工作流教程/故障排查/环境变量详解见 **[使用指南](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/使用指南.md)**。
 >
 > **关于「工具数」**:本项目用 merged tool 架构——每个顶层 MCP 工具(如 `scene`)聚合多个 action(如 `read_scene`/`add_node`/`save_scene`)。**顶层工具数:46**(`tools/list` 返回条目数,与 capability-matrix 一致);**action 总数:274**(matrix 的 risk 聚合 read 132+write 116+destructive 10+process 16)。对比竞品统一用「顶层工具数」口径。两个数字均由 `npm run build-matrix` 从代码自动生成,CI 漂移检测守护。
 
@@ -376,7 +376,7 @@ read_scene / read_script → 理解结构 → write_script / edit_script
 
 ### Game Bridge 工具
 
-> 需游戏运行中(bridge autoload 已随项目启动)。除下表 5 个基础 action 外,`game` 工具还有: `game_write`(写属性/调方法)、`playtest.*`(确定性测试:seed/锁步长/单步/快照)、`monitor_*`(属性采样)、`watch_*`(信号记录)、`find_ui_elements`/`click_button`(UI 发现/点击)、`network_conditioner`(弱网注入)、`sync_state`(状态快照对比)、`install_override`(调试脚本注入)、`custom_command`(项目自定义命令)。完整清单见 [docs/tools/game.md](docs/tools/game.md)。
+> 需游戏运行中(bridge autoload 已随项目启动)。除下表 5 个基础 action 外,`game` 工具还有: `game_write`(写属性/调方法)、`playtest.*`(确定性测试:seed/锁步长/单步/快照)、`monitor_*`(属性采样)、`watch_*`(信号记录)、`find_ui_elements`/`click_button`(UI 发现/点击)、`network_conditioner`(弱网注入)、`sync_state`(状态快照对比)、`install_override`(调试脚本注入)、`custom_command`(项目自定义命令)。完整清单见 [docs/tools/game.md](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/tools/game.md)。
 
 | 工具 | 说明 |
 |------|------|
@@ -637,11 +637,11 @@ CodeBuddy 文档（2026-06-27 实测）支持外部 stdio MCP Server：**设置 
 
 #### Warp
 [Warp 终端](https://www.warp.dev/) 原生支持 MCP。**Settings → Agents → MCP servers → + Add → CLI Server**，粘贴与上面相同的 json（`command: npx`、`args: ["-y", "godot-mcp-enhanced"]`）；也可写入 `~/.warp/.mcp.json`，或开启「Auto-spawn servers from third-party agents」直接复用上面的 Claude Code 配置（零额外配置）。
-> ✅ 协议层实测通过（46 工具全发现、inputSchema 完整、无 integer 参数兼容风险）；⚠️ Warp GUI 端到端待补（本机未装 Warp）。完整步骤、兼容性核对表、env / `working_directory` 说明见 [使用指南-Warp](docs/使用指南-Warp.md)。
+> ✅ 协议层实测通过（46 工具全发现、inputSchema 完整、无 integer 参数兼容风险）；⚠️ Warp GUI 端到端待补（本机未装 Warp）。完整步骤、兼容性核对表、env / `working_directory` 说明见 [使用指南-Warp](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/使用指南-Warp.md)。
 
 #### ZCode（智谱 GLM-5.2 ADE）
 [ZCode](https://zcode.z.ai/) 原生支持 MCP。**设置 → MCP 服务器 → 新建**（stdio，`command: npx`、`args: ["-y", "godot-mcp-enhanced"]`），或写入 `<项目根>/.zcode/config.json` / `.agents/mcp.json`。**关键**：ZCode 不读 `CLAUDE.md`，只读 workspace 根 `AGENTS.md`——运行 `setup_project_rules`（默认双写）生成 `AGENTS.md` 让 godot 规则生效。
-> 完整步骤、三种配置方式、env / 权限矩阵 / AGENTS.md 注入说明见 [使用指南-ZCode](docs/使用指南-ZCode.md)。
+> 完整步骤、三种配置方式、env / 权限矩阵 / AGENTS.md 注入说明见 [使用指南-ZCode](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/使用指南-ZCode.md)。
 
 ### 一键配置
 ```bash
@@ -665,7 +665,7 @@ npx godot-mcp-enhanced skills install
 npx godot-mcp-enhanced doctor    # 终端诊断:Godot 检测/客户端配置/插件同步逐项 ✓/✗
 ```
 
-或在 AI 客户端里让 AI 调用 `get_godot_version` — 返回版本号即链路全通。更多工作流(五个典型闭环/故障排查/环境变量参考)见 **[使用指南](docs/使用指南.md)**。
+或在 AI 客户端里让 AI 调用 `get_godot_version` — 返回版本号即链路全通。更多工作流(五个典型闭环/故障排查/环境变量参考)见 **[使用指南](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/使用指南.md)**。
 
 ### 首次使用
 
@@ -711,7 +711,7 @@ npx godot-mcp-enhanced rules --paths "D:/proj/A;D:/proj/B"
 | `GODOT_MCP_BRIDGE_PORT` | game bridge 起始监听端口（被占自动递增避让至 +9;多实例并存安全,实际端口写入实例 registry,ping 响应带 pid/project 指纹） | `9081` |
 | `GODOT_MCP_ALLOW_UNSAFE_CONFIRM` | `true`=confirm 类写操作跳过 out-of-band 确认（⚠️ 削弱安全防线;生产环境设此值 server 拒绝启动,详见使用指南 12.12） | `false` |
 | `DEBUG` | 启用详细日志 | `false` |
-| `GODOT_MCP_TELEMETRY` | 匿名遥测 opt-in(默认关闭,详见 [docs/telemetry.md](docs/telemetry.md)) | `false` |
+| `GODOT_MCP_TELEMETRY` | 匿名遥测 opt-in(默认关闭,详见 [docs/telemetry.md](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/telemetry.md)) | `false` |
 | `GODOT_MCP_INSTALL_TAG` | CLI `install` 固定版本 tag(如 `4.7.2-stable`,跳过 latest 查询;测试/复现用) | 未设(latest) |
 | `GODOT_MCP_PROFILE` | 工具 profile(basic/lite/minimal/full/bridge_dev/3d_dev 或逗号组名)。**默认 basic**(BREAKING from full;lite 9 组省 ~60% context,RCE action 经 action-gate 默认 gated)。回退全量:`GODOT_MCP_PROFILE=full` 或 `--profile=full` | `basic` |
 | `GODOT_MCP_AUDIT_CODE` | `true`=审计日志记录所执行 GDScript 的代码内容(默认不记录;开启后字符串字面量已脱敏防 secret 泄露) | `false` |
@@ -845,7 +845,7 @@ Claude Code（`mcpServers` 键，字段同形）：
 
 - [godot-mcp](https://github.com/Coding-Solo/godot-mcp) — 原始项目，本项目基于其二次开发（Copyright (c) 2025 Solomon Elias，MIT，见 [LICENSE](LICENSE)）
 - [Hastur Operation Plugin](https://github.com/rayxuln/hastur-operation-plugin) — 动态 GDScript 执行和结构化输出的灵感来源
-- [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) — 借鉴了以下功能概念(在用 CCGS?见 **[集成指南](docs/guides/ccgs-integration.md)**):
+- [Claude Code Game Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) — 借鉴了以下功能概念(在用 CCGS?见 **[集成指南](https://github.com/wgt19861219/godot-mcp-enhanced/blob/master/docs/guides/ccgs-integration.md)**):
   - **Hooks + Rules 体系** → `setup_project_rules` 自动生成 `.claude/settings.json`（PostToolUse hook 自动验证 GDScript）和 `CLAUDE.md`（项目编码标准）
   - **Gate-check / verify** → `verify_delivery` 端到端交付验证（场景树完整性 + 脚本健康 + 性能 + 自定义断言 + GDD 合规）
   - **Workflow pipeline** → `dev_loop` 执行→验证→截图一体化工作流，支持 `acceptance` 验收标准和 `save_state` 会话记忆

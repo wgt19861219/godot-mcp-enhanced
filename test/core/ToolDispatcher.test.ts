@@ -2459,3 +2459,114 @@ describe('ToolDispatcher.buildMiddleware 顺序锁(Nit-5)', () => {
     expect(typeof elicitation!.after === 'function').toBeFalsy();
   });
 });
+
+// ── 批 B3 熔断 dispatcher 集成(2026-10-29 审查 B-1/F1/F2 回归)──────────────────
+// 孤体测试只覆盖 middleware 本体;F1(确认流绕过)/F2(注入致键漂移)只有在
+// dispatcher 级视角才能暴露——修复前本组测试红,修复后绿。
+describe('ToolDispatcher circuit breaker integration (B-1/F1/F2)', () => {
+  const failResult: ToolResult = {
+    content: [{ type: 'text', text: JSON.stringify({ success: false, error_code: 'COMMIT_FAILED', error: 'EACCES permission denied' }) }],
+    isError: true,
+  };
+  // handleCall describe 内的局部 helper 在此不可见,就地复制同款;
+  // 类型从 handleCall 签名用 Parameters 派生,避免新增 any warning(lint 533 上限零余量)
+  const mkDispatcher = () => new ToolDispatcher(createOptions());
+  const mkSrvCtxConfirmed = () => ({
+    mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: true } } } },
+  }) as Parameters<ToolDispatcher['handleCall']>[1];
+
+  beforeEach(() => {
+    delete process.env.GODOT_MCP_TOOL_CIRCUIT_BREAKER;
+    mockGetActionRisk.mockImplementation((tool: string, action: string) =>
+      tool === 'scene' && action === 'commit' ? 'write' : undefined);
+  });
+  afterEach(() => { delete process.env.GODOT_MCP_TOOL_CIRCUIT_BREAKER; });
+
+  it('F1:确认流真实执行连续 3 败 → 第 4 次真实执行被 TOOL_CIRCUIT_OPEN 拒', async () => {
+    // pending.args 含 project_path(token 创建时 executeToolCall 已注入——与客户端省略形态须同键)
+    const pending = { toolName: 'scene', args: { action: 'commit', scene_path: 'res://a.tscn', project_path: '/default/project' } };
+    mockPeekToken.mockReturnValue({ ...pending, wasTruncated: false });
+    mockConsumeToken.mockReturnValue(pending);
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(failResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = mkDispatcher();
+
+    for (let i = 0; i < 3; i++) {
+      const r = await dispatcher.handleCall(
+        { params: { name: 'confirm_and_execute', arguments: { token: `t${i}` } } },
+        mkSrvCtxConfirmed(),
+      );
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as { text: string }).text).not.toContain('TOOL_CIRCUIT_OPEN');
+    }
+    // 第 4 次同参真实执行:熔断拒绝,工具不再执行
+    const blocked = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 't3' } } },
+      mkSrvCtxConfirmed(),
+    );
+    expect((blocked.content[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    expect(mockModule.handleTool).toHaveBeenCalledTimes(3);
+  });
+
+  it('F2:客户端省略 project_path 时注入不漂移键,熔断仍生效(middleware 直接路径)', async () => {
+    mockRequiresConfirmation.mockReturnValue(false);
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(failResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = mkDispatcher();
+    const call = () => dispatcher.handleCall({ params: { name: 'scene', arguments: { action: 'commit', scene_path: 'res://a.tscn' } } });
+
+    for (let i = 0; i < 3; i++) {
+      const r = await call();
+      expect(r.isError).toBe(true);
+    }
+    const blocked = await call();
+    expect((blocked.content[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    expect(mockModule.handleTool).toHaveBeenCalledTimes(3);
+  });
+
+  it('I-1(独立审查):确认流 dispatch 抛异常型失败同样记账——3 次 throw 后第 4 次被 TOOL_CIRCUIT_OPEN 拒', async () => {
+    const pending = { toolName: 'scene', args: { action: 'commit', scene_path: 'res://a.tscn', project_path: '/default/project' } };
+    mockPeekToken.mockReturnValue({ ...pending, wasTruncated: false });
+    mockConsumeToken.mockReturnValue(pending);
+    // dispatch 抛异常(handler/执行器 bug 形态)——handleCall 外层 G2 转结构化 isError 返回
+    const mockModule = { handleTool: vi.fn().mockRejectedValue(new Error('executor crashed')) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = mkDispatcher();
+    for (let i = 0; i < 3; i++) {
+      const r = await dispatcher.handleCall(
+        { params: { name: 'confirm_and_execute', arguments: { token: `t${i}` } } },
+        mkSrvCtxConfirmed(),
+      );
+      expect(r.isError).toBe(true);
+      expect((r.content[0] as { text: string }).text).not.toContain('TOOL_CIRCUIT_OPEN');
+    }
+    // 第 4 次:throw 型失败已累计 3 次 → 熔断拒绝,工具不再执行
+    const blocked = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 't3' } } },
+      mkSrvCtxConfirmed(),
+    );
+    expect((blocked.content[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    expect(mockModule.handleTool).toHaveBeenCalledTimes(3);
+  });
+
+  it('确认流与直接调用共用计数表:直接调用 3 败后,确认流同参执行也被拒', async () => {
+    mockRequiresConfirmation.mockReturnValue(false);
+    const pending = { toolName: 'scene', args: { action: 'commit', scene_path: 'res://a.tscn', project_path: '/default/project' } };
+    mockPeekToken.mockReturnValue({ ...pending, wasTruncated: false });
+    mockConsumeToken.mockReturnValue(pending);
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(failResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = mkDispatcher();
+    // 直接调用(middleware 路径)3 败
+    for (let i = 0; i < 3; i++) {
+      await dispatcher.handleCall({ params: { name: 'scene', arguments: { action: 'commit', scene_path: 'res://a.tscn' } } });
+    }
+    // 确认流同参(checkOpen 命中同一键)→ 拒
+    const blocked = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 't0' } } },
+      mkSrvCtxConfirmed(),
+    );
+    expect((blocked.content[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    expect(mockModule.handleTool).toHaveBeenCalledTimes(3);
+  });
+});

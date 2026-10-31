@@ -91,6 +91,52 @@ describe('listRestorePoints / restoreFromPoint', () => {
     expect(r.missing[0]).toContain('[SECURITY: escapes project root');
     expect(r.missing[0]).toContain('../escape.txt');
   });
+
+  it('2026-10-29 审查 L-1:backups 含 ../ 逃逸拒绝(防伪造 manifest 拷回任意本地文件)', () => {
+    // 伪造 manifest:files 是合法项目内路径,backups 指向 restore-point 目录外
+    // (ROOT 外的可读敏感文件模拟)——修复前 join(dir, backup) 无消毒直接 copyFileSync
+    const ts = Date.now();
+    const evilId = `${ts}-evil2`;
+    const evilDir = join(ROOT, projHash(proj), evilId);
+    mkdirSync(evilDir, { recursive: true });
+    // 备份面:一个正常备份 + 一个逃逸路径(指向 ROOT 上一级的文件)
+    writeFileSync(join(evilDir, '0_a.tscn'), 'BACKUP');
+    const outsideDir = join(ROOT, 'outside');
+    mkdirSync(outsideDir, { recursive: true });
+    const secretAbs = join(outsideDir, 'secret.txt');
+    writeFileSync(secretAbs, 'SECRET-CONTENT');
+    writeFileSync(join(evilDir, 'manifest.json'), JSON.stringify({
+      id: evilId, ts, project: proj,
+      files: ['scenes/a.tscn', 'stolen.txt'],
+      backups: ['0_a.tscn', '../../outside/secret.txt'],
+    }));
+    writeFileSync(join(proj, 'stolen.txt'), 'PRE-EXISTING');
+    const r = restoreFromPoint(proj, evilId);
+    // 正常备份恢复成功;逃逸项拒绝拷贝(项目内文件不被外部内容覆盖)
+    expect(r.restored).toEqual(['scenes/a.tscn']);
+    expect(r.missing).toEqual(['stolen.txt [SECURITY: escapes project root, restore refused]']);
+    expect(readFileSync(join(proj, 'stolen.txt'), 'utf8')).toBe('PRE-EXISTING');
+  });
+
+  it('2026-10-29 审查 L-1:backups/files 长度不齐或非 string 显式报 manifest 损坏', () => {
+    const mkEvil = (id: string, manifest: Record<string, unknown>) => {
+      const evilDir = join(ROOT, projHash(proj), id);
+      mkdirSync(evilDir, { recursive: true });
+      writeFileSync(join(evilDir, '0_a.tscn'), 'BACKUP');
+      writeFileSync(join(evilDir, 'manifest.json'), JSON.stringify(manifest));
+      return id;
+    };
+    const ts = Date.now();
+    // 长度不齐(修复前 join(dir, undefined) 抛 TypeError 被上层误报)
+    const shortId = mkEvil(`${ts}-evil3`, { id: `${ts}-evil3`, ts, project: proj, files: ['scenes/a.tscn'], backups: [] });
+    expect(() => restoreFromPoint(proj, shortId)).toThrow(/manifest corrupted/);
+    // backups 含非 string 元素
+    const badTypeId = mkEvil(`${ts}-evil4`, { id: `${ts}-evil4`, ts, project: proj, files: ['scenes/a.tscn'], backups: [null] });
+    expect(() => restoreFromPoint(proj, badTypeId)).toThrow(/manifest corrupted/);
+    // files 非 string 元素
+    const badFileId = mkEvil(`${ts}-evil5`, { id: `${ts}-evil5`, ts, project: proj, files: [123], backups: ['0_a.tscn'] });
+    expect(() => restoreFromPoint(proj, badFileId)).toThrow(/manifest corrupted/);
+  });
 });
 
 describe('LRU 清理', () => {

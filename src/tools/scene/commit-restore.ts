@@ -110,6 +110,10 @@ export function listRestorePoints(projectPath: string): RestorePoint[] {
  * 指向 restore-points 根外);manifest.files 是磁盘上的可变 JSON 而非创建时内存值,
  * 每条 rel 恢复前复核 resolveWithinRoot(逃逸项进 missing 拒拷贝,与 commit 入口
  * tileset_path 的纵深校验同标准)。
+ * 2026-10-29 审查 L-1 清偿:manifest.backups 与 files 同为磁盘输入——backups 逐条
+ * 复核在 restore-point 目录内(resolveWithinRoot,防伪造 manifest 把目录外任意本地
+ * 文件拷回项目路径);长度不齐/类型异常显式报 manifest 损坏(原实现 backups 短于
+ * files 时 join(undefined) 抛 TypeError 被上层误报 RESTORE_POINT_NOT_FOUND)。
  * @returns restored=已恢复文件;missing=备份缺失或安全校验拒绝的文件。
  */
 export function restoreFromPoint(projectPath: string, id: string): { restored: string[]; missing: string[] } {
@@ -121,15 +125,24 @@ export function restoreFromPoint(projectPath: string, id: string): { restored: s
     throw new Error(`restore point not found: ${id}(用 commit_restore_list 查看可用点)`);
   }
   const m = JSON.parse(readFileSync(mPath, 'utf8')) as Manifest;
+  // L-1: 结构完整性前置校验(数组形态 + 逐条 string + 与 files 等长)——损坏 manifest
+  // 显式报错,而非循环中途 TypeError 被上层 catch 吞成误导性错误
+  if (!Array.isArray(m.files) || !Array.isArray(m.backups) || m.backups.length !== m.files.length
+    || m.files.some((f) => typeof f !== 'string') || m.backups.some((b) => typeof b !== 'string')) {
+    throw new Error(`restore point manifest corrupted (files/backups mismatch): ${id}`);
+  }
   const dir = join(pointsRoot(projectPath), id);
   const restored: string[] = [];
   const missing: string[] = [];
   for (let i = 0; i < m.files.length; i++) {
     const rel = m.files[i]!;
-    const backupAbs = join(dir, m.backups[i]!);
-    if (!existsSync(backupAbs)) { missing.push(rel); continue; }
+    // 备份缺失检查在消毒前(纯只读 existsSync,无写风险)——缺失报普通 missing,
+    // 存在但逃逸才报 SECURITY(消毒函数对不存在目标会回落根,顺序颠倒会误标)
+    if (!existsSync(join(dir, m.backups[i]!))) { missing.push(rel); continue; }
     try {
+      // 双数组全量消毒:files 复核在项目根内,backups 复核在本 restore-point 目录内
       const abs = resolveWithinRoot(projectPath, rel);
+      const backupAbs = resolveWithinRoot(dir, m.backups[i]!);
       mkdirSync(join(abs, '..'), { recursive: true });
       copyFileSync(backupAbs, abs);
       restored.push(rel);

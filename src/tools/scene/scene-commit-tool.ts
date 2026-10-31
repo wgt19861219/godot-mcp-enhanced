@@ -59,7 +59,7 @@ export function getToolDefinitions(): Tool[] {
         },
         save: { type: 'boolean', description: '是否保存到文件（默认 true）', default: true },
         stop_on_error: { type: 'boolean', description: '遇错是否停止（默认 true）', default: true },
-        dry_run: { type: 'boolean', description: '只读预检（默认 false）:不执行变更不写盘,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan+issues+would_write', default: false },
+        dry_run: { type: 'boolean', description: '只读预检(默认 false)——不执行变更 op、不写场景/资源文件,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan/issues/would_write;免确认(边界:headless load 场景可能触发 .godot import 缓存写入,instantiate 会执行场景脚本 _init,非严格零副作用)', default: false },
       },
       required: ['scene_path', 'operations'],
     },

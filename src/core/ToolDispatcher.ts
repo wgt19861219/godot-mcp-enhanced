@@ -8,6 +8,7 @@ import { inputRequired, acceptedContent } from "@modelcontextprotocol/server";
 import type { EditorToolExecutor } from './EditorToolExecutor.js';
 import { executeMiddleware, createRateLimitMiddleware, createElicitationMiddleware } from './middleware.js';
 import { createCircuitBreakerMiddleware } from './tool-circuit-breaker.js';
+import type { CircuitBreakerMiddleware } from './tool-circuit-breaker.js';
 import { createElicitFn, type ElicitFn } from './elicit.js';
 import { getCallRecorder, extractErrorMessage } from './call-recorder.js';
 import { HealthMonitor } from './health-monitor.js';
@@ -105,6 +106,10 @@ export class ToolDispatcher {
   private _editorFallbackWarned = false;
   private healthMonitor: HealthMonitor;
   private readonly middleware: Middleware[];
+  /** 批 B3 熔断实例(B-1/F1 修复,2026-10-29 审查):middleware 链只覆盖直接调用,
+   * 确认流(confirm_and_execute→_confirmExecute)绕过链——实例提为字段供该路径
+   * checkOpen/recordOutcome 显式接入,共用同一计数表。 */
+  private readonly circuitBreakerMw: CircuitBreakerMiddleware;
 
   /** CRITICAL(2026-07-13 安全): out-of-band elicitation — confirm_and_execute 强制用户确认(堵 AI 自确认)。 */
   private readonly elicitFn: ElicitFn;
@@ -140,6 +145,10 @@ export class ToolDispatcher {
 
     // Health monitor for middleware pipeline
     this.healthMonitor = new HealthMonitor({ heartbeatIntervalMs: 15_000 });  // ipc P0-2: 心跳 15s < 编辑器侧 INACTIVITY_TIMEOUT(30s), 避免边界竞争误杀
+    // 批 B3 熔断:先建实例(buildMiddleware 入链;_confirmExecute 确认流复用同一计数表)
+    this.circuitBreakerMw = createCircuitBreakerMiddleware({
+      getActionRisk: (toolName, action) => getActionRisk(toolName, action),
+    });
     this.middleware = this.buildMiddleware();
 
     // Phase 3a: Wire proxy delegate through handleCall for full middleware chain
@@ -627,9 +636,7 @@ export class ToolDispatcher {
     // after(记录成败),必须在 audit 之前;且在 healthSample 之后(其 after 会把逻辑
     // 失败补打 isError,熔断判定依赖)。before 链序:熔断检查先于 audit/rate-limit——
     // 频次超限或熔断拒绝的调用仍会进 audit(失败可审计)。
-    mw.push(createCircuitBreakerMiddleware({
-      getActionRisk: (toolName, action) => getActionRisk(toolName, action),
-    }));
+    mw.push(this.circuitBreakerMw);
 
     // IMPORTANT-5: 全局 rate limit(防 AI 失控循环耗尽资源)。默认 60 次/秒软限。
     // W6 批3: audit middleware 抽 _auditMiddleware 工厂(纯搬移;顺序约定见其 docstring)
@@ -952,9 +959,35 @@ export class ToolDispatcher {
       await this.resolveFindGodotOverride(pending.args);
     if (confirmedFindGodotErr) return confirmedFindGodotErr;
 
+    // B-1/F1 修复(2026-10-29 审查):确认流真实执行接熔断。本方法绕过 middleware 链
+    // (外层 ctx.toolName='confirm_and_execute' 对熔断恒不可熔),write 类工具的
+    // 真实执行失败此前完全记录不到——此处按 pending.toolName/pending.args 显式
+    // checkOpen/recordOutcome,与 middleware 路径共用同一计数表(键空间一致:
+    // 指纹剔除 project_path 注入字段)。位置在全部前置校验之后(校验失败非工具执行失败,不计)。
+    const cbReject = this.circuitBreakerMw.checkOpen(pending.toolName, pending.args);
+    if (cbReject) {
+      log('[CONFIRM] circuit breaker open, refusing confirmed execution: %s', pending.toolName);
+      return cbReject;
+    }
+
     // editor/headless 分支逻辑复用 _dispatchEditorOrHeadless(与 executeToolCall 共用)
     log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
-    return this._dispatchEditorOrHeadless(pending.toolName, pending.args, currentMode, currentExecutor, startTime, confirmedFindGodotOverride, progressEmitter, clientTasksCapable);
+    let confirmedResult: ToolResult;
+    try {
+      confirmedResult = await this._dispatchEditorOrHeadless(pending.toolName, pending.args, currentMode, currentExecutor, startTime, confirmedFindGodotOverride, progressEmitter, clientTasksCapable);
+    } catch (err) {
+      // I-1(2026-10-29 独立审查):dispatch 抛异常(handler/执行器 bug)时下方 recordOutcome
+      // 会被跳过——throw 型失败同样计入熔断(仅入内存首错摘要,响应仍由外层 G2 结构化处理),
+      // 记账后原样 rethrow。
+      this.circuitBreakerMw.recordOutcome(pending.toolName, pending.args,
+        opsErrorResult('TOOL_EXECUTION_ERROR', err instanceof Error ? err.message : String(err)), true);
+      throw err;
+    }
+    // failed 判定与 healthSample 同口径:确认流绕过其 isError 补打,{success:false} JSON
+    // 形态的失败也须计入(isError flag 单独判定会漏)。
+    this.circuitBreakerMw.recordOutcome(pending.toolName, pending.args, confirmedResult,
+      confirmedResult.isError === true || this.checkJsonSuccessFalse(confirmedResult));
+    return confirmedResult;
   }
 
   /** B-1 修复(审查):confirm_and_execute 真实执行后补审计。

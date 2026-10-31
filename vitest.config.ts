@@ -33,6 +33,16 @@ export default defineConfig({
             // 不透传进 project 的文件收集,排除静默失效(2026-10-23 CI 红根因)。
             // 平台条件内置进 config:Windows 本地全量仍跑(保 game-bridge 覆盖),非 Windows 排除。
             ...(process.platform === 'win32' ? [] : ['test/game-bridge.test.ts']),
+            // M-1 清偿(2026-10-29 审查):6 个自 spawn e2e 文件共享 real-project fixture
+            // + 9090 端口 + .godot/mcp_editor.key(可变共享资源)——留在 unit 并行池时
+            // E2E_EDITOR=1 npm test 会复现 M-7 同类冲突(互删 .godot/、争抢 secret)。
+            // 移入 godot-integration 串行池;默认(无 E2E_EDITOR/GODOT_MCP_E2E_L2)仍 skip,行为不变。
+            'test/e2e-asset-tools.test.ts',
+            'test/e2e-bridge-get-node-layout.test.ts',
+            'test/e2e-debug-tools.test.ts',
+            'test/e2e-phase1-discovery.test.ts',
+            'test/e2e-resilience-editor.test.ts',
+            'test/e2e-testing-undo-manager.test.ts',
           ],
         },
       },
@@ -48,6 +58,15 @@ export default defineConfig({
             // 依赖真 Godot(describe.skipIf(!hasGodot)),自 unit 挪入串行池(计划第 4 点分支:
             // 依真 Godot 且不稳 → 移入 godot-integration,以两轮全量跑全绿为准)
             'test/e2e-full-tool-verification.test.ts',
+            // M-1 清偿(2026-10-29 审查):自 spawn e2e 六件套(共享 real-project fixture/
+            // 9090 端口/.godot/mcp_editor.key,unit exclude 镜像排除)。默认 env 守卫 skip,
+            // E2E_EDITOR=1 / GODOT_MCP_E2E_L2=1 时在串行池执行,消除并行互踩。
+            'test/e2e-asset-tools.test.ts',
+            'test/e2e-bridge-get-node-layout.test.ts',
+            'test/e2e-debug-tools.test.ts',
+            'test/e2e-phase1-discovery.test.ts',
+            'test/e2e-resilience-editor.test.ts',
+            'test/e2e-testing-undo-manager.test.ts',
           ],
         },
       },

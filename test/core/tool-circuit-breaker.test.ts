@@ -176,3 +176,116 @@ describe('circuit breaker(批 B3:同参数连续 N 败拒绝,写类专属)', () 
     expect((blocked.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
   });
 });
+
+// ── 2026-10-29 审查 B-1(F1/F2)+ M-2(F3)+ M-3(F4)清偿回归 ──────────────────
+describe('circuit breaker(2026-10-29 审查清偿:集成面缺陷修复)', () => {
+  beforeEach(() => { fakeNow = 1_000_000; delete process.env.GODOT_MCP_TOOL_CIRCUIT_BREAKER; });
+  afterEach(() => { delete process.env.GODOT_MCP_TOOL_CIRCUIT_BREAKER; });
+
+  it('F2:before 后 args 注入 project_path 不漂移键——after 计数落 before 键,后续调用被拒', async () => {
+    const mw = mkMw();
+    for (let i = 0; i < 3; i++) {
+      // 模拟 executeToolCall:before 之后原地注入 project_path(F2 漂移源)
+      const c = mkCtx('scene', 'commit', { scene_path: 'a' });
+      await mw.before(c);
+      c.args.project_path = '/injected/later';
+      await mw.after!(c, failResult());
+    }
+    // 客户端仍省略 project_path 的下一次调用(= before 键)被拒
+    const blocked = await runOnce(mw, mkCtx('scene', 'commit', { scene_path: 'a' }), okResult());
+    expect((blocked.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+  });
+
+  it('F2:指纹剔除注入字段——pending.args 含 project_path 与客户端省略形态同键', () => {
+    expect(stableArgsFingerprint({ action: 'commit', scene_path: 'a', project_path: '/p1' }))
+      .toBe(stableArgsFingerprint({ action: 'commit', scene_path: 'a' }));
+    // 显式传入不同 project_path 的两个调用也同键(project_path 非客户端语义)
+    expect(stableArgsFingerprint({ action: 'commit', project_path: '/p1' }))
+      .toBe(stableArgsFingerprint({ action: 'commit', project_path: '/p2' }));
+  });
+
+  it('确认令牌第一轮响应(requires_confirmation)中性:不清零真实失败计数', async () => {
+    const mw = mkMw();
+    const confirmationResult: ToolResult = { content: [{ type: 'text', text: JSON.stringify({ requires_confirmation: true, tool: 'scene', confirmation_token: 'tok' }) }] };
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 1
+    await runOnce(mw, mkCtx(), confirmationResult); // 第一轮发 token——不应清零
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 2
+    await runOnce(mw, mkCtx(), failResult()); // 真失败 3 → 开路
+    const blocked = await runOnce(mw, mkCtx(), okResult());
+    expect((blocked.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+  });
+
+  it('M-2:半开试探在飞期间并发调用被拒(单飞);试探失败续开路', async () => {
+    const mw = mkMw(3, 600_000);
+    for (let i = 0; i < 3; i++) await runOnce(mw, mkCtx(), failResult()); // 开路
+    fakeNow += 601_000;
+    // 试探请求 1:半开放行(probingAt 登记),尚未 after
+    const probeCtx = mkCtx();
+    const before1 = await mw.before(probeCtx);
+    expect('rejected' in before1 && before1.rejected).toBe(false);
+    // 并发请求 2:同参数,试探在飞 → 拒绝
+    const before2 = await mw.before(mkCtx());
+    expect('rejected' in before2 && before2.rejected).toBe(true);
+    const text2 = ((before2 as { error: ToolResult }).error.content?.[0] as { text: string }).text;
+    expect(text2).toContain('半开试探进行中');
+    // 试探 1 失败 → 续开路;此后新调用仍被拒(常规开路文案)
+    await mw.after!(probeCtx, failResult());
+    const blocked = await runOnce(mw, mkCtx(), okResult());
+    expect((blocked.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    expect((blocked.content?.[0] as { text: string }).text).not.toContain('半开试探进行中');
+  });
+
+  it('M-2:probingAt 超过 probeTimeoutMs 视为试探丢失,允许新试探(防永久锁死)', async () => {
+    const mw = createCircuitBreakerMiddleware({
+      threshold: 3, openMs: 600_000, probeTimeoutMs: 1_000, now: () => fakeNow,
+      getActionRisk: () => 'write',
+    });
+    for (let i = 0; i < 3; i++) await runOnce(mw, mkCtx(), failResult()); // 开路
+    fakeNow += 601_000;
+    const probeCtx = mkCtx();
+    await mw.before(probeCtx); // 半开放行,probingAt 登记,不 after(模拟试探丢失)
+    fakeNow += 2_000; // 超过 probeTimeoutMs
+    const retry = await runOnce(mw, mkCtx(), okResult()); // 新试探放行且成功 → 关路
+    expect(retry.isError).toBeUndefined();
+    const after = await runOnce(mw, mkCtx(), failResult()); // 已关路,重新计数(真执行)
+    expect((after.content?.[0] as { text: string }).text).not.toContain('TOOL_CIRCUIT_OPEN');
+  });
+
+  it('M-3:全开路超限时按最旧 openedAt 淘汰,Map 不无界增长', async () => {
+    const mw = createCircuitBreakerMiddleware({
+      threshold: 1, openMs: 600_000, maxKeys: 2, now: () => fakeNow,
+      getActionRisk: () => 'write',
+    });
+    // 三个键各 1 败全开路(key1 最旧)
+    await runOnce(mw, mkCtx('scene', 'commit', { p: '1' }), failResult());
+    fakeNow += 1_000;
+    await runOnce(mw, mkCtx('scene', 'commit', { p: '2' }), failResult());
+    fakeNow += 1_000;
+    await runOnce(mw, mkCtx('scene', 'commit', { p: '3' }), failResult()); // size 3 > 2,全开路 → 淘汰 key1(最旧)
+    // key2/key3 仍被拒
+    const b2 = await runOnce(mw, mkCtx('scene', 'commit', { p: '2' }), okResult());
+    expect((b2.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    const b3 = await runOnce(mw, mkCtx('scene', 'commit', { p: '3' }), okResult());
+    expect((b3.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    // key1 被淘汰 → 放行(真执行)
+    const r1 = await runOnce(mw, mkCtx('scene', 'commit', { p: '1' }), okResult());
+    expect(r1.isError).toBeUndefined();
+  });
+
+  it('F1 接入面:checkOpen/recordOutcome 与 middleware 共用计数表(确认流路径)', async () => {
+    const mw = mkMw();
+    // 确认流记账:recordOutcome ×3(模拟 _confirmExecute 真实执行失败)
+    for (let i = 0; i < 3; i++) mw.recordOutcome('scene', { action: 'commit', scene_path: 'a', project_path: '/p' }, failResult());
+    // 确认流前置检查:第 4 次同参真实执行被拒(含注入的 project_path,与 middleware 键一致)
+    const blocked = mw.checkOpen('scene', { action: 'commit', scene_path: 'a', project_path: '/p' });
+    expect(blocked).not.toBeNull();
+    expect((blocked!.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    // middleware 直接调用路径(客户端省略 project_path)同键被拒——两路径键空间互通
+    const blockedMw = await runOnce(mw, mkCtx('scene', 'commit', { scene_path: 'a' }), okResult());
+    expect((blockedMw.content?.[0] as { text: string }).text).toContain('TOOL_CIRCUIT_OPEN');
+    // failed 覆盖参数:{success:false} JSON 无 isError 也计入(确认流绕过 healthSample 补打)
+    const mw2 = mkMw();
+    for (let i = 0; i < 3; i++) mw2.recordOutcome('scene', { action: 'commit' }, { content: [{ type: 'text', text: '{"success":false}' }] }, true);
+    expect(mw2.checkOpen('scene', { action: 'commit' })).not.toBeNull();
+  });
+});
