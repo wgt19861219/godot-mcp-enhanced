@@ -179,6 +179,41 @@ async function main(): Promise<void> {
     }
   }
 
+  // ⑤b 孤儿样本脚本显式检查(三审遗留2/L-2 收尾):--import 只编译资源引用链触达的
+  // 脚本(实测:被 test_main.tscn 引用的 audit_label.gd 注入错误被抓,无引用的
+  // validate_probe_sample.gd 注入错误静默 errors=0)。无场景引用的静态样本须
+  // --check-only 逐文件补编译覆盖。显式清单而非枚举根级:fixture 根级存在运行时
+  // 拷贝残留 mcp_bridge.gd(gitignore,CI 上不存在),枚举会把本地残留纳入造成
+  // 本地/CI 结果漂移;清单内文件缺失 → incomplete(样本被误删即失去覆盖,防假绿)。
+  const ROOT_CHECK_ONLY_SAMPLES = ['validate_probe_sample.gd'];
+  for (const sample of ROOT_CHECK_ONLY_SAMPLES) {
+    if (!existsSync(join(CHECK_PROJECT, sample))) {
+      writeReport({ ...parsed, files: expected, incomplete: true,
+                    reason: `check-only 样本缺失: ${sample}(孤儿脚本编译覆盖面丢失)` });
+      return;
+    }
+    let r;
+    try {
+      r = await runGodotHeadless(
+        ['--headless', '--path', CHECK_PROJECT, '--check-only', '--script', `res://${sample}`],
+        godotPath, 30_000,
+      );
+    } catch (e) {
+      writeReport({ ...parsed, files: expected, incomplete: true,
+                    reason: `check-only spawn 失败(${sample}): ${(e as Error).message}` });
+      return;
+    }
+    if (r.exitCode !== 0) {
+      const sampleParsed = parseGdscriptOutput(r.stdout + '\n' + r.stderr);
+      const extra = sampleParsed.errors > 0
+        ? sampleParsed.details
+        : [`[check-only] ${sample}: exit=${r.exitCode}(无 SCRIPT ERROR 行,疑似加载失败)`];
+      parsed.errors += Math.max(sampleParsed.errors, 1);
+      parsed.details.push(...extra);
+      parsed.detailsTotal += Math.max(sampleParsed.errors, 1);
+    }
+  }
+
   // ⑥ 正常产出
   writeReport({ ...parsed, files: expected });
 }

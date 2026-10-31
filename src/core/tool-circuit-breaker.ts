@@ -130,10 +130,17 @@ export function parseOpsErrorCode(result: ToolResult): string | undefined {
   }
 }
 
-/** 确认令牌第一轮响应(requires_confirmation)——非错误非成功,计数中性。 */
+/** 确认令牌第一轮响应(requires_confirmation)——非错误非成功,计数中性。
+ *  收紧(2026-10-31 三审遗留3):同时要求 "confirmation_token" 子串在场——真实令牌响应
+ *  两键恒同现(ToolDispatcher 确认门);单 requires_confirmation 子串可被工具正文伪造。
+ *  与 audit-log isTokenRequestResult 同口径联动,改须两处同步。 */
 function isConfirmationRequest(result: ToolResult): boolean {
   const text = result.content?.[0]?.type === 'text' ? result.content[0].text : undefined;
-  return typeof text === 'string' && text.includes('"requires_confirmation":true');
+  return (
+    typeof text === 'string' &&
+    text.includes('"requires_confirmation":true') &&
+    text.includes('"confirmation_token"')
+  );
 }
 
 function extractErrorBrief(result: ToolResult): string {

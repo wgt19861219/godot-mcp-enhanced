@@ -188,6 +188,16 @@ describe('isTokenRequestResult(B-1:令牌请求响应→跳过虚假审计)', ()
     ).toBe(true);
   });
 
+  it('三审遗留3收紧:正文伪造 requires_confirmation 子串但无 confirmation_token → false(照常记审计)', () => {
+    // 真实令牌响应两键恒同现(ToolDispatcher 确认门);单子串不构成令牌请求,
+    // 与 tool-circuit-breaker isConfirmationRequest 同口径
+    expect(
+      isTokenRequestResult({
+        content: [{ type: 'text', text: 'doc says the literal marker "requires_confirmation":true must not appear' }],
+      }),
+    ).toBe(false);
+  });
+
   it('普通成功响应 → false(audit 正常记录)', () => {
     expect(
       isTokenRequestResult({ content: [{ type: 'text', text: '{"success":true,"data":{}}' }] }),

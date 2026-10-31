@@ -1,6 +1,9 @@
 // 批 B1 (2026-10-26): scene.commit dry_run 只读预检测试。
 // 生成器结构断言 + parseValidateResult + handler 分流(mock executeGdscript)。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const probeMock = vi.fn();
 vi.mock('../src/gdscript-executor.js', () => ({
@@ -69,8 +72,39 @@ describe('generateValidateScript(批 B1)', () => {
   });
 });
 
-describe('parseValidateResult', () => {
-  it('解析 VALIDATE_RESULT marker;与 COMMIT_RESULT 不串扰', () => {
+// 三审遗留2(L-2 收尾):探测脚本动态生成、从未过真 Godot 编译(批 B 审查 Nit-5 自知)。
+// 补法:代表性 ops 的生成输出固化为静态 fixture 落进 gdscript-check 项目,由
+// check:gdscript(godot --headless --import 项目级编译)覆盖;本测试锚定 fixture 与
+// 生成器同步——生成器改动使输出漂移时此处红,UPDATE_FIXTURE=1 重生成并人工复核 diff。
+const PROBE_SAMPLE_OPS = [
+  // 块1:tile op 节点存在性+类型
+  { op: 'tile_set', node_path: 'Grid', coords: { x: 1, y: 1 }, source_id: 0, atlas: { x: 0, y: 0 } },
+  // 块2+3:TileSet 资源存在性 + physics layer 越界
+  { op: 'tileset_physics_layer_set', tileset_path: 'res://fixtures/tileset.tres', layer: 5, collision_layer: 1, collision_mask: 1 },
+  // 块2 无 layer 形态(资源存在性独立)
+  { op: 'tileset_custom_data_layer_add', tileset_path: 'res://fixtures/tileset.tres', name: 'cd', type: 'int' },
+  // 块3:node_add 父节点存在性
+  { op: 'node_add', name: 'Marker', type: 'Node2D', parent: 'Sub' },
+  // 块4:node_property 目标节点存在性
+  { op: 'node_property', path: 'Marker', property: 'position', value: 1 },
+  // 块5:无探测面占位(默认挂根,无 parent)
+  { op: 'node_add', name: 'RootChild', type: 'Node2D' },
+] as never[];
+
+describe('探测脚本真 Godot 编译锚(三审遗留2)', () => {
+  it('代表性 ops 生成输出 == fixture 快照(validate_probe_sample.gd 随 check:gdscript 编译)', () => {
+    const generated = generateValidateScript('res://test_main.tscn', PROBE_SAMPLE_OPS);
+    const fixturePath = join(dirname(fileURLToPath(import.meta.url)), 'fixtures/gdscript-check/validate_probe_sample.gd');
+    if (process.env.UPDATE_FIXTURE === '1') {
+      writeFileSync(fixturePath, generated, 'utf8');
+      return;
+    }
+    const fixture = readFileSync(fixturePath, 'utf8');
+    expect(generated).toBe(fixture);
+  });
+});
+
+describe('parseValidateResult', () => {  it('解析 VALIDATE_RESULT marker;与 COMMIT_RESULT 不串扰', () => {
     const out = 'noise\nVALIDATE_RESULT: {"ok":false,"issues":[{"op_index":0,"code":"NODE_NOT_FOUND","message":"m"}]}';
     const r = parseValidateResult(out);
     expect(r).toEqual({ ok: false, issues: [{ op_index: 0, code: 'NODE_NOT_FOUND', message: 'm' }] });
