@@ -108,5 +108,8 @@
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
+  },
+  "overrides": {
+    "minimatch": "^11.0.3"
   }
 }
