@@ -43,7 +43,7 @@ export function getToolDefinitions(): Tool[] {
     inputSchema: {
       type: 'object' as const,
       properties: {
-        project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+        project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
         action: { type: 'string', enum: ['execute_bpy'], description: '操作类型（当前仅 execute_bpy=执行 Blender Python 建模并导出 glb）' },
         export_path: { type: 'string', description: '相对项目根的 glb 导出路径，可带可选 res:// 前缀（如 assets/models/rock.glb）' },
         code: { type: 'string', description: 'bpy 建模片段（无需 import/export，godot-mcp 自动包装）' },

@@ -97,3 +97,7 @@ test/fixtures/real-project/GeneratedAssets/
 
 # 集成测试运行时落盘目录(磁盘卫生规则:测试数据放项目内,收尾清理)
 test-output/
+
+# 批 D (2026-10-26): tool-audit 审计套件复用 gdscript-check fixture——qa auto_install_bridge 拷贝件同款运行时产物
+test/fixtures/gdscript-check/mcp_bridge.gd
+test/fixtures/gdscript-check/mcp_bridge.gd.uid

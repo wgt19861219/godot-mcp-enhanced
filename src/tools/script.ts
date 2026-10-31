@@ -38,11 +38,11 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'script',
-      description: '脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入；高安全场景 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写 .gd 前也走沙箱扫描（与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 最佳实践:分步执行、每步验证,复杂逻辑拆小块用 read/edit_script 迭代。详细用法: help 工具。',
+      description: '脚本操作。读写: read_script, write_script。编辑: edit_script(行号/search_and_replace)。执行: execute_gdscript(⚠️ 沙箱仅防误操作,不可信输入需 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离;write/edit_script 写 .gd 前同走沙箱扫描)。测试: generate_test, create_test_scene。批量替换: project_replace。最佳实践:分步执行、每步验证,复杂逻辑用 read/edit_script 迭代。详见 help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -94,7 +94,7 @@ export function getToolDefinitions(): Tool[] {
             default: ['.godot', '.import'],
           },
           dry_run: { type: 'boolean', description: 'project_replace: 仅预览不写入（默认 false）', default: false },
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },

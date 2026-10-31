@@ -272,7 +272,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -348,7 +348,7 @@ export function getToolDefinitions(): Tool[] {
           flip_h: { type: 'boolean', description: '水平翻转（可选，默认 false）。tilemap_set_transform 使用' },
           flip_v: { type: 'boolean', description: '垂直翻转（可选，默认 false）。tilemap_set_transform 使用' },
           transpose: { type: 'boolean', description: '转置（可选，默认 false）。tilemap_set_transform 使用' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

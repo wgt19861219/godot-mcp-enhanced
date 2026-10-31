@@ -60,6 +60,10 @@ vi.mock('../../src/core/tool-registry.js', () => ({
   // A1 (2026-08-11): dispatcher 新增动态工具门反查 import,mock 工厂缺此导出会在
   // executeToolCall 调 undefined 报 TypeError(测试全红)
   isDynamicToolName: vi.fn().mockReturnValue(false),
+  // 批 B3 (2026-10-26): 熔断 middleware 每次 before 都经 dispatcher 注入闭包查
+  // getActionRisk——mock 缺此导出时为 undefined,调用即 TypeError 被链路当拒绝。
+  // 返回 undefined = risk 未知不熔(本测试焦点在 telemetry,不测熔断行为)。
+  getActionRisk: vi.fn().mockReturnValue(undefined),
   setActiveGroups: vi.fn(),
   resolveProfile: vi.fn().mockReturnValue(new Set<string>()),
   skipProjectPath: mockSkipProjectPath,

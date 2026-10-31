@@ -1,5 +1,5 @@
 {
-  "version": "0.36.1",
+  "version": "0.36.2",
   "tools": [
     {
       "name": "analysis",
@@ -139,7 +139,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "lines": {
             "type": "number",
@@ -225,8 +225,8 @@
       },
       "size": {
         "descBytes": 166,
-        "schemaBytes": 1122,
-        "totalBytes": 1288
+        "schemaBytes": 1083,
+        "totalBytes": 1249
       },
       "annotations": {
         "readOnlyHint": false,
@@ -237,13 +237,13 @@
     {
       "name": "animation",
       "group": "animation",
-      "description": "查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "查询、控制和编辑动画。查询: list_players, get_info/details/keyframes。播放: play/stop/seek/blend。编辑: create/delete/update_props, add/remove_track, add/remove/update_keyframe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -269,7 +269,7 @@
               "ik_modifier_set",
               "ik_list_bones"
             ],
-            "description": "操作类型。list_players=列 AnimationPlayer, get_info/get_details/get_keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add_track/remove_track/add_keyframe/remove_keyframe/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼"
+            "description": "操作类型。list_players=列 AnimationPlayer, get_info/details/keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add/remove_track、add/remove/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼"
           },
           "root_path": {
             "type": "string",
@@ -389,7 +389,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "type": {
             "type": "string",
@@ -497,9 +497,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 334,
-        "schemaBytes": 3430,
-        "totalBytes": 3764
+        "descBytes": 292,
+        "schemaBytes": 3345,
+        "totalBytes": 3637
       },
       "annotations": {
         "readOnlyHint": false,
@@ -516,7 +516,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -606,7 +606,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -665,8 +665,8 @@
       },
       "size": {
         "descBytes": 241,
-        "schemaBytes": 1842,
-        "totalBytes": 2083
+        "schemaBytes": 1787,
+        "totalBytes": 2028
       },
       "annotations": {
         "readOnlyHint": false,
@@ -695,7 +695,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "node_path": {
             "type": "string",
@@ -790,7 +790,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -852,8 +852,8 @@
       },
       "size": {
         "descBytes": 243,
-        "schemaBytes": 2592,
-        "totalBytes": 2835
+        "schemaBytes": 2537,
+        "totalBytes": 2780
       },
       "annotations": {
         "readOnlyHint": false,
@@ -870,7 +870,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -1056,8 +1056,8 @@
       },
       "size": {
         "descBytes": 210,
-        "schemaBytes": 2249,
-        "totalBytes": 2459
+        "schemaBytes": 2210,
+        "totalBytes": 2420
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1074,7 +1074,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -1124,7 +1124,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -1179,8 +1179,8 @@
       },
       "size": {
         "descBytes": 260,
-        "schemaBytes": 1257,
-        "totalBytes": 1517
+        "schemaBytes": 1202,
+        "totalBytes": 1462
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1289,7 +1289,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -1360,8 +1360,8 @@
       },
       "size": {
         "descBytes": 450,
-        "schemaBytes": 710,
-        "totalBytes": 1160
+        "schemaBytes": 671,
+        "totalBytes": 1121
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1372,7 +1372,7 @@
     {
       "name": "cpp",
       "group": "code",
-      "description": "GDExtension (C++) 脚手架生成。scaffold_gdextension: 在 project_path 下生成完整可编译的 godot-cpp GDExtension 工程骨架（src/类.cpp/.h + register_types + SConstruct + .gdextension + .gitignore + README），不联网/不编译，对齐 godot-cpp 官方 example。",
+      "description": "GDExtension (C++) 脚手架生成。scaffold_gdextension: 在 project_path 下生成可编译的 godot-cpp GDExtension 工程骨架(src/类.cpp/.h + register_types + SConstruct + .gdextension + README),不联网/不编译。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1399,7 +1399,7 @@
           },
           "godot_version": {
             "type": "string",
-            "description": "Godot 版本（4.4–4.7。决定 godot-cpp clone ref 与 SConstruct api_version、.gdextension compatibility_minimum；4.6/4.7 走 godot-cpp master(v10)+api_version（无 godot-4.x-stable ref），4.4/4.5 用 godot-4.x-stable 分支。默认 4.7）",
+            "description": "Godot 版本(4.4–4.7,决定 godot-cpp clone ref 与 api_version/compatibility_minimum;4.6/4.7 走 godot-cpp master,4.4/4.5 用 godot-4.x-stable。默认 4.7)",
             "default": "4.7",
             "enum": [
               "4.4",
@@ -1461,9 +1461,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 283,
-        "schemaBytes": 1061,
-        "totalBytes": 1344
+        "descBytes": 224,
+        "schemaBytes": 971,
+        "totalBytes": 1195
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1474,7 +1474,7 @@
     {
       "name": "csv_to_resources",
       "group": "unknown",
-      "description": "CSV→Resource 批量生成。读取 CSV(class_path 指向的 GDScript Resource 类),按 filename_column 列命名,批量生成 .tres 到 output_dir。CSV 行数据走 GDScript FileAccess.get_csv_line(零进脚本字符串,防注入)。output_dir 经 resolveWithinRoot 沙箱(TS pre);filename 白名单(GDScript 正则 + .. 段级拒)。",
+      "description": "CSV→Resource 批量生成。读取 CSV(class_path 指向 GDScript Resource 类),按 filename_column 命名批量生成 .tres 到 output_dir。CSV 行数据走 FileAccess.get_csv_line 零拼接防注入;output_dir 过 resolveWithinRoot 沙箱;filename 白名单(正则 + .. 拒)。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1487,7 +1487,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "class_path": {
             "type": "string",
@@ -1568,9 +1568,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 337,
-        "schemaBytes": 1060,
-        "totalBytes": 1397
+        "descBytes": 282,
+        "schemaBytes": 1021,
+        "totalBytes": 1303
       },
       "annotations": {
         "readOnlyHint": false,
@@ -1985,7 +1985,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -2042,8 +2042,8 @@
       },
       "size": {
         "descBytes": 156,
-        "schemaBytes": 394,
-        "totalBytes": 550
+        "schemaBytes": 355,
+        "totalBytes": 511
       },
       "annotations": {
         "readOnlyHint": true,
@@ -2156,13 +2156,13 @@
     {
       "name": "game",
       "group": "bridge",
-      "description": "游戏桥接操作(游戏运行时经 bridge 通信):安装/卸载 bridge、查询场景树/节点属性/截图、写入属性/调方法、模拟输入、等待条件、确定性 playtest(seed/锁步长/单步/快照)、freeze 控制、monitor 属性采样、watch 信号记录、UI 元素发现与点击、弱网注入、项目自定义命令。完整用法见规则文档(或 help 工具)。",
+      "description": "游戏桥接操作(游戏运行时经 bridge 通信):装拆 bridge、查询(场景树/节点/截图)、写属性/调方法、模拟输入、等待条件、确定性 playtest(seed/锁步长/单步/快照)、freeze、monitor 采样、watch 信号、UI 发现与点击、弱网注入、自定义命令。详见规则文档(或 help 工具)。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -2192,22 +2192,22 @@
           },
           "port": {
             "type": "number",
-            "description": "game_bridge_install: 期望的起始监听端口(实际端口由游戏侧 env GODOT_MCP_BRIDGE_PORT 设起点,被占自动递增避让;此参数不影响行为,保留兼容)。实际端口见 ping 响应与实例 registry",
+            "description": "install: 起始端口(实际由游戏侧 env 设定+被占自动避让,本参不影响行为;实际端口见 ping 响应/实例 registry)",
             "default": 9081
           },
           "force": {
             "type": "boolean",
-            "description": "install: 项目内 mcp_bridge.gd 与自带版本不同(旧版未同步)时 force=true 覆盖刷新,重启游戏生效。send_drag 等报 Method not found 时用本参数",
+            "description": "install: 项目内 mcp_bridge.gd 版本不同时 force=true 覆盖刷新(重启游戏生效);报 Method not found 时用",
             "default": false
           },
           "clean_stale_secrets": {
             "type": "boolean",
-            "description": "install: 清理 .godot/ 陈旧 mcp_bridge_*.secret(按 registry 新鲜心跳判活,无心跳拒清防误删)。多实例 auth 失败/连错实例时用",
+            "description": "install: 清理 .godot/ 陈旧 mcp_bridge_*.secret(按 registry 心跳判活防误删);多实例 auth 失败/连错实例时用",
             "default": false
           },
           "source_script_path": {
             "type": "string",
-            "description": "install_override/uninstall_override: 源调试脚本绝对路径（必须在 ALLOWED_PROJECT_PATHS 白名单内,拷贝到项目根注册为 MCPOVERRIDE_<basename> autoload;插入 [autoload] 段末尾=在游戏 autoload 之后加载,脚本 _ready 可直接访问游戏单例,无需 await <Singleton>.ready）"
+            "description": "install_override/uninstall_override: 源调试脚本绝对路径(须在 ALLOWED_PROJECT_PATHS 白名单内;拷贝到项目根注册 MCPOVERRIDE_<basename> autoload)"
           },
           "sub_action": {
             "type": "string",
@@ -2221,7 +2221,7 @@
           },
           "label": {
             "type": "string",
-            "description": "sync_state snapshot: 快照标签(如 host/client);进程内全局——跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 跨项目快照带 cross_project 警告。compare 时用 label_a/label_b。"
+            "description": "sync_state snapshot: 快照标签;跨实例场景建议带实例前缀(如 gameA-host)防静默覆盖;compare 用 label_a/label_b。"
           },
           "label_a": {
             "type": "string",
@@ -2233,7 +2233,7 @@
           },
           "tolerance": {
             "type": "number",
-            "description": "sync_state compare: 浮点容差(默认 0.0001,数值 |a-b|<=tolerance 视为相等;Vector2/3/4 自动转 {x,y,z} dict 分量级容差;浮点位置类不逐位相等是多人比对必然,masteryee 亲读坑)。"
+            "description": "sync_state compare: 浮点容差(默认 0.0001;Vector2/3/4 转分量 dict 级容差)。"
           },
           "group": {
             "type": "string",
@@ -2241,15 +2241,15 @@
           },
           "method": {
             "type": "string",
-            "description": "方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/dump_layout_tree/get_font_report/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors。game_write: set_node_property/call_method。game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence。game_wait: wait_for_node/wait_for_property。game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。"
+            "description": "方法名(按 action 选)。game_query: ping/get_tree/find_nodes/get_node_properties/get_node_layout/dump_layout_tree/get_font_report/get_performance/get_viewport_info/take_screenshot/get_errors/clear_errors;game_write: set_node_property/call_method;game_input: send_key/send_mouse_click/send_mouse_move/send_text/send_touch/send_drag/send_input_sequence;game_wait: wait_for_node/wait_for_property;game_playtest: playtest.seed/playtest.fixed_delta/playtest.step/playtest.snapshot/playtest.restore/playtest.freeze/playtest.unfreeze/playtest.step_until。细节见规则文档。"
           },
           "params": {
             "type": "object",
-            "description": "方法参数(紧凑形状,完整说明见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻:同维度升序,锚点排除;player 档下 position 有字段规则的锚点/候选不参与测距);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path=\"/root\",max_depth=32,visible_only=false}(整树控件坐标表导出:controls/hidden 两组 {名:[x,y,w,h]} 运行态 global 坐标 roundi,重名 _2 后缀,visible_only=true 隐藏子树剪枝;配合 analysis.layout_compare 比对);get_font_report{path=\"/root\",max_depth=32}(子树 Label 字体度量:font_source/font_size/line_height/ink_height/ink_gap_top 理论留白/ink_center_shift 实际偏上量,负=偏上;跨引擎字体不居中诊断);get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 命令参数由游戏方定义。"
+            "description": "方法参数(形状签名,细节见规则文档)。find_nodes{pattern?,type?,group?,limit?,root?,near_node?,max_distance?,observation_profile?}(near_node 近邻细节见规则);get_node_properties{path,observation_profile?};get_node_layout{path,observation_profile?};dump_layout_tree{path?,max_depth?,visible_only?};get_font_report{path?,max_depth?};get_errors{since_seq?,clear?};set_node_property{path,property,value};call_method{path,method,args}(白名单+GDA_CALLABLE+预检-10 见规则);send_key{key,pressed};send_mouse_click{x,y,button,pressed};send_mouse_move{x,y,button_mask?};send_text{text};send_touch{x,y,pressed,index};send_drag{x,y,index,relative,speed};send_input_sequence{timeline[{at_frame(1-600),type,...}],settle_frames?(0-600),wall_budget_ms?(1000-50000)};wait_for_node{path};wait_for_property{path,property,value};playtest.seed{seed};fixed_delta{hz};step{frames};step_until{conditions[{path,property,op,value}],max_frames?(1-600),wall_budget_ms?(1000-50000,默认30000)};network set{latency_ms,loss_pct,jitter_ms};custom 由游戏方定义。"
           },
           "timeout": {
             "type": "number",
-            "description": "game_query/game_write/game_input/game_wait: 超时时间（毫秒，默认 10000）。game_wait 的 timeout 用作整个轮询窗口的总预算（在窗口内反复探测直到条件成立）。send_input_sequence 延迟响应,timeout 自动放宽至 wall_budget+10s(上限 65000)"
+            "description": "超时毫秒(默认 10000);game_wait 用作轮询窗口总预算;send_input_sequence 自动放宽至 wall_budget+10s(上限 65000)"
           },
           "request_id": {
             "type": "string",
@@ -2273,7 +2273,7 @@
           },
           "interval_frames": {
             "type": "number",
-            "description": "monitor_start: 采样间隔(60fps 基准下的标称帧数,默认 10,最小 1,最大 300;实际按游戏时间毫秒调度,帧率变化节奏不漂移,paused/freeze 期间游戏时间停走不采样,样本含 t_game_ms 游戏时间戳)"
+            "description": "monitor_start: 采样间隔(60fps 基准帧数,默认 10,范围 1-300;按游戏时间调度,paused/freeze 不采样,样本含 t_game_ms)"
           },
           "signal_name": {
             "type": "string",
@@ -2293,12 +2293,12 @@
               "debug",
               "player"
             ],
-            "description": "P7 观察档位(默认 debug;player 需游戏侧 env GODOT_MCP_BRIDGE_ALLOWED_PROFILES 授权,节点 meta 级联隐藏 + agent_field_rules 字段投影生效,详见规则文档)",
+            "description": "观察档位(默认 debug;player 需游戏侧 env 授权,节点 meta 级联隐藏+字段投影,详见规则文档)",
             "default": "debug"
           },
           "pattern": {
             "type": "string",
-            "description": "find_ui_elements: 名称/文字匹配(语义按 match:wildcard=Godot match 语法,exact/contains=全等/子串)"
+            "description": "find_ui_elements: 名称/文字匹配(match:wildcard=Godot match 语法,exact/contains=全等/子串)"
           },
           "type": {
             "type": "string",
@@ -2315,7 +2315,7 @@
               "exact",
               "contains"
             ],
-            "description": "find_ui_elements: pattern 匹配模式。wildcard(默认)=Godot match 通配符扫 name/text;exact=全等;contains=子串(exact/contains 额外扫 label)",
+            "description": "find_ui_elements: 匹配模式。wildcard(默认)=通配符扫 name/text;exact=全等;contains=子串(额外扫 label)",
             "default": "wildcard"
           },
           "visible_only": {
@@ -2336,7 +2336,7 @@
           },
           "real_event": {
             "type": "boolean",
-            "description": "click_button: 走真实输入事件路径(默认 false=emit_signal)。true 时注入 press/release InputEventMouseButton 到 viewport,走完整引擎输入管道(切换 button_pressed 状态/触发 button_group 互斥/focus),等 4 帧后返回 signal_counts 信号计数与 verified;延迟响应(同 call_method await_completion)。修复\"点击成功但 CheckBox 没勾上\"类问题"
+            "description": "click_button: 走真实输入事件路径(默认 false=emit_signal);true 时注入完整引擎输入管道(button_group 互斥/focus),修复\"点击成功但 CheckBox 没勾上\"类问题"
           },
           "op": {
             "type": "string",
@@ -2345,7 +2345,7 @@
               "clear",
               "status"
             ],
-            "description": "network_conditioner: 子操作。set=包装当前 MultiplayerPeer 注入弱网(latency_ms/loss_pct/jitter_ms 参数),clear=拆除恢复原 peer,status=查询当前状态"
+            "description": "network_conditioner: set=注入弱网(latency_ms/loss_pct/jitter_ms),clear=恢复原 peer,status=查状态"
           },
           "latency_ms": {
             "type": "number",
@@ -2361,7 +2361,7 @@
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -2444,9 +2444,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 393,
-        "schemaBytes": 9699,
-        "totalBytes": 10092
+        "descBytes": 339,
+        "schemaBytes": 8000,
+        "totalBytes": 8339
       },
       "annotations": {
         "readOnlyHint": false,
@@ -2871,7 +2871,7 @@
     {
       "name": "load_skill",
       "group": "code",
-      "description": "从本地知识库(GodotPrompter/gd-agentic 等)按关键词检索 SKILL.md。两级检索:name/description 高精度→全文 fallback。返回带来源标注(source/path)和相关性 score 的匹配。缺失库进 missing_libraries 不报错。",
+      "description": "从本地知识库(GodotPrompter/gd-agentic 等)按关键词检索 SKILL.md。两级检索:name/description 高精度→全文 fallback;返回带来源标注(source/path)与 score;缺失库进 missing_libraries 不报错。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2928,9 +2928,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 246,
+        "descBytes": 223,
         "schemaBytes": 354,
-        "totalBytes": 600
+        "totalBytes": 577
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3037,7 +3037,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -3150,8 +3150,8 @@
       },
       "size": {
         "descBytes": 294,
-        "schemaBytes": 1374,
-        "totalBytes": 1668
+        "schemaBytes": 1335,
+        "totalBytes": 1629
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3168,7 +3168,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -3376,7 +3376,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "timeout": {
             "type": "number",
@@ -3444,8 +3444,8 @@
       },
       "size": {
         "descBytes": 370,
-        "schemaBytes": 3225,
-        "totalBytes": 3595
+        "schemaBytes": 3170,
+        "totalBytes": 3540
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3473,7 +3473,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "node_type": {
             "type": "string",
@@ -3630,7 +3630,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -3696,8 +3696,8 @@
       },
       "size": {
         "descBytes": 292,
-        "schemaBytes": 2657,
-        "totalBytes": 2949
+        "schemaBytes": 2602,
+        "totalBytes": 2894
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3714,7 +3714,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -3817,7 +3817,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -3873,8 +3873,8 @@
       },
       "size": {
         "descBytes": 410,
-        "schemaBytes": 1717,
-        "totalBytes": 2127
+        "schemaBytes": 1662,
+        "totalBytes": 2072
       },
       "annotations": {
         "readOnlyHint": false,
@@ -3885,13 +3885,13 @@
     {
       "name": "profiler",
       "group": "profiler",
-      "description": "性能分析工具。snapshot: 快照（FPS/内存/绘制调用/物理统计）。start/stop: 开始/停止分析会话。get_data: 收集帧级数据，含多维度采样、p99百分位、趋势退化检测、内存趋势、渲染统计。get_active_processes: 遍历场景树查找有 _process/_physics_process 的节点。get_signal_connections: 列出子树所有信号连接。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "性能分析工具。snapshot: 快照(FPS/内存/绘制调用/物理统计)。start/stop: 分析会话。get_data: 帧级数据+多维度采样/p99/趋势退化/内存趋势/渲染统计。get_active_processes: 找 _process/_physics_process 节点。get_signal_connections: 子树信号连接。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -3904,7 +3904,7 @@
               "get_signal_connections",
               "capture_functions"
             ],
-            "description": "操作类型。capture_functions(P2,2026-09-11):函数级热点——需先 run_project(profiling=true) 起 spawn 会话,一次调用完成采样窗口+排名(引擎原生 profiler 流,等价编辑器 Profiler 面板;帧级 get_data 之外的函数级 self/total 热点+最慢帧 top30)"
+            "description": "操作类型。capture_functions: 函数级热点——需先 run_project(profiling=true) 起 spawn 会话,一次调用完成采样窗口+排名(引擎原生 profiler 流;帧级 get_data 之外的函数级 self/total 热点+最慢帧 top30)"
           },
           "target_fps": {
             "type": "number",
@@ -3931,7 +3931,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "seconds": {
             "type": "number",
@@ -4002,9 +4002,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 476,
-        "schemaBytes": 1880,
-        "totalBytes": 2356
+        "descBytes": 389,
+        "schemaBytes": 1779,
+        "totalBytes": 2168
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4036,7 +4036,7 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "search_dir": {
             "type": "string",
@@ -4215,8 +4215,8 @@
       },
       "size": {
         "descBytes": 109,
-        "schemaBytes": 3107,
-        "totalBytes": 3216
+        "schemaBytes": 3068,
+        "totalBytes": 3177
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4256,7 +4256,7 @@
           },
           "spec": {
             "type": "object",
-            "description": "run: inline 套件 spec 对象。步骤为 discriminated union(type 字段决定形态)：input(method+params,bridge 原生参数)、wait(wait_for_node/wait_for_property 轮询)、wait_frames(1-60 帧确定性推进)、freeze/unfreeze、step_until(结构化条件{path,property,op,value}[]，规避 RCE)、snapshot/restore、set(写节点属性)、call(bridge 只读白名单方法，写方法需 GODOT_MCP_BRIDGE_EXTRA_METHODS)、watch_start(node_path+signal_name，单套件单 watch)、watch_stop、monitor_start(node_path+properties[]，单套件单 monitor)、monitor_stop、screenshot(证据落报告目录)、sleep。步骤带 label 便于 diff 对齐"
+            "description": "run: inline 套件 spec。步骤为 discriminated union(type 决定形态):input(bridge 原生参数)/wait(条件轮询)/wait_frames(1-60 帧确定性推进)/freeze/unfreeze/step_until(结构化条件[],规避 RCE)/snapshot/restore/set/call(只读白名单方法,写需 GODOT_MCP_BRIDGE_EXTRA_METHODS)/watch_start|stop(单套件单 watch)/monitor_start|stop(单套件单 monitor)/screenshot(证据落报告目录)/sleep;步骤带 label 便于 diff 对齐"
           },
           "spec_path": {
             "type": "string",
@@ -4331,8 +4331,8 @@
       },
       "size": {
         "descBytes": 469,
-        "schemaBytes": 1953,
-        "totalBytes": 2422
+        "schemaBytes": 1749,
+        "totalBytes": 2218
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4343,7 +4343,7 @@
     {
       "name": "runtime",
       "group": "core",
-      "description": "启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project 关键参数: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=预览模式窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详细用法: help 工具。",
+      "description": "启动编辑器、运行/停止项目、取调试输出、跑测试、查 Godot 版本、录制回放。run_project: timeout 0/-1=不自动停(手动 stop_project), wait_for_bridge=轮询等 bridge 就绪, preview=窗口常驻, profiling=绑调试端口。需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详见 help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4366,11 +4366,11 @@
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）。多项目并行:run_project 按项目分桶(同项目重跑互杀旧进程,跨项目并存互不杀);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他项目的会话桶"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）。多项目并行按项目分桶(同项目重跑互杀,跨项目并存);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他会话桶"
           },
           "timeout": {
             "type": "number",
-            "description": "自动停止秒数（默认 30。0 或负数 = 不自动停，由 stop_project 手动控制——bridge 交互会话逐步 game_write/game_query 驱动时推荐 0，总时长超冷启动不会被到点静默 kill；游戏冷启动 >30s 的项目传更大值如 120；wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防与 bridge 就绪 race，0/-1 优先短路不抬升）",
+            "description": "自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)",
             "default": 30
           },
           "wait_for_bridge": {
@@ -4381,7 +4381,7 @@
           "profiling": {
             "type": "boolean",
             "default": false,
-            "description": "true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置;之后用 profiler 工具 action=capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)"
+            "description": "true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置,之后用 profiler capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)"
           },
           "bridge_timeout": {
             "type": "number",
@@ -4391,7 +4391,7 @@
           "preview": {
             "type": "boolean",
             "default": false,
-            "description": "预览模式:禁用自动停止,游戏窗口常驻,用户关闭窗口即结束验证。适用于 AI 改完代码/场景后的人工视觉验证(替代打开编辑器)。默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则说明)"
+            "description": "预览模式:禁用自动停止,游戏窗口常驻,用户关窗即结束(AI 改完代码/场景后的人工视觉验证);默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则)"
           },
           "test_script": {
             "type": "string",
@@ -4421,11 +4421,11 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -4482,9 +4482,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 362,
-        "schemaBytes": 3106,
-        "totalBytes": 3468
+        "descBytes": 330,
+        "schemaBytes": 2757,
+        "totalBytes": 3087
       },
       "annotations": {
         "readOnlyHint": false,
@@ -4495,7 +4495,7 @@
     {
       "name": "runtime_assert",
       "group": "core",
-      "description": "运行时断言：在运行中的游戏上验证节点状态/场景结构/屏幕文本/性能/截图对比。agent 可任意时刻调用，不必走 workflow.dev_loop。全部依赖 game-bridge（需先 game_bridge_install + 游戏运行中）。",
+      "description": "运行时断言:在运行中游戏上验证节点状态/场景结构/屏幕文本/性能/截图对比;可任意时刻调用,不必走 dev_loop。依赖 game-bridge(需先 install bridge + 游戏运行中)。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -4623,9 +4623,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 246,
+        "descBytes": 207,
         "schemaBytes": 1993,
-        "totalBytes": 2239
+        "totalBytes": 2200
       },
       "annotations": {
         "readOnlyHint": true,
@@ -4636,13 +4636,13 @@
     {
       "name": "scene",
       "group": "core",
-      "description": "场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源: save_scene, load_sprite。查询: query_scene_tree, inspect_node。实例: instance_scene, set_instance_property, detach_instance。详细用法: help 工具。",
+      "description": "场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源/查询/实例: save_scene, load_sprite, query_scene_tree, inspect_node, instance_scene 等。详见 help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -4665,9 +4665,11 @@
               "health_check",
               "merge_scene",
               "create_3d_node",
-              "commit"
+              "commit",
+              "commit_restore",
+              "commit_restore_list"
             ],
-            "description": "操作类型。read_scene/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit_node/remove_node=编辑删除, save_scene/open_scene=保存打开, instance_scene/set_instance_property/detach_instance=实例化, load_sprite=贴图加载, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交"
+            "description": "操作类型。read/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit/remove_node=编辑删除, save/open_scene=保存打开, instance_*=实例化, load_sprite=贴图, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交, commit_restore(_list)=提交还原点恢复/列表"
           },
           "scene_path": {
             "type": "string",
@@ -4775,7 +4777,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "type": {
             "type": "string",
@@ -4918,9 +4920,18 @@
             "type": "boolean",
             "description": "遇错是否停止（默认 true;false 时失败不阻止后续与 .tres 写盘）"
           },
+          "dry_run": {
+            "type": "boolean",
+            "description": "commit: 只读预检(默认 false)——不执行变更 op、不写场景/资源文件,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan/issues/would_write;免确认(边界:headless load 场景可能触发 .godot import 缓存写入,instantiate 会执行场景脚本 _init,非严格零副作用)",
+            "default": false
+          },
+          "restore_point_id": {
+            "type": "string",
+            "description": "commit_restore: 目标还原点 id(来自 commit 结果的 restore_point 字段或 commit_restore_list)"
+          },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -4959,6 +4970,8 @@
         "operations",
         "save",
         "stop_on_error",
+        "dry_run",
+        "restore_point_id",
         "godot_path"
       ],
       "readonly": false,
@@ -4966,8 +4979,8 @@
       "guarded": true,
       "securityLevel": "danger-api",
       "riskDistribution": {
-        "read": 4,
-        "write": 13,
+        "read": 5,
+        "write": 14,
         "destructive": 2,
         "process": 0
       },
@@ -4993,9 +5006,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 305,
-        "schemaBytes": 6410,
-        "totalBytes": 6715
+        "descBytes": 258,
+        "schemaBytes": 6878,
+        "totalBytes": 7136
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5012,7 +5025,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -5065,7 +5078,7 @@
           },
           "vision_route": {
             "type": "boolean",
-            "description": "Phase 2 Vision Routing:开启时调视觉模型(groq)把图片翻译成文字描述,返回纯文本(不含 image block),让纯文本模型(DeepSeek 等)也能\"看懂\"截图。失败时 fallback 到 detail 分层 + 追加 note。需 GODOT_MCP_VISION_KEY 环境变量。",
+            "description": "Vision Routing:开启时调视觉模型把截图翻译成文字描述(纯文本返回,不含 image block),让纯文本模型也能\"看懂\"截图;失败时 fallback 到 detail 分层+note。需 GODOT_MCP_VISION_KEY。",
             "default": false
           },
           "vision_question": {
@@ -5116,7 +5129,7 @@
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -5182,8 +5195,8 @@
       },
       "size": {
         "descBytes": 229,
-        "schemaBytes": 3703,
-        "totalBytes": 3932
+        "schemaBytes": 3585,
+        "totalBytes": 3814
       },
       "annotations": {
         "readOnlyHint": true,
@@ -5194,13 +5207,13 @@
     {
       "name": "script",
       "group": "core",
-      "description": "脚本操作。读写: read_script, write_script。编辑: edit_script（行号/search_and_replace）。执行: execute_gdscript（⚠️ 沙箱仅防误操作，不可用于不可信输入；高安全场景 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离）。⚠️ write_script/edit_script 写 .gd 前也走沙箱扫描（与 execute_gdscript 同威胁面）。测试: generate_test, create_test_scene。批量替换: project_replace。💡 最佳实践:分步执行、每步验证,复杂逻辑拆小块用 read/edit_script 迭代。详细用法: help 工具。",
+      "description": "脚本操作。读写: read_script, write_script。编辑: edit_script(行号/search_and_replace)。执行: execute_gdscript(⚠️ 沙箱仅防误操作,不可信输入需 ALLOW_EXECUTE_GDSCRIPT=false 或容器隔离;write/edit_script 写 .gd 前同走沙箱扫描)。测试: generate_test, create_test_scene。批量替换: project_replace。最佳实践:分步执行、每步验证,复杂逻辑用 read/edit_script 迭代。详见 help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -5329,7 +5342,7 @@
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -5393,9 +5406,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 561,
-        "schemaBytes": 2995,
-        "totalBytes": 3556
+        "descBytes": 448,
+        "schemaBytes": 2929,
+        "totalBytes": 3377
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5484,7 +5497,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -5527,7 +5540,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -5581,8 +5594,8 @@
       },
       "size": {
         "descBytes": 232,
-        "schemaBytes": 1174,
-        "totalBytes": 1406
+        "schemaBytes": 1119,
+        "totalBytes": 1351
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5699,7 +5712,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -5896,7 +5909,7 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           }
         },
         "required": [
@@ -5957,8 +5970,8 @@
       },
       "size": {
         "descBytes": 352,
-        "schemaBytes": 3705,
-        "totalBytes": 4057
+        "schemaBytes": 3650,
+        "totalBytes": 4002
       },
       "annotations": {
         "readOnlyHint": false,
@@ -5975,7 +5988,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -6066,8 +6079,8 @@
       },
       "size": {
         "descBytes": 294,
-        "schemaBytes": 1125,
-        "totalBytes": 1419
+        "schemaBytes": 1086,
+        "totalBytes": 1380
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6078,13 +6091,13 @@
     {
       "name": "ui",
       "group": "ui",
-      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set_layout, ui_get_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;bg/fill/borderRadius/border→StyleBoxFlat,落盘 theme_override_styles/<slot>;返回 style_verify 逐槽位样式 diff/flow_verify flow 直接子层 rect diff)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗,几何+style_verify 全绿后跑一次)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -6103,15 +6116,15 @@
               "theme_create",
               "theme_set_property"
             ],
-            "description": "操作类型。ui_build_layout=CSS 布局翻译构建(推荐), ui_import_prototype=原型导入, ui_pixel_verify=像素验证, ui_create_control/container_add/anchor_preset=控件, ui_set/get/measure_layout=布局, ui_draw_recipe=绘制, theme_*=主题"
+            "description": "操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, draw_recipe=绘制, theme_*=主题"
           },
           "scene_path": {
             "type": "string",
-            "description": "场景路径（相对项目路径）。ui_set_theme/theme_set_property 可选;ui_pixel_verify: 必填,已构建场景(ui_import_prototype persist 产物)"
+            "description": "场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景)"
           },
           "node_path": {
             "type": "string",
-            "description": "节点路径（ui_set_layout/ui_get_layout/ui_anchor_preset/ui_set_theme/ui_container_add/ui_draw_recipe）"
+            "description": "节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe）"
           },
           "node_type": {
             "type": "string",
@@ -6478,12 +6491,12 @@
           },
           "geometry": {
             "type": "object",
-            "description": "ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline,{viewport,nodes},扁平视口坐标;与 geometry_path 二选一,同时给时本参优先;样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color}+可选 perSides:{top,right,bottom,left} 四边各异信息→翻译器 warning,渲染仍取 top;top=0 其余边>0 时用 borderNotice 提示字段替代 border)→StyleBoxFlat 四控件槽位(Panel/ProgressBar/Button/Label))",
+            "description": "ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;perSides 单边差异等细节见规则文档",
             "additionalProperties": true
           },
           "geometry_path": {
             "type": "string",
-            "description": "ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res:// 前缀;与 geometry 二选一)"
+            "description": "ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一)"
           },
           "tolerance": {
             "type": "number",
@@ -6491,11 +6504,11 @@
           },
           "parent_path": {
             "type": "string",
-            "description": "ui_build_layout: 父节点路径;ui_import_prototype: 须为原点对齐(global_position≈0,0)的节点,默认 root——非原点挂载时 layout_verify 根级条目期望按视口原点求解,根级 diff 恒误报"
+            "description": "ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报"
           },
           "tree": {
             "type": "object",
-            "description": "ui_build_layout: UI 节点树（最大深度 10）;节点可带 styleboxes: [{slot: panel|normal|background|fill|hover|pressed|disabled, box: {bg_color:[r,g,b,a]0-1, corner_radius: 数值或{tl,tr,br,bl}, border_width, border_color, draw_center}}]→add_theme_stylebox_override(StyleBoxFlat)",
+            "description": "ui_build_layout: UI 节点树(最大深度 10);节点可带 styleboxes:[{slot: panel|normal|background|fill|hover|pressed|disabled, box: {bg_color:[r,g,b,a]0-1, corner_radius: 数值或{tl,tr,br,bl}, border_width, border_color, draw_center}}]→add_theme_stylebox_override",
             "properties": {
               "type": {
                 "type": "string",
@@ -6698,11 +6711,11 @@
           },
           "load_autoloads": {
             "type": "boolean",
-            "description": "是否加载 Autoload 上下文（默认 true）"
+            "description": "加载 Autoload（默认 true）"
           },
           "viewport": {
             "type": "object",
-            "description": "ui_build_layout: 根节点 rect 的求解基准 {w, h}(默认 1280x720,须为正数;与项目 display/window/size 一致时根 rect 即视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport",
+            "description": "ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport",
             "properties": {
               "w": {
                 "type": "number",
@@ -6798,9 +6811,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 709,
-        "schemaBytes": 11513,
-        "totalBytes": 12222
+        "descBytes": 561,
+        "schemaBytes": 11095,
+        "totalBytes": 11656
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6817,7 +6830,7 @@
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -6909,8 +6922,8 @@
       },
       "size": {
         "descBytes": 462,
-        "schemaBytes": 1070,
-        "totalBytes": 1532
+        "schemaBytes": 1031,
+        "totalBytes": 1493
       },
       "annotations": {
         "readOnlyHint": false,
@@ -6921,7 +6934,7 @@
     {
       "name": "validation",
       "group": "core",
-      "description": "运行验证、分析错误、验证项目/脚本、导入资源、导出、交付门禁(verify_delivery)。headless 域需 GODOT_PATH 环境变量(或项目级 .godot/mcp-godot.json)。一键 headless 运行 + 错误分析，或按需单项检查。详细用法: help 工具。",
+      "description": "运行验证、分析错误、验证项目/脚本、导入资源、导出、交付门禁(verify_delivery)。headless 域需 GODOT_PATH(或项目级 .godot/mcp-godot.json)。详见 help 工具。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6942,11 +6955,11 @@
               "chain_verify",
               "verify_delivery"
             ],
-            "description": "操作类型。validate_project/validate_scripts/import_resources=验证导入, run_and_verify=运行+错误分析, analyze_error=分析错误输出, assert/stress=断言/压测, export_*=导出三连, validate_gdd=验证 GDD, chain_verify=链式验证, verify_delivery=交付门禁"
+            "description": "操作类型。validate_project/scripts/import_resources=验证导入, run_and_verify=运行+错误分析, analyze_error=错误分析, assert/stress=断言/压测, export_*=导出三连, validate_gdd=验证 GDD, chain_verify=链式验证, verify_delivery=交付门禁"
           },
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "scope": {
             "type": "string",
@@ -7048,7 +7061,7 @@
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -7113,9 +7126,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 278,
-        "schemaBytes": 2706,
-        "totalBytes": 2984
+        "descBytes": 194,
+        "schemaBytes": 2625,
+        "totalBytes": 2819
       },
       "annotations": {
         "readOnlyHint": false,
@@ -7126,13 +7139,13 @@
     {
       "name": "workflow",
       "group": "profiler",
-      "description": "开发工作流工具。dev_loop: 执行 GDScript,可选项目验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 结构化场景树快照。batch_validate: 批量脚本验证。create_files: 批量创建文件(支持自动验证 .gd)。run_verify: 批量运行 headless 验证场景。diff_scenes: 比较两个场景文件差异。",
+      "description": "开发工作流工具。dev_loop: 执行 GDScript+可选验证/bridge 截图查询/验收断言/状态保存。scene_snapshot: 场景树快照。batch_validate: 批量脚本验证。create_files: 批量建文件(自动验证 .gd)。run_verify: 批量 headless 验证。diff_scenes: 场景差异。",
       "inputSchema": {
         "type": "object",
         "properties": {
           "project_path": {
             "type": "string",
-            "description": "Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）"
+            "description": "项目目录（默认 GODOT_PROJECT_PATH 或当前目录）"
           },
           "action": {
             "type": "string",
@@ -7400,7 +7413,7 @@
           },
           "godot_path": {
             "type": "string",
-            "description": "覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）"
+            "description": "Godot 路径覆盖（可选，优先于配置/env）"
           }
         },
         "required": [
@@ -7463,9 +7476,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 351,
-        "schemaBytes": 5392,
-        "totalBytes": 5743
+        "descBytes": 297,
+        "schemaBytes": 5326,
+        "totalBytes": 5623
       },
       "annotations": {
         "readOnlyHint": false,

@@ -64,13 +64,17 @@ export function isAuditStrict(): boolean {
 }
 
 /** B-1(审查修复):检测令牌请求响应(content 含 "requires_confirmation":true,操作未执行)。
- *  audit middleware 应跳过此类,不记虚假 ok=true。真实执行经 _auditConfirmedExecution 补审计。 */
+ *  audit middleware 应跳过此类,不记虚假 ok=true。真实执行经 _auditConfirmedExecution 补审计。
+ *  收紧(2026-10-31 三审遗留3):同时要求 "confirmation_token" 子串在场——真实令牌响应
+ *  两键恒同现(ToolDispatcher 确认门 JSON.stringify);单 requires_confirmation 子串可被
+ *  工具正文伪造,与 tool-circuit-breaker isConfirmationRequest 同口径联动,改须两处同步。 */
 export function isTokenRequestResult(result: { content?: ReadonlyArray<unknown> }): boolean {
   return (
     result.content?.some(
       (c) =>
         typeof (c as { text?: unknown }).text === 'string' &&
-        ((c as { text: string }).text).includes('"requires_confirmation":true'),
+        ((c as { text: string }).text).includes('"requires_confirmation":true') &&
+        ((c as { text: string }).text).includes('"confirmation_token"'),
     ) ??
     false
   );

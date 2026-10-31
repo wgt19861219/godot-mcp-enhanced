@@ -32,7 +32,13 @@ export const THRESHOLDS = {
   // 同前例接受水位,warn 线校准至 116*1024=118784B(余量 3610B,二进制口径——注释里的
   // KB 一律按 1024 换算,防十进制误读);B4 outputSchema(+1350B,extract 口径含 outputSchema
   // 后实测 116524B)同批并入此水位。error 硬线不动。回弹语义保留。
-  totalSum:      { warn: 116 * 1024, error: 120 * 1024 },
+  // 批 A (2026-10-26, 竞品综述建议1): 描述压缩治理(全库 3 通用句式 61 处 + ui/game/qa/runtime/
+  // script/scene/workflow/validation/profiler/cpp/screenshot/animation/load-skill/data-import 等
+  // 顶层描述与 action 枚举导航瘦身,深层语义归规则文档)116975B→111923B(-5052B);剩余体积大头为
+  // schema 结构形状(enum/嵌套 properties,SSOT 防线不可砍)。warn 校准至 112*1024(余量 2765B,
+  // 沿瘦身即校准惯例;plan 验收线 105KB 未达,偏差原因即上述 SSOT 结构占比——继续压伤描述可用性);
+  // error 120KB 硬线不动。回弹语义保留。
+  totalSum:      { warn: 112 * 1024, error: 120 * 1024 },
 };
 
 /** @typedef {{name:string,size:{descBytes:number,schemaBytes:number,totalBytes:number}}} CapLike */
@@ -65,7 +71,7 @@ export function checkBudget(caps) {
   return { warnings, errors, sum };
 }
 
-function main() {
+async function main() {
   const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
   const matrixPath = join(projectRoot, 'docs', 'capability-matrix.json');
   const { tools } = JSON.parse(readFileSync(matrixPath, 'utf8'));
@@ -78,6 +84,9 @@ function main() {
   for (const t of top5) {
     console.log('  %s: desc %dB / schema %dB / total %dB', t.name, t.size.descBytes, t.size.schemaBytes, t.size.totalBytes);
   }
+  // 审查 Nit-3 清偿:await 而非 fire-and-forget——error 路径的 process.exit(1) 可能先于
+  // dynamic import 完成,per-profile 输出会被截断丢失。main 由此改 async,尾部顶层 await。
+  await printProfileExposure(projectRoot, tools);
 
   for (const w of warnings) console.warn('[token-budget] WARN: ' + w);
   for (const e of errors) console.error('[token-budget] ERROR: ' + e);
@@ -89,4 +98,31 @@ function main() {
   console.log('[token-budget] %d warning(s), 0 error — 通过', warnings.length);
 }
 
-main();
+/**
+ * 批 A (2026-10-26): per-profile 暴露量统计——按 PROFILES 展开组得到各 profile 实际暴露的
+ * tools/list 字节数(默认会话上下文成本可见)。**口径说明(审查 Nit-4)**:与 manage_tools
+ * profilePriceTags() 的差异——本统计按 capability-matrix 源定义口径(descBytes+schemaBytes,
+ * 不含 slim 变换后差异),工具集口径一致(组展开);manage_tools/testing/csv_to_resources 等
+ * 3 个不归组的 ALWAYS_ALLOWED 注册工具(共 ~4.1KB)不在任何 profile 统计内,内联推送的
+ * confirm_and_execute 亦不在 matrix,均按 0B 计。build 产物缺失时降级提示(先 npm run build)。
+ */
+async function printProfileExposure(projectRoot, tools) {
+  let registry;
+  try {
+    registry = await import(`file://${join(projectRoot, 'build', 'core', 'tool-registry.js').replace(/\\/g, '/')}`);
+  } catch {
+    console.log('[token-budget] per-profile: 跳过(build/core/tool-registry.js 不存在,先 npm run build)');
+    return;
+  }
+  const byName = new Map(tools.map(t => [t.name, t.size.totalBytes]));
+  console.log('[token-budget] per-profile 暴露量(仅注册模块工具,内联工具按 0B):');
+  for (const [profile, groups] of Object.entries(registry.PROFILES)) {
+    const toolNames = registry.expandGroups(groups);
+    let bytes = 0;
+    for (const n of toolNames) bytes += byName.get(n) ?? 0;
+    const known = [...toolNames].filter(n => byName.has(n)).length;
+    console.log('  %s %dB (~%d tokens), %d 工具(组: %s)', profile.padEnd(10), bytes, Math.round(bytes / 4), known, groups.join(','));
+  }
+}
+
+await main();

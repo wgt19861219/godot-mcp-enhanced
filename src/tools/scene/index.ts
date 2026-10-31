@@ -21,6 +21,7 @@ import { handleInstanceScene, handleSetInstanceProperty, handleDetachInstance } 
 import { mergeTscn, checkSceneHealth } from './scene-merge.js';
 import { handleCreate3dNode } from '../node-3d-ops.js';
 import { handleCommitAction } from './scene-commit-tool.js';
+import { listRestorePoints, restoreFromPoint } from './commit-restore.js';
 import { scanScriptSandboxOrThrow } from '../script/shared.js';
 import type { RiskLevel } from '../../core/tool-registry.js';
 
@@ -32,15 +33,15 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'scene',
-      description: '场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源: save_scene, load_sprite。查询: query_scene_tree, inspect_node。实例: instance_scene, set_instance_property, detach_instance。详细用法: help 工具。',
+      description: '场景操作。读取/创建: read_scene, create_scene, quick_scene。节点: add_node, batch_add_nodes, edit_node, remove_node。保存/资源/查询/实例: save_scene, load_sprite, query_scene_tree, inspect_node, instance_scene 等。详见 help 工具。',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。read_scene/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit_node/remove_node=编辑删除, save_scene/open_scene=保存打开, instance_scene/set_instance_property/detach_instance=实例化, load_sprite=贴图加载, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交',
+            description: '操作类型。read/query_scene_tree/inspect_node=读取, create_scene/add_node/batch_add_nodes/quick_scene=创建, edit/remove_node=编辑删除, save/open_scene=保存打开, instance_*=实例化, load_sprite=贴图, health_check=体检, merge_scene=合并, create_3d_node/commit=3D节点/批量提交, commit_restore(_list)=提交还原点恢复/列表',
           },
           scene_path: { type: 'string', description: '场景路径（read_scene 用绝对路径，其余用相对项目路径）' },
           summary_only: { type: 'boolean', description: 'read_scene: 返回摘要而非完整 JSON' },
@@ -75,7 +76,7 @@ export function getToolDefinitions(): Tool[] {
           instance_path: { type: 'string', description: '要实例化的场景（res://…tscn）' },
           property: { type: 'string', description: 'set_instance_property: 属性名' },
           value: { description: '属性值（set_instance_property）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           // create_3d_node 参数
           type: { type: 'string', description: '类型（create_3d_node，白名单）' },
           name: { type: 'string', description: '名称（create_3d_node）' },
@@ -115,7 +116,9 @@ export function getToolDefinitions(): Tool[] {
           },
           save: { type: 'boolean', description: 'commit: 是否保存到文件（默认 true）' },
           stop_on_error: { type: 'boolean', description: '遇错是否停止（默认 true;false 时失败不阻止后续与 .tres 写盘）' },
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          dry_run: { type: 'boolean', description: 'commit: 只读预检(默认 false)——不执行变更 op、不写场景/资源文件,逐 op 探测节点/TileSet 资源/layer 越界,返回 plan/issues/would_write;免确认(边界:headless load 场景可能触发 .godot import 缓存写入,instantiate 会执行场景脚本 _init,非严格零副作用)', default: false },
+          restore_point_id: { type: 'string', description: 'commit_restore: 目标还原点 id(来自 commit 结果的 restore_point 字段或 commit_restore_list)' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },
@@ -503,6 +506,26 @@ export async function handleTool(
       return handleCreate3dNode(args, ctx);
     case 'commit':
       return handleCommitAction(args, ctx);
+    // 批 B2 (2026-10-26): commit 的 restore point 作用域回滚——只回滚该次提交
+    // 触及的文件(备份于 commit 写盘前,LRU 保 10 点);恢复=备份覆盖当前文件,
+    // 不删除 commit 新建的文件(restored/missing 明细如实返回)。
+    case 'commit_restore': {
+      const p = requireProjectPath(args);
+      const id = args.restore_point_id as string;
+      if (!id || typeof id !== 'string') {
+        return opsErrorResult('INVALID_PARAMS', 'restore_point_id is required (see commit_restore_list)');
+      }
+      try {
+        const { restored, missing } = restoreFromPoint(p, id);
+        return textResult(JSON.stringify({ restored, missing, status: missing.length > 0 ? 'partial' : 'ok' }, null, 2));
+      } catch (err) {
+        return opsErrorResult('RESTORE_POINT_NOT_FOUND', err instanceof Error ? err.message : String(err));
+      }
+    }
+    case 'commit_restore_list': {
+      const p = requireProjectPath(args);
+      return textResult(JSON.stringify({ points: listRestorePoints(p) }, null, 2));
+    }
 
     default: return opsErrorResult('UNKNOWN_ACTION', `Unknown action: ${action}`);
   }
@@ -520,6 +543,7 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
       create_scene: 'write', quick_scene: 'write', add_node: 'write', batch_add_nodes: 'write',
       edit_node: 'write', save_scene: 'write', load_sprite: 'write', instance_scene: 'write',
       set_instance_property: 'write', detach_instance: 'write', create_3d_node: 'write', commit: 'write',
+      commit_restore: 'write', commit_restore_list: 'read',
       open_scene: 'write',
       remove_node: 'destructive', merge_scene: 'destructive',
     } satisfies Record<typeof ACTIONS[number], RiskLevel>,

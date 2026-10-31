@@ -333,7 +333,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],

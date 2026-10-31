@@ -1,6 +1,6 @@
 {
   "name": "godot-mcp-enhanced",
-  "version": "0.36.1",
+  "version": "0.36.2",
   "mcpName": "io.github.wgt19861219/godot-mcp-enhanced",
   "description": "Enhanced MCP server for Godot game engine - closed-loop AI development with dynamic GDScript execution, scene tree query, node inspection, and more",
   "keywords": [
@@ -54,6 +54,7 @@
     "score:pr-comment": "node build/scoring/cli.js pr-comment",
     "score:html": "node build/scoring/cli.js html",
     "check:gdscript": "node build/scoring/check-gdscript.js",
+    "audit:tools": "node build/index.js qa nightly test/fixtures/tool-audit/specs --project test/fixtures/gdscript-check",
     "audit:json": "npm audit --json --registry=https://registry.npmjs.org",
     "test:integration": "vitest run --project godot-integration",
     "test:all": "vitest run",
@@ -88,24 +89,27 @@
     "codemirror": "^5.65.21",
     "pngjs": "^7.0.0",
     "ws": "^8.21.0",
-    "zod": "^4.2.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^20.11.24",
     "@types/pngjs": "^6.0.5",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^4.1.12",
     "eslint": "^10.4.0",
     "fast-check": "^4.8.0",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.60.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/"
+  },
+  "overrides": {
+    "minimatch": "^11.0.3"
   }
 }

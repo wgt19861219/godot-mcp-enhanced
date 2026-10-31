@@ -51,16 +51,16 @@ export function getToolDefinitions(): Tool[] {
     {
       name: 'profiler',
       description:
-        '性能分析工具。snapshot: 快照（FPS/内存/绘制调用/物理统计）。start/stop: 开始/停止分析会话。get_data: 收集帧级数据，含多维度采样、p99百分位、趋势退化检测、内存趋势、渲染统计。get_active_processes: 遍历场景树查找有 _process/_physics_process 的节点。get_signal_connections: 列出子树所有信号连接。' +
+        '性能分析工具。snapshot: 快照(FPS/内存/绘制调用/物理统计)。start/stop: 分析会话。get_data: 帧级数据+多维度采样/p99/趋势退化/内存趋势/渲染统计。get_active_processes: 找 _process/_physics_process 节点。get_signal_connections: 子树信号连接。' +
         NON_PERSIST,
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: ['snapshot', 'start', 'stop', 'get_data', 'get_active_processes', 'get_signal_connections', 'capture_functions'],
-            description: '操作类型。capture_functions(P2,2026-09-11):函数级热点——需先 run_project(profiling=true) 起 spawn 会话,一次调用完成采样窗口+排名(引擎原生 profiler 流,等价编辑器 Profiler 面板;帧级 get_data 之外的函数级 self/total 热点+最慢帧 top30)',
+            description: '操作类型。capture_functions: 函数级热点——需先 run_project(profiling=true) 起 spawn 会话,一次调用完成采样窗口+排名(引擎原生 profiler 流;帧级 get_data 之外的函数级 self/total 热点+最慢帧 top30)',
           },
           target_fps: { type: 'number', description: '目标帧率，用于帧预算分析（get_data，默认 60）' },
           frame_count: { type: 'number', description: '采样帧数（get_data，默认 60）' },
@@ -71,7 +71,7 @@ export function getToolDefinitions(): Tool[] {
           },
           leak_threshold_mb: { type: 'number', description: '内存泄漏嫌疑阈值 MB（get_data，默认 2.0）' },
           node_path: { type: 'string', description: '子树根节点路径（get_active_processes/get_signal_connections，默认 root）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           seconds: { type: 'number', description: 'capture_functions: 采样窗口秒数(默认 3,上限 60;窗口从首帧真实数据起算,自动停)' },
           top: { type: 'number', description: 'capture_functions: 返回热点行数(默认 20,上限 100,按 sort 排序)' },
           sort: { type: 'string', description: 'capture_functions: 排序键(selfMs|totalMs|calls,默认 selfMs)' },

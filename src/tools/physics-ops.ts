@@ -314,7 +314,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -350,7 +350,7 @@ export function getToolDefinitions(): Tool[] {
           parent_path: { type: 'string', description: '父节点路径（collision_overlay，默认 root）' },
           color_override: { type: 'string', description: '统一颜色，如 "1,0,0,0.5"（collision_overlay 可选）' },
           // 通用参数
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

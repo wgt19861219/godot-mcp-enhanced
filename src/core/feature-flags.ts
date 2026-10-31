@@ -15,6 +15,9 @@ const FEATURES = {
   // 启用时跑两层:第一层 PID 集合扫描(毫秒级)+ 第二层全系统扫描(15s,跳过 --editor)。
   // IPC-R1/R5: 全系统扫由 GodotServer.ts 传 { fullSystemScan: true } 显式触发,不读 env。
   STARTUP_CLEANUP: { env: 'GODOT_MCP_STARTUP_CLEANUP',  default: false },
+  // 批 B3 (2026-10-26): 工具级失败熔断(同参数连续 3 败拒绝,写类 action 专属,10min 半开)。
+  // 默认开;env 设 'false'/'0'(任何非 'true' 值)即关。见 tool-circuit-breaker.ts。
+  TOOL_CIRCUIT_BREAKER: { env: 'GODOT_MCP_TOOL_CIRCUIT_BREAKER', default: true },
 } as const;
 
 export type FeatureKey = keyof typeof FEATURES;

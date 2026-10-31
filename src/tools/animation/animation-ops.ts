@@ -33,16 +33,16 @@ export function getToolDefinitions(): Tool[] {
     {
       name: 'animation',
       description:
-        '查询、控制和编辑动画。查询: list_players, get_info, get_details, get_keyframes。播放: play, stop, seek, blend。编辑: create, delete, update_props, add_track, remove_track, add_keyframe, remove_keyframe, update_keyframe。' +
+        '查询、控制和编辑动画。查询: list_players, get_info/details/keyframes。播放: play/stop/seek/blend。编辑: create/delete/update_props, add/remove_track, add/remove/update_keyframe。' +
         NON_PERSIST,
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。list_players=列 AnimationPlayer, get_info/get_details/get_keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add_track/remove_track/add_keyframe/remove_keyframe/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼',
+            description: '操作类型。list_players=列 AnimationPlayer, get_info/details/keyframes=查询, play/stop/seek/blend=播放控制, create/delete/update_props=动画增删改, add/remove_track、add/remove/update_keyframe=轨道与关键帧, ik_*=IK 修改器与骨骼',
           },
           root_path: { type: 'string', description: '搜索起始节点路径（list_players）' },
           node_path: { type: 'string', description: 'AnimationPlayer 节点路径（除 list_players 外必填）' },
@@ -69,7 +69,7 @@ export function getToolDefinitions(): Tool[] {
           update: { type: 'boolean', description: '跳转后立即更新节点（seek）' },
           blend_time: { type: 'number', description: '混合过渡时间（秒）（blend）' },
           speed: { type: 'number', description: '播放速度，默认 1.0（blend）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           // ── IK parameters (merged, v0.18.0) ──
           type: { type: 'string', enum: ['TwoBoneIK3D', 'FABRIK3D', 'CCDIK3D', 'SplineIK3D', 'JacobianIK3D'], description: 'IK：IK 类型' },
           bone_name: { type: 'string', description: 'IK：骨骼名' },

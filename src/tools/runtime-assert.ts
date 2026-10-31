@@ -29,7 +29,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'runtime_assert',
-      description: '运行时断言：在运行中的游戏上验证节点状态/场景结构/屏幕文本/性能/截图对比。agent 可任意时刻调用，不必走 workflow.dev_loop。全部依赖 game-bridge（需先 game_bridge_install + 游戏运行中）。',
+      description: '运行时断言:在运行中游戏上验证节点状态/场景结构/屏幕文本/性能/截图对比;可任意时刻调用,不必走 dev_loop。依赖 game-bridge(需先 install bridge + 游戏运行中)。',
       inputSchema: {
         type: 'object' as const,
         properties: {

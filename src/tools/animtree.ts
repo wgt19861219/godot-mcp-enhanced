@@ -49,7 +49,7 @@ export function getToolDefinitions(): Tool[] {
               'animtree_add_transition 添加转换；animtree_set_blend 设置混合参数；' +
               'animtree_play 播放状态；animtree_state_edit 编辑状态属性',
           },
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           node_path: { type: 'string', description: 'AnimationTree 节点路径' },
           name: { type: 'string', description: 'AnimationTree 节点名称（animtree_create 时使用）' },
           parent: { type: 'string', description: '父节点路径（animtree_create 时使用，默认 root）' },
@@ -88,7 +88,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['set_position', 'set_blend'],
             description: 'animtree_state_edit 的子操作：set_position 设置状态位置(需 state_name + position)；set_blend 设置混合参数(需 parameter_name + value)',
           },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

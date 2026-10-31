@@ -41,7 +41,9 @@ if (isVerify) {
   const cfgPath = join(addonDest, 'plugin.cfg');
   if (!existsSync(cfgPath)) {
     console.error('FAIL: plugin.cfg not found at', cfgPath);
-    console.error('Run: npx godot-mcp-enhanced install-plugin --project', projectPath);
+    // L-19 残留清偿(2026-10-29 审查 L-3):CLI 路由无 install-plugin 子命令(install 是
+    // 装 Godot 二进制),旧提示照做会落入未知子命令——改为 node 直跑脚本形态。
+    console.error(`Run: node node_modules/godot-mcp-enhanced/scripts/install-plugin.js --project ${projectPath}`);
     process.exit(1);
   }
   const content = readFileSync(cfgPath, 'utf-8');

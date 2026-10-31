@@ -66,7 +66,7 @@ export function getToolDefinitions(): Tool[] {
         run_id: { type: 'string', description: 'status/cancel: 目标 run_id(status 省略=列出全部注册 run)' },
         // assert 8 种(node_state/scene_structure/screen_text/perf/screenshot_diff/signal/errors/monitor)
         // 的字段级语义在 spec.ts zod 注释与 runtime-assert schema description(Task 6),此处只做索引级概述,避免双份维护
-        spec: { type: 'object', description: 'run: inline 套件 spec 对象。步骤为 discriminated union(type 字段决定形态)：input(method+params,bridge 原生参数)、wait(wait_for_node/wait_for_property 轮询)、wait_frames(1-60 帧确定性推进)、freeze/unfreeze、step_until(结构化条件{path,property,op,value}[]，规避 RCE)、snapshot/restore、set(写节点属性)、call(bridge 只读白名单方法，写方法需 GODOT_MCP_BRIDGE_EXTRA_METHODS)、watch_start(node_path+signal_name，单套件单 watch)、watch_stop、monitor_start(node_path+properties[]，单套件单 monitor)、monitor_stop、screenshot(证据落报告目录)、sleep。步骤带 label 便于 diff 对齐' },
+        spec: { type: 'object', description: 'run: inline 套件 spec。步骤为 discriminated union(type 决定形态):input(bridge 原生参数)/wait(条件轮询)/wait_frames(1-60 帧确定性推进)/freeze/unfreeze/step_until(结构化条件[],规避 RCE)/snapshot/restore/set/call(只读白名单方法,写需 GODOT_MCP_BRIDGE_EXTRA_METHODS)/watch_start|stop(单套件单 watch)/monitor_start|stop(单套件单 monitor)/screenshot(证据落报告目录)/sleep;步骤带 label 便于 diff 对齐' },
         spec_path: { type: 'string', description: 'run: spec 文件路径(.json 或含 ```qa-spec 围栏的 .md)，大套件建议用文件避免 token 截断；须在 ALLOWED_PROJECT_PATHS 白名单内' },
         project_path: { type: 'string', description: 'run: 项目路径(覆盖 spec 内的 project_path；spec 未写时必填)' },
         // report / diff

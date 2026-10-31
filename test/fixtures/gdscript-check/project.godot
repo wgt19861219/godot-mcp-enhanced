@@ -10,6 +10,8 @@ config_version=5
 
 [application]
 
+run/main_scene="res://test_main.tscn"
+
 config/name="M3c gdscript check"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 
@@ -26,3 +28,6 @@ enabled=PackedStringArray("res://addons/godot_mcp_server/plugin.cfg")
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+
+[autoload]
+MCPBridge="*res://mcp_bridge.gd"

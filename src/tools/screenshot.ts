@@ -40,7 +40,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: ['capture', 'analyze', 'diff'],
@@ -60,7 +60,7 @@ export function getToolDefinitions(): Tool[] {
           // Phase 2: Vision Routing(纯文本模型用,调视觉模型把图片翻译成文字描述)
           vision_route: {
             type: 'boolean',
-            description: 'Phase 2 Vision Routing:开启时调视觉模型(groq)把图片翻译成文字描述,返回纯文本(不含 image block),让纯文本模型(DeepSeek 等)也能"看懂"截图。失败时 fallback 到 detail 分层 + 追加 note。需 GODOT_MCP_VISION_KEY 环境变量。',
+            description: 'Vision Routing:开启时调视觉模型把截图翻译成文字描述(纯文本返回,不含 image block),让纯文本模型也能"看懂"截图;失败时 fallback 到 detail 分层+note。需 GODOT_MCP_VISION_KEY。',
             default: false,
           },
           vision_question: {
@@ -86,7 +86,7 @@ export function getToolDefinitions(): Tool[] {
             default: 0.12,
           },
           diff_path: { type: 'string', description: 'diff: 可选,差异图输出路径。差异像素染纯红 (255,0,0),其余保留 a 图原色。不提供则不写文件。' },
-          godot_path: { type: 'string', description: '覆盖 Godot 二进制路径（可选，优先于项目配置和环境变量）' },
+          godot_path: { type: 'string', description: 'Godot 路径覆盖（可选，优先于配置/env）' },
         },
         required: ['action'],
       },

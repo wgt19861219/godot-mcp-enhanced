@@ -172,7 +172,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           action: {
             type: 'string',
             enum: [...ACTIONS],
@@ -198,7 +198,7 @@ export function getToolDefinitions(): Tool[] {
             description: 'set: 属性键值对（active, influence, bone_name, target_nodepath, use_magnet, magnet_position）',
           },
           limit: { type: 'number', description: 'list_bones: 最大返回数量' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

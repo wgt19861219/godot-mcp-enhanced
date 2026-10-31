@@ -293,7 +293,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['particles_create', 'particles_set_emission', 'particles_set_process', 'particles_load_preset', 'particles_set_material'],
             description: '操作类型。particles_create=建粒子节点, particles_set_emission/set_process=设发射/处理参数, particles_load_preset=加载预设(fire/smoke/rain/snow/sparkle/explosion), particles_set_material=设材质',
           },
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           node_type: {
             type: 'string',
             enum: ['GPUParticles2D', 'GPUParticles3D'],
@@ -351,7 +351,7 @@ export function getToolDefinitions(): Tool[] {
             type: 'string',
             description: '材质类型（ParticleProcessMaterial）',
           },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['action'],
       },

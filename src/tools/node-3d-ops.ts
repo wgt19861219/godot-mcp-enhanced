@@ -89,7 +89,7 @@ export function getToolDefinitions(): Tool[] {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          project_path: { type: 'string', description: 'Godot 项目目录路径（可选，默认使用 GODOT_PROJECT_PATH 环境变量或当前目录）' },
+          project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）' },
           type: { type: 'string', description: '节点类型（仅限白名单）' },
           name: { type: 'string', description: '节点名称' },
           parent: { type: 'string', description: '父节点路径（默认 root）' },
@@ -112,7 +112,7 @@ export function getToolDefinitions(): Tool[] {
             required: ['x', 'y', 'z'],
           },
           properties: { type: 'object', description: '自定义属性（仅基本类型值）' },
-          load_autoloads: { type: 'boolean', description: '是否加载 Autoload 上下文（默认 true）' },
+          load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
         },
         required: ['type', 'name'],
       },

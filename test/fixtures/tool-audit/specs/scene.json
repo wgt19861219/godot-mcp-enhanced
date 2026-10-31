@@ -1,0 +1,11 @@
+{
+  "name": "scene-contract",
+  "description": "批 D 首批契约:scene_structure 引擎裁决——test_main.tscn 实例化后根与 Label 子节点存在于运行树",
+  "steps": [
+    { "type": "wait", "label": "wait-main", "method": "wait_for_node", "params": { "path": "/root/Main" } },
+    { "type": "assert", "label": "structure", "assert": "scene_structure", "nodes": [
+      { "path": "/root/Main", "type": "Node2D" },
+      { "path": "/root/Main/AuditLabel", "type": "Label" }
+    ] }
+  ]
+}
