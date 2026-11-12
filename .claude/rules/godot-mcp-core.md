@@ -3,7 +3,7 @@ description: "godot-mcp 核心指南 模式选择 Headless Editor Bridge execute
 alwaysApply: true
 ---
 
-> 适用于 godot-mcp-enhanced v0.17.0+
+> 适用于 godot-mcp-enhanced v0.36.3+
 
 ## 概述与架构
 
@@ -121,6 +121,14 @@ AI 改动涉及用户需要看到效果才能验收的内容（`.tscn` / UI 脚�
 - **持久化方法**：使用 add_node（写入 .tscn）+ save_scene 保存。或用 write_script / edit_script 修改 .gd 文件。
 
 > 运行时工具适合验证和测试。若需持久化场景修改，必须使用 add_node + save_scene。
+
+## 绑脚本场景（B 轨）结构改动推荐通道
+
+场景绑定的 `.gd` 脚本若引用 **autoload 单例或全局 class_name**（跨文件依赖），headless `load()` 该场景会因脚本编译失败而返回 null——headless 片段进程缺完整项目上下文，autoload 相关 "Identifier not found" 属已知 headless 限制（`run_and_verify` 同源将其标记为 headless_limitation）。此类场景的**结构性改动（加/删/改节点）必须走编辑器 WS 通道**：`launch_editor` → 编辑器内打开目标场景 → `add_node`/`edit_node`/`remove_node`（editor 路由操作活动场景）→ `save_scene`。编辑器有完整项目上下文（autoload 注册 + 全局类缓存），加载此类场景不失败。
+
+- **识别信号**：headless 报 `Failed to load scene: <path> — scene or its attached scripts failed to compile, check script dependencies/autoloads`，且消息尾部附引擎原始错误行（前 5 行，如 `res://player.gd:12: ... Identifier not found ...`）——切编辑器通道，不要在 headless 侧反复重试。
+- **headless 仍可用的操作**：`read_scene`（纯文本 parse，不执行脚本）、`edit_script`/`write_script`（改 .gd 源码本身）——只改脚本内容不动场景结构时无需编辑器。
+- **错误消息自带归因**：模板 `_mcp_load_scene` 的 null 分支附上述归因提示；`parseGdscriptResult` 把 executor 解析的引擎错误行（`result.errors` 前 5 行）拼进 SCRIPT_EXEC_FAILED/LOAD_FAILED 等错误消息——直接看消息即可定位是脚本依赖问题，无需翻 raw_output。
 
 ## Headless 截图限制（2D 与 3D）
 

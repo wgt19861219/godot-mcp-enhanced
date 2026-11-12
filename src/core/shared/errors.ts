@@ -46,17 +46,37 @@ export function opsErrorResult(
   return errorResult(JSON.stringify(opsError(errorCode, message, opts)));
 }
 
+/**
+ * Task D4 (2026-11-12): 把 executor 解析出的引擎错误行（result.errors，error-analyzer
+ * 从 stderr 解析的结构化 ParsedError）拼进错误消息——此前 parseGdscriptResult 只透传
+ * compile_error/run_error/entry.value，errors 整组丢弃，场景绑脚本编译失败时调用方
+ * 只剩裸 "Failed to load scene"，引擎原始错误行（哪个 .gd 哪行什么错）不可见。
+ * 上限 5 行防刷屏，超出附溢出计数；空/缺省数组返回空串（消息保持原样，不拼空段——
+ * 兼容测试/调用方不传 errors 的极简对象形态）。
+ */
+function formatEngineErrorLines(errors: ExecuteGdscriptResult['errors'] | undefined, max = 5): string {
+  if (!Array.isArray(errors) || errors.length === 0) return '';
+  const lines = errors.slice(0, max).map((e) => {
+    const loc = e.file ? `${e.file}${e.line !== undefined ? `:${e.line}` : ''}` : '';
+    return loc ? `${loc}: ${e.message}` : e.message;
+  });
+  const overflow = errors.length > max ? `\n  (+${errors.length - max} more)` : '';
+  return `\nEngine error output (first ${lines.length} line(s), parsed from stderr):\n  ${lines.join('\n  ')}${overflow}`;
+}
+
 export function parseGdscriptResult(
   result: ExecuteGdscriptResult,
   paramWarnings: string[] = [],
   errorMapper: (errorMsg: string) => string = () => 'SCRIPT_EXEC_FAILED',
   errorOpts?: { suggestion?: string },
 ): ToolResult {
+  // Task D4: 三个失败分支统一拼引擎错误行（compile/run/errorMapper——如 LOAD_FAILED）
+  const engineLines = formatEngineErrorLines(result.errors);
   if (!result.compile_success) {
-    return opsErrorResult('SCRIPT_EXEC_FAILED', result.compile_error, errorOpts);
+    return opsErrorResult('SCRIPT_EXEC_FAILED', result.compile_error + engineLines, errorOpts);
   }
   if (!result.run_success) {
-    return opsErrorResult('SCRIPT_EXEC_FAILED', result.run_error, errorOpts);
+    return opsErrorResult('SCRIPT_EXEC_FAILED', result.run_error + engineLines, errorOpts);
   }
 
   const data: Record<string, unknown> = {};
@@ -66,7 +86,7 @@ export function parseGdscriptResult(
       warnings.push(String(entry.value));
     } else if (entry.key === 'error') {
       const errCode = errorMapper(String(entry.value));
-      return opsErrorResult(errCode, String(entry.value), errCode === 'NODE_NOT_FOUND' ? errorOpts : undefined);
+      return opsErrorResult(errCode, String(entry.value) + engineLines, errCode === 'NODE_NOT_FOUND' ? errorOpts : undefined);
     } else {
       try {
         data[entry.key] = JSON.parse(entry.value);

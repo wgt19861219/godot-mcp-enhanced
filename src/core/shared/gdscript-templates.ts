@@ -89,6 +89,9 @@ export const SCENE_TREE_HEADER = [
   ...GD_MCP_LOAD_MAIN_SCENE,
   '',
   // SCENE_TREE_HEADER 独有：场景加载和导航辅助
+  // Task D4 (2026-11-12): load() 返回 null 最常见根因是场景绑定脚本引用 autoload/class_name
+  // 在 headless 编译失败——null 分支文案附归因（前缀保持 "Failed to load scene"，errorMapper
+  // 的 LOAD_FAILED 匹配依赖此子串）；引擎原始错误行由 TS 侧 parseGdscriptResult 拼 result.errors。
   'func _mcp_load_scene(sp: String) -> bool:',
   '	var _r: Node = _mcp_get_root()',
   '	if _r == null:',
@@ -101,7 +104,7 @@ export const SCENE_TREE_HEADER = [
   '		_mcp_scene_instance = null',
   '	var _sr = load(sp)',
   '	if _sr == null:',
-  '		_mcp_output("error", "Failed to load scene: " + sp)',
+  '		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")',
   '		return false',
   '	_mcp_scene_instance = _sr.instantiate()',
   '	_r.add_child(_mcp_scene_instance)',

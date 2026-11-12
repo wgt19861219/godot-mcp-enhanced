@@ -90,7 +90,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -218,7 +218,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -357,7 +357,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -498,7 +498,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -638,7 +638,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -768,7 +768,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -902,7 +902,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
@@ -1040,7 +1040,7 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       		_mcp_scene_instance = null
       	var _sr = load(sp)
       	if _sr == null:
-      		_mcp_output("error", "Failed to load scene: " + sp)
+      		_mcp_output("error", "Failed to load scene: " + sp + " — scene or its attached scripts failed to compile, check script dependencies/autoloads (headless lacks autoload/class_name resolution; structural changes should use the editor WS channel)")
       		return false
       	_mcp_scene_instance = _sr.instantiate()
       	_r.add_child(_mcp_scene_instance)
