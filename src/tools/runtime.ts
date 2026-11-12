@@ -678,9 +678,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // A4 (2026-07-04 反馈): GUT 退出标志参数化。默认 -gquit(GUT ≤9.5 惯例,GUT 9.6+ 移除);
         // 白名单二选一,非法值回落 gquit(值只拼进 spawn args 数组,无注入面,白名单是行为兜底)。
         const quitFlag = args.quit_flag === 'gexit' ? 'gexit' : 'gquit';
-        // D6 (2026-11-12): timeout 参数取代 120s 硬编码(未传/非法/<=0 → 120 向后兼容;
-        // 分片时 per-shard 计时)。shards>1 走分片循环(蛇形 + -gconfig= 选片 + 汇总)。
-        const timeoutSecs = Math.max(1, Math.floor(Number(args.timeout) || 120));
+        // D6 (2026-11-12): timeout 参数取代 120s 硬编码(未传/非法/0/负数 → 120 向后兼容;
+        // 分片时 per-shard 计时)。I-1(D6 审查): 归一须用 isFinite+>0 显式判定——`|| 120`
+        // 只挡 0/NaN,负数 truthy 直通后 max(1,·) 会把 run_project 惯例输入 -1
+        // ("0/-1=不自动停")归一成 1s 几乎必超时;正数下取 floor。
+        const rawTimeout = Number(args.timeout);
+        const timeoutSecs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? Math.floor(rawTimeout) : 120;
         const shards = Math.max(1, Math.floor(Number(args.shards) || 1));
 
         if (shards > 1) {

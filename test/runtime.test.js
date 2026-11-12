@@ -623,6 +623,34 @@ describe('runtime handleTool — run_tests', () => {
       vi.useRealTimers();
     }
   });
+
+  // I-1(D6 审查): timeout=-1 不得归一成 1s——run_project 惯例明文"0/-1=不自动停",
+  // 读者按惯例给 run_tests 传 -1 若走 || 短路(truthy 直通)+max(1,·) 会得 1s 几乎必超时。
+  // 归一规则:非有限正数(含 0/负数/NaN/未传)一律回落 120。
+  it('timeout=-1(run_project 不自动停惯例输入)归一回 120s,而非 1s(I-1)', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = mockProc();
+      setupSpawnMock(proc);
+      const ctx = createMockCtx();
+      const rp = handleTool('runtime', {
+        action: 'run_tests',
+        project_path: '/fake/project',
+        timeout: -1,
+      }, ctx);
+      await new Promise(r => process.nextTick(r));
+
+      vi.advanceTimersByTime(119_999);
+      expect(forceKillTree).not.toHaveBeenCalled();   // 若归一成 1s,此处早已强杀
+      vi.advanceTimersByTime(1);
+      expect(forceKillTree).toHaveBeenCalled();
+
+      const result = await rp;
+      expect(result.content[0].text).toContain('timed out after 120s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ─── handleTool — run_tests 分片模式(D6, 2026-11-12 反馈:单进程全量 22.5GB 死机) ───
@@ -775,6 +803,23 @@ describe('runtime handleTool — run_tests 分片模式(D6)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('timeout=-1 分片模式:timeout_per_shard_s 归一 120(I-1,非 1s)', async () => {
+    setupFlatTestDir(['test_a.gd', 'test_b.gd']);
+    shardSpawn(['Tests: 1\n', 'Tests: 1\n'], [0, 0]);
+
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+      timeout: -1,
+    }, createMockCtx());
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.timeout_per_shard_s).toBe(120);
+    // 全片正常完成(120s 默认下 mock 进程立即 close,非 timeout 状态)
+    expect(parsed.shard_results.every(x => x.status === 'ok')).toBe(true);
   });
 
   it('shards 缺省(=1):保持现有单进程行为(-gdir 直传、无 -gconfig、输出结构不变)', async () => {
