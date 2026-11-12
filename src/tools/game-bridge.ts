@@ -97,11 +97,32 @@ function bundledBridgeSha256(ctx: ToolContext): string | null {
   } catch { return null; }
 }
 
+/** A4(2026-11-12): semver 三段数值比较。逐段 split('.') 数值比对(缺段补 0,"0.36" < "0.36.1");
+ *  任一段非纯数字(如 "3-beta"/"x")放弃数值语义,回落整串字符串比较(容错,不炸)。
+ *  返回 -1/0/1(a<b / a==b / a>b)。字典序陷阱:'0.36.10' < '0.36.9' 是错的,数值段比较才是对的。 */
+function compareVersions(a: string, b: string): number {
+  const as = a.split('.');
+  const bs = b.split('.');
+  const numeric = (seg: string[]) => seg.length > 0 && seg.every(s => /^\d+$/.test(s));
+  if (numeric(as) && numeric(bs)) {
+    const n = Math.max(as.length, bs.length);
+    for (let i = 0; i < n; i++) {
+      const av = i < as.length ? Number(as[i]) : 0;
+      const bv = i < bs.length ? Number(bs[i]) : 0;
+      if (av !== bv) return av < bv ? -1 : 1;
+    }
+    return 0;
+  }
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** ping 响应注解(纯函数,单测直测):附加 bundledBridgeVersion,与远端 bridgeVersion 不一致
  *  时加 versionWarning(旧版项目拷贝的可操作指引)。返回注解后的新对象,不改入参。
  *  批次3: 第三参 bundledSha(可选)启用内容指纹比对 —— 版本号一致但字节指纹不一致 =
  *  项目内 mcp_bridge.gd 被手工修改/损坏(版本号比对的结构性盲区,yanhuifair v1.12.4
- *  内容哈希同步修法的检测面);远端无指纹(旧版 GD)或本地算不出(bundled 缺失)跳过。 */
+ *  内容哈希同步修法的检测面);远端无指纹(旧版 GD)或本地算不出(bundled 缺失)跳过。
+ *  A4: 不一致时分方向 —— remote 旧(含 unknown 哨兵,远端非 string 无从数值比较,按旧处理)
+ *  维持 force 重装指引;remote 新(项目装了更新版本,服务端还没跟上)不建议 force 回退。 */
 export function annotatePingWithVersion(
   result: Record<string, unknown>,
   bundled: string | null,
@@ -109,13 +130,17 @@ export function annotatePingWithVersion(
 ): Record<string, unknown> {
   if (!bundled) return result;
   const annotated: Record<string, unknown> = { ...result, bundledBridgeVersion: bundled };
-  const remote = typeof result.bridgeVersion === 'string'
-    ? result.bridgeVersion
+  const remoteRaw = result.bridgeVersion;
+  const remote = typeof remoteRaw === 'string'
+    ? remoteRaw
     : 'unknown (old GD without version fingerprint)';
   if (remote !== bundled) {
-    annotated.versionWarning =
-      `bridge GD ${remote} != bundled ${bundled} — the project's mcp_bridge.gd is an outdated copy. ` +
-      'Re-run game_bridge_install with force: true and restart the game to sync (new tools like send_drag/send_input_sequence live only in the bundled version).';
+    const cmp = typeof remoteRaw === 'string' ? compareVersions(remoteRaw, bundled) : -1;
+    annotated.versionWarning = cmp > 0
+      ? `bridge GD ${remote} != bundled ${bundled} — ` +
+        'project bridge is newer than bundled — no action needed (server-side update pending).'
+      : `bridge GD ${remote} != bundled ${bundled} — the project's mcp_bridge.gd is an outdated copy. ` +
+        'Re-run game_bridge_install with force: true and restart the game to sync (new tools like send_drag/send_input_sequence live only in the bundled version).';
     return annotated;
   }
   // 版本一致时才做指纹比对(版本都不一致,指纹必然不一致,单报版本即可)

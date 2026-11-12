@@ -227,4 +227,39 @@ describe('annotatePingWithVersion (A2: ping 响应版本比对注解)', () => {
     expect(result.versionWarning).toBeUndefined();
     expect(result.bundledBridgeVersion).toBeUndefined();
   });
+
+  // ─── A4(2026-11-12): versionWarning 分方向(semver 三段数值比较) ───
+  it('A4: 远端新(remote 0.37.0 / bundled 0.36.2)→ no action needed 文案,不含 force 回退建议', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.37.0' }, '0.36.2');
+    expect(annotated.versionWarning).toContain('0.37.0');
+    expect(annotated.versionWarning).toContain('0.36.2');
+    expect(annotated.versionWarning).toContain('project bridge is newer than bundled — no action needed (server-side update pending)');
+    expect(annotated.versionWarning).not.toContain('force: true');
+    expect(annotated.versionWarning).not.toContain('outdated copy');
+  });
+
+  it('A4: 数值比较非字典序——remote 0.36.10 / bundled 0.36.9 → 新分支(字典序会误判 10<9)', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.36.10' }, '0.36.9');
+    expect(annotated.versionWarning).toContain('project bridge is newer than bundled');
+    expect(annotated.versionWarning).not.toContain('outdated copy');
+  });
+
+  it('A4: 远端旧(remote 0.36.9 / bundled 0.36.10)→ 维持 outdated copy + force 现文案', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.36.9' }, '0.36.10');
+    expect(annotated.versionWarning).toContain('outdated copy');
+    expect(annotated.versionWarning).toContain('force: true');
+  });
+
+  it('A4: 非数字段容错——回落整串字符串比较(0.36.3-beta < 0.36.4 → 旧分支)', () => {
+    const annotated = annotatePingWithVersion({ pong: true, bridgeVersion: '0.36.3-beta' }, '0.36.4');
+    expect(annotated.versionWarning).toContain('outdated copy');
+    expect(annotated.versionWarning).toContain('force: true');
+  });
+
+  it('A4: unknown 哨兵(旧 GD 无版本)→ 视为旧,不进"更新"分支', () => {
+    const annotated = annotatePingWithVersion({ pong: true }, '0.36.3');
+    expect(annotated.versionWarning).toContain('unknown (old GD without version fingerprint)');
+    expect(annotated.versionWarning).toContain('outdated copy');
+    expect(annotated.versionWarning).not.toContain('newer than bundled');
+  });
 });
