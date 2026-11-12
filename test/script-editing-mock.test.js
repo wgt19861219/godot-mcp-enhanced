@@ -30,9 +30,35 @@ vi.mock('../src/tools/validation.js', async (importOriginal) => {
   };
 });
 
+// Task D1 (2026-11-12): spy fs-atomic.writeFileAtomic(透传真实实现,行为零变化)——
+// 断言 parse error 回滚写走原子写(原裸 writeFileSync)
+vi.mock('../src/core/fs-atomic.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    writeFileAtomic: vi.fn((...args) => actual.writeFileAtomic(...args)),
+  };
+});
+
+// Task D1 (2026-11-12): mock 'fs' readFileSync(getter 透传)——写后回读校验用例
+// 向第 2 次读(=写后回读)注入 stale 磁盘内容。vi.hoisted 保证 mock 工厂(hoisted)可安全访问。
+const _fsMockState = vi.hoisted(() => ({ readFileMock: null, realReadFileSync: null }));
+
+vi.mock('fs', async (importOriginal) => {
+  const original = await importOriginal();
+  _fsMockState.realReadFileSync = original.readFileSync;
+  return {
+    ...original,
+    get readFileSync() {
+      return _fsMockState.readFileMock ?? original.readFileSync;
+    },
+  };
+});
+
 import { executeGdscript } from '../src/gdscript-executor.js';
 import * as script from '../src/tools/script.js';
 import * as validation from '../src/tools/validation.js';
+import * as fsAtomic from '../src/core/fs-atomic.js';
 import { createToolContext, createTempProject } from './helpers/tool-context.js';
 import { MINIMAL_PROJECT } from './helpers/fixtures.js';
 
@@ -222,6 +248,8 @@ describe('Level B: Script editing', () => {
       new_content: 'bad code',
     }, ctx);
     const text = result.content?.[0]?.text || '';
+    // Task D1: 行模式回滚同样是错误语义(isError:true)
+    expect(result.isError).toBe(true);
     // 应包含结构化行号信息
     expect(text).toContain('Line 15');
     expect(text).toContain('Line 23');
@@ -230,5 +258,89 @@ describe('Level B: Script editing', () => {
     expect(text).toContain('calc_damage');
     // 文件应被恢复到原始状态
     expect(text).toContain('Original file restored');
+  });
+
+  // ─── Task D1 (2026-11-12): edit_script 回滚语义修正 + 原子回滚 + 写后回读 ───
+  // 反馈 2026-11-08: 返回成功但静默回滚未落盘——回滚响应必须以错误语义为主
+  // (isError:true + EDIT_REVERTED),不得以成功主语开头。
+
+  it('edit_script revert returns error semantics (isError + EDIT_REVERTED, no success wording)', async () => {
+    vi.mocked(validation.batchValidateScripts).mockResolvedValueOnce([{
+      file: 'scripts/main.gd',
+      errors: ['scripts/main.gd:5 - Parse Error: identifier "oops" not declared in current scope'],
+      warnings: [],
+    }]);
+
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path,
+      action: 'edit_script',
+      script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tprint("edited")' },
+    }, ctx);
+
+    // 错误语义为主:isError:true + error_code EDIT_REVERTED
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error_code).toBe('EDIT_REVERTED');
+    expect(parsed.error.startsWith('EDIT WAS REVERTED')).toBe(true);
+    // 不含成功主语(防"成功文案+REVERTED 拼同一响应"回归)
+    expect(parsed.error).not.toContain('replaced occurrence');
+    // 文件已回滚为原始内容
+    const content = readFileSync(join(dirRef.path, 'scripts', 'main.gd'), 'utf-8');
+    expect(content).toContain('\tpass');
+    expect(content).not.toContain('edited');
+  });
+
+  it('edit_script revert writes rollback content via writeFileAtomic (atomic rollback)', async () => {
+    vi.mocked(validation.batchValidateScripts).mockResolvedValueOnce([{
+      file: 'scripts/main.gd',
+      errors: ['scripts/main.gd:5 - Parse Error: identifier "oops" not declared in current scope'],
+      warnings: [],
+    }]);
+    // 只清调用记录,透传实现保留(mockClear 不动 vi.fn(impl) 的初始实现)
+    vi.mocked(fsAtomic.writeFileAtomic).mockClear();
+
+    await script.handleTool('script', {
+      project_path: dirRef.path,
+      action: 'edit_script',
+      script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tprint("edited")' },
+    }, ctx);
+
+    const calls = vi.mocked(fsAtomic.writeFileAtomic).mock.calls;
+    // 第 1 次 = 编辑落盘,第 2 次 = 回滚;回滚参数必须是 (目标文件, 原始内容)
+    expect(calls.length).toBe(2);
+    const [rollbackPath, rollbackContent] = calls[1];
+    expect(String(rollbackPath).endsWith(join('scripts', 'main.gd'))).toBe(true);
+    expect(rollbackContent).toBe('extends Node2D\n\nfunc _ready():\n\tpass\n');
+  });
+
+  it('edit_script returns WRITE_VERIFY_FAILED when post-write read-back mismatches', async () => {
+    const scriptFile = join(dirRef.path, 'scripts', 'main.gd');
+    let readCount = 0;
+    _fsMockState.readFileMock = (p, ...rest) => {
+      if (String(p) === scriptFile) {
+        readCount++;
+        // 第 1 次 = 读原文件(rawFile),第 2 次 = writeFileAtomic 后的写后回读校验
+        if (readCount === 2) return 'STALE ON DISK';
+      }
+      return _fsMockState.realReadFileSync(p, ...rest);
+    };
+    try {
+      const result = await script.handleTool('script', {
+        project_path: dirRef.path,
+        action: 'edit_script',
+        script_path: 'scripts/main.gd',
+        search_and_replace: { search: '\tpass', replace: '\tprint("edited")' },
+      }, ctx);
+
+      expect(result.isError).toBe(true);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error_code).toBe('WRITE_VERIFY_FAILED');
+      // 校验失败时不得落入成功文案
+      expect(parsed.error).not.toContain('replaced occurrence');
+    } finally {
+      _fsMockState.readFileMock = null;
+    }
   });
 });

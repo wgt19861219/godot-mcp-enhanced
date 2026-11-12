@@ -48,13 +48,25 @@ function joinWithLineEnding(content: string, hasCRLF: boolean): string {
   return content.split('\n').join('\r\n');
 }
 
+/** validateAndRevert 输出(Task D1, 2026-11-12):
+ * - reverted=true: 检测到 GDScript parse error 且已尝试回滚(无论回滚写成败)。
+ *   edit_script 必须以错误语义返回(opsErrorResult('EDIT_REVERTED') → isError:true),
+ *   不得以成功主语开头——反馈 2026-11-08: 旧实现回滚响应无 error 标志,
+ *   调用方(AI)在长上下文里误判"编辑成功但静默回滚未落盘"。
+ * - reverted=false: 编辑保留在磁盘上。message 为附注(验证基础设施不可用的
+ *   skip note),空串表示无附注。 */
+interface ValidateRevertOutcome {
+  reverted: boolean;
+  message: string;
+}
+
 async function validateAndRevert(
   fullPath: string,
   rawFile: string,
   godotPath: string,
   projectPath: string,
   contextInfo?: string
-): Promise<string | null> {
+): Promise<ValidateRevertOutcome> {
   try {
     const valResult = await batchValidateScripts(godotPath, projectPath, [fullPath], 15000);
     // Godot 不可用 / 验证基础设施失败 → 无法判定脚本正确性,不回滚。
@@ -65,16 +77,24 @@ async function validateAndRevert(
     // 只有 file 为真实脚本路径(rel)且含 Parse Error 时才回滚。
     const infraFailure = valResult.length > 0 && valResult[0]!.file.startsWith('<');
     if (infraFailure) {
-      return `⚠️ Validation skipped (Godot unavailable): ${valResult[0]!.errors[0] ?? 'validator did not run'}\nEdit was applied but not validated.`;
+      return {
+        reverted: false,
+        message: `⚠️ Validation skipped (Godot unavailable): ${valResult[0]!.errors[0] ?? 'validator did not run'}\nEdit was applied but not validated.`,
+      };
     }
     if (valResult.length > 0 && valResult[0]!.errors.length > 0) {
       try {
-        writeFileSync(fullPath, rawFile, 'utf-8');
+        // D1(2026-11-12): 回滚改原子写(原裸 writeFileSync,回滚中途崩溃会留半截损坏文件,
+        // 与主链 A-ATOMIC 写不对称)
+        writeFileAtomic(fullPath, rawFile);
       } catch (rollbackErr) {
-        return `⚠️ CRITICAL: Parse error detected AND rollback failed!\n` +
-          `Parse errors:\n  ${valResult[0]!.errors.join('\n  ')}\n` +
-          `Rollback error: ${rollbackErr}\n` +
-          `File may be in a corrupted state: ${fullPath}`;
+        return {
+          reverted: true,
+          message: `⚠️ CRITICAL: Parse error detected AND rollback failed!\n` +
+            `Parse errors:\n  ${valResult[0]!.errors.join('\n  ')}\n` +
+            `Rollback error: ${rollbackErr}\n` +
+            `File may be in a corrupted state: ${fullPath}`,
+        };
       }
       // 尝试解析结构化错误信息
       const parsed = parseGodotErrors(valResult[0]!.errors);
@@ -90,13 +110,35 @@ async function validateAndRevert(
         errorLines = valResult[0]!.errors.map(e => `  ${e}`).join('\n');
       }
 
-      return `⚠️ Edit REVERTED due to GDScript parse error:\n` +
-        errorLines +
-        `\n\nOriginal file restored. Please fix the edit content and retry.` +
-        (contextInfo ? `\n\n--- Attempted change ---\n${contextInfo}` : '');
+      return {
+        reverted: true,
+        message: `EDIT WAS REVERTED due to GDScript parse error:\n` +
+          errorLines +
+          `\n\nOriginal file restored. Please fix the edit content and retry.` +
+          (contextInfo ? `\n\n--- Attempted change ---\n${contextInfo}` : ''),
+      };
     }
   } catch (e) {
-    return `⚠️ Validation skipped (Godot unavailable): ${(e as Error).message}\nEdit was applied but not validated.`;
+    return {
+      reverted: false,
+      message: `⚠️ Validation skipped (Godot unavailable): ${(e as Error).message}\nEdit was applied but not validated.`,
+    };
+  }
+  return { reverted: false, message: '' };
+}
+
+/** D1(2026-11-12): 写后回读校验——writeFileAtomic 落盘后读回磁盘内容与意图内容比对,
+ * 不一致(并发修改/降级直写中断等)以 WRITE_VERIFY_FAILED 错误返回,防"谎报已落盘"。
+ * @returns opsErrorResult 若回读不一致;null 表示磁盘内容与意图一致。 */
+function verifyWriteResult(fullPath: string, expectedContent: string): ToolResult | null {
+  const written = readFileSync(fullPath, 'utf-8');
+  if (written !== expectedContent) {
+    return opsErrorResult(
+      'WRITE_VERIFY_FAILED',
+      `Post-write verification failed: disk content of ${basename(fullPath)} does not match the intended edit ` +
+        `(expected ${expectedContent.length} chars, found ${written.length}). The file may have been modified concurrently.`,
+      { suggestion: 'Re-read the file (read_script) and retry the edit.' },
+    );
   }
   return null;
 }
@@ -352,10 +394,14 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
       // A-ATOMIC (2026-09-01): 覆盖用户 .gd 走原子写(此前直写,进程崩溃/断电窗口
       // 半写;validateAndRevert 只兜"验证失败回滚",不兜崩溃)
       writeFileAtomic(fullPath, finalContent);
+      // D1(2026-11-12): 写后回读校验,不一致以错误返回
+      const verifyFail0 = verifyWriteResult(fullPath, finalContent);
+      if (verifyFail0) return verifyFail0;
 
       if (godotPath) {
-        const revertMsg = await validateAndRevert(fullPath, rawFile, godotPath, projectPath);
-        if (revertMsg) return textResult(revertMsg);
+        const outcome = await validateAndRevert(fullPath, rawFile, godotPath, projectPath);
+        if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+        if (outcome.message) return textResult(outcome.message);
       }
       if (isCsharp && autoValidate) {
         const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
@@ -403,10 +449,14 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
     const sandboxGuard = scanScriptSandboxOrThrow(finalContent, fullPath);
     if (sandboxGuard) return sandboxGuard;
     writeFileAtomic(fullPath, finalContent);  // A-ATOMIC: 覆盖用户 .gd 原子写
+    // D1(2026-11-12): 写后回读校验,不一致以错误返回
+    const verifyFail1 = verifyWriteResult(fullPath, finalContent);
+    if (verifyFail1) return verifyFail1;
 
     if (godotPath) {
-      const revertMsg = await validateAndRevert(fullPath, rawFile, godotPath, projectPath);
-      if (revertMsg) return textResult(revertMsg);
+      const outcome = await validateAndRevert(fullPath, rawFile, godotPath, projectPath);
+      if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+      if (outcome.message) return textResult(outcome.message);
     }
     if (isCsharp && autoValidate) {
       const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
@@ -535,11 +585,15 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
   const sandboxGuard = scanScriptSandboxOrThrow(result, fullPath);
   if (sandboxGuard) return sandboxGuard;
   writeFileAtomic(fullPath, result);  // A-ATOMIC: 覆盖用户 .gd 原子写
+  // D1(2026-11-12): 写后回读校验,不一致以错误返回
+  const verifyFail2 = verifyWriteResult(fullPath, result);
+  if (verifyFail2) return verifyFail2;
 
   if (godotPath) {
     const ctxInfo = `Lines ${startLine}-${endLine}:\n${beforeLines.join('\n')}\n→\n${adjustedLines.join('\n')}`;
-    const revertMsg = await validateAndRevert(fullPath, rawFile, godotPath, projectPath, ctxInfo);
-    if (revertMsg) return textResult(revertMsg);
+    const outcome = await validateAndRevert(fullPath, rawFile, godotPath, projectPath, ctxInfo);
+    if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+    if (outcome.message) return textResult(outcome.message);
   }
   if (isCsharp && autoValidate) {
     const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
