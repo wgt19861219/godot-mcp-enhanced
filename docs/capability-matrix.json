@@ -2328,15 +2328,15 @@
           },
           "text": {
             "type": "string",
-            "description": "click_button: 按钮文字（和 path 二选一）"
+            "description": "click_button: 按钮文字（和 path 二选一；顶层参数或 params 对象内均可，顶层优先）"
           },
           "path": {
             "type": "string",
-            "description": "click_button: 按钮节点路径（和 text 二选一）"
+            "description": "click_button: 按钮节点路径（和 text 二选一；顶层参数或 params 对象内均可，顶层优先）"
           },
           "real_event": {
             "type": "boolean",
-            "description": "click_button: 走真实输入事件路径(默认 false=emit_signal);true 时注入完整引擎输入管道(button_group 互斥/focus),修复\"点击成功但 CheckBox 没勾上\"类问题"
+            "description": "click_button: 走真实输入事件路径(默认 false=emit_signal);true 时注入完整引擎输入管道(button_group 互斥/focus),修复\"点击成功但 CheckBox 没勾上\"类问题;顶层参数或 params 对象内均可，顶层优先"
           },
           "op": {
             "type": "string",
@@ -2445,8 +2445,8 @@
       },
       "size": {
         "descBytes": 339,
-        "schemaBytes": 8000,
-        "totalBytes": 8339
+        "schemaBytes": 8166,
+        "totalBytes": 8505
       },
       "annotations": {
         "readOnlyHint": false,

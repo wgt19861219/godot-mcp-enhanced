@@ -354,9 +354,9 @@ export function getToolDefinitions(): Tool[] {
           match: { type: 'string', enum: ['wildcard', 'exact', 'contains'], description: 'find_ui_elements: 匹配模式。wildcard(默认)=通配符扫 name/text;exact=全等;contains=子串(额外扫 label)', default: 'wildcard' },
           visible_only: { type: 'boolean', description: 'find_ui_elements: 仅返回可见元素（默认 true）' },
           limit: { type: 'number', description: 'find_ui_elements: 最大返回数（默认 200，上限 500）' },
-          text: { type: 'string', description: 'click_button: 按钮文字（和 path 二选一）' },
-          path: { type: 'string', description: 'click_button: 按钮节点路径（和 text 二选一）' },
-          real_event: { type: 'boolean', description: 'click_button: 走真实输入事件路径(默认 false=emit_signal);true 时注入完整引擎输入管道(button_group 互斥/focus),修复"点击成功但 CheckBox 没勾上"类问题' },
+          text: { type: 'string', description: 'click_button: 按钮文字（和 path 二选一；顶层参数或 params 对象内均可，顶层优先）' },
+          path: { type: 'string', description: 'click_button: 按钮节点路径（和 text 二选一；顶层参数或 params 对象内均可，顶层优先）' },
+          real_event: { type: 'boolean', description: 'click_button: 走真实输入事件路径(默认 false=emit_signal);true 时注入完整引擎输入管道(button_group 互斥/focus),修复"点击成功但 CheckBox 没勾上"类问题;顶层参数或 params 对象内均可，顶层优先' },
           op: { type: 'string', enum: ['set', 'clear', 'status'], description: 'network_conditioner: set=注入弱网(latency_ms/loss_pct/jitter_ms),clear=恢复原 peer,status=查状态' },
           latency_ms: { type: 'number', description: 'network_conditioner set: 注入延迟毫秒(>=0,默认 0)' },
           loss_pct: { type: 'number', description: 'network_conditioner set: 丢包百分比 0-100(默认 0)' },
@@ -1040,15 +1040,26 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           observation_profile: (args.observation_profile as string) ?? 'debug',  // P7: 观察档位
         }, ctx, clampTimeoutMs(args.timeout));
       case 'click_button': {
-        const hasText = args.text && typeof args.text === 'string';
-        const hasPath = args.path && typeof args.path === 'string';
+        // 反馈 2026-11-07 (Task A1): 顶层/params 双形态兼容——game_query/write/input 均为
+        // params{} 透传惯例,唯 click_button 只认顶层 text/path,调用方塞 params 必被拒。
+        // 取值:顶层 args 优先,读不到(undefined/null)回落 args.params.*;params 键已在
+        // schema 声明(:params 参数),handler 无新顶层键,SSOT 审计无变化。
+        const nested = (args.params && typeof args.params === 'object' ? args.params : {}) as Record<string, unknown>;
+        const rawText = args.text ?? nested.text;
+        const rawPath = args.path ?? nested.path;
+        const hasText = typeof rawText === 'string' && rawText.length > 0;
+        const hasPath = typeof rawPath === 'string' && rawPath.length > 0;
         if (!hasText && !hasPath) {
-          return opsErrorResult('INVALID_PARAMS', 'click_button requires "text" or "path" parameter');
+          // 回显实际收到的顶层键集(params 存在时附其内键),区分"没传"与"塞错位置"。
+          const received = Object.keys(args).map(k => k === 'params' && Object.keys(nested).length > 0
+            ? `params{${Object.keys(nested).join(',')}}`
+            : k);
+          return opsErrorResult('INVALID_PARAMS', `click_button requires "text" or "path" parameter (received keys: [${received.join(', ')}]); tip: text/path/real_event 作为顶层参数或 params 内均可`);
         }
         return await bridgeAction('click_button', {
-          text: (args.text as string) ?? '',
-          path: (args.path as string) ?? '',
-          real_event: args.real_event === true,  // P3-2: 真实输入事件路径(信号计数验证)
+          text: hasText ? (rawText as string) : '',
+          path: hasPath ? (rawPath as string) : '',
+          real_event: (args.real_event ?? nested.real_event) === true,  // P3-2: 真实输入事件路径(信号计数验证)
         }, ctx, clampTimeoutMs(args.timeout));
       }
       case 'network_conditioner': {

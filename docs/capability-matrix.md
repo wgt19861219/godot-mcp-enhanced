@@ -8,7 +8,7 @@
 - risk：read 132 / write 116 / destructive 10 / process 16
 - L2 覆盖：covered 0 / partial 0 / none 46
   - ⚠ 占位说明：L2 列为提取器占位（`src/capability/extract.ts` 硬编码 `l2:'none'`），未接线 CI e2e 映射，**不代表真实覆盖为零**（CI 实际跑 16 个 L2 e2e 文件，见 `scripts/check-e2e-l2-coverage.mjs`）；relatedDefects 同为占位。
-- token 预算：tools/list ≈ 113171B / ~28293 tokens（description 15688B / schema 97483B，schema 占 86%）
+- token 预算：tools/list ≈ 113337B / ~28334 tokens（description 15688B / schema 97649B，schema 占 86%）
 - annotations：readOnly 10 / destructive 5 / idempotent 13
 > 注：标 read 但实际启进程/有副作用(项目有意信任不确认): `validation.run_and_verify`, `validation.verify_delivery`
 
@@ -84,7 +84,7 @@
 
 ## token 预算 TOP 5
 - `ui` (ui): desc 561B / schema 11095B / total 11656B
-- `game` (bridge): desc 339B / schema 8000B / total 8339B
+- `game` (bridge): desc 339B / schema 8166B / total 8505B
 - `scene` (core): desc 258B / schema 6878B / total 7136B
 - `workflow` (profiler): desc 297B / schema 5326B / total 5623B
 - `tilemap` (tilemap): desc 352B / schema 3650B / total 4002B
