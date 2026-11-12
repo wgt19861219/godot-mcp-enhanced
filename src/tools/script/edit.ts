@@ -398,8 +398,11 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
       }
       const newFileContent = normalizedContent.replaceAll(normalizedSearch, normalizedReplace);
       const finalContent = joinWithLineEnding(newFileContent, hasCRLF);
-      // SEC-P1-1: edit_script 全量替换扫沙箱(扫描替换后的完整内容)
-      const sandboxGuard = scanScriptSandboxOrThrow(finalContent, fullPath);
+      // SEC-P1-1 / Task D3(2026-11-12 反馈批次): edit_script 沙箱扫描收窄到增量——只扫
+      // replace 段。既有文件的合法敏感代码(FileAccess.WRITE 存档/load(常量) 等)不再阻断
+      // 无关编辑(它们已在盘上,编辑行为不改变其存在);replace 段新引入的危险模式
+      // (Phase 1/2/3,含字符串拼接绕过)仍拦。write_script 维持全文扫描(新文件/整文件覆盖,威胁模型不同)。
+      const sandboxGuard = scanScriptSandboxOrThrow(normalizedReplace, fullPath);
       if (sandboxGuard) return sandboxGuard;
       // A-ATOMIC (2026-09-01): 覆盖用户 .gd 走原子写(此前直写,进程崩溃/断电窗口
       // 半写;validateAndRevert 只兜"验证失败回滚",不兜崩溃)
@@ -455,8 +458,9 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
     const after = normalizedContent.substring(searchIndex + normalizedSearch.length);
     const newFileContent = before + normalizedReplace + after;
     const finalContent = joinWithLineEnding(newFileContent, hasCRLF);
-    // SEC-P1-1: edit_script 单 occurrence 替换扫沙箱(扫描替换后的完整内容)
-    const sandboxGuard = scanScriptSandboxOrThrow(finalContent, fullPath);
+    // SEC-P1-1 / Task D3(2026-11-12 反馈批次): 同上 occurrence=0 路径——单次替换只扫
+    // replace 段增量,既有文件敏感代码不阻断无关编辑;replace 段新引入危险模式仍拦。
+    const sandboxGuard = scanScriptSandboxOrThrow(normalizedReplace, fullPath);
     if (sandboxGuard) return sandboxGuard;
     writeFileAtomic(fullPath, finalContent);  // A-ATOMIC: 覆盖用户 .gd 原子写
     // D1(2026-11-12): 写后回读校验,不一致以错误返回
@@ -591,8 +595,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
   lines.splice(startLine - 1, endLine - startLine + 1, ...adjustedLines);
 
   const result = joinWithLineEnding(lines.join('\n'), hasCRLF);
-  // SEC-P1-1: edit_script 行号模式扫沙箱(扫描替换后的完整内容)
-  const sandboxGuard = scanScriptSandboxOrThrow(result, fullPath);
+  // SEC-P1-1 / Task D3(2026-11-12 反馈批次): 行号模式沙箱扫描收窄到增量——只扫实际插入的
+  // 新行(adjustedLines,smart 缩进调整后的最终落盘增量)。既有文件敏感代码不阻断无关编辑;
+  // 新行引入的危险模式(Phase 1/2/3,含字符串拼接绕过)仍拦。
+  const sandboxGuard = scanScriptSandboxOrThrow(adjustedLines.join('\n'), fullPath);
   if (sandboxGuard) return sandboxGuard;
   writeFileAtomic(fullPath, result);  // A-ATOMIC: 覆盖用户 .gd 原子写
   // D1(2026-11-12): 写后回读校验,不一致以错误返回

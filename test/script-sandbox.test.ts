@@ -483,3 +483,246 @@ describe('SEC-P1-1 B-1: create_project 第4写入面(godot_version / project_nam
     expect(existsSync(newDir)).toBe(false);
   });
 });
+
+// Task D3 (2026-11-12 反馈批次): edit_script 沙箱扫描对象改增量。
+// 反馈根因:edit.ts 三处调用点扫「写入后全文」,既有 .gd 内合法的 FileAccess.WRITE 存档 /
+// load(常量) 非字面量加载触发 SANDBOX_VIOLATION,阻断一切无关编辑(2026-11-06 起 8 次复现)。
+// 设计决策(与 write_script 威胁模型差异):
+// - write_script 不变:新文件/整文件覆盖,扫全部新内容;
+// - edit_script 只扫「本次编辑新增内容」:search_and_replace 的 replace 段、行模式的新行。
+//   既有文件中的危险模式不再拦(已在盘上,编辑行为不改变其存在);replace 段新引入的
+//   危险模式(Phase 1 正则 / Phase 2 字符串拼接 / Phase 3 非字面量 load)仍拦。
+describe('Task D3: edit_script 沙箱扫描收窄到增量内容', () => {
+  // 既有合法但含沙箱敏感 API 的脚本(FileAccess.WRITE 存档 + load(常量) 资源加载)。
+  // 全量扫描下这两行分别触发 'File write access'(Phase 1)与
+  // 'load() with non-literal path'(Phase 3),任何无关编辑被整体阻断 — 根因复现素材。
+  const EXISTING_SENSITIVE = [
+    'extends Node',
+    '',
+    'const BTN_RES := "res://assets/btn.png"',
+    '',
+    'func save_game(path: String) -> void:',
+    '\tvar f = FileAccess.open(path, FileAccess.WRITE)',
+    '\tf.store_line("saved")',
+    '',
+    'func load_icon() -> Texture2D:',
+    '\treturn load(BTN_RES)',
+    '',
+    'func _ready() -> void:',
+    '\tprint("ready")',
+    '',
+  ].join('\n');
+
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'mcp-sec-d3-'));
+    writeFileSync(join(tmpDir, 'project.godot'), '[application]\nconfig/name="t"\n');
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  });
+
+  // ── 既有敏感代码 + 无关编辑 → 不再误拦(修复主断言,实现前红) ──
+
+  it('既有 FileAccess.WRITE/load(BTN_RES):search_and_replace 全量替换无关行不被误拦', async () => {
+    const targetPath = join(tmpDir, 'edit_inc0.gd');
+    writeFileSync(targetPath, EXISTING_SENSITIVE);
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_inc0.gd',
+      auto_validate: false,
+      search_and_replace: { search: 'print("ready")', replace: 'print("ready v2")', occurrence: 0 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).not.toContain('SANDBOX_VIOLATION');
+    // 编辑真实落盘(无关行被替换,既有敏感行原样保留)
+    const after = readFileSync(targetPath, 'utf-8');
+    expect(after).toContain('print("ready v2")');
+    expect(after).toContain('FileAccess.open(path, FileAccess.WRITE)');
+    expect(after).toContain('load(BTN_RES)');
+  });
+
+  it('既有 FileAccess.WRITE/load(BTN_RES):search_and_replace 单 occurrence 无关行不被误拦', async () => {
+    const targetPath = join(tmpDir, 'edit_inc1.gd');
+    writeFileSync(targetPath, EXISTING_SENSITIVE);
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_inc1.gd',
+      auto_validate: false,
+      search_and_replace: { search: 'print("ready")', replace: 'print("ready v2")', occurrence: 1 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).not.toContain('SANDBOX_VIOLATION');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('print("ready v2")');
+  });
+
+  it('既有 FileAccess.WRITE/load(BTN_RES):行号模式编辑无关行不被误拦', async () => {
+    const targetPath = join(tmpDir, 'edit_incln.gd');
+    writeFileSync(targetPath, EXISTING_SENSITIVE);
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_incln.gd',
+      auto_validate: false,
+      start_line: 13,
+      end_line: 13,
+      new_content: '\tprint("ready v2")',
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).not.toContain('SANDBOX_VIOLATION');
+    const after = readFileSync(targetPath, 'utf-8');
+    expect(after).toContain('print("ready v2")');
+    expect(after).toContain('FileAccess.open(path, FileAccess.WRITE)');
+  });
+
+  // ── replace 段/新行新引入危险模式 → 仍拦(负向防护,实现前后均应绿) ──
+
+  it('replace 段含 Thread.new() 仍拦(occurrence=0)', async () => {
+    const targetPath = join(tmpDir, 'edit_thr0.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_thr0.gd',
+      auto_validate: false,
+      search_and_replace: { search: '    pass', replace: '    var t = Thread.new()', occurrence: 0 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(text).toContain('Thread creation');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('replace 段含 Thread.new() 仍拦(occurrence=1 单次路径)', async () => {
+    const targetPath = join(tmpDir, 'edit_thr1.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc a():\n    pass\n\nfunc b():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_thr1.gd',
+      auto_validate: false,
+      search_and_replace: { search: '    pass', replace: '    var t = Thread.new()', occurrence: 1 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(text).toContain('Thread creation');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('replace 段含 FileAccess.WRITE 仍拦(本次编辑新引入写文件向量)', async () => {
+    const targetPath = join(tmpDir, 'edit_fwr.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_fwr.gd',
+      auto_validate: false,
+      search_and_replace: { search: '    pass', replace: '    var f = FileAccess.open("/tmp/x", FileAccess.WRITE)', occurrence: 0 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('replace 段含拼接绕过 str("OS")+".execute" 仍拦(Phase 2 语义对增量生效)', async () => {
+    const targetPath = join(tmpDir, 'edit_concat.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_concat.gd',
+      auto_validate: false,
+      search_and_replace: { search: '    pass', replace: '    var api = str("OS")+".execute"', occurrence: 0 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(text).toContain('String concatenation bypass');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('replace 段含 load(变量) 非字面量仍拦(Phase 3 tokenizer 对增量生效)', async () => {
+    const targetPath = join(tmpDir, 'edit_dynload.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_dynload.gd',
+      auto_validate: false,
+      search_and_replace: { search: '    pass', replace: '    var tex = load(BTN_RES)', occurrence: 0 },
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('行模式新行含 Thread.new() 仍拦', async () => {
+    const targetPath = join(tmpDir, 'edit_thrln.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_thrln.gd',
+      auto_validate: false,
+      start_line: 4,
+      end_line: 4,
+      new_content: '    var t = Thread.new()',
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(text).toContain('Thread creation');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+
+  it('行模式新行含拼接绕过 str("OS")+".execute" 仍拦(Phase 2 对增量生效)', async () => {
+    const targetPath = join(tmpDir, 'edit_concatln.gd');
+    writeFileSync(targetPath, 'extends Node\n\nfunc _ready():\n    pass\n');
+    const { handleTool } = await import('../src/tools/script.js');
+    const ctx = { findGodot: async () => '/fake/godot' };
+    const res = await handleTool('script', {
+      action: 'edit_script',
+      project_path: tmpDir,
+      script_path: 'edit_concatln.gd',
+      auto_validate: false,
+      start_line: 4,
+      end_line: 4,
+      new_content: '    var api = str("OS")+".execute"',
+    }, ctx);
+
+    const text = res.content[0].text;
+    expect(text).toContain('SANDBOX_VIOLATION');
+    expect(text).toContain('String concatenation bypass');
+    expect(readFileSync(targetPath, 'utf-8')).toContain('    pass');
+  });
+});
