@@ -118,6 +118,16 @@ async function validateAndRevert(
           (contextInfo ? `\n\n--- Attempted change ---\n${contextInfo}` : ''),
       };
     }
+    // Task D2 (2026-11-12): MCP_LOAD_NULL 等已降级为 headless_limitations 警告
+    // (batchValidateScripts 不再计入 errors → 上述回滚分支不触发,编辑保留)。
+    // 此处经 message(skip-note)通道透传警告,防"编辑保留但 load null 信号静默丢失"。
+    const loadNullWarns = valResult.flatMap(r => r.headless_limitations ?? []);
+    if (loadNullWarns.length > 0) {
+      return {
+        reverted: false,
+        message: `⚠️ Validation warning: ${loadNullWarns.join('\n')}`,
+      };
+    }
   } catch (e) {
     return {
       reverted: false,

@@ -11,7 +11,7 @@ import { opsErrorResult, validateTimeout } from './shared.js';
 import { runDotnetBuild } from './shared/validation.js';
 import { requireProjectPath } from '../core/args-validation.js';
 import { resolveWithinRoot, normalizeUserProjectPath, relPathOf } from '../core/path-utils.js';
-import { parseMcpScriptOutput } from '../core/config-parser.js';
+import { parseMcpScriptOutput, parseGodotConfig } from '../core/config-parser.js';
 import { checkVersionMismatch } from '../core/godot-finder.js';
 import { scanFiles } from '../core/file-scanner.js';
 import { analyzeOutput, type AnalysisResult, type AnalyzeOptions } from '../error-analyzer.js';
@@ -91,6 +91,10 @@ export interface BatchValidateResult {
   file: string;
   errors: string[];
   filtered_count?: number;
+  /** Task D2 (2026-11-12): headless 环境限制类警告(load() 返 null 等)。
+   *  不计入 errors——errors>0 会触发 edit_script(D1)回滚,而 load null 常因
+   *  依赖脚本/autoload 在 headless 不可用,不代表被验证文件本身有 parse error。 */
+  headless_limitations?: string[];
 }
 
 interface ExtendedAnalysisResult extends AnalysisResult {
@@ -122,7 +126,7 @@ const ACTIONS = [
 // Matches: .method_name, "method_name", method_name( — captures the identifier.
 const METHOD_REF_RE = /(?:\.|"|\b)([a-z_][a-z0-9_]{0,40})(?:\(|"|\.|\s|$)/gi;
 
-export function isErrorFalsePositive(line: string): boolean {
+export function isErrorFalsePositive(line: string, symbols?: ProjectSymbolContext): boolean {
   const trimmedLine = line.trim();
 
   // await expressions in "not found in base self" context are false positives
@@ -150,7 +154,59 @@ export function isErrorFalsePositive(line: string): boolean {
     if (/not found in base self/.test(trimmedLine)) return true;
   }
 
+  // 规则 3 (Task D2, 2026-11-12): autoload/class_name 误报 — headless 验证器无法实例化
+  // autoload 单例、无法解析跨文件 class_name,任何对它们的引用都报
+  // Identifier "X" not declared/not found。X ∈ 项目符号集(project.godot [autoload] 键 +
+  // .godot/global_script_class_cache.cfg class_name)→ false positive。与 run_and_verify
+  // 侧 error-analyzer 的 headless_limitation 分类同语义(不限 "not found"——headless 下
+  // 对 autoload/class_name 的任何引用都会失败),batchValidateScripts 链路复用同一符号集。
+  if (symbols) {
+    const identMatch = trimmedLine.match(/Identifier\s+"(\w+)"/);
+    if (identMatch) {
+      const name = identMatch[1]!;
+      if (symbols.autoloadNames.includes(name) || symbols.classNames.includes(name)) return true;
+    }
+  }
+
   return false;
+}
+
+// ─── Project symbol context (autoload / global class_name) ─────────────────
+
+export interface ProjectSymbolContext {
+  autoloadNames: string[];
+  classNames: string[];
+}
+
+/** Task D2 (2026-11-12): 读取项目符号集(autoload 单例名 + 全局 class_name)。
+ *  从 run_and_verify 原内联逻辑抽取(抽函数不改行为),供 batchValidateScripts 的
+ *  误报过滤与 run_and_verify 的 error-analyzer 接线共用。
+ *  - autoload: project.godot [autoload] 段键名
+ *  - classNames: .godot/global_script_class_cache.cfg 的 "class" 字段(S3)
+ *  任一文件缺失/读取失败 → 对应数组为空(不炸验证链路)。 */
+export async function readProjectSymbolContext(projectPath: string): Promise<ProjectSymbolContext> {
+  const autoloadNames: string[] = [];
+  const classNames: string[] = [];
+  try {
+    const cfgPath = join(projectPath, 'project.godot');
+    if (existsSync(cfgPath)) {
+      const cfgContent = readFileSync(cfgPath, 'utf-8');
+      const config = parseGodotConfig(cfgContent);
+      const autoloadSection = config['autoload'] as Record<string, unknown> | undefined;
+      if (autoloadSection) {
+        autoloadNames.push(...Object.keys(autoloadSection));
+      }
+    }
+    // S3 (2026-06-23): 读 global_script_class_cache.cfg 提取 class_name 全局类。
+    // headless 跨文件 class_name 解析失败同样报 "Identifier X not found",需与 autoload
+    // 同归 headless_limitation,否则干净项目被误诊为真实错误(见 review-followup S3)。
+    const classCachePath = join(projectPath, '.godot', 'global_script_class_cache.cfg');
+    if (existsSync(classCachePath)) {
+      const cacheContent = readFileSync(classCachePath, 'utf-8');
+      classNames.push(...[...cacheContent.matchAll(/"class":\s*&?"(\w+)"/g)].map(m => m[1] as string));
+    }
+  } catch (err) { getLogger().debug('validation', `read autoload/class config: ${err instanceof Error ? err.message : err}`); }
+  return { autoloadNames, classNames };
 }
 
 // ─── Script file collection ────────────────────────────────────────────────
@@ -187,6 +243,14 @@ export async function batchValidateScripts(
   globalTimeoutMs: number = 15000
 ): Promise<BatchValidateResult[]> {
   if (scriptFiles.length === 0) return [];
+
+  // Task D2 (2026-11-12): 读项目符号集(autoload/class_name),供 isErrorFalsePositive
+  // 过滤 headless 误报——此前符号集识别只在 run_and_verify 接线,本链路(edit_script
+  // 自动验证)引用 autoload/class_name 的合法脚本被误报触发回滚。
+  let symbols: ProjectSymbolContext = { autoloadNames: [], classNames: [] };
+  try {
+    symbols = await readProjectSymbolContext(projectPath);
+  } catch (err) { getLogger().debug('validation', `read symbol context: ${err instanceof Error ? err.message : err}`); }
 
   let effectiveGodotPath = godotPath;
   if (process.platform === 'win32' && !godotPath.endsWith('_console.exe')) {
@@ -239,6 +303,7 @@ export async function batchValidateScripts(
   writeFileSync(validatorPath, validatorCode, 'utf-8');
 
   const results = new Map<string, string[]>();
+  const loadNullWarnings = new Map<string, string>();
 
   const spawnResult = await spawnGodot(effectiveGodotPath, [
     '--headless', '--path', projectPath, '--script', validatorPath,
@@ -264,7 +329,11 @@ export async function batchValidateScripts(
       results.set('<validator>', infraErrors.map(l => l.trim()));
     }
 
-    // 兜底: load() 返回 null 但 Godot 未打印标准 Parse Error 时,仍标记该文件(防静默漏报)
+    // Task D2 (2026-11-12): MCP_LOAD_NULL 从 errors 降级为警告(headless_limitations)。
+    // load() 返 null 的任何原因(依赖脚本/autoload 在 headless 不可用、循环依赖等非典型
+    // 加载失败)此前都被归到被验证文件名下计入 errors——edit_script(D1)的 errors>0 回滚
+    // 条件随之误触发,正确编辑被回滚。降级后不进 errors(不回滚),归警告通道引导复核;
+    // 文件已有真实 Parse Error 时不覆盖(errors 优先)。
     const loadNullLines = outputLines.filter(l => l.includes('MCP_LOAD_NULL:'));
     for (const ln of loadNullLines) {
       const m = ln.match(/MCP_LOAD_NULL:\s*(res:\/\/.+)/);
@@ -275,7 +344,7 @@ export async function batchValidateScripts(
         if (nullResPath === 'res://' + normalizedRel) {
           const existing = results.get(rel);
           if (!existing || existing.length === 0) {
-            results.set(rel, ['Script failed to load (returned null) — Godot reported no Parse Error for this file. Check load-time issues (circular deps, invalid extends, missing dependency): ' + nullResPath]);
+            loadNullWarnings.set(rel, 'load() returned null — 可能因依赖脚本/autoload 在 headless 不可用，编辑已保留，请用 check:gdscript 或带窗口模式复核: ' + nullResPath);
           }
           break;
         }
@@ -291,7 +360,7 @@ export async function batchValidateScripts(
     for (const line of outputLines) {
       const trimmed = line.trim();
       if (trimmed.includes('Parse Error:')) {
-        if (isErrorFalsePositive(trimmed)) {
+        if (isErrorFalsePositive(trimmed, symbols)) {
           filteredCount++;
           lastParseError = '';
         } else {
@@ -317,8 +386,20 @@ export async function batchValidateScripts(
     try { rmSync(validatorPath, { force: true }); } catch (e) { getLogger().debug('validation', `cleanup validator file (finally): ${e instanceof Error ? e.message : e}`); }
   }
 
-  const finalResults: Array<{ file: string; errors: string[]; filtered_count?: number }> =
-    Array.from(results.entries()).map(([file, errors]) => ({ file, errors }));
+  // Task D2: 组装 finalResults 时合并 headless_limitations 警告——results(errors)中没有
+  // 条目但存在 load-null 警告的文件也要出现(诚实暴露),否则警告静默丢失。
+  const finalResults: BatchValidateResult[] = [];
+  for (const [file, errors] of results.entries()) {
+    const entry: BatchValidateResult = { file, errors };
+    const warning = loadNullWarnings.get(file);
+    if (warning) entry.headless_limitations = [warning];
+    finalResults.push(entry);
+  }
+  for (const [file, warning] of loadNullWarnings) {
+    if (!finalResults.some(r => r.file === file)) {
+      finalResults.push({ file, errors: [], headless_limitations: [warning] });
+    }
+  }
   if (filteredCount > 0) {
     if (finalResults.length > 0) {
       finalResults[0]!.filtered_count = filteredCount;
@@ -587,26 +668,13 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const allOutput = [...result.stdout.split('\n'), ...result.stderr.split('\n')];
 
       // Read autoload singleton names from project.godot for better error classification
+      // Task D2 (2026-11-12): 抽取为 readProjectSymbolContext(batchValidateScripts 复用),
+      // 行为不变——仅在符号集非空时设置 analyzeOpts 字段。
       const analyzeOpts: AnalyzeOptions = { projectPath };
       try {
-        const cfgPath = join(projectPath, 'project.godot');
-        if (existsSync(cfgPath)) {
-          const cfgContent = readFileSync(cfgPath, 'utf-8');
-          const config = ctx.parseGodotConfig(cfgContent);
-          const autoloadSection = config['autoload'] as Record<string, unknown> | undefined;
-          if (autoloadSection) {
-            analyzeOpts.autoloadNames = Object.keys(autoloadSection);
-          }
-        }
-        // S3 (2026-06-23): 读 global_script_class_cache.cfg 提取 class_name 全局类。
-        // headless 跨文件 class_name 解析失败同样报 "Identifier X not found",需与 autoload
-        // 同归 headless_limitation,否则干净项目被误诊为真实错误(见 review-followup S3)。
-        const classCachePath = join(projectPath, '.godot', 'global_script_class_cache.cfg');
-        if (existsSync(classCachePath)) {
-          const cacheContent = readFileSync(classCachePath, 'utf-8');
-          const classNames = [...cacheContent.matchAll(/"class":\s*&?"(\w+)"/g)].map(m => m[1] as string);
-          if (classNames.length > 0) analyzeOpts.classNames = classNames;
-        }
+        const symbols = await readProjectSymbolContext(projectPath);
+        if (symbols.autoloadNames.length > 0) analyzeOpts.autoloadNames = symbols.autoloadNames;
+        if (symbols.classNames.length > 0) analyzeOpts.classNames = symbols.classNames;
       } catch (err) { getLogger().debug('validation', `read autoload/class config: ${err instanceof Error ? err.message : err}`); }
 
       const analysis = analyzeOutput(allOutput, analyzeOpts);
@@ -853,6 +921,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       const errorMap = new Map(allBatchResults.map(r => [r.file, r.errors]));
+      // Task D2 (2026-11-12): headless_limitations(load-null 警告)并入 warnings 呈现——
+      // 降级出 errors 后若不透传,validate_scripts 用户将完全看不到 load null 信号(静默丢失)。
+      const limitMap = new Map(
+        allBatchResults.filter(r => r.headless_limitations && r.headless_limitations.length > 0)
+          .map(r => [r.file, r.headless_limitations!])
+      );
       const results: Array<{ file: string; has_errors: boolean; errors: string[]; warnings?: string[] }> = [];
       let totalErrors = 0;
       let totalWarnings = 0;
@@ -866,12 +940,15 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         totalErrors += errs.length;
 
         // API pitfall scan
-        let warnings: string[] = [];
+        const loadNullWarnings = limitMap.get(rel) ?? [];
+        let warnings: string[] = [...loadNullWarnings];
+        totalWarnings += loadNullWarnings.length;
         let hasLintErrors = false;
         try {
           const content = readFileSync(sf, 'utf-8');
-          warnings = scanForCommonPitfalls(content);
-          totalWarnings += warnings.length;
+          const pitfallWarnings = scanForCommonPitfalls(content);
+          warnings = [...warnings, ...pitfallWarnings];
+          totalWarnings += pitfallWarnings.length;
 
           // Lint framework: call-order rules, deprecated API patterns, etc.
           const lintOutput = lintGDScript(content);

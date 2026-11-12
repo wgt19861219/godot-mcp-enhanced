@@ -1,12 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   KNOWN_BASE_METHODS,
   isErrorFalsePositive,
   getToolDefinitions,
   handleTool,
   TOOL_META,
+  readProjectSymbolContext,
+  batchValidateScripts,
 } from '../src/tools/validation.js';
 import { mockSuccessResult } from './helpers/mock-results.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ─── Mock executor ──────────────────────────────────────────────────────────
 
@@ -128,6 +133,133 @@ describe('validation-tools: isErrorFalsePositive additional cases', () => {
   it('returns false for real identifier not found', () => {
     const line = 'SCRIPT ERROR: Parse Error: Identifier "my_custom_func" not found in the current scope.';
     expect(isErrorFalsePositive(line)).toBe(false);
+  });
+});
+
+// ─── Task D2 (2026-11-12): readProjectSymbolContext 抽取 + batchValidateScripts 接线 ──
+// 背景: autoload/class_name 识别机制此前只在 run_and_verify 接线(error-analyzer
+// headless_limitation 分类),edit_script 自动验证链(batchValidateScripts)没有——
+// 引用 autoload 的合法脚本被 headless 误报 Identifier not declared 计入 errors,
+// 触发 D1 之前的回滚链路误回滚正确编辑。
+
+function makeSymbolFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'd2-symbols-'));
+  writeFileSync(join(dir, 'project.godot'), [
+    'config_version=5',
+    '',
+    '[autoload]',
+    '',
+    'GameData="*res://scripts/game_data.gd"',
+    'AudioManager="*res://scripts/audio_manager.gd"',
+    '',
+  ].join('\n'), 'utf-8');
+  mkdirSync(join(dir, '.godot'), { recursive: true });
+  writeFileSync(join(dir, '.godot', 'global_script_class_cache.cfg'), [
+    'list=Array[Dictionary]([{',
+    '"base": "Node",',
+    '"class": &"PlayerStats",',
+    '"icon": "",',
+    '"language": &"GDScript",',
+    '"path": "res://scripts/player_stats.gd"',
+    '}])',
+  ].join('\n'), 'utf-8');
+  return dir;
+}
+
+function godotSpawnResult(lines) {
+  return { stdout: ['Godot Engine v4.6.2.stable...', '', ...lines].join('\n'), stderr: '', exitCode: 0, timedOut: false };
+}
+
+describe('readProjectSymbolContext (Task D2)', () => {
+  it('reads autoload names from project.godot [autoload] section', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const ctx = await readProjectSymbolContext(dir);
+      expect(ctx.autoloadNames).toContain('GameData');
+      expect(ctx.autoloadNames).toContain('AudioManager');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads class_name list from .godot/global_script_class_cache.cfg', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const ctx = await readProjectSymbolContext(dir);
+      expect(ctx.classNames).toContain('PlayerStats');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns empty arrays (no throw) for a project without configs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'd2-empty-'));
+    try {
+      const ctx = await readProjectSymbolContext(dir);
+      expect(ctx.autoloadNames).toEqual([]);
+      expect(ctx.classNames).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('batchValidateScripts: autoload 误报过滤 + MCP_LOAD_NULL 降级 (Task D2)', () => {
+  it('Identifier "GameData" not declared(GameData 为声明的 autoload)不计入 errors', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const { spawnGodot } = await import('../src/tools/spawn-helper.js');
+      vi.mocked(spawnGodot).mockResolvedValueOnce(godotSpawnResult([
+        'SCRIPT ERROR: Parse Error: Identifier "GameData" not declared in the current scope.',
+        '   at: GDScript::reload (res://scripts/main.gd:7)',
+        'MCP_VALIDATE_DONE',
+      ]));
+      const results = await batchValidateScripts('/usr/bin/godot', dir, [join(dir, 'scripts', 'main.gd')], 5000);
+      // 误报被过滤: 全部条目 errors 为空(不触发 edit_script 回滚条件)
+      for (const r of results) {
+        expect(r.errors).toEqual([]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('未知 Identifier 仍计入 errors(真实错误不被误滤)', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const { spawnGodot } = await import('../src/tools/spawn-helper.js');
+      vi.mocked(spawnGodot).mockResolvedValueOnce(godotSpawnResult([
+        'SCRIPT ERROR: Parse Error: Identifier "typo_var" not declared in the current scope.',
+        '   at: GDScript::reload (res://scripts/main.gd:7)',
+        'MCP_VALIDATE_DONE',
+      ]));
+      const results = await batchValidateScripts('/usr/bin/godot', dir, [join(dir, 'scripts', 'main.gd')], 5000);
+      const entry = results.find(r => r.file.includes('main.gd'));
+      expect(entry).toBeTruthy();
+      expect(entry.errors.some(e => e.includes('Identifier "typo_var"'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('MCP_LOAD_NULL 归入 headless_limitations 警告而非 errors(不触发 D1 回滚)', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const { spawnGodot } = await import('../src/tools/spawn-helper.js');
+      vi.mocked(spawnGodot).mockResolvedValueOnce(godotSpawnResult([
+        'MCP_LOAD_NULL: res://scripts/main.gd',
+        'MCP_VALIDATE_DONE',
+      ]));
+      const results = await batchValidateScripts('/usr/bin/godot', dir, [join(dir, 'scripts', 'main.gd')], 5000);
+      const entry = results.find(r => r.file.includes('main.gd'));
+      expect(entry).toBeTruthy();
+      expect(entry.errors).toEqual([]);
+      expect(entry.headless_limitations).toBeTruthy();
+      expect(entry.headless_limitations.some(w => w.includes('load() returned null'))).toBe(true);
+      expect(entry.headless_limitations.some(w => w.includes('编辑已保留'))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

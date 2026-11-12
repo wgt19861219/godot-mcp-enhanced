@@ -343,4 +343,33 @@ describe('Level B: Script editing', () => {
       _fsMockState.readFileMock = null;
     }
   });
+
+  // ─── Task D2 (2026-11-12): MCP_LOAD_NULL 降级警告不触发回滚 ───
+  // headless load() 返 null 归 headless_limitations 警告通道(errors 为空)——
+  // edit_script 保留编辑(D1 回滚条件 errors.length>0 不触发),警告透传到响应。
+
+  it('edit_script keeps edit (no revert) when validation returns only headless_limitations', async () => {
+    vi.mocked(validation.batchValidateScripts).mockResolvedValueOnce([{
+      file: 'scripts/main.gd',
+      errors: [],
+      headless_limitations: [
+        'load() returned null — 可能因依赖脚本/autoload 在 headless 不可用，编辑已保留，请用 check:gdscript 或带窗口模式复核 (res://scripts/main.gd)',
+      ],
+    }]);
+
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path,
+      action: 'edit_script',
+      script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tprint("edited")' },
+    }, ctx);
+
+    // 编辑保留: 非错误语义 + 新内容落盘(未被回滚)
+    expect(result.isError).not.toBe(true);
+    const content = readFileSync(join(dirRef.path, 'scripts', 'main.gd'), 'utf-8');
+    expect(content).toContain('edited');
+    // 警告透传: 响应含 load() returned null 复核提示(agent 可见)
+    const text = result.content[0].text;
+    expect(text).toContain('load() returned null');
+  });
 });

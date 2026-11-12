@@ -72,13 +72,17 @@ describe('batchValidateScripts 归因 (Godot 4.6.2 单行 at: 格式)', () => {
     expect(entry.errors.some(e => e.includes('same name'))).toBe(true);
   });
 
-  it('MCP_LOAD_NULL 兜底: load 失败无 Parse Error 时仍标记该文件', async () => {
+  it('MCP_LOAD_NULL 降级警告(Task D2): load 失败无 Parse Error 时归 headless_limitations 而非 errors', async () => {
     vi.mocked(spawnGodot).mockResolvedValue(godotLoadNullOutput(['scripts/odd.gd']));
     const results = await batchValidateScripts('godot', PROJECT, [f('scripts/odd.gd')], 5000);
     const entry = results.find(r => r.file.includes('odd'));
     expect(entry).toBeTruthy();
-    expect(entry.errors.length).toBeGreaterThan(0);
-    expect(entry.errors.some(e => e.includes('failed to load'))).toBe(true);
+    // 不进 errors(否则 edit_script 的 D1 回滚条件 errors.length>0 仍会触发)
+    expect(entry.errors.length).toBe(0);
+    // 归入警告通道,文案引导复核
+    expect(entry.headless_limitations).toBeTruthy();
+    expect(entry.headless_limitations.some(w => w.includes('load() returned null'))).toBe(true);
+    expect(entry.headless_limitations.some(w => w.includes('编辑已保留'))).toBe(true);
   });
 
   it('正常脚本(无错误)不产生错误条目', async () => {

@@ -182,6 +182,46 @@ describe('validation-filter: non-whitelist items pass through', () => {
   });
 });
 
+// ─── Task D2 (2026-11-12): autoload/class_name 符号集误报过滤 ────────────────
+// 背景: headless 验证器无法实例化 autoload 单例/解析跨文件 class_name,引用它们的
+// 合法脚本报 Identifier "X" not declared → 计入 errors → edit_script 误回滚。
+// run_and_verify 侧 error-analyzer 早有 headless_limitation 分类,但
+// batchValidateScripts(edit_script 自动验证链)未接线符号集——D2 补齐。
+
+describe('validation-filter: autoload/class_name 符号集规则 (Task D2)', () => {
+  const symbols = { autoloadNames: ['GameData'], classNames: ['PlayerStats'] };
+
+  it('filters Identifier "GameData" not declared when GameData is a declared autoload', () => {
+    const line = parseError('Identifier "GameData" not declared in the current scope.');
+    expect(isErrorFalsePositive(line, symbols)).toBeTruthy();
+  });
+
+  it('filters Identifier "PlayerStats" not found when PlayerStats is a global class_name', () => {
+    const line = parseError('Identifier "PlayerStats" not found.');
+    expect(isErrorFalsePositive(line, symbols)).toBeTruthy();
+  });
+
+  it('filters any Identifier reference to an autoload symbol (不限 not found,对齐 error-analyzer 语义)', () => {
+    const line = parseError('Cannot call method on Identifier "GameData".');
+    expect(isErrorFalsePositive(line, symbols)).toBeTruthy();
+  });
+
+  it('does NOT filter unknown identifiers even when symbols are supplied', () => {
+    const line = parseError('Identifier "typo_name" not declared in the current scope.');
+    expect(isErrorFalsePositive(line, symbols)).toBeFalsy();
+  });
+
+  it('does NOT filter autoload-named identifiers when no symbols supplied (向后兼容)', () => {
+    const line = parseError('Identifier "GameData" not declared in the current scope.');
+    expect(isErrorFalsePositive(line)).toBeFalsy();
+  });
+
+  it('empty symbol set behaves like no symbols', () => {
+    const line = parseError('Identifier "GameData" not declared in the current scope.');
+    expect(isErrorFalsePositive(line, { autoloadNames: [], classNames: [] })).toBeFalsy();
+  });
+});
+
 describe('validation-filter: no duplicate entries in whitelist', () => {
   it('KNOWN_BASE_METHODS has no duplicates', () => {
     const seen = new Set();
