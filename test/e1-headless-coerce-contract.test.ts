@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { SCENE_TREE_HEADER } from '../src/core/shared/gdscript-templates.js';
+import { genPropertyLines } from '../src/tools/ui/types.js';
+import { genUiCreateControlScript, genUiContainerAddScript } from '../src/tools/ui/ui-create.js';
 
 // 批 E (2026-08-14) E-1 契约测试:headless 数学类型真转换(godot_operations.gd)。
 // 修复前:数学分支只 _has_components 校验不转换,coerced 仍是原 Array/Dict,
@@ -136,5 +139,87 @@ describe('E-1: headless 数学类型真转换(godot_operations.gd)', () => {
     const bDoc = bridgeGd.slice(Math.max(0, bStart - 600), bStart);
     expect(bDoc.includes('godot_operations.gd'), 'bridge _math_comp 缺 headless 反向指向').toBe(true);
     expect(bDoc.includes('command_helpers'), 'bridge _math_comp 缺 editor 反向指向').toBe(true);
+  });
+});
+
+// ─── Task D5 (2026-11-12): headless ui 属性 coerce helper(_mcp_set_prop) ────
+// 修复前:genPropertyLines(types.ts) 裸 node.set + valueToGd 按**值形状**预猜类型——
+// texture 等 Resource 属性传 "res://a.png" 是静默 no-op(Godot set() 不 load,4.7
+// verified);[1,0,0,1] 无条件猜成 Color,目标属性是 Vector4/Quaternion 时类型错配
+// 同样 no-op。修复后:属性经 SCENE_TREE_HEADER 内 _mcp_set_prop 运行时按
+// typeof(node.get(key)) **目标类型**分派 coerce(对齐 editor coerce_value_for_property
+// 的 typeof(current) 分派语义 + headless _set_property_with_coerce 的 TYPE_OBJECT→load)。
+
+describe('D5: headless ui 属性 coerce helper(_mcp_set_prop, gdscript-templates.ts)', () => {
+  it('D5-a: SCENE_TREE_HEADER 含 _mcp_set_prop helper 定义', () => {
+    expect(SCENE_TREE_HEADER.includes('func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:'), '缺 _mcp_set_prop 定义').toBe(true);
+  });
+
+  it('D5-b: 按目标属性运行时类型(typeof(node.get(key)))分派 Vector2/3/4/Color', () => {
+    for (const t of ['TYPE_VECTOR2', 'TYPE_VECTOR3', 'TYPE_VECTOR4', 'TYPE_COLOR']) {
+      expect(SCENE_TREE_HEADER.includes(t), `_mcp_set_prop 缺 ${t} 分派分支`).toBe(true);
+    }
+    for (const ctor of ['Vector2(', 'Vector3(', 'Vector4(', 'Color(']) {
+      expect(SCENE_TREE_HEADER.includes(ctor), `_mcp_set_prop 缺构造器 ${ctor}`).toBe(true);
+    }
+    // 分派基准是 node.get(key) 的 typeof,不是值形状猜测
+    expect(SCENE_TREE_HEADER.includes('typeof('), '缺 typeof 分派').toBe(true);
+    expect(SCENE_TREE_HEADER.includes('node.get(key)'), '分派须读目标属性当前值 node.get(key)').toBe(true);
+  });
+
+  it('D5-c: TYPE_OBJECT + res:// 字符串 → load()(texture 类 Resource 属性)', () => {
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const s = SCENE_TREE_HEADER.slice(start);
+    expect(s.includes('TYPE_OBJECT'), '缺 TYPE_OBJECT 分支').toBe(true);
+    expect(s.includes('begins_with("res://")'), '缺 res:// 前缀判定').toBe(true);
+    expect(s.includes('load('), '缺 load() 调用').toBe(true);
+  });
+
+  it('D5-i: Object 分支按声明类型判定(get_property_list)——Object 属性默认值是 null,typeof(current) 得 TYPE_NIL,load 分支永不可达', () => {
+    expect(SCENE_TREE_HEADER.includes('func _mcp_prop_declared_type'), '缺声明类型 helper(_mcp_prop_declared_type)').toBe(true);
+    expect(SCENE_TREE_HEADER.includes('get_property_list()'), '声明类型须走 get_property_list').toBe(true);
+    // Object 分支不得用 typeof(current) 判定(texture 默认 null 陷阱,对齐 editor/headless 副本的声明类型路径)
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    const loadBranch = SCENE_TREE_HEADER.slice(start, SCENE_TREE_HEADER.indexOf('node.set(key, val)', start));
+    expect(loadBranch).not.toContain('typeof(current) == TYPE_OBJECT');
+  });
+
+  it('D5-d: node.get(key) 为 null(属性不存在/无默认值) → 原样 set 交引擎报错,不吞', () => {
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    const s = SCENE_TREE_HEADER.slice(start);
+    // Array 分支仅 current != null 才进入分派(否则属性不存在,get 为 null)
+    expect(s.includes('current != null'), 'Array 分派缺 current != null 守卫').toBe(true);
+    // 兜底路径:原样 set
+    expect(s.includes('node.set(key, val)'), '缺原样 set 兜底').toBe(true);
+  });
+
+  it('D5-e: 分量类型白名单防毒分量(float({}/null) 是 SCRIPT ERROR,engine-quirks 真机实证)', () => {
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    const s = SCENE_TREE_HEADER.slice(start);
+    expect(s.includes('is int or'), '缺分量类型白名单(int/float)').toBe(true);
+    expect(s.includes('is_valid_float()'), '缺合法数字串放行').toBe(true);
+  });
+
+  it('D5-f: genPropertyLines 生成 _mcp_set_prop 调用,Array 以数组字面量传入(不预猜 Color)', () => {
+    const lines = genPropertyLines({ texture: 'res://a.png', modulate: [1, 0, 0, 1] });
+    expect(lines).toContain('_mcp_set_prop(node, "texture", "res://a.png")');
+    expect(lines).toContain('_mcp_set_prop(node, "modulate", [1, 0, 0, 1])');
+    // Array 不被 valueToGd 按值形状预转——目标类型由运行时 helper 决定
+    expect(lines).not.toContain('Color(1, 0, 0, 1)');
+  });
+
+  it('D5-g: genUiCreateControlScript 整脚本含 helper 定义 + 调用', () => {
+    const script = genUiCreateControlScript('res://main.tscn', 'TextureRect', 'T', '.', { texture: 'res://a.png', modulate: [1, 0, 0, 1] });
+    expect(script).toContain('func _mcp_set_prop(');
+    expect(script).toContain('_mcp_set_prop(node, "texture", "res://a.png")');
+    expect(script).toContain('_mcp_set_prop(node, "modulate", [1, 0, 0, 1])');
+  });
+
+  it('D5-h: genUiContainerAddScript 属性调用换用 child 变量(replace 联动)', () => {
+    const script = genUiContainerAddScript('res://main.tscn', '/root/HBox', 'Label', 'L', { text: 'Hi' });
+    expect(script).toContain('_mcp_set_prop(child, "text", "Hi")');
+    // child 脚本无 node 变量——漏联动 replace 会生成引用不存在变量的调用
+    expect(script).not.toMatch(/_mcp_set_prop\(node,/);
   });
 });

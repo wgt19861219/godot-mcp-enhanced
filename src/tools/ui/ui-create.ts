@@ -48,7 +48,7 @@ export function genUiContainerAddScript(
     throw new Error(`INVALID_CONTROL_TYPE: "${childType}" is not a whitelisted Control type`);
   }
   const propLines = childProperties && Object.keys(childProperties).length > 0
-    ? genPropertyLines(childProperties).replace(/\tnode\./g, '\tchild.')
+    ? genPropertyLines(childProperties).replace(/\t_mcp_set_prop\(node,/g, '\t_mcp_set_prop(child,')
     : '';
 
   return `${SCENE_TREE_HEADER}

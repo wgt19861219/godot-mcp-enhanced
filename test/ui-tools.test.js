@@ -82,21 +82,21 @@ describe('genUiCreateControlScript', () => {
   it('includes property assignments when provided', () => {
     const props = { text: 'Click Me', disabled: true, size: 42 };
     const script = genUiCreateControlScript('/scene.tscn', 'Label', 'Lbl', '/root', props);
-    expect(script).toContain('node.set("text", "Click Me")');
-    expect(script).toContain('node.set("disabled", true)');
-    expect(script).toContain('node.set("size", 42)');
+    expect(script).toContain('_mcp_set_prop(node, "text", "Click Me")');
+    expect(script).toContain('_mcp_set_prop(node, "disabled", true)');
+    expect(script).toContain('_mcp_set_prop(node, "size", 42)');
   });
 
   it('handles null property value', () => {
     const props = { icon: null };
     const script = genUiCreateControlScript('/scene.tscn', 'Button', 'Btn', '/root', props);
-    expect(script).toContain('node.set("icon", null)');
+    expect(script).toContain('_mcp_set_prop(node, "icon", null)');
   });
 
   it('escapes special characters in strings', () => {
     const props = { text: 'Hello "World"' };
     const script = genUiCreateControlScript('/scene.tscn', 'Label', 'Lbl', '/root', props);
-    expect(script).toContain('node.set("text", "Hello \\"World\\"")');
+    expect(script).toContain('_mcp_set_prop(node, "text", "Hello \\"World\\"")');
   });
 
   it('uses provided parent path', () => {
@@ -289,8 +289,8 @@ describe('genUiContainerAddScript', () => {
   it('includes child properties when provided', () => {
     const props = { text: 'Hello', disabled: true };
     const script = genUiContainerAddScript('/scene.tscn', '/root/HBox', 'Label', 'Lbl', props);
-    expect(script).toContain('child.set("text", "Hello")');
-    expect(script).toContain('child.set("disabled", true)');
+    expect(script).toContain('_mcp_set_prop(child, "text", "Hello")');
+    expect(script).toContain('_mcp_set_prop(child, "disabled", true)');
   });
 
   it('handles node path correctly', () => {

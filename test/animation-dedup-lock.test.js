@@ -125,6 +125,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
 
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
+
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
       	if Engine.get_main_loop() == self:
@@ -252,6 +308,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
 
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
+
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
 
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
@@ -391,6 +503,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
 
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
+
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
 
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
@@ -533,6 +701,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
 
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
+
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
       	if Engine.get_main_loop() == self:
@@ -673,6 +897,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
 
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
+
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
       	if Engine.get_main_loop() == self:
@@ -802,6 +1082,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
 
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
+
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
 
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
@@ -936,6 +1272,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
 
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
+
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
 
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))
@@ -1074,6 +1466,62 @@ describe('生成脚本快照锁定(重构前基线)', () => {
 
       func _mcp_output(key: String, value: Variant) -> void:
       	_mcp_outputs.append({"key": key, "value": str(value)})
+
+      func _mcp_set_prop(node: Node, key: String, val: Variant) -> void:
+      	var current: Variant = node.get(key)
+      	if val is Array and current != null:
+      		var a: Array = val
+      		var coerced: Variant = null
+      		match typeof(current):
+      			TYPE_VECTOR2:
+      				var v2x: Variant = _mcp_prop_comp(a, 0)
+      				var v2y: Variant = _mcp_prop_comp(a, 1)
+      				if v2x != null and v2y != null:
+      					coerced = Vector2(float(v2x), float(v2y))
+      			TYPE_VECTOR3:
+      				var v3x: Variant = _mcp_prop_comp(a, 0)
+      				var v3y: Variant = _mcp_prop_comp(a, 1)
+      				var v3z: Variant = _mcp_prop_comp(a, 2)
+      				if v3x != null and v3y != null and v3z != null:
+      					coerced = Vector3(float(v3x), float(v3y), float(v3z))
+      			TYPE_VECTOR4:
+      				var v4x: Variant = _mcp_prop_comp(a, 0)
+      				var v4y: Variant = _mcp_prop_comp(a, 1)
+      				var v4z: Variant = _mcp_prop_comp(a, 2)
+      				var v4w: Variant = _mcp_prop_comp(a, 3)
+      				if v4x != null and v4y != null and v4z != null and v4w != null:
+      					coerced = Vector4(float(v4x), float(v4y), float(v4z), float(v4w))
+      			TYPE_COLOR:
+      				var cr: Variant = _mcp_prop_comp(a, 0)
+      				var cg: Variant = _mcp_prop_comp(a, 1)
+      				var cb: Variant = _mcp_prop_comp(a, 2)
+      				if cr != null and cg != null and cb != null:
+      					var ca: Variant = _mcp_prop_comp(a, 3)
+      					coerced = Color(float(cr), float(cg), float(cb), float(ca) if ca != null else 1.0)
+      		if coerced != null:
+      			node.set(key, coerced)
+      			return
+      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res: Variant = load(String(val))
+      		if res != null:
+      			node.set(key, res)
+      		else:
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      		return
+      	node.set(key, val)
+
+      func _mcp_prop_declared_type(node: Node, key: String) -> int:
+      	for p in node.get_property_list():
+      		if String(p.get("name", "")) == key:
+      			return int(p.get("type", TYPE_NIL))
+      	return -1
+
+      func _mcp_prop_comp(a: Array, index: int) -> Variant:
+      	if index < a.size():
+      		var c: Variant = a[index]
+      		if c is int or c is float or (c is String and String(c).is_valid_float()):
+      			return c
+      	return null
 
       func _mcp_done() -> void:
       	print("___MCP_RESULT___" + JSON.stringify({"success": true, "outputs": _mcp_outputs}))

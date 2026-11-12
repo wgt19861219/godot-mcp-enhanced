@@ -125,20 +125,30 @@ func handle_ui_create_control(params: Dictionary, request_id: int) -> Dictionary
 	node.name = node_name
 
 	var properties = params.get("properties")
+	# Task D5 (2026-11-12): 属性失败/跳过逐键收集进响应 failed_props——修复前 r.ok
+	# 失败无 else(静默吞),":"/"/" 子属性键与私有键 continue 丢弃,调用方看到 "created"
+	# 但属性没落,无从排查(coerce 本体 coerce_property_value 609761e1d 已有)。
+	var failed_props: Array = []
 	if properties != null and properties is Dictionary:
 		for key in properties:
 			if key.begins_with("_"):
+				failed_props.append({"prop": str(key), "error": "skipped: private property (leading _)"})
 				continue
 			if not key is String:
+				failed_props.append({"prop": str(key), "error": "skipped: non-String property key"})
 				continue
 			if ":" in key or "/" in key:
+				failed_props.append({"prop": key, "error": "skipped: subproperty paths not supported here"})
 				continue
 			var val = properties[key]
 			if val is Object:
+				failed_props.append({"prop": key, "error": "skipped: Object value not expressible via JSON"})
 				continue
 			var r := CommandHelpers.coerce_property_value(node, key, val)
 			if r["ok"]:
 				node.set(key, r["value"])
+			else:
+				failed_props.append({"prop": key, "error": str(r["error"])})
 
 	if _undo_manager != null:
 		_undo_manager.create_action_mixed("Create UI Control (req:%d)" % request_id,
@@ -155,7 +165,10 @@ func handle_ui_create_control(params: Dictionary, request_id: int) -> Dictionary
 		parent_node.add_child(node)
 		node.owner = root
 
-	return {"result": {"type": node_type, "name": node_name, "path": str(node.get_path()), "status": "created"}}
+	var result := {"type": node_type, "name": node_name, "path": str(node.get_path()), "status": "created"}
+	if failed_props.size() > 0:
+		result["failed_props"] = failed_props
+	return {"result": result}
 
 # ─── ui_set_layout ──────────────────────────────────────────────────────────
 

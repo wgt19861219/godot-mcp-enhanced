@@ -143,7 +143,13 @@ export function findBlockedProps(properties?: Record<string, unknown>): string[]
 export function genPropertyLines(properties: Record<string, unknown>): string {
   let lines = '';
   for (const [key, value] of Object.entries(properties)) {
-    lines += `\n\tnode.set("${gdEscape(key)}", ${valueToGd(value)})`;
+    // Task D5 (2026-11-12): 属性经 _mcp_set_prop 运行时按目标属性类型 coerce(SCENE_TREE_HEADER 内
+    // helper)。Array 以数组字面量传入——裸 valueToGd 按值形状预猜 Color/Vector2,目标属性是
+    // Vector4 等时类型错配 set 静默 no-op;Resource 属性(texture)传 res:// 字符串也由 helper load()。
+    const v = Array.isArray(value)
+      ? `[${value.map(el => valueToGd(el)).join(', ')}]`
+      : valueToGd(value);
+    lines += `\n\t_mcp_set_prop(node, "${gdEscape(key)}", ${v})`;
   }
   return lines;
 }

@@ -30,9 +30,9 @@ describe('P2-E: genUiCreateControlScript', () => {
 
   it('properties 生成属性赋值行', () => {
     const script = genUiCreateControlScript('res://main.tscn', 'Label', 'L', '.', { text: 'Hello', visible: true });
-    // genPropertyLines（types.ts:108）用 set() 形式赋值，非直接 node.text =
+    // genPropertyLines（types.ts）经 _mcp_set_prop 赋值（Task D5: 运行时按目标属性类型 coerce），非直接 node.text =
     expect(script).toContain('Hello');
-    expect(script).toContain('node.set'); // 属性经 set() 赋值
+    expect(script).toContain('_mcp_set_prop(node,'); // 属性经 _mcp_set_prop 赋值
   });
 
   it('无 properties 时不生成属性行', () => {
