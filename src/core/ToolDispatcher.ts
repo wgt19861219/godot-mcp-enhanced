@@ -1218,7 +1218,7 @@ export class ToolDispatcher {
         return {
           ...result,
           content: [
-            { type: 'text' as const, text: first.text + '\n\n⚠️ [EDITOR_FALLBACK] Running in Headless mode — Editor features (UndoRedo, live scene sync) unavailable.' },
+            { type: 'text' as const, text: first.text + '\n\n⚠️ [EDITOR_FALLBACK] Running in Headless mode — Editor features (UndoRedo, live scene sync) unavailable. 若需人工视觉验收,run_project 传 preview=true 确保游戏窗口常驻(headless 降级下用户屏幕可能无窗口)。' },
             ...result.content.slice(1),
           ],
         };

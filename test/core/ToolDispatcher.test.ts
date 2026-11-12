@@ -1063,6 +1063,10 @@ describe('ToolDispatcher.handleCall', () => {
     const result = await dispatcher.handleCall({ params: { name: 'scene', arguments: {} } });
     const firstText = (result.content[0] as { text: string }).text;
     expect(firstText).toContain('EDITOR_FALLBACK');
+    // Task D7 (2026-11-12): headless 降级无窗口的自救指引——用户不知道屏幕上没有游戏窗口
+    // 时该走 preview=true 人工视觉验收。
+    expect(firstText).toContain('preview=true');
+    expect(firstText).toContain('游戏窗口常驻');
   });
 
   // [T18] 非首次 → 不附加

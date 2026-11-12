@@ -189,7 +189,7 @@ export function createCircuitBreakerMiddleware(opts: CircuitBreakerOptions = {})
           {
             retryable: true,
             errorCategory: 'guard',
-            suggestion: '半开试探成功后自动恢复;失败则重新计时。稍后重试或修改参数(参数不同即新指纹)。',
+            suggestion: '半开试探成功后自动恢复;失败则重新计时。修改任一参数值(参数指纹即变)即可立即重试。',
           });
       }
       st.probingAt = now();
@@ -202,7 +202,7 @@ export function createCircuitBreakerMiddleware(opts: CircuitBreakerOptions = {})
       {
         retryable: true,
         errorCategory: 'guard',
-        suggestion: '先 read 目标状态定位失败原因,或修改参数后重试(参数不同即新指纹);半开窗口后自动放行一次试探。',
+        suggestion: '先 read 目标状态定位失败原因,或修改任一参数值(参数指纹即变)即可立即重试,无需等半开窗口;半开窗口后亦自动放行一次试探。',
       });
   };
 

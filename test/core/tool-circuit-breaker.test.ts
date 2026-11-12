@@ -66,6 +66,10 @@ describe('circuit breaker(批 B3:同参数连续 N 败拒绝,写类专属)', () 
     expect(text).toContain('TOOL_CIRCUIT_OPEN');
     expect(text).toContain('EACCES'); // 首错摘要
     expect(text).toContain('read 目标状态');
+    // Task D7 (2026-11-12): 自救指引必须点明「改任一参数值=立即重试」——反馈痛点是被熔断
+    // 500s+ 卡住,不知道改参数即刻绕过(无需等半开窗口)。
+    expect(text).toContain('参数指纹即变');
+    expect(text).toContain('立即重试');
   });
 
   it('参数变化 → 新指纹不拒绝(设计意图:改参数获得新机会)', async () => {
@@ -243,6 +247,9 @@ describe('circuit breaker(2026-10-29 审查清偿:集成面缺陷修复)', () =>
     expect('rejected' in before2 && before2.rejected).toBe(true);
     const text2 = ((before2 as { error: ToolResult }).error.content?.[0] as { text: string }).text;
     expect(text2).toContain('半开试探进行中');
+    // Task D7 (2026-11-12): 半开拒绝文案同样给出「改参数立即重试」自救路径。
+    expect(text2).toContain('参数指纹即变');
+    expect(text2).toContain('立即重试');
     // 试探 1 失败 → 续开路;此后新调用仍被拒(常规开路文案)
     await mw.after!(probeCtx, failResult());
     const blocked = await runOnce(mw, mkCtx(), okResult());
