@@ -554,11 +554,21 @@ async function findViaScoop(): Promise<string | null> {
  * security/sandbox switches (GODOT_MCP_UNRESTRICTED, GODOT_MCP_ALLOW_UNSAFE,
  * ALLOW_EXECUTE_GDSCRIPT, ALLOWED_PROJECT_PATHS) MUST stay stripped — a child
  * process must not unlock its own restrictions. See gdscript-executor-core.test.js.
+ *
+ * D6 (2026-11-12 反馈批次): GODOT_TEST_MODE exact-match passthrough — 游戏测试代码读它
+ * 切换测试存档/环境(2026-09-19 反馈:测试直写真实存档的数据风险,根因是 spawn 边界剥掉
+ * 该 env,游戏测试无从区分测试/生产)。透传非注入:调用方 shell 设了才传,MCP 不注入默认值
+ * (保持项目中立——非 Godot 测试项目不受影响)。
  */
+const ENV_EXACT_PASSTHROUGH = ['GODOT_TEST_MODE'];
+
 export function buildSafeEnv(): NodeJS.ProcessEnv {
   const godotMcpEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if ((key.startsWith('GODOT_MCP_BRIDGE_') || key.startsWith('GODOT_MCP_EDITOR_')) && value !== undefined) {
+    const passthrough = key.startsWith('GODOT_MCP_BRIDGE_')
+      || key.startsWith('GODOT_MCP_EDITOR_')
+      || ENV_EXACT_PASSTHROUGH.includes(key);
+    if (passthrough && value !== undefined) {
       godotMcpEnv[key] = value;
     }
   }

@@ -1,0 +1,8 @@
+{
+	"dirs": ["res://test_legacy"],
+	"should_exit": true,
+	"should_maximize": false,
+	"hide_orphans": true,
+	"exit_on_fail": false,
+	"log_level": 1
+}

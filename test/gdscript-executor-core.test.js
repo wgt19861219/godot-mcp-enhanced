@@ -290,6 +290,37 @@ describe('buildSafeEnv', () => {
     const env = buildSafeEnv();
     expect(env).toHaveProperty('GODOT');
   });
+
+  // D6 (2026-11-12 反馈批次): GODOT_TEST_MODE 透传(非注入)——游戏测试代码读它切换
+  // 测试存档/环境(2026-09-19 反馈:剥 GODOT_TEST_MODE 直写真实存档的数据风险)。
+  // 调用方 shell 设了才传;MCP 不注入默认值(保持项目中立)。
+  it('passes through GODOT_TEST_MODE when set in caller env (D6 透传非注入)', () => {
+    const original = process.env.GODOT_TEST_MODE;
+    process.env.GODOT_TEST_MODE = '1';
+    try {
+      const env = buildSafeEnv();
+      expect(env.GODOT_TEST_MODE).toBe('1');
+    } finally {
+      if (original === undefined) {
+        delete process.env.GODOT_TEST_MODE;
+      } else {
+        process.env.GODOT_TEST_MODE = original;
+      }
+    }
+  });
+
+  it('does NOT inject GODOT_TEST_MODE when unset (项目中立)', () => {
+    const original = process.env.GODOT_TEST_MODE;
+    delete process.env.GODOT_TEST_MODE;
+    try {
+      const env = buildSafeEnv();
+      expect(env).not.toHaveProperty('GODOT_TEST_MODE');
+    } finally {
+      if (original !== undefined) {
+        process.env.GODOT_TEST_MODE = original;
+      }
+    }
+  });
 });
 
 // ─── parseMcpMarkers (extended edge cases) ────────────────────────────────────

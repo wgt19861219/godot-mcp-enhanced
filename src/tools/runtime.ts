@@ -12,7 +12,8 @@ import { checkVersionMismatch, buildSafeEnv } from '../core/godot-finder.js';
 import { isBridgeReady } from './game-bridge.js';
 import { detectGodotVersion } from '../core/godot-finder.js';
 import { handleRecordingAction } from './recording.js';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { getLogger } from '../core/logger.js';
 import type { RiskLevel } from '../core/tool-registry.js';
@@ -117,13 +118,14 @@ export function getToolDefinitions(): Tool[] {
             description: '操作类型。launch_editor=开编辑器, run_project/stop_project=运行/停止游戏, get_debug_output=取调试输出, run_tests=跑测试, get_godot_version=查版本, record_*=录制回放(start/stop/save/load/play)',
           },
           project_path: { type: 'string', description: '项目目录（默认 GODOT_PROJECT_PATH 或当前目录）。多项目并行按项目分桶(同项目重跑互杀,跨项目并存);stop_project/get_debug_output 缺省操作最近 run 的项目,传本参数可指定其他会话桶' },
-          timeout: { type: 'number', description: '自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)', default: 30 },
+          timeout: { type: 'number', description: 'run_project: 自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)。run_tests: 单次 GUT 进程超时秒数(默认 120,分片时 per-shard 计时)', default: 30 },
           wait_for_bridge: { type: 'boolean', default: false, description: 'true 时 spawn 后轮询 bridge 就绪(默认 false,向后兼容)' },
           profiling: { type: 'boolean', default: false, description: 'true 时 spawn 前绑 debugger 端口并传 --remote-debug(函数级 profiling 前置,之后用 profiler capture_functions 采样;仅 spawn 模式,attach/已运行会话无 debugger 通道)' },
           bridge_timeout: { type: 'number', default: 10, description: 'wait_for_bridge 轮询总预算(秒,默认 10)' },
           preview: { type: 'boolean', default: false, description: '预览模式:禁用自动停止,游戏窗口常驻,用户关窗即结束(AI 改完代码/场景后的人工视觉验证);默认不与 wait_for_bridge 组合(bridge 未就绪会终止游戏,见规则)' },
           test_script: { type: 'string', description: '测试脚本或目录路径（默认 res://test/）', default: 'res://test/' },
           quit_flag: { type: 'string', enum: ['gquit', 'gexit'], default: 'gquit', description: 'run_tests 的 GUT 退出标志。默认 gquit(GUT ≤9.5);GUT 9.6+ 移除 -gquit(报 Unknown arguments: -gquit)时切 gexit' },
+          shards: { type: 'integer', default: 1, description: 'run_tests 分片数(默认 1=单进程现有行为)。>1 时:TS 侧枚举 test_script 目录下 *.gd(递归,排除 addons/ 段与 _ 前缀),蛇形均衡分 N 片,逐片生成临时 gutconfig 经 -gconfig= 显式覆盖项目 .gutconfig.json(防 dirs 附加合并),串行执行,失败/超时片不中断,汇总各片 Tests/Failed。大测试集防单进程 OOM(2026-11-12 反馈:单进程全量跑 22.5GB 死机)。GODOT_TEST_MODE env 透传到子进程(调用方 shell 设了才传)' },
           // ── Recording parameters (merged, v0.18.0) ──
           events_json: { type: 'string', description: '录制：JSON 格式的事件序列字符串' },
           file_name: { type: 'string', description: '录制保存:始终自动命名 recording_YYYYMMDD_HHmmss.json(file_name 入参被忽略);但 file_name 须匹配 recording_*.json 格式(否则 INVALID_FILE_NAME),禁止含 / \\\\ ..' },
@@ -354,6 +356,205 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   return textResult(warnPrefix + `Running project at ${p} (${timeoutNote}; bridge not probed — wait_for_bridge=false). Use game_query(method="ping") to check bridge, or get_debug_output / stop_project.` + sessionNote);
 }
 
+// ─── run_tests 加固(D6, 2026-11-12 反馈批次)──────────────────────────────────
+// 反馈背景:① 2026-11-12 单进程全量跑 GUT 22.5GB 内存死机——大测试集需分片降峰值;
+// ② 2026-09-19 GODOT_TEST_MODE 被 spawn 边界剥掉,游戏测试代码无从区分测试/生产存档
+//   (直写真实存档的数据风险)——透传修在 buildSafeEnv(godot-finder.ts)。
+
+/** 蛇形(round-robin)分片:文件排序后轮流发牌到 N 片,片间均衡(非连续切块——连续切块
+ *  在按名字聚簇的测试集(同模块前缀)下片大小失衡)。导出供测试。 */
+export function shardFiles(files: string[], shards: number): string[][] {
+  const n = Math.max(1, Math.floor(shards));
+  const sorted = [...files].sort();
+  const buckets: string[][] = Array.from({ length: n }, () => []);
+  sorted.forEach((f, i) => { const b = buckets[i % n]; if (b) b.push(f); });
+  return buckets;
+}
+
+/** 递归枚举 test_script 目录下 *.gd(TS 侧磁盘枚举),返回 res:// 风格路径(排序)。
+ *  排除:addons/ 目录段(GUT 自带测试不进用户分片)、_ 前缀 basename(GUT 惯例帮助脚本)、
+ *  点开头(隐藏/.godot)、非 .gd。单 .gd 文件入参直接返回单元素列表。
+ *  目录不存在/不可读返回 [](调用方按"无测试文件"报错,不静默空跑)。 */
+export function enumerateTestScripts(projectDir: string, resScript: string): string[] {
+  const rel = resScript.slice('res://'.length);
+  if (rel.endsWith('.gd')) return [resScript];
+  const rootRel = rel.replace(/\/+$/, '');
+  const out: string[] = [];
+  const walk = (diskDir: string, relDir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(diskDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith('.') || e.name.startsWith('_')) continue;
+      if (e.isDirectory()) {
+        if (e.name === 'addons') continue;
+        walk(join(diskDir, e.name), `${relDir}/${e.name}`);
+      } else if (e.isFile() && e.name.endsWith('.gd')) {
+        out.push(`res://${relDir}/${e.name}`);
+      }
+    }
+  };
+  walk(join(projectDir, rootRel), rootRel);
+  return out.sort();
+}
+
+/** GUT 计数解析(双格式,D6 真机实证 2026-11-12 GUT 9.7.1):≤9.5 行式 "Tests: N"/
+ *  "Failed: N";9.7 Totals 对齐空格式 "Tests<sp>N"/"Failing Tests<sp>N"(Failing 行
+ *  非零才打印,缺行=0)。新格式行首锚定防误匹配 "Passing Tests";输出实含 ANSI 色码,
+ *  解析前剥离。返回全部匹配的数字串(调用方按需 join 或求和)。 */
+const ANSI_COLOR_RE = /\x1b\[[0-9;]*m/g;
+const GUT_TESTS_PATTERNS = [/Tests:\s*(\d+)/g, /^Tests[ \t]+(\d+)/gm];
+const GUT_FAILED_PATTERNS = [/Failed:\s*(\d+)/g, /^Failing Tests[ \t]+(\d+)/gm];
+
+function gutCountMatches(out: string, patterns: RegExp[]): string[] {
+  const plain = out.replace(ANSI_COLOR_RE, '');
+  const values: string[] = [];
+  for (const p of patterns) {
+    const rx = new RegExp(p.source, p.flags.includes('g') ? p.flags : p.flags + 'g');
+    let m: RegExpExecArray | null;
+    while ((m = rx.exec(plain)) !== null) { if (m[1] !== undefined) values.push(m[1]); }
+  }
+  return values;
+}
+
+/** 单次 GUT 进程执行(P1-1 PID 注册 / 输出收集 / 超时强杀 / close-error 双路 resolve)。
+ *  shards=1 与分片模式共用;超时返回 timedOut=true(exitCode null),spawn 同步抛/异步
+ *  error 事件返回 spawnError。 */
+function runGutProcess(
+  godot: string,
+  args: string[],
+  timeoutSecs: number,
+): Promise<{ exitCode: number | null; out: string; timedOut: boolean; spawnError?: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let out = '';
+    const MAX_OUTPUT = 500_000;
+    let proc: ChildProcess;
+    try {
+      proc = spawn(godot, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      resolve({ exitCode: null, out: '', timedOut: false, spawnError: msg });
+      return;
+    }
+    if (proc.pid) registerSpawnedGodotPid(proc.pid);
+    const unregisterSpawn = () => { if (proc.pid) unregisterSpawnedGodotPid(proc.pid); };
+
+    proc.stdout?.on('data', (d: Buffer) => { if (out.length < MAX_OUTPUT) out += d.toString(); });
+    proc.stderr?.on('data', (d: Buffer) => { if (out.length < MAX_OUTPUT) out += d.toString(); });
+
+    const timer = setTimeout(() => {
+      if (!settled && !proc.killed) {
+        settled = true;
+        forceKillTree(proc);
+        unregisterSpawn();  // P1-1: timeout 强杀后注销(exit 事件可能不触发)
+        resolve({ exitCode: null, out, timedOut: true });
+      }
+    }, timeoutSecs * 1000);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      unregisterSpawn();
+      resolve({ exitCode: code, out, timedOut: false });
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      unregisterSpawn();
+      resolve({ exitCode: null, out, timedOut: false, spawnError: err.message });
+    });
+  });
+}
+
+/** 分片执行主循环:逐片写临时 gutconfig → spawn(-gconfig= 显式覆盖,不传 -gdir——
+ *  cmd 层 -gdir 优先级最高会盖回 config dirs)→ 汇总。失败/超时片不中断后续片。
+ *
+ *  -gconfig 语义依据(GUT 9.7.1 源码):gut_cli.gd GutCliOptionResolver 以 cmd>config>base
+ *  优先级解析 config_file 自身——显式传 -gconfig=X 时项目 .gutconfig.json 完全不加载
+ *  (替换语义,防 dirs 附加合并,反馈坑③);selected 是单子串匹配不能传集合,tests(完整
+ *  路径列表)经 gut.add_script 逐个加载才是选片通道;FileAccess.open 接受 OS 绝对路径,
+ *  临时文件放 tmpdir 可行。 */
+async function runShardedTests(opts: {
+  godot: string;
+  projectDir: string;
+  testScript: string;
+  quitFlag: string;
+  shards: number;
+  timeoutSecs: number;
+}): Promise<ToolResult> {
+  const { godot, projectDir, testScript, quitFlag, shards, timeoutSecs } = opts;
+  const files = enumerateTestScripts(projectDir, testScript);
+  if (files.length === 0) {
+    return textResult(
+      `Error: no test scripts (*.gd) found under ${testScript} for sharding `
+      + '(addons/ dirs and _-prefixed files are excluded). Check test_script or run with shards=1.',
+    );
+  }
+  const buckets = shardFiles(files, shards).filter(b => b.length > 0);
+  const SHARD_TAIL = 4_000;   // 每片 raw_output 尾部截断(汇总多片防 MCP 通道超限,I-11 同款)
+
+  const shardResults = [];
+  for (const [i, shardTests] of buckets.entries()) {
+    const configFile = join(
+      tmpdir(),
+      `gutconfig-mcp-shard-${process.pid}-${Math.random().toString(36).slice(2, 8)}.json`,
+    ).split('\\').join('/');   // 正斜杠:FileAccess 与 optparse split('=') 均安全
+    writeFileSync(configFile, JSON.stringify({ dirs: [], tests: shardTests }), 'utf-8');
+
+    let r;
+    try {
+      r = await runGutProcess(godot, [
+        '--headless', '--path', projectDir,
+        '--script', 'addons/gut/gut_cmdln.gd',
+        `-gconfig=${configFile}`,
+        `-${quitFlag}`,
+      ], timeoutSecs);
+    } finally {
+      try { unlinkSync(configFile); } catch { /* best-effort 清理 */ }
+    }
+
+    const tests = gutCountMatches(r.out, GUT_TESTS_PATTERNS).reduce((s, v) => s + (Number(v) || 0), 0);
+    const failed = gutCountMatches(r.out, GUT_FAILED_PATTERNS).reduce((s, v) => s + (Number(v) || 0), 0);
+    shardResults.push({
+      shard: i + 1,
+      files: shardTests.length,
+      exit_code: r.exitCode,
+      tests,
+      failed,
+      status: r.timedOut ? 'timeout' : (r.spawnError ? 'error' : (r.exitCode === 0 && failed === 0 ? 'ok' : 'failed')),
+      spawn_error: r.spawnError,
+      raw_output: r.out.length > SHARD_TAIL
+        ? r.out.slice(r.out.length - SHARD_TAIL) + `\n... [tail ${SHARD_TAIL}/${r.out.length} bytes]`
+        : r.out,
+    });
+  }
+
+  const totalTests = shardResults.reduce((s, x) => s + x.tests, 0);
+  const totalFailed = shardResults.reduce((s, x) => s + x.failed, 0);
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        mode: 'sharded',
+        requested_shards: shards,
+        shards: shardResults.length,
+        total_tests: totalTests,
+        total_failed: totalFailed,
+        all_passed: totalFailed === 0 && shardResults.every(x => x.status === 'ok'),
+        timeout_per_shard_s: timeoutSecs,
+        shard_results: shardResults,
+      }, null, 2),
+    }],
+  };
+}
+
 // ─── Tool handler ───────────────────────────────────────────────────────────
 
 export async function handleTool(name: string, args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult | null> {
@@ -466,83 +667,60 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
       }
       if (!acquireShortRunningSlot()) return textResult('Error: too many concurrent headless operations (max 3). Please wait and retry.');
-      const rawTestScript = (args.test_script as string) || 'res://test/';
-      // I-SEC-08: Validate test_script starts with res:// to prevent filesystem traversal
-      if (!rawTestScript.startsWith('res://')) {
-        releaseShortRunningSlot();
-        return textResult(`Error: test_script must start with "res://", got: "${rawTestScript}"`);
-      }
-      const testScript = rawTestScript;
-      const godot = await ctx.findGodot();
-      // A4 (2026-07-04 反馈): GUT 退出标志参数化。默认 -gquit(GUT ≤9.5 惯例,GUT 9.6+ 移除);
-      // 白名单二选一,非法值回落 gquit(值只拼进 spawn args 数组,无注入面,白名单是行为兜底)。
-      const quitFlag = args.quit_flag === 'gexit' ? 'gexit' : 'gquit';
+      try {
+        const rawTestScript = (args.test_script as string) || 'res://test/';
+        // I-SEC-08: Validate test_script starts with res:// to prevent filesystem traversal
+        if (!rawTestScript.startsWith('res://')) {
+          return textResult(`Error: test_script must start with "res://", got: "${rawTestScript}"`);
+        }
+        const testScript = rawTestScript;
+        const godot = await ctx.findGodot();
+        // A4 (2026-07-04 反馈): GUT 退出标志参数化。默认 -gquit(GUT ≤9.5 惯例,GUT 9.6+ 移除);
+        // 白名单二选一,非法值回落 gquit(值只拼进 spawn args 数组,无注入面,白名单是行为兜底)。
+        const quitFlag = args.quit_flag === 'gexit' ? 'gexit' : 'gquit';
+        // D6 (2026-11-12): timeout 参数取代 120s 硬编码(未传/非法/<=0 → 120 向后兼容;
+        // 分片时 per-shard 计时)。shards>1 走分片循环(蛇形 + -gconfig= 选片 + 汇总)。
+        const timeoutSecs = Math.max(1, Math.floor(Number(args.timeout) || 120));
+        const shards = Math.max(1, Math.floor(Number(args.shards) || 1));
 
-      return new Promise((resolve) => {
-        let settled = false;
-        const proc = spawn(godot, [
+        if (shards > 1) {
+          return await runShardedTests({ godot, projectDir: p, testScript, quitFlag, shards, timeoutSecs });
+        }
+
+        // shards=1:现有单进程行为(-gdir 直传;输出结构不变),仅超时可配化
+        const r = await runGutProcess(godot, [
           '--headless', '--path', p,
           '--script', 'addons/gut/gut_cmdln.gd',
           '-gdir', testScript,
           `-${quitFlag}`,
-        ], { stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
-        // P1-1: 注册到 _spawnedGodotPids，close/崩溃可清理 in-flight run_tests spawn。
-        // 原 only-run_project 注册（runtime.ts:224）致 close() 清不到 run_tests 进程 +
-        // 非 detached 非 unref 阻止 Node 退出最多 120s。对齐 gdscript-executor.ts:1198-1199。
-        // 系 07-29 P1-② gdscript-executor spawn orphan 修复的遗漏分支。
-        if (proc.pid) registerSpawnedGodotPid(proc.pid);
-        const unregisterSpawn = () => { if (proc.pid) unregisterSpawnedGodotPid(proc.pid); };
-
-        let out = '';
-        const MAX_OUTPUT = 500_000;
-        proc.stdout?.on('data', (d: Buffer) => { if (out.length < MAX_OUTPUT) out += d.toString(); });
-        proc.stderr?.on('data', (d: Buffer) => { if (out.length < MAX_OUTPUT) out += d.toString(); });
-
-        const timer = setTimeout(() => {
-          if (!settled && !proc.killed) {
-            settled = true;
-            forceKillTree(proc);
-            unregisterSpawn();  // P1-1: timeout 强杀后注销（exit 事件可能不触发）
-            releaseShortRunningSlot();
-            resolve(textResult('run_tests timed out after 120s'));
-          }
-        }, 120000);
-
-        proc.on('close', (code) => {
-          clearTimeout(timer);
-          if (settled) return;
-          settled = true;
-          unregisterSpawn();  // P1-1: 正常 close 注销 PID
-          releaseShortRunningSlot();
-          const passed = (out.match(/Tests: (\d+)/g) || []).map(m => m.replace('Tests: ', ''));
-          const failed = (out.match(/Failed: (\d+)/g) || []).map(m => m.replace('Failed: ', ''));
-          // I-11: Truncate raw_output to prevent excessive MCP channel bandwidth
-          const MAX_RAW_OUTPUT = 50_000;
-          const rawOutput = out.length > MAX_RAW_OUTPUT
-            ? out.slice(0, MAX_RAW_OUTPUT) + `\n... [truncated, ${out.length} total bytes]`
-            : out;
-          resolve({
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                exit_code: code,
-                passed: passed.join(', '),
-                failed: failed.join(', '),
-                raw_output: rawOutput,
-              }, null, 2),
-            }],
-          });
-        });
-
-        proc.on('error', (err) => {
-          clearTimeout(timer);
-          if (settled) return;
-          settled = true;
-          unregisterSpawn();  // P1-1: spawn 错误（ENOENT 等）注销 PID
-          releaseShortRunningSlot();
-          resolve({ content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true });
-        });
-      });
+        ], timeoutSecs);
+        if (r.timedOut) {
+          return textResult(`run_tests timed out after ${timeoutSecs}s`);
+        }
+        if (r.spawnError) {
+          return { content: [{ type: 'text', text: `Error: ${r.spawnError}` }], isError: true };
+        }
+        const passed = gutCountMatches(r.out, GUT_TESTS_PATTERNS).join(', ');
+        const failed = gutCountMatches(r.out, GUT_FAILED_PATTERNS).join(', ');
+        // I-11: Truncate raw_output to prevent excessive MCP channel bandwidth
+        const MAX_RAW_OUTPUT = 50_000;
+        const rawOutput = r.out.length > MAX_RAW_OUTPUT
+          ? r.out.slice(0, MAX_RAW_OUTPUT) + `\n... [truncated, ${r.out.length} total bytes]`
+          : r.out;
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              exit_code: r.exitCode,
+              passed,
+              failed,
+              raw_output: rawOutput,
+            }, null, 2),
+          }],
+        };
+      } finally {
+        releaseShortRunningSlot();
+      }
     }
 
     case 'get_godot_version': {

@@ -4370,7 +4370,7 @@
           },
           "timeout": {
             "type": "number",
-            "description": "自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)",
+            "description": "run_project: 自动停止秒数(默认 30;0/-1=不自动停,由 stop_project 手动控——bridge 逐步交互会话推荐 0,冷启动>30s 的项目传更大值如 120;wait_for_bridge 时正数自动取 max(bridge_timeout+10, timeout) 防 race)。run_tests: 单次 GUT 进程超时秒数(默认 120,分片时 per-shard 计时)",
             "default": 30
           },
           "wait_for_bridge": {
@@ -4406,6 +4406,11 @@
             ],
             "default": "gquit",
             "description": "run_tests 的 GUT 退出标志。默认 gquit(GUT ≤9.5);GUT 9.6+ 移除 -gquit(报 Unknown arguments: -gquit)时切 gexit"
+          },
+          "shards": {
+            "type": "integer",
+            "default": 1,
+            "description": "run_tests 分片数(默认 1=单进程现有行为)。>1 时:TS 侧枚举 test_script 目录下 *.gd(递归,排除 addons/ 段与 _ 前缀),蛇形均衡分 N 片,逐片生成临时 gutconfig 经 -gconfig= 显式覆盖项目 .gutconfig.json(防 dirs 附加合并),串行执行,失败/超时片不中断,汇总各片 Tests/Failed。大测试集防单进程 OOM(2026-11-12 反馈:单进程全量跑 22.5GB 死机)。GODOT_TEST_MODE env 透传到子进程(调用方 shell 设了才传)"
           },
           "events_json": {
             "type": "string",
@@ -4444,6 +4449,7 @@
         "preview",
         "test_script",
         "quit_flag",
+        "shards",
         "events_json",
         "file_name",
         "speed",
@@ -4483,8 +4489,8 @@
       },
       "size": {
         "descBytes": 330,
-        "schemaBytes": 2757,
-        "totalBytes": 3087
+        "schemaBytes": 3390,
+        "totalBytes": 3720
       },
       "annotations": {
         "readOnlyHint": false,

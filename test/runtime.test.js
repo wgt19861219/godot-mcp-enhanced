@@ -57,8 +57,13 @@ vi.mock('../src/core/godot-finder.js', () => ({
   detectGodotVersion: vi.fn(async () => '4.6.stable'),
 }));
 
+// D6: run_tests 分片模式需要 readdirSync/writeFileSync/unlinkSync——factory 面同步扩展
+// (默认值无害:readdirSync→[] 使非分片用例不触磁盘;现有用例只消费 existsSync)
 vi.mock('fs', () => ({
   existsSync: vi.fn(() => true),
+  readdirSync: vi.fn(() => []),
+  writeFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
 }));
 
 vi.mock('path', async (importOriginal) => {
@@ -78,8 +83,11 @@ import {
   getToolDefinitions,
   handleTool,
   TOOL_META,
+  shardFiles,
+  enumerateTestScripts,
 } from '../src/tools/runtime.js';
 import { spawn } from 'child_process';
+import { readdirSync, writeFileSync, unlinkSync } from 'fs';
 import {
   killProcess,
   clearOutputBuffer,
@@ -516,6 +524,37 @@ describe('runtime handleTool — run_tests', () => {
     expect(spawnArgs[1]).not.toContain('-gquit');
   });
 
+  // D6 真机实证(2026-11-12, GUT 9.7.1 + Godot 4.7): Totals 段是无冒号对齐空格式
+  // "Tests<spaces>N" / "Passing Tests<spaces>N" / "Failing Tests<spaces>N"(非零才打印),
+  // 旧 regex "Tests: (\d+)" 在 GUT 9.7 上匹配不到任何行——解析须双格式兼容。
+  it('GUT 9.7 Totals 格式(无冒号):单进程 passed 计数可解析', async () => {
+    const proc = mockProc();
+    setupSpawnMock(proc);
+    const ctx = createMockCtx();
+    const rp = handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+    }, ctx);
+    emitProcessEvents(proc, 'Totals\n------\nTests                 6\nPassing Tests         6\nAsserts               6\n');
+    const result = await rp;
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.passed).toBe('6');
+  });
+
+  it('GUT 9.7 格式带 ANSI 色码也能解析(输出实含 \\x1b[33m 等)', async () => {
+    const proc = mockProc();
+    setupSpawnMock(proc);
+    const ctx = createMockCtx();
+    const rp = handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+    }, ctx);
+    emitProcessEvents(proc, '\x1b[33mTests\x1b[0m                 6\n');
+    const result = await rp;
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.passed).toBe('6');
+  });
+
   it('quit_flag 非法值回落 gquit(白名单兜底)', async () => {
     const proc = mockProc();
     setupSpawnMock(proc);
@@ -534,7 +573,283 @@ describe('runtime handleTool — run_tests', () => {
     expect(spawnArgs[1]).toContain('-gquit');
     expect(spawnArgs[1]).not.toContain('--evil-flag');
   });
+
+  // D6 (2026-11-12 反馈批次): timeout 参数取代 120s 硬编码(单进程路径同样生效)
+  it('timeout 可配:单进程路径 timeout=5 时 5s 强杀(默认 120)', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = mockProc();
+      setupSpawnMock(proc);   // 永不 close → 超时路径
+      const ctx = createMockCtx();
+      const rp = handleTool('runtime', {
+        action: 'run_tests',
+        project_path: '/fake/project',
+        timeout: 5,
+      }, ctx);
+      await new Promise(r => process.nextTick(r));   // spawn 已发生
+
+      vi.advanceTimersByTime(4_999);
+      expect(forceKillTree).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(forceKillTree).toHaveBeenCalledWith(proc);
+
+      const result = await rp;
+      expect(result.content[0].text).toContain('timed out after 5s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('timeout 缺省 120s(向后兼容基线)', async () => {
+    vi.useFakeTimers();
+    try {
+      const proc = mockProc();
+      setupSpawnMock(proc);
+      const ctx = createMockCtx();
+      const rp = handleTool('runtime', {
+        action: 'run_tests',
+        project_path: '/fake/project',
+      }, ctx);
+      await new Promise(r => process.nextTick(r));
+
+      vi.advanceTimersByTime(119_999);
+      expect(forceKillTree).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(forceKillTree).toHaveBeenCalled();
+
+      const result = await rp;
+      expect(result.content[0].text).toContain('timed out after 120s');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+
+// ─── handleTool — run_tests 分片模式(D6, 2026-11-12 反馈:单进程全量 22.5GB 死机) ───
+
+describe('runtime handleTool — run_tests 分片模式(D6)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const direntry = (name, isDir) => ({
+    name,
+    isDirectory: () => isDir,
+    isFile: () => !isDir,
+  });
+
+  function setupFlatTestDir(names) {
+    readdirSync.mockImplementation(() => names.map(n => direntry(n, false)));
+  }
+
+  function shardSpawn(outputs, exitCodes) {
+    outputs.forEach((outText, i) => {
+      spawn.mockImplementationOnce(() => {
+        const p = mockProc();
+        process.nextTick(() => {
+          p.stdout.emit('data', Buffer.from(outText));
+          p.emit('close', exitCodes[i]);
+        });
+        return p;
+      });
+    });
+  }
+
+  it('shards=2: spawn 2 次、每次 args 含 -gconfig= 且不含 -gdir、汇总 Tests=两片之和(3+4=7)', async () => {
+    setupFlatTestDir(['test_a.gd', 'test_b.gd', 'test_c.gd', 'test_d.gd']);
+    shardSpawn(['Tests: 3\nFailed: 0\n', 'Tests: 4\nFailed: 1\n'], [0, 1]);
+
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+    }, createMockCtx());
+
+    expect(spawn).toHaveBeenCalledTimes(2);
+    for (const call of spawn.mock.calls) {
+      const gconfigArg = call[1].find(a => typeof a === 'string' && a.startsWith('-gconfig='));
+      expect(gconfigArg, '每片 spawn 须传 -gconfig=<临时文件>').toBeTruthy();
+      // cmd 层 -gdir 优先级最高会覆盖 config 的 dirs(反馈坑③:防 dirs 附加合并)——分片禁传
+      expect(call[1]).not.toContain('-gdir');
+    }
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total_tests).toBe(7);
+    expect(parsed.total_failed).toBe(1);
+    expect(parsed.all_passed).toBe(false);
+    expect(parsed.shards).toBe(2);
+  });
+
+  it('GUT 9.7 Totals 格式:分片计数求和(Failing Tests 非零行)', async () => {
+    setupFlatTestDir(['test_a.gd', 'test_b.gd']);
+    shardSpawn([
+      'Totals\n------\nTests                 4\nFailing Tests         1\n',
+      'Totals\n------\nTests                 3\n',
+    ], [1, 0]);
+
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+    }, createMockCtx());
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total_tests).toBe(7);
+    expect(parsed.total_failed).toBe(1);
+    expect(parsed.shard_results[0].failed).toBe(1);
+    expect(parsed.shard_results[1].failed).toBe(0);   // Failing 行非零才打印:缺行=0
+  });
+
+  it('每片临时 gutconfig:dirs 置空、tests=该片 res:// 文件蛇形分配(a,c|b,d),跑完清理', async () => {
+    setupFlatTestDir(['test_a.gd', 'test_b.gd', 'test_c.gd', 'test_d.gd']);
+    shardSpawn(['Tests: 2\n', 'Tests: 2\n'], [0, 0]);
+
+    await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+    }, createMockCtx());
+
+    expect(writeFileSync).toHaveBeenCalledTimes(2);
+    const cfg0 = JSON.parse(writeFileSync.mock.calls[0][1]);
+    expect(cfg0.dirs).toEqual([]);
+    expect(cfg0.tests).toEqual(['res://test/test_a.gd', 'res://test/test_c.gd']);
+    const cfg1 = JSON.parse(writeFileSync.mock.calls[1][1]);
+    expect(cfg1.tests).toEqual(['res://test/test_b.gd', 'res://test/test_d.gd']);
+    // 临时文件跑完清理(每片 unlink 一次)
+    expect(unlinkSync).toHaveBeenCalledTimes(2);
+    const writtenPaths = writeFileSync.mock.calls.map(c => c[0]);
+    for (const p of writtenPaths) {
+      expect(unlinkSync).toHaveBeenCalledWith(p);
+    }
+  });
+
+  it('失败片(exit 1)不中断后续片:全片跑完汇总', async () => {
+    setupFlatTestDir(['test_a.gd', 'test_b.gd']);
+    shardSpawn(['Tests: 1\nFailed: 1\nSome Script ERROR\n', 'Tests: 2\nFailed: 0\n'], [1, 0]);
+
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+    }, createMockCtx());
+
+    expect(spawn).toHaveBeenCalledTimes(2);   // 片1 失败后片2 照跑
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.shard_results[0].status).toBe('failed');
+    expect(parsed.shard_results[1].status).toBe('ok');
+    expect(parsed.total_tests).toBe(3);
+    expect(parsed.total_failed).toBe(1);
+  });
+
+  it('片超时不中断后续片:per-shard 计时,超时片 status=timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      setupFlatTestDir(['test_a.gd', 'test_b.gd']);
+      const hung = mockProc();   // 片1 永不 close
+      spawn.mockImplementationOnce(() => hung);
+      spawn.mockImplementationOnce(() => {
+        const p = mockProc();
+        process.nextTick(() => {
+          p.stdout.emit('data', Buffer.from('Tests: 2\n'));
+          p.emit('close', 0);
+        });
+        return p;
+      });
+
+      const rp = handleTool('runtime', {
+        action: 'run_tests',
+        project_path: '/fake/project',
+        shards: 2,
+        timeout: 5,
+      }, createMockCtx());
+      await new Promise(r => process.nextTick(r));   // 片1 spawn 已发生
+
+      vi.advanceTimersByTime(5_000);   // 片1 超时 → 片2 继续
+      const result = await rp;
+
+      expect(forceKillTree).toHaveBeenCalledWith(hung);
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.shard_results[0].status).toBe('timeout');
+      expect(parsed.shard_results[1].status).toBe('ok');
+      expect(parsed.total_tests).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shards 缺省(=1):保持现有单进程行为(-gdir 直传、无 -gconfig、输出结构不变)', async () => {
+    setupFlatTestDir(['test_a.gd']);
+    const proc = mockProc();
+    setupSpawnMock(proc);
+    const ctx = createMockCtx();
+    const rp = handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+    }, ctx);
+    emitProcessEvents(proc, 'Tests: 5 Passed');
+
+    const result = await rp;
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const spawnArgs = spawn.mock.calls[0];
+    expect(spawnArgs[1]).toContain('-gdir');
+    expect(spawnArgs[1].some(a => typeof a === 'string' && a.startsWith('-gconfig='))).toBe(false);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.exit_code).toBe(0);
+    expect(parsed.passed).toBe('5');   // 现有输出结构(单值 join)
+  });
+
+  it('测试目录无 .gd 文件时报错(不空跑分片)', async () => {
+    setupFlatTestDir(['notes.txt']);
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      shards: 2,
+    }, createMockCtx());
+    expect(result.content[0].text).toContain('no test scripts');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+// ─── run_tests 分片纯函数(D6) ────────────────────────────────────────────────
+
+describe('run_tests 分片纯函数(D6)', () => {
+  it('shardFiles 蛇形 round-robin:排序后轮流发牌,片间均衡(非连续切块)', () => {
+    expect(shardFiles(['e', 'a', 'c', 'b', 'd'], 2)).toEqual([['a', 'c', 'e'], ['b', 'd']]);
+    expect(shardFiles(['a', 'b'], 4)).toEqual([['a'], ['b'], [], []]);   // 片数>文件数:空片保留由调用方过滤
+    expect(shardFiles(['a'], 1)).toEqual([['a']]);
+  });
+
+  it('enumerateTestScripts:递归子目录、排除 addons 段/_ 前缀/非 .gd/点开头', () => {
+    readdirSync.mockImplementation((dir) => {
+      if (dir === '/fake/project/test') {
+        return [
+          direntryHelper('test_a.gd', false),
+          direntryHelper('sub', true),
+          direntryHelper('addons', true),
+          direntryHelper('_helper.gd', false),
+          direntryHelper('notes.txt', false),
+          direntryHelper('.hidden', true),
+        ];
+      }
+      if (dir === '/fake/project/test/sub') {
+        return [direntryHelper('test_deep.gd', false), direntryHelper('_skip.gd', false)];
+      }
+      throw new Error(`unexpected readdirSync: ${dir}`);
+    });
+    const files = enumerateTestScripts('/fake/project', 'res://test/');
+    expect(files).toEqual(['res://test/sub/test_deep.gd', 'res://test/test_a.gd']);
+  });
+
+  it('enumerateTestScripts:单 .gd 文件入参直接返回单元素列表', () => {
+    expect(enumerateTestScripts('/fake/project', 'res://test/test_only.gd'))
+      .toEqual(['res://test/test_only.gd']);
+  });
+});
+
+// direntry helper(纯函数 describe 共用;主 describe 内 direntry 已定义)
+function direntryHelper(name, isDir) {
+  return { name, isDirectory: () => isDir, isFile: () => !isDir };
+}
 
 // ─── handleTool — get_godot_version ─────────────────────────────────────────
 

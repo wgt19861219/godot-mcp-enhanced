@@ -83,16 +83,20 @@ function stripCommentsAndStrings(src: string): string {
 const RUNTIME_SRC_CLEAN = stripCommentsAndStrings(RUNTIME_SRC);
 
 /**
- * 在原始源码上定位 run_tests case 分支的 [start, end) 边界，
- * 然后从清洗后源码切对应片段。这样既准确定位（原始源码 case 'run_tests': 不会被清洗），
- * 又保证断言在真实代码 token 上（清洗去掉注释/字符串字面量，防 NEUTERED 假绿）。
+ * 在原始源码上定位 runGutProcess 函数体的 [start, end) 边界，然后从清洗后源码切对应片段。
+ * D6 (2026-11-12): run_tests case 重构后 PID 注册不变量的载体从 case 分支移入
+ * runGutProcess（shards=1 与分片模式共用的单进程执行函数）——契约定位点随之搬家,
+ * 不变量本身（spawn 后 register + 三结束路径 unregister）不变。
+ * 这样既准确定位（原始源码 function 声明不会被清洗），又保证断言在真实代码 token 上
+ * （清洗去掉注释/字符串字面量，防 NEUTERED 假绿）。
  */
 function extractRunTestsBranchClean(): string {
-  const startIdx = RUNTIME_SRC.indexOf("case 'run_tests':");
-  if (startIdx < 0) throw new Error("找不到 case 'run_tests': 分支");
+  const startIdx = RUNTIME_SRC.indexOf('function runGutProcess');
+  if (startIdx < 0) throw new Error('找不到 function runGutProcess（run_tests 单进程执行载体）');
   const rest = RUNTIME_SRC.slice(startIdx + 1);
-  const nextCaseMatch = rest.match(/\ncase '/);
-  const endIdx = nextCaseMatch ? startIdx + 1 + nextCaseMatch.index : RUNTIME_SRC.length;
+  // 函数体终点:下一个顶层函数声明（async function runShardedTests）
+  const nextFnMatch = rest.match(/\nasync function /);
+  const endIdx = nextFnMatch ? startIdx + 1 + nextFnMatch.index : RUNTIME_SRC.length;
   // 清洗后的源码与原始源码等长（stripCommentsAndStrings 用 '""' 占位保持长度），
   // 故可直接用同一下标切。核实等长以防 strip 实现变化：
   if (RUNTIME_SRC_CLEAN.length !== RUNTIME_SRC.length) {
@@ -105,7 +109,7 @@ describe('P1-1: run_tests spawn 注册 PID（对齐 B-T4 gdscript-executor 模�
   it("run_tests 分支存在且可独立抽取", () => {
     expect(RUNTIME_SRC).toMatch(/case 'run_tests':/);
     const branch = extractRunTestsBranchClean();
-    // 基本完整性：分支内含 spawn + close + error + timer（清洗后引号变 ""，匹配标识符即可）
+    // 基本完整性：执行函数内含 spawn + close/error 监听 + timer（清洗后引号变 ""，匹配标识符即可）
     expect(branch).toMatch(/spawn\(/);
     expect(branch).toMatch(/proc\.on\(/);
     expect(branch).toMatch(/setTimeout/);
@@ -114,10 +118,10 @@ describe('P1-1: run_tests spawn 注册 PID（对齐 B-T4 gdscript-executor 模�
   it("run_tests spawn 后立即注册 PID（proc 出现后 600 字符内调 register）", () => {
     const branch = extractRunTestsBranchClean();
     const spawnIdx = branch.indexOf('spawn(godot');
-    expect(spawnIdx, 'run_tests 分支内应有 spawn(godot, ...)').toBeGreaterThan(0);
-    // run_tests 的 spawn 是多行 args 数组（--headless/--path/--script/-gdir/-gquit），
-    // 加上 {stdio,env} 块本身占 ~250 字符，故窗口取 600（对齐 gdscript-spawn-orphan
-    // 用 400 的意图：单行 spawn 取 400，多行 args 取 600）。
+    expect(spawnIdx, 'runGutProcess 内应有 spawn(godot, ...)').toBeGreaterThan(0);
+    // run_tests 的 spawn 是多行 args 形式（单进程路径 args 数组 --headless/--path/--script/
+    // -gdir/-gquit，或分片的 -gconfig=），加上 {stdio,env} 块本身占 ~250 字符，
+    // 故窗口取 600（对齐 gdscript-spawn-orphan 用 400 的意图：单行 spawn 取 400，多行 args 取 600）。
     const after = branch.slice(spawnIdx, spawnIdx + 600);
     expect(
       after,
@@ -144,13 +148,13 @@ describe('P1-1: run_tests spawn 注册 PID（对齐 B-T4 gdscript-executor 模�
   });
 
   it("run_tests 注册独立于 run_project（:224 注册不能算 run_tests 的覆盖）", () => {
-    // 抽取的 run_tests 分支必须自含 register，不能依赖分支外的 run_project 注册
+    // 抽取的 run_tests 执行函数必须自含 register，不能依赖函数外的 run_project 注册
     // \b 词边界：排除 unregisterSpawnedGodotPid 的子串匹配（un-register）
     const branch = extractRunTestsBranchClean();
     const branchRegister = branch.match(/\bregisterSpawnedGodotPid\s*\(\s*proc\.pid\s*\)/g) ?? [];
     expect(
       branchRegister.length,
-      'run_tests 分支内必须有自己的 register 调用（不能依赖 run_project :224）'
+      'runGutProcess 内必须有自己的 register 调用（不能依赖 run_project :224）'
     ).toBeGreaterThanOrEqual(1);
   });
 });
