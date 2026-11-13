@@ -11,6 +11,10 @@ vi.mock('fs', () => ({
   readdirSync: vi.fn(),
   readFileSync: vi.fn(),
   statSync: vi.fn(),
+  // 环境隔离(2026-11-13):path-utils safeRealPath 依赖 fs.realpathSync,mock 缺该导出时
+  // 会落真实 fs(宿主文件系统状态泄漏进 mock 世界)。恒等实现与"realpath 抛错→回落原始
+  // 路径"的字符串比较语义等价,且跨宿主确定。注意:勿对该 mock 调 mockReset(会丢默认实现)。
+  realpathSync: vi.fn((p) => p),
 }));
 
 import { execFile } from 'child_process';
@@ -415,6 +419,10 @@ describe('project override whitelist hardening', () => {
     // test/setup.js 全局设 UNRESTRICTED=true 绕过白名单;本用例测收紧语义,须显式覆盖为空
     vi.stubEnv('GODOT_MCP_UNRESTRICTED', '');
     vi.stubEnv('GODOT_PATH', envBin);
+    // 环境隔离(2026-11-13):宿主 shell 可能真实设了 GODOT_MCP_ALLOWED_GODOT_PATHS
+    // (vi.unstubAllEnvs 会还原宿主值,stub 才能覆盖)——不隔离则真实白名单接管,
+    // envBin 不在其中→GODOT_PATH 回落被拒,用例在装过 CLI 的机器上环境敏感失败。
+    vi.stubEnv('GODOT_MCP_ALLOWED_GODOT_PATHS', '');
     // 白名单 env 未配置;readGodotPathsConfig 的 godot-paths.json 在 existsSync mock 下不存在 → allowed 空
     existsSyncMock.mockImplementation((p) =>
       p === projectBin || p === envBin || p.endsWith('mcp-godot.json')
