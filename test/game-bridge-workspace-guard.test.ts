@@ -96,6 +96,17 @@ describe('A2: game_bridge_install 内容比对守卫', () => {
     expect(resultText(r)).toContain('overwritten (force: true)');
   });
 
+  // ── B4 (2026-11-12 反馈批次): force 覆盖响应补编辑器写回提示 ──────────────────
+  // 2026-09-16 反馈:force 重装覆盖 mcp_bridge.gd 后,项目在 Godot 编辑器中开着时编辑器
+  // 内存的旧版本会把磁盘新版本写回(编辑器不受 MCP 控制)——响应须提示用户 reload/关编辑器。
+  it('B4: force 覆盖响应含编辑器写回提示(reload the script / close the editor)', async () => {
+    writeFileSync(join(projectDir, 'mcp_bridge.gd'), USER_MODIFIED_CONTENT, 'utf-8');
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, force: true }, ctx());
+    const text = resultText(r);
+    expect(text).toContain('overwritten (force: true)');
+    expect(text).toContain('If the project is currently open in the Godot editor, reload the script there (or close the editor) to prevent the old version being written back');
+  });
+
   it('A1: drift 无 force → 提示含可操作指引(force=true 与精确删除路径)', async () => {
     writeFileSync(join(projectDir, 'mcp_bridge.gd'), USER_MODIFIED_CONTENT, 'utf-8');
     const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());

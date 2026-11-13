@@ -670,7 +670,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           if (readFileSync(bridgeSrc, 'utf-8') !== readFileSync(destScript, 'utf-8')) {
             if (forceRefresh) {
               copyFileSync(bridgeSrc, destScript);
-              scriptNote = `existing ${BRIDGE_SCRIPT_NAME} was outdated and has been overwritten (force: true) — restart the game to load the new version.`;
+              // B4 (2026-11-12 反馈批次 / 2026-09-16 反馈): force 覆盖只改磁盘,编辑器内存的
+              // 旧版本会在保存场景/脚本时写回(编辑器不受 MCP 控制)——响应须提示 reload/关闭。
+              scriptNote = `existing ${BRIDGE_SCRIPT_NAME} was outdated and has been overwritten (force: true) — restart the game to load the new version. If the project is currently open in the Godot editor, reload the script there (or close the editor) to prevent the old version being written back.`;
             } else {
               scriptNote = `existing ${BRIDGE_SCRIPT_NAME} at ${destScript} differs from bundled version — kept as-is (project may manage its own copy). To refresh to the bundled version: re-run with force: true, or delete that file and re-run game_bridge_install.`;
             }
