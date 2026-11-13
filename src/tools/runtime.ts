@@ -5,7 +5,8 @@ import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { maybeWrapUntrusted } from '../core/untrusted-wrap.js';
 import { textResult, errorResult } from '../types.js';
-import { appendOutput, clearOutputBuffer, killProcess, forceKillTree, acquireProcessSlot, acquireShortRunningSlot, releaseShortRunningSlot, buildBusyErrorMessage, killOrphanGodotProcesses, registerSpawnedGodotPid, unregisterSpawnedGodotPid, normalizeProjectKey, ensureSessionCapacity, getRunSessionProc, setRunSessionProc, releaseRunSessionBusy, clearRunSession, markSessionStopping, markSessionExited, setSessionStatus, listRunSessions, getSession } from '../core/process-state.js';
+import { appendOutput, clearOutputBuffer, killProcess, forceKillTree, acquireProcessSlot, acquireShortRunningSlot, releaseShortRunningSlot, buildBusyErrorMessage, killOrphanGodotProcesses, registerSpawnedGodotPid, unregisterSpawnedGodotPid, normalizeProjectKey, ensureSessionCapacity, getRunSessionProc, setRunSessionProc, releaseRunSessionBusy, clearRunSession, markSessionStopping, markSessionExited, setSessionStatus, listRunSessions, getSession, isPidAlive } from '../core/process-state.js';
+import { cleanDeadInstanceSecrets } from '../core/bridge-client.js';
 import type { RunSession } from '../core/process-state.js';
 import { requireProjectPath } from '../core/args-validation.js';
 import { checkVersionMismatch, buildSafeEnv } from '../core/godot-finder.js';
@@ -612,6 +613,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       await killProcess(targetProc);
       releaseRunSessionBusy(stopTargetKey);
 
+      // B3(反馈批次 2026-11-12): kill 成功后 best-effort 清本项目死实例 secret——判死=
+      // registry 条目 pid 进程探测(有意不用 lastSeen 新鲜度:刚 kill 的实例心跳仍新鲜会
+      // 误保留),pid 活/缺失一律保留;try/catch 包裹,失败仅附告警不阻断 stop 主流程。
+      let secretsCleaned: number[] = [];
+      let secretCleanupWarning: string | undefined;
+      const stopProjectDir = (typeof rawStopPath === 'string' && rawStopPath.length > 0 ? rawStopPath : '') || ctx.projectDir || '';
+      try {
+        if (stopProjectDir) secretsCleaned = cleanDeadInstanceSecrets(stopProjectDir, undefined, isPidAlive);
+      } catch (err) {
+        secretCleanupWarning = `dead-instance secret cleanup failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+
       // per-key 读数(设计 §4.3 M-3):source/runtime/total_lines 来自目标桶 session
       const s = getSession(stopTargetKey);
       const { lines: stopLines, fromSnapshot: stopFromSnapshot } = resolveReadableOutputFor(s);
@@ -626,6 +639,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         warnings: classified.warnings,
         prints: classified.prints.slice(-50),
         total_lines: stopLines.length,
+        secretsCleaned,
+        ...(secretCleanupWarning ? { secret_cleanup_warning: secretCleanupWarning } : {}),
       };
       clearRunSession(stopTargetKey);   // 快照挪移 + busy/proc 清理(桶保留可查)
       return textResult(maybeWrapUntrusted('runtime.stop_output', 'godot-process', JSON.stringify(result, null, 2)))

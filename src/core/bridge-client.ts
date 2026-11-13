@@ -14,7 +14,7 @@
  */
 import { createConnection, Socket } from 'net';
 import { createHmac } from 'crypto';
-import { readFileSync, existsSync, lstatSync, chmodSync, statSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, lstatSync, chmodSync, statSync, readdirSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { userInfo } from 'os';
 import { execFileSync, type ChildProcess } from 'child_process';
@@ -206,6 +206,47 @@ export function liveHeartbeatPortsFor(
     }
   } catch { /* registry 目录不可读 → 空集(调用方按无法判活保守处理) */ }
   return ports;
+}
+
+/** Task B3(反馈批次 2026-11-12): 清理 projectPath 的**死实例** bridge secret —— stop_project
+ *  kill 成功后的 best-effort 收尾(重启即驱动,免手动 clean_stale_secrets 每轮一遍)。
+ *  判死依据 = registry 条目 pid 的进程存活探测(isAlive 由调用方注入,生产传
+ *  process-state.isPidAlive;缺省 () => true 保守全保留——无探测能力即不清)。
+ *  ⚠️ 有意不用 lastSeen 新鲜度(与 liveHeartbeatPortsFor 判据相反):刚 kill 的实例心跳
+ *  仍新鲜,按新鲜度判活会误保留;本函数在 kill 后立即调用,pid 探测才是当下真实状态。
+ *  过滤同 resolveBridgePort:capabilities 含 registry-heartbeat(排除 server 自注册条目)
+ *  + projectPath 归一化匹配。保守边界:pid 缺失/非法(旧条目)无法判死 → 保留;pid 复用
+ *  误报活 → 保留(方向安全:垃圾 secret 无害,误删活实例 secret 才有害,同 web-gui registry
+ *  哲学)。只删 secret 文件,不动 registry 条目(GD 侧心跳生命周期自管)。
+ *  返回实际删除的端口清单(secret 本就不存在不计入);registry 不可读/全损坏 → [](保守不清)。 */
+export function cleanDeadInstanceSecrets(
+  projectPath: string,
+  registryDir: string = machineRegistryInstancesDir(),
+  isAlive: (pid: number) => boolean = () => true,
+): number[] {
+  const cleaned: number[] = [];
+  const want = normalizeProjectKey(projectPath);
+  try {
+    for (const name of readdirSync(registryDir)) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const entry = JSON.parse(readFileSync(join(registryDir, name), 'utf-8')) as {
+          port?: unknown; projectPath?: unknown; pid?: unknown; capabilities?: unknown;
+        };
+        if (typeof entry.port !== 'number') continue;
+        if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
+        if (typeof entry.projectPath !== 'string' || normalizeProjectKey(entry.projectPath) !== want) continue;
+        if (typeof entry.pid !== 'number' || !Number.isInteger(entry.pid) || entry.pid <= 0) continue;  // pid 缺失无法判死
+        if (isAlive(entry.pid)) continue;  // 活实例保留
+        try {
+          unlinkSync(bridgeSecretPathFor(entry.projectPath, entry.port));
+          cleaned.push(entry.port);
+        } catch { /* 删除失败(权限/已不存在):best-effort 跳过该条 */
+        }
+      } catch { /* 损坏条目容错跳过 */ }
+    }
+  } catch { /* registry 目录不可读 → 空清单(无法判死,保守不清) */ }
+  return cleaned;
 }
 
 /** registry 未命中时的回落:按 secret 文件存在性扫 DEFAULT_PORT_START..END(9081-9090)。

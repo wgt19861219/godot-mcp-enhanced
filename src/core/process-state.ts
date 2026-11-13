@@ -54,8 +54,9 @@ export function forceKillTree(proc: ChildProcess, opts: { ignoreKilled?: boolean
   }
 }
 
-/** 探测 PID 是否存活（signal 0，不发信号）。 */
-function isPidAlive(pid: number): boolean {
+/** 探测 PID 是否存活（signal 0，不发信号）。Task B3 起导出(stop_project 死实例 secret
+ *  清理注入 bridge-client.cleanDeadInstanceSecrets 复用,勿另造同语义函数)。 */
+export function isPidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
