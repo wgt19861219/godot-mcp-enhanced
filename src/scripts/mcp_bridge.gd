@@ -694,18 +694,32 @@ func _start_server() -> void:
 ## auth failed 需重跑(可用性),**非静默错连**(无数据安全问题),auth 是语义防线。
 ## 随机源用 _crypto 而非 randi():playtest.seed 锁全局 randi/randf,双实例同 seed 时
 ## randi() 同值随机化失效;密码学源不受 seed 影响。env 显式指定时保持确定性(用户契约)。
+## B1 (2026-11-12 反馈症状①): env 显式起点**线性向上**(candidate = start_port + i,越界
+## 65535 停)——旧环形取模把任何 env 起点折回 [9081,9090] 十口窗,CI 连跑无法按次错开
+## (GODOT_MCP_BRIDGE_PORT=9095 被钳回 9085)。crypto 随机起点仍保持窗口内取模(默认行为
+## 不变,候选集与 TS instance-manager 的扫描窗口对称)。注意:env 起点在 9081-9090 窗外时
+## TS 侧端口解析靠 instance registry 心跳(非窗口扫描)定位,与 run_project 多实例语义一致。
 func _bind_available_port() -> bool:
 	var start_port := PORT_DEFAULT
+	var env_explicit := false
 	var env_port := OS.get_environment("GODOT_MCP_BRIDGE_PORT")
 	if env_port != "" and env_port.is_valid_int():
 		start_port = clampi(int(env_port), 1, 65535)
+		env_explicit = true
 	elif _crypto != null:
 		var rb := _crypto.generate_random_bytes(2)
 		start_port = PORT_DEFAULT + (int(rb[0]) * 256 + int(rb[1])) % PORT_ATTEMPTS
 	for i in PORT_ATTEMPTS:
-		# 审查Nit-A:环形取模保候选集合恒为 [PORT_DEFAULT, PORT_DEFAULT+PORT_ATTEMPTS-1]
-		# (随机起点+线性递增会漂到窗口外,与 instance-manager 分配窗口不对称)
-		var candidate: int = PORT_DEFAULT + ((start_port - PORT_DEFAULT + i) % PORT_ATTEMPTS)
+		var candidate: int
+		if env_explicit:
+			# B1: 显式起点线性向上——不取模钳窗,越界 65535 停(端口空间顶,不回绕)
+			candidate = start_port + i
+			if candidate > 65535:
+				break
+		else:
+			# 审查Nit-A:环形取模保候选集合恒为 [PORT_DEFAULT, PORT_DEFAULT+PORT_ATTEMPTS-1]
+			# (随机起点+线性递增会漂到窗口外,与 instance-manager 分配窗口不对称)
+			candidate = PORT_DEFAULT + ((start_port - PORT_DEFAULT + i) % PORT_ATTEMPTS)
 		if _port_in_use(candidate):
 			print("[MCP Bridge] Port %d already served by another instance, trying %d" % [candidate, candidate + 1])
 			continue
