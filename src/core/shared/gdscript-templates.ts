@@ -181,14 +181,42 @@ export const SCENE_TREE_HEADER = [
   '		if coerced != null:',
   '			node.set(key, coerced)',
   '			return',
-  '	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:',
-  '		var res: Variant = load(String(val))',
+  '	elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:',
+  // D5 M1+M2(终审 Important-2, 2026-11-12): res:// load 前路径防护(对齐
+  // godot_operations.gd _sanitize_res_path 的拒绝语义,null byte/反斜杠/
+  // percent-decode 穿越 → prop_error 跳过不 load);TYPE_OBJECT 收非 res://
+  // 字符串也显式报 prop_error 不再静默 no-op(文案对齐 editor 副本
+  // command_helpers.gd coerce_property_value)。
+  '		var res_path: String = String(val)',
+  '		if not res_path.begins_with("res://"):',
+  '			_mcp_output("prop_error", "Property " + key + " expects Resource, got plain String \'" + res_path + "\' (use res:// path)")',
+  '			return',
+  '		if not _mcp_res_path_ok(res_path):',
+  '			_mcp_output("prop_error", "Unsafe res:// path blocked for " + key + ": " + res_path)',
+  '			return',
+  '		var res: Variant = load(res_path)',
   '		if res != null:',
   '			node.set(key, res)',
   '		else:',
-  '			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))',
+  '			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + res_path)',
   '		return',
   '	node.set(key, val)',
+  '',
+  // D5 M1(终审 Important-2): load 前防护 ~15 行内联(拒绝语义,与 godot_operations.gd
+  // _sanitize_res_path 同源——那边读文件面归一化后仍放行,这里属性注入面直接拒绝上报)。
+  // null byte(裸与 %00)/反斜杠(裸与 %5C)/percent-decode 后的 .. 或 . 段一律拒。
+  'func _mcp_res_path_ok(path: String) -> bool:',
+  '	if path.find(char(0)) != -1:',
+  '		return false',
+  '	var decoded: String = path',
+  '	if path.find("%") != -1:',
+  '		decoded = path.uri_decode()',
+  '	if decoded.find(char(0)) != -1 or decoded.find("\\\\") != -1:',
+  '		return false',
+  '	for part in decoded.substr(6).split("/"):',
+  '		if part == ".." or part == ".":',
+  '			return false',
+  '	return true',
   '',
   'func _mcp_prop_declared_type(node: Node, key: String) -> int:',
   '	for p in node.get_property_list():',

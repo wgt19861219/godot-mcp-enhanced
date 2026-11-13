@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **fix(core): editor/转发 30s 超时 env 可配（反馈批次 2026-11-12 Task C4，反馈 2026-11-11）**:勘察定谳 stdio 主路径工具 deadline 本就是 1h（`GODOT_MCP_TOOL_DEADLINE_MS` 可配），代码内真实 30s 硬编码仅两处：①editor WebSocket 单请求超时——`EditorConnection` 构造默认 30000 且 `EditorConnectionManager.establish` 构造时漏传 `requestTimeout`（env 无从覆盖）；②多实例 HTTP 转发——sender 两处 `AbortSignal.timeout(30000)`（`GodotServer.ts` sendToInstance/dynamicSender）+ receiver `DEFAULT_FORWARD_TIMEOUT_MS`。修复：新增 `GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS`（establish 透传 requestTimeout）与 `GODOT_MCP_FORWARD_TIMEOUT_MS`（新增导出 `resolveForwardTimeoutMs()`，sender 两处与 receiver 构造默认统一经其派生，收发对称不破坏），默认均 30000 行为兼容，非法值回落默认并 console.warn 一行（`readPositiveIntEnv` 同步补 warn）。README/使用指南 env 表补两 env,含定性说明——**宿主侧 MCP 客户端自己的请求超时不在 server 管辖**（11-11 根因为宿主侧/进程卡死,本任务是防御性收口,待用户重启验证）。新增测试 7 条（env 设 60000 透传/未设默认 30000/非法回落+warn/显式注入优先于 env/GodotServer sender 两处无 30000 硬编码源码契约）。
 
+## [0.36.7] - 2026-11-13
+
+> 反馈批次终审条件性收尾——三个小修合一（终审 Important-1/Important-2/Minor-2,均已实况核实锚点）。≠发版,npm publish/tag 待用户明确指令。bridge 规则内容变更（A5 例外行）,版本行 v0.36.6+→v0.36.7+。
+
+- **fix(script): D1 C# 回滚 isError 对称（终审 Important-1）**:`edit_script` C# 路径的 `csharpValidateAndRevert` 回滚响应旧为 `textResult(revertMsg)`（isError=false）,与 GDScript 回滚的 `opsErrorResult('EDIT_REVERTED')`（isError=true）不对称——调用方（AI）在长上下文里误判"编辑成功但静默回滚未落盘"（与 D1 GDScript 同根因）。修复:返回形态改为 `ValidateRevertOutcome`（{reverted, message}）,三处调用点统一 `reverted → opsErrorResult('EDIT_REVERTED')` / 非 revert 附注 → textResult;意外异常（非回滚,编辑保留）走 textResult 附注。测试:`test/script-csharp.test.ts` build 失败回滚断言升级——isError=true + error_code=EDIT_REVERTED（mock dotnet build,gate 路径不受 PRIVILEGED_GROUPS 默认跳过影响）。
+- **fix(ui): D5 M1+M2 headless `_mcp_set_prop` res:// load 防护（终审 Important-2）**:`SCENE_TREE_HEADER` 的 `_mcp_set_prop` res:// 分支旧为裸 `load(String(val))` 无 path 防护。M1:新增内联 `_mcp_res_path_ok`（null byte/反斜杠（裸与 %5C）/percent-decode 后 `..`/`.` 段,拒绝语义对齐 `godot_operations.gd _sanitize_res_path`）,load 前过防护,非法路径 → `prop_error` 上报跳过。M2:TYPE_OBJECT 收非 res:// 字符串显式报 prop_error 不再静默 no-op（文案对齐 editor 副本 `command_helpers.gd coerce_property_value`）。契约测试:`test/e1-headless-coerce-contract.test.ts` 新增 D5-j（sanitize 四向量+防护先于 load）/D5-k（非 res:// 字符串 prop_error）。
+- **docs(bridge): A5 即时生效段例外行（终审 Minor-2,双副本）**:「输入注入管线要点」即时生效 bullet 补例外说明——`send_key`/`send_drag`/`send_text` 直接路径**未接 flush**（事件坐引擎输入缓冲到次帧派发）,与 timeline 同属例外;需当帧派发改走已接 flush 的 mouse/touch 通道或 `send_input_sequence` 帧对齐。双副本（rule-templates.ts + .claude/rules/godot-mcp-bridge.md）同步。
+
 ## [0.36.6] - 2026-11-13
 
 > 反馈批次 2026-11-12 修复 Task B1+B2（bridge 生命周期两小修:显式端口起点线性避让 + GODOT_MCP_BRIDGE_DISABLE env + CI/连跑指南文档）。规则模板 bridge.md 新增「CI/连跑场景」段触发 bump 硬门禁,按 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更。同批 Task B4（install force 响应补编辑器写回提示,纯 TS 文案）合入本版。

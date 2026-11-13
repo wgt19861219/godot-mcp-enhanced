@@ -222,4 +222,38 @@ describe('D5: headless ui 属性 coerce helper(_mcp_set_prop, gdscript-templates
     // child 脚本无 node 变量——漏联动 replace 会生成引用不存在变量的调用
     expect(script).not.toMatch(/_mcp_set_prop\(node,/);
   });
+
+  // 终审 Important-2(2026-11-12) D5 M1: res:// load 前路径防护——裸 load(String(val))
+  // 无 path 防护,注入面可喂 res://../ 穿越/null byte/反斜杠/%2e%2e 编码路径。
+  it('D5-j: res:// load 前过 _mcp_res_path_ok 防护,非法路径 → prop_error 跳过不 load', () => {
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    const s = SCENE_TREE_HEADER.slice(start);
+    // 防护 helper 存在,覆盖 null byte / 反斜杠 / percent-decode / 穿越段四向量
+    expect(s.includes('func _mcp_res_path_ok'), '缺 _mcp_res_path_ok 防护 helper').toBe(true);
+    expect(s.includes('char(0)'), '缺 null byte 防护').toBe(true);
+    expect(s.includes('uri_decode()'), '缺 percent-decode 防护').toBe(true);
+    expect(s.includes('"\\\\"'), '缺反斜杠防护').toBe(true);
+    expect(s.includes('".."'), '缺 .. 穿越段拒绝').toBe(true);
+    // load 前必须过防护(helper 调用在 load 之前)
+    const guardIdx = s.indexOf('if not _mcp_res_path_ok(res_path):');
+    expect(guardIdx, '缺防护调用分支').toBeGreaterThanOrEqual(0);
+    expect(guardIdx).toBeLessThan(s.indexOf('var res: Variant = load(res_path)'));
+    // 非法路径 → prop_error 上报并跳过(不静默,也不裸 load)
+    expect(s.includes('"Unsafe res:// path blocked for "'), '非法路径缺 prop_error 上报').toBe(true);
+  });
+
+  // 终审 Important-2(2026-11-12) D5 M2: TYPE_OBJECT 收非 res:// 字符串 → prop_error
+  // (旧实现落兜底 node.set 静默 no-op 假成功;文案对齐 editor 副本 command_helpers.gd
+  // coerce_property_value "expects Resource, got plain String" )。
+  it('D5-k: TYPE_OBJECT 收非 res:// 字符串 → prop_error,不再静默 no-op', () => {
+    const start = SCENE_TREE_HEADER.indexOf('func _mcp_set_prop');
+    const s = SCENE_TREE_HEADER.slice(start);
+    expect(s.includes('expects Resource, got plain String'), '缺非 res:// 字符串 prop_error 分支').toBe(true);
+    // Object 分支收任意 String(不再以 begins_with("res://") 作为进分支条件——
+    // 非 res:// 字符串须进分支报错,而不是漏到兜底 set)
+    const branchLine = 'elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:';
+    expect(s.includes(branchLine), 'Object 分支条件应收任意 String(非 res:// 也进分支报错)').toBe(true);
+    const branchIdx = s.indexOf(branchLine);
+    expect(s.indexOf('expects Resource, got plain String')).toBeGreaterThan(branchIdx);
+  });
 });

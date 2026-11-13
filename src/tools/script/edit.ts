@@ -158,19 +158,25 @@ function verifyWriteResult(fullPath: string, expectedContent: string): ToolResul
  * 与 validateAndRevert(GDScript)平行,但错误处理更粗粒度(不做行号解析,
  * dotnet 输出格式解析是老规划阶段二的 L 工作量)。
  *
- * 优雅降级:无 .csproj / dotnet CLI 不可用时返回 skipNote(不阻断编辑)。
+ * 返回形态对齐 ValidateRevertOutcome(终审 Important-1, 2026-11-12):
+ * reverted=true → 调用方必须 opsErrorResult('EDIT_REVERTED')(isError:true),
+ * 与 GDScript 回滚语义对称——旧实现返回裸消息由调用方 textResult,无 error 标志,
+ * 调用方(AI)在长上下文里误判"编辑成功但静默回滚未落盘"(与 D1 GDScript 同根因)。
+ *
+ * 优雅降级:无 .csproj / gate 未放行 / build 成功 → {reverted:false, message:''}
+ * (不阻断编辑);意外异常 → {reverted:false, message:警告}(编辑保留在盘上)。
  */
 async function csharpValidateAndRevert(
   fullPath: string,
   rawFile: string,
   projectPath: string
-): Promise<string | null> {
+): Promise<ValidateRevertOutcome> {
   // 检测 .csproj 存在
   // 注：existsSync 不展开 glob，早期版本误用 existsSync(join(projectPath, '*.csproj'))
   // 永远返 false（死代码），实际靠 readdirSync 兜底。2026-08-06 审查 P2 删死代码。
   const csprojExists = readdirSync(projectPath).some(f => f.endsWith('.csproj'));
   if (!csprojExists) {
-    return null; // 无 .csproj,无法验证,不阻断(调用方显示 skipNote)
+    return { reverted: false, message: '' }; // 无 .csproj,无法验证,不阻断
   }
 
   // 2026-08-06 审查 P1 修复：dotnet build 执行任意 MSBuild <Target>/.csproj 预构建步骤
@@ -184,13 +190,13 @@ async function csharpValidateAndRevert(
     getLogger().warn('security',
       `C# dotnet build skipped (not gated): GODOT_MCP_PRIVILEGED_GROUPS lacks 'code-execution'. ` +
       `Set GODOT_MCP_PRIVILEGED_GROUPS=code-execution to enable dotnet build validation (note: MSBuild targets can execute arbitrary code).`);
-    return null; // 未 opt-in 时 skip（不阻断编辑，但也不跑 build）
+    return { reverted: false, message: '' }; // 未 opt-in 时 skip（不阻断编辑，但也不跑 build）
   }
 
   try {
     const result = await runDotnetBuild(projectPath, execFileAsync as unknown as (cmd: string, args: string[], opts: Record<string, unknown>) => Promise<unknown>);
     if (result.ok) {
-      return null; // build 成功（或 dotnet 不在 PATH 时 skipped）
+      return { reverted: false, message: '' }; // build 成功（或 dotnet 不在 PATH 时 skipped）
     }
     // build 失败 → 原子回滚（tmp+rename，2026-08-06 审查 P2 修复：原 writeFileSync 直写非原子，
     // 回滚中途崩溃会留半截损坏文件）
@@ -199,17 +205,23 @@ async function csharpValidateAndRevert(
       writeFileSync(tmpPath, rawFile, 'utf-8');
       renameSync(tmpPath, fullPath);
     } catch (rollbackErr) {
-      return `⚠️ CRITICAL: C# build error detected AND rollback failed!\n` +
-        `Rollback error: ${rollbackErr}\nFile may be in a corrupted state: ${fullPath}`;
+      return {
+        reverted: true,
+        message: `⚠️ CRITICAL: C# build error detected AND rollback failed!\n` +
+          `Rollback error: ${rollbackErr}\nFile may be in a corrupted state: ${fullPath}`,
+      };
     }
     const output = result.output;
     // 截取关键错误行(MSBuild error/warning 行),保留前 1500 字符
     const errorSection = output.split('\n').filter(l => /error|Error|FAILED/.test(l)).join('\n');
     const trimmed = (errorSection || output).substring(0, 1500);
-    return `⚠️ Edit REVERTED due to C# build error:\n  ${trimmed.split('\n').join('\n  ')}\n\nOriginal file restored. Please fix the edit content and retry.`;
+    return {
+      reverted: true,
+      message: `⚠️ Edit REVERTED due to C# build error:\n  ${trimmed.split('\n').join('\n  ')}\n\nOriginal file restored. Please fix the edit content and retry.`,
+    };
   } catch (e: unknown) {
-    // runDotnetBuild 内部已 catch，此处防御性兜底
-    return `⚠️ Unexpected error during C# validation: ${(e as Error).message}`;
+    // runDotnetBuild 内部已 catch，此处防御性兜底（非回滚——编辑保留在盘上，走 textResult 附注）
+    return { reverted: false, message: `⚠️ Unexpected error during C# validation: ${(e as Error).message}` };
   }
 }
 
@@ -417,8 +429,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
         if (outcome.message) return textResult(outcome.message);
       }
       if (isCsharp && autoValidate) {
-        const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
-        if (revertMsg) return textResult(revertMsg);
+        // 终审 Important-1(2026-11-12): C# 回滚对齐 GDScript 的 isError 语义
+        const outcome = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
+        if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+        if (outcome.message) return textResult(outcome.message);
       }
 
       const count = normalizedContent.split(normalizedSearch).length - 1;
@@ -473,8 +487,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
       if (outcome.message) return textResult(outcome.message);
     }
     if (isCsharp && autoValidate) {
-      const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
-      if (revertMsg) return textResult(revertMsg);
+      // 终审 Important-1(2026-11-12): C# 回滚对齐 GDScript 的 isError 语义
+      const outcome = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
+      if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+      if (outcome.message) return textResult(outcome.message);
     }
 
     const dupWarns = detectDuplicateLines(finalContent.split(/\r?\n/));
@@ -612,8 +628,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
     if (outcome.message) return textResult(outcome.message);
   }
   if (isCsharp && autoValidate) {
-    const revertMsg = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
-    if (revertMsg) return textResult(revertMsg);
+    // 终审 Important-1(2026-11-12): C# 回滚对齐 GDScript 的 isError 语义
+    const outcome = await csharpValidateAndRevert(fullPath, rawFile, projectPath);
+    if (outcome.reverted) return opsErrorResult('EDIT_REVERTED', outcome.message);
+    if (outcome.message) return textResult(outcome.message);
   }
 
   const afterLines = adjustedLines;

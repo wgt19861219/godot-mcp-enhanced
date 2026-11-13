@@ -236,6 +236,14 @@ describe('edit_script — C# dotnet build 失败原子回滚', () => {
       const text = (result as { content: Array<{ text: string }> }).content[0]!.text;
       expect(text).toMatch(/revert|回滚|rollback|MockBuildFailure/i);
 
+      // 断言 1b(终审 Important-1, 2026-11-12): 回滚响应必须 isError=true +
+      // error_code=EDIT_REVERTED——对齐 GDScript 回滚语义(opsErrorResult)。
+      // 旧实现 textResult(revertMsg) 无 error 标志,调用方误判"编辑成功但静默回滚"。
+      expect((result as { isError?: boolean }).isError, 'C# 回滚响应缺 isError:true').toBe(true);
+      const errPayload = JSON.parse(text) as { error_code?: string; success?: boolean };
+      expect(errPayload.success).toBe(false);
+      expect(errPayload.error_code).toBe('EDIT_REVERTED');
+
       // 断言 2: 文件回滚到原始内容（Health=100，非 999）
       const afterEdit = readFileSync(csPath, 'utf-8');
       expect(afterEdit).toContain('Health = 100');
