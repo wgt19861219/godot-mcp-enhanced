@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.36.5] - 2026-11-13
+
+> 反馈批次 2026-11-12 修复 Task A5（输入注入 flush + 时序/坐标系文档）。规则模板 bridge.md 触发 bump 硬门禁,按 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更。
+
+- **fix(bridge): A5 三处直接注入后立即 `Input.flush_buffered_events()`——事件当帧派发（反馈 2026-10-09 延迟队列重放污染）**:`_cmd_send_mouse_click`/`_cmd_send_mouse_move`/`_cmd_send_touch` 的 `Input.parse_input_event` 此后把事件留在引擎输入缓冲队列、下一帧帧首才派发——延迟队列在特定时序下重放污染游戏输入。修复:三函数注入后紧跟 `if do_flush: Input.flush_buffered_events()`（新增 `do_flush := true` 默认参数;4.0 级 API,4.5-4.7 三版本安全）;`_inject_timeline_event` 复用三函数时显式传 `false`——timeline at_frame 帧对齐是有意延迟,flush 会把事件提前到注入处理当帧破坏帧对齐语义。定谳手法:Engine.max_fps=1 限帧下相邻 bridge 命令各占一帧（socket 只在 _process poll,RTT<<1s）,探针帧号差直接区分当帧/次帧派发——修复前实测 `last_mouse_event_frame == after.frame`（次帧派发）,修复后 `== after.frame - 1`（当帧派发）。新增源码契约 6 条（三处 parse 后紧跟 flush 守卫/timeline 传 false 不 flush/全文件 flush 调用点恰 3 处）+ 文档五要点契约 10 条（双副本关键词级锚定）+ 真机 e2e 1 条（`test/e2e-bridge-mouse-gui.test.ts` A5 describe,fixture 探针扩 frame/last_mouse_event_frame/set_engine_max_fps）。
+- **docs(bridge): 「输入注入管线要点」五要点扩充（反馈 2026-10-09/09-19/09-25/11-01 + A2A3 定谳副产品）**:①即时生效语义——flush 后当帧派发但游戏逻辑消费在下一帧,注入后查询状态前等 ≥1 帧,「success 但属性没变」绝大多数是查早了;timeline 不 flush。②坐标系＝窗口像素 vs `get_node_properties` 逻辑坐标——高 DPI/stretch 项目差**窗口缩放倍数**,注入坐标 ＝ 逻辑坐标 × 窗口实际尺寸 / 视口尺寸。③headless 下 CanvasLayer 控件拾取可能不达——结构直驱替代（EXTRA_METHODS/GDA_CALLABLE）。④排查清单补 ④DPI/窗口缩放——新项目裸坐标点击首验先用 `click_button` 对照（text 定位不吃坐标）。⑤headless 下 BaseButton 点击链不达（A2A3 真机定谳,push_input/parse_input_event 均零计数,4.7/4.6.3 双端）——Button 类 e2e 必须带窗口模式;既有「覆盖面」bullet 同步修正（原文「headless 与带窗口 spawn 均正常派发」对 Button 不成立）。双副本（rule-templates.ts + .claude/rules/godot-mcp-bridge.md,版本行 v0.17.0+→v0.36.5+）同步。
+
 ## [0.36.4] - 2026-11-13
 
 > 反馈批次 2026-11-12 修复 Task A2+A3（bridge `mcp_bridge.gd` 两处小修,合并一版）。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更 bump（bump≠发版,npm publish/tag 待用户明确指令）。

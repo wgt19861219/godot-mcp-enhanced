@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.36.4"
+const BRIDGE_SCRIPT_VERSION := "0.36.5"
 const INACTIVITY_TIMEOUT := 60.0
 # 批次2(2026-10-04 幂等层,对齐 unity-mcp-server queue-transport):requestId 去重表 ——
 # 客户端超时后按原 requestId 重试(而非按命令重试),命中缓存直接回首次响应,杜绝
@@ -2716,7 +2716,7 @@ func _is_valid_touch_index(v: Variant) -> bool:
 	return false
 
 
-func _cmd_send_mouse_click(params: Dictionary) -> Variant:
+func _cmd_send_mouse_click(params: Dictionary, do_flush := true) -> Variant:
 	# 反馈批次C (2026-09-17):x/y 裸 float() 是 2026-09-03 审查 I-C 修复的漏网点
 	# (mouse_move/drag 已改 _num 守卫,此处漏改)——null/容器参数触发 SCRIPT ERROR,
 	# 同步分发无异常隔离 → 响应静默变 result:null(真机 headless 实证)。对齐 _num 收口。
@@ -2735,10 +2735,16 @@ func _cmd_send_mouse_click(params: Dictionary) -> Variant:
 	# 不设时默认 -1,当前引擎派发链会规范化为 0——真机 4.6.3 实测——但不依赖该未文档化行为)。
 	event.device = 0
 	Input.parse_input_event(event)
+	# A5 (反馈批次 2026-11-12): 注入后立即 flush——事件当帧派发,不坐引擎输入缓冲到
+	# 下一帧(2026-10-09 延迟队列重放污染反馈根因;Input.flush_buffered_events 为
+	# 4.0 级 API,4.5-4.7 三版本安全)。timeline 逐帧注入传 do_flush=false(at_frame
+	# 帧对齐是有意延迟,见 _inject_timeline_event)。
+	if do_flush:
+		Input.flush_buffered_events()
 	return {"success": true, "x": x, "y": y, "button": button}
 
 
-func _cmd_send_mouse_move(params: Dictionary) -> Variant:
+func _cmd_send_mouse_move(params: Dictionary, do_flush := true) -> Variant:
 	# 审查 I-C: x/y/button_mask 与 _num 守卫(本函数本批新增 button_mask,同函数同形态一并守卫)
 	var x: float = _num(params.get("x", 0), 0.0)
 	var y: float = _num(params.get("y", 0), 0.0)
@@ -2754,11 +2760,14 @@ func _cmd_send_mouse_move(params: Dictionary) -> Variant:
 		mask = 0
 	event.button_mask = mask
 	Input.parse_input_event(event)
+	# A5 (反馈批次 2026-11-12): 注入后立即 flush(同 _cmd_send_mouse_click;timeline 传 false)
+	if do_flush:
+		Input.flush_buffered_events()
 	return {"success": true, "x": x, "y": y, "button_mask": mask}
 
 
 # 阶段2b IMP-11: 触摸事件注入(对齐 recording_commands.gd :197 + recording.ts touch 回放契约)
-func _cmd_send_touch(params: Dictionary) -> Variant:
+func _cmd_send_touch(params: Dictionary, do_flush := true) -> Variant:
 	# 反馈批次C (2026-09-17):x/y 裸 float() 同 _cmd_send_mouse_click 的 I-C 漏网收口
 	var x: float = _num(params.get("x", 0), 0.0)
 	var y: float = _num(params.get("y", 0), 0.0)
@@ -2775,6 +2784,9 @@ func _cmd_send_touch(params: Dictionary) -> Variant:
 	# timeline 注入复用本函数,自动跟随。
 	event.device = 0
 	Input.parse_input_event(event)
+	# A5 (反馈批次 2026-11-12): 注入后立即 flush(同 _cmd_send_mouse_click;timeline 传 false)
+	if do_flush:
+		Input.flush_buffered_events()
 	return {"success": true, "x": x, "y": y, "pressed": pressed, "index": index}
 
 
@@ -4097,11 +4109,13 @@ func _inject_timeline_event(ev: Dictionary) -> Variant:
 		"key":
 			return _cmd_send_key(ev)
 		"mouse_click":
-			return _cmd_send_mouse_click(ev)
+			# A5 (反馈批次 2026-11-12): do_flush=false——timeline 逐帧注入是有意延迟
+			# (at_frame 帧对齐语义,flush 会把事件提前到注入处理当帧破坏帧对齐)。
+			return _cmd_send_mouse_click(ev, false)
 		"mouse_move":
-			return _cmd_send_mouse_move(ev)
+			return _cmd_send_mouse_move(ev, false)
 		"touch":
-			return _cmd_send_touch(ev)
+			return _cmd_send_touch(ev, false)
 		"drag":
 			return _cmd_send_drag(ev)
 		_:

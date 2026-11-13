@@ -389,3 +389,110 @@ describe.skipIf(!hasGodot || !hasFixture || !RUN)('C2 headless spawn 输入派�
     }
   });
 });
+
+// A5 (2026-11-12 反馈批次): 注入即时生效定谳——send_mouse_click 等 parse 注入后
+// 紧跟 Input.flush_buffered_events()(反馈 2026-10-09 延迟队列重放污染:不 flush 时
+// 注入事件坐引擎输入缓冲,下一帧帧首才派发)。定谳手法:Engine.max_fps=1 限帧——
+// bridge 只在 _process poll socket,localhost RTT(毫秒级)<<1s 帧长,相邻命令
+// 确定性各占一帧(探针 frame 字段锚定):base 探针在 f0、press 在 f1=f0+1、after
+// 探针在 f2=f0+2。flush 后事件在 press 处理帧 f1 当帧派发(last_mouse_event_frame
+// == f1 == after.frame-1);无 flush 则事件坐缓冲到 f2 帧首派发(last_mouse_event_frame
+// == f2 == after.frame)。目标控件是普通 Control(headless 下 gui_input 派发正常,
+// BaseButton 点击链 headless 不达——A2A3 定谳,Button 断言须带窗口模式,本用例不涉)。
+describe.skipIf(!hasGodot || !hasFixture || !RUN)('A5 注入 flush 当帧派发定谳 (L2)', { timeout: 180_000, sequential: true }, () => {
+  let projectGodotSnap = '';
+
+  beforeAll(() => {
+    projectGodotSnap = readFileSync(resolve(FIXTURE, 'project.godot'), 'utf-8');
+    process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET = 'true';
+    // set_engine_max_fps 是写方法,经文档支持的 EXTRA_METHODS env 放行(仅本测试进程)
+    process.env.GODOT_MCP_BRIDGE_EXTRA_METHODS = 'get_probe_state,get_ctl_center,set_engine_max_fps';
+  });
+
+  afterAll(() => {
+    delete process.env.GODOT_MCP_BRIDGE_PERSISTENT_SECRET;
+    delete process.env.GODOT_MCP_BRIDGE_EXTRA_METHODS;
+    try {
+      writeFileSync(resolve(FIXTURE, 'project.godot'), projectGodotSnap);
+      rmSync(resolve(FIXTURE, '.godot'), { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+    try {
+      rmSync(resolve(FIXTURE, 'mcp_bridge.gd'), { force: true });
+    } catch {
+      // best-effort
+    }
+  });
+
+  it('send_mouse_click 注入后 flush——事件在注入命令处理帧当帧派发(max_fps=1 帧号定谳)', async () => {
+    const { spawn: nodeSpawn } = await import('child_process');
+    const { sendToBridge, setBridgeProjectDir } = await import('../src/core/bridge-client.js');
+
+    ensureRegistered();
+    rmSync(resolve(FIXTURE, 'mcp_bridge.gd'), { force: true });
+    const install = await callTool({ action: 'game_bridge_install' });
+    expect(install.isError, `install: ${install.text.slice(0, 200)}`).toBe(false);
+
+    const proc = nodeSpawn(GODOT_PATH, ['--headless', '--path', FIXTURE], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env } as Record<string, string>,
+    });
+    const stderrLines: string[] = [];
+    proc.stderr?.on('data', (d: Buffer) => stderrLines.push(d.toString()));
+    proc.stdout?.on('data', (d: Buffer) => stderrLines.push(d.toString()));
+
+    try {
+      setBridgeProjectDir(FIXTURE);
+      let ready = false;
+      for (let i = 0; i < 40 && !ready; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        try {
+          const pong = await sendToBridge('ping', {}, 2000);
+          ready = !!pong && !('error' in (pong as Record<string, unknown>));
+        } catch {
+          // 未就绪,继续轮询
+        }
+      }
+      expect(ready, `bridge 未就绪。输出:\n${stderrLines.slice(-20).join('')}`).toBe(true);
+
+      const unwrapCallMethod = (r: Record<string, unknown>): Record<string, unknown> =>
+        ((r.result as Record<string, unknown>).result) as Record<string, unknown>;
+      const callProbe = async (method: string, args: unknown[] = []): Promise<Record<string, unknown>> => {
+        const r = await sendToBridge('call_method', { path: '/root/Main', method, args }, 20000);
+        const rr = r as Record<string, unknown>;
+        expect(rr.result, `call_method ${method}: ${JSON.stringify(rr).slice(0, 300)}`).toBeDefined();
+        return unwrapCallMethod(rr);
+      };
+
+      // 限帧前(帧率不限,命令快):取控件中心 + 限帧 1fps
+      const ctl = await callProbe('get_ctl_center');
+      await callProbe('set_engine_max_fps', [1]);
+
+      // 限帧后相邻命令确定性各占一帧:base@f0 → press@f1 → after@f2
+      const base = await callProbe('get_probe_state');
+      const press = await sendToBridge('send_mouse_click', { x: Number(ctl.x), y: Number(ctl.y), button: 1, pressed: true }, 20000) as Record<string, unknown>;
+      const after = await callProbe('get_probe_state');
+
+      process.stderr.write(`[A5] base=${JSON.stringify(base)}\n[A5] after=${JSON.stringify(after)}\n[A5] press=${JSON.stringify(press)}\n[A5] proc tail:\n${stderrLines.slice(-15).join('')}\n`);
+
+      const f0 = Number(base.frame);
+      const f2 = Number(after.frame);
+      const fe = Number(after.last_mouse_event_frame);
+
+      // 分帧前提锚定:相邻命令各占一帧(RTT<<1s;不成立说明限帧未生效,须查环境)
+      expect(f2, 'base→after 两个命令间隔应恰为 2 帧(max_fps=1 分帧前提)').toBe(f0 + 2);
+
+      // 注入生效:press 事件进引擎管线并送达 Control.gui_input
+      expect(Number(after.engine_mouse_events)).toBeGreaterThanOrEqual(Number(base.engine_mouse_events) + 1);
+      expect(Number(after.control_gui_count)).toBeGreaterThanOrEqual(Number(base.control_gui_count) + 1);
+
+      // 定谳断言:flush 后事件在 press 处理帧 f1=f2-1 当帧派发;
+      // 无 flush 则坐缓冲到 f2 帧首派发(last_mouse_event_frame == f2)
+      expect(fe, `flush 后事件须当帧派发(f2-1=${f2 - 1});得 ${fe}(==f2 即未 flush 的次帧派发)`).toBe(f2 - 1);
+    } finally {
+      proc.kill();
+      await new Promise(r => setTimeout(r, 500));
+    }
+  });
+});

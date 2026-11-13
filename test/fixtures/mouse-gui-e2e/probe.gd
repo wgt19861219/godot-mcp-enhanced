@@ -19,6 +19,8 @@ var engine_touch_events := 0
 var touch_device_counts := {}
 var engine_key_events := 0
 var key_device_counts := {}
+# A5 (2026-11-12): 最近一次鼠标事件派发时的引擎帧号——flush 后当帧派发的定谳探针
+var last_mouse_event_frame := -1
 
 var _press_pos := Vector2.ZERO
 var _press_valid := false
@@ -54,6 +56,7 @@ func _ready() -> void:
 func _input(ev: InputEvent) -> void:
 	if ev is InputEventMouse:
 		engine_mouse_events += 1
+		last_mouse_event_frame = Engine.get_process_frames()
 	elif ev is InputEventScreenTouch or ev is InputEventScreenDrag:
 		engine_touch_events += 1
 		var d := str(ev.device)
@@ -118,4 +121,13 @@ func get_probe_state() -> Dictionary:
 		"touch_device_counts": touch_device_counts,
 		"engine_key_events": engine_key_events,
 		"key_device_counts": key_device_counts,
+		"frame": Engine.get_process_frames(),
+		"last_mouse_event_frame": last_mouse_event_frame,
 	}
+
+
+# A5 (2026-11-12) e2e 探针:限帧注入(Engine.max_fps)——max_fps=1 时相邻 bridge 命令
+# 各占一帧(socket 只在 _process poll,RTT<<1s 确定性分帧),帧号差即可定谳当帧/次帧派发。
+# 写方法经测试进程 env GODOT_MCP_BRIDGE_EXTRA_METHODS 放行。
+func set_engine_max_fps(v: int) -> void:
+	Engine.max_fps = v

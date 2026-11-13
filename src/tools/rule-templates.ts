@@ -231,10 +231,14 @@ Game Bridge 是 MCP 服务端与**运行中的游戏**之间的 TCP 通信层。
 | \`send_text\` | 输入文本（text） |
 | \`send_input_sequence\` | H1(2026-08-20) 帧定时输入时间线（timeline=[{at_frame:1-600 开窗后第N帧, type:"action"/"key"/"mouse_click"/"mouse_move"/"touch"/"drag", ...事件参数}], settle_frames, wall_budget_ms）。延迟响应;owner 互斥同 control 层;frozen 下自动开窗播放+完成 refreeze;与 playtest.seed/fixed_delta 组合=确定性完全体。action 事件需 name 在项目 InputMap |
 
-**输入注入管线要点（反馈批次C 2026-09-17 真机定谳）**：
+**输入注入管线要点（反馈批次C 2026-09-17 真机定谳；A5 五要点扩充 2026-11-12）**：
 - 坐标口径：x/y 为**窗口/视口坐标**（非屏幕坐标、非控件本地坐标）。引擎派发时自动局部化——Control 的 \`gui_input\` 收到 \`position\` 为控件局部坐标、\`global_position\` 为窗口坐标；跨容器/CanvasLayer 取点用 \`get_node_layout\` 的 global 值
-- 覆盖面（e2e 锚定 \`test/e2e-bridge-mouse-gui.test.ts\`）：Button/TextureButton 的 pressed 链与普通 Control 的 \`gui_input\`（含 press→release 位移判 tap 的自定义判定链）均触发；headless 与带窗口 spawn 均正常派发；注入事件 device=0/global_position 与真实管线一致
-- 注入无效排查顺序：① 多实例连错——\`ping\` 核对 pid/project 指纹 ② 坐标口径错位（控件本地/父容器坐标误当窗口坐标）③ 项目内 addons 旧版——\`game_bridge_install\` 重装同步
+- **即时生效语义（A5，反馈 2026-10-09 延迟队列重放污染）**：\`send_mouse_click\`/\`send_mouse_move\`/\`send_touch\` 注入后立即 \`Input.flush_buffered_events()\`——事件在注入当帧派发，不再坐引擎输入缓冲队列到下一帧。但**游戏逻辑消费在下一帧**（\`_process\`/\`_physics_process\` 读到的是派发后的状态）——注入后查询状态前等 ≥1 帧（\`game_wait\` 或 sleep ≥100ms 再查），「注入返回 success 但属性没变」绝大多数是查早了。\`send_input_sequence\`（timeline 逐帧注入）**不 flush**——at_frame 帧对齐是有意延迟，勿手动补 flush
+- **坐标系＝窗口像素，非视口逻辑坐标（反馈 2026-09-19）**：x/y 是窗口/视口**像素坐标**；\`get_node_properties\`/\`get_node_layout\` 返回的是视口**逻辑坐标**——高 DPI / \`display/window/stretch/*\` 项目两者差**窗口缩放倍数**。裸拿节点逻辑坐标去注入在高缩放项目必偏移：注入坐标 ＝ 逻辑坐标 × 窗口实际尺寸 / 视口尺寸（两套尺寸可从 \`get_viewport_info\` 取）
+- **headless 下 CanvasLayer 拾取可能不达（反馈 2026-09-25）**：--headless 进程下非视口内 Control 树（CanvasLayer 高层）的坐标拾取可能不命中——验证控件行为改用**结构直驱**（\`call_method\` 经 \`GODOT_MCP_BRIDGE_EXTRA_METHODS\`/\`GDA_CALLABLE\` 通道直接调游戏方法），不依赖坐标注入
+- **headless 下 BaseButton 点击链不达（A2A3 真机定谳，2026-11-13）**：--headless 进程下普通 Control 的 \`gui_input\` 派发正常，但 **BaseButton（Button/CheckBox 等衍生）pressed 链不响应注入**（push_input/parse_input_event 均零计数，4.7/4.6.3 双端实测）——Button 类 e2e 必须带窗口模式（\`run_project\` 非 headless）
+- 覆盖面（e2e 锚定 \`test/e2e-bridge-mouse-gui.test.ts\`）：Button/TextureButton 的 pressed 链（**须带窗口模式**，headless 下 BaseButton 不达，见上条）与普通 Control 的 \`gui_input\`（含 press→release 位移判 tap 的自定义判定链；headless 亦正常派发）均触发；注入事件 device=0/global_position 与真实管线一致
+- 注入无效排查顺序：① 多实例连错——\`ping\` 核对 pid/project 指纹 ② 坐标口径错位（控件本地/父容器坐标误当窗口坐标）③ 项目内 addons 旧版——\`game_bridge_install\` 重装同步 ④ **DPI/窗口缩放**——逻辑坐标未乘窗口缩放倍数（见上「坐标系」条）；新项目裸坐标点击首验先用 \`click_button\` 对照（text 定位不吃坐标）：click_button 通而坐标点击不通＝坐标换算问题，两者都不通＝管线/版本问题
 - 复杂交互（自定义 tap/drag 判定链）：press 与 release 分两次注入并间隔若干帧；帧对齐需求走 \`send_input_sequence\`
 
 ### 写入 — game_write
