@@ -704,7 +704,7 @@ npx godot-mcp-enhanced rules --paths "D:/proj/A;D:/proj/B"
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `GODOT_PATH` | Godot 可执行文件路径 | 自动搜索（PATH/注册表/Scoop/Downloads） |
-| `ALLOWED_PROJECT_PATHS` | **项目路径白名单**(分号分隔,deny-by-default——未设置时仅允许当前工作目录)。files API/资源读写等均以此校验,路径越界即 forbidden。配置示例:`ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"` | 未设(限 cwd) |
+| `ALLOWED_PROJECT_PATHS` | **项目路径白名单**(分号分隔,deny-by-default——未设置时仅允许当前工作目录)。**条目覆盖其整个子树**(带分隔符边界的前缀匹配,非精确成员——worktree/子项目建在已列父目录下即可,无需逐级列出)。files API/资源读写等均以此校验,路径越界即 forbidden;被拒报错回显当前生效的 `Allowed roots`(与判定同源生成,可直接对照配置差在哪)。配置示例:`ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"` | 未设(限 cwd) |
 | `GODOT_PROJECT_PATH` | 默认项目路径 | 自动检测 cwd（向上搜索 project.godot） |
 | `GODOT_MCP_SEARCH_PATHS` | 额外 Godot 搜索目录（分号分隔） | 无 |
 | `GODOT_MCP_ALLOWED_GODOT_PATHS` | Godot 二进制路径白名单(分号分隔,realpath 归一)。空=回落 `~/.godot-mcp/godot-paths.json`(CLI `install` 登记生成并自动追加安装路径;非空即接管 whitelist,条目可为可执行文件或其父目录);两者皆无=back-compat 放行(签名校验仍兜底)。设了 env 则 env 优先(显式用户意图,config 被忽略)。加行示例:`{"version":1,"paths":["C:/Godot/Godot_v4.7.exe","C:/Godot"]}`。多用户/不可信环境显式列出可信 Godot 路径,防 `godot_path` 工具参数/项目 override/env 指向任意二进制被 spawn(任意代码执行)。当前生效状态可随时用 `doctor` 查看(2.7b 段:env 优先时提示 json 被忽略;json 接管时报条目数并判定当前发现结果是否命中) | 空(回落 config) |

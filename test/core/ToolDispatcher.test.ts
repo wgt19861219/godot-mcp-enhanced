@@ -23,6 +23,7 @@ const {
   mockConsumeToken,
   mockPeekToken,
   mockIsPathInAllowedRoots,
+  mockDescribeAllowedRoots,
   mockIsToolAllowed,
   mockSetActiveGroups,
   mockValidateGodotBinary,
@@ -43,6 +44,8 @@ const {
   mockConsumeToken: vi.fn(),
   mockPeekToken: vi.fn(),
   mockIsPathInAllowedRoots: vi.fn().mockReturnValue(true),
+  // Task C5(反馈批次 2026-11-12): validatePathArgs 报错文案统一回显 Allowed roots(与 requireProjectPath 对齐)
+  mockDescribeAllowedRoots: vi.fn().mockReturnValue('/allowed/root-a;/allowed/root-b'),
   mockIsToolAllowed: vi.fn().mockReturnValue(true),
   mockSetActiveGroups: vi.fn(),
   mockValidateGodotBinary: vi.fn().mockResolvedValue(true),
@@ -88,6 +91,7 @@ vi.mock('../../src/core/config-parser.js', () => ({
 
 vi.mock('../../src/core/path-utils.js', () => ({
   isPathInAllowedRoots: mockIsPathInAllowedRoots,
+  describeAllowedRoots: mockDescribeAllowedRoots,
   resolveProjectPath: vi.fn().mockReturnValue('/default/project'),
   _resetProjectPathCache: vi.fn(),
 }));
@@ -1351,6 +1355,28 @@ describe('ToolDispatcher.handleCall', () => {
     const parsed = JSON.parse((result.content[0] as { text: string }).text);
     expect(parsed.error_code).toBe('PATH_NOT_ALLOWED');
     expect(mockModule.handleTool).not.toHaveBeenCalled();
+  });
+
+  // [P2b] Task C5(反馈批次 2026-11-12): PATH_NOT_ALLOWED 文案统一回显 Allowed roots
+  // ——与 requireProjectPath(args-validation) 的消息对齐,用户被拒时直接看到该列哪些根,
+  // 不再是干巴巴的 "Check your setting."(4 项目复现"全拒"时无法自查配置差在哪)。
+  // 回显走 describeAllowedRoots(basename 级同源生成,与判定链一致;不拼 project_path 原值,PII 护栏 G2 保持)。
+  it('PATH_NOT_ALLOWED message echoes allowed roots (Task C5)', async () => {
+    const guard = createMockGuard(false);
+    mockIsPathInAllowedRoots.mockReturnValue(false);
+    mockDescribeAllowedRoots.mockReturnValue('/allowed/root-a;/allowed/root-b');
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+    const result = await dispatcher.handleCall({
+      params: { name: 'scene', arguments: { project_path: '/etc/shadow', action: 'read_scene' } },
+    });
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text);
+    expect(parsed.error_code).toBe('PATH_NOT_ALLOWED');
+    expect(parsed.error).toMatch(/Allowed roots: \/allowed\/root-a;\/allowed\/root-b/);
+    // PII 护栏不回退:消息不得包含被拒路径原值
+    expect(parsed.error).not.toContain('/etc/shadow');
   });
 
   // [P3] P0-2 MRTR: confirm_and_execute 第二轮 _confirmExecute 中 pending.args 包含不允许的路径 → 被拦截

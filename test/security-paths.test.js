@@ -282,3 +282,68 @@ describe('isPathInAllowedRoots — C-1 junction/symlink bypass', () => {
     expect(isPathInAllowedRoots(join(root, 'scenes', 'main.tscn'))).toBe(true);
   });
 });
+
+// ─── isPathInAllowedRoots — Task C5 前缀语义定谳（反馈批次 2026-11-12）──────────
+// 反馈"精确成员/全拒"与实现不符:isPathInAllowedRoots 是**带分隔符边界的前缀匹配**——
+// allowlist 条目覆盖其整个子树。worktree 物理路径不在任何已列根之下才是"全拒"实况。
+// 以下测试钉死前缀语义防回退(精确匹配语义回归会立刻红)。
+
+describe('isPathInAllowedRoots — Task C5 prefix semantics', () => {
+  let restore = () => {};
+  let tmpRoots = [];
+
+  beforeEach(() => {
+    restore = isolatePathEnv();
+    tmpRoots = [];
+  });
+
+  afterEach(() => {
+    restore();
+    for (const r of tmpRoots) {
+      try { rmSync(r, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  });
+
+  const makeRoot = () => {
+    const r = mkdtempSync(join(tmpdir(), 'mcp-c5-'));
+    tmpRoots.push(r);
+    return r;
+  };
+
+  const linkDir = (target, linkPath) => {
+    symlinkSync(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
+  };
+
+  it('C5: allowlist 列父目录,其深层子路径放行(worktree 建在已列父目录下即可)', () => {
+    // 反馈场景等价形态:allowlist=D:/workspace/wt(父目录),请求 D:/workspace/wt/m20m/game(深层子路径)
+    // → 前缀匹配放行。子路径不必逐级列出。
+    const root = makeRoot();
+    process.env.ALLOWED_PROJECT_PATHS = root;
+    expect(isPathInAllowedRoots(join(root, 'm20m', 'game'))).toBe(true);
+    expect(isPathInAllowedRoots(join(root, 'm20m', 'game', 'project.godot'))).toBe(true);
+  });
+
+  it('C5: 同前缀名的兄弟目录被拒(分隔符边界,非字符串 startsWith)', () => {
+    // D:/workspace/wt-evil 不在 D:/workspace/wt 之下——ensureSep 分隔符边界防误放行。
+    // 防止未来有人把 startsWith(ensureSep(normP)) "简化"成裸 startsWith(normP)。
+    const root = mkdtempSync(join(tmpdir(), 'mcp-c5-wt'));
+    tmpRoots.push(root);
+    const sibling = mkdtempSync(join(tmpdir(), 'mcp-c5-wt-evil'));
+    tmpRoots.push(sibling);
+    process.env.ALLOWED_PROJECT_PATHS = root;
+    expect(isPathInAllowedRoots(sibling)).toBe(false);
+    expect(isPathInAllowedRoots(join(sibling, 'game'))).toBe(false);
+  });
+
+  it('C5: allowlist 条目为 junction 时,经 junction 字面路径访问其子树放行', () => {
+    // worktree 以 junction 形态存在的场景:allowlist 列 junction 路径,请求 junction/child。
+    // 两层 realpath 均解析到真实目标 → 匹配放行(C-1 第三条测的是真实路径方向,此处补 junction 字面方向)。
+    const realRoot = makeRoot();
+    const linkParent = mkdtempSync(join(tmpdir(), 'mcp-c5-linkparent-'));
+    tmpRoots.push(linkParent);
+    const linkRoot = join(linkParent, 'linkroot');
+    linkDir(realRoot, linkRoot);
+    process.env.ALLOWED_PROJECT_PATHS = linkRoot;
+    expect(isPathInAllowedRoots(join(linkRoot, 'game', 'project.godot'))).toBe(true);
+  });
+});

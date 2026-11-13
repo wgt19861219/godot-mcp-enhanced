@@ -19,6 +19,7 @@ const {
   mockGetToolDefinition,
   mockRequiresConfirmation,
   mockIsPathInAllowedRoots,
+  mockDescribeAllowedRoots,
   mockSkipProjectPath,
   mockValidateGodotBinary,
   mockValidateGodotBinaryDetailed,
@@ -31,6 +32,8 @@ const {
   mockGetToolDefinition: vi.fn().mockReturnValue(undefined),
   mockRequiresConfirmation: vi.fn().mockReturnValue(false),
   mockIsPathInAllowedRoots: vi.fn().mockReturnValue(true),
+  // Task C5(反馈批次 2026-11-12): validatePathArgs 报错文案回显 Allowed roots——补导出防漂移
+  mockDescribeAllowedRoots: vi.fn().mockReturnValue('/allowed/root-a'),
   mockSkipProjectPath: vi.fn().mockReturnValue(false),
   mockValidateGodotBinary: vi.fn().mockResolvedValue(true),
   mockValidateGodotBinaryDetailed: vi.fn().mockResolvedValue({ ok: true }),
@@ -83,6 +86,7 @@ vi.mock('../../src/core/config-parser.js', () => ({
 
 vi.mock('../../src/core/path-utils.js', () => ({
   isPathInAllowedRoots: mockIsPathInAllowedRoots,
+  describeAllowedRoots: mockDescribeAllowedRoots,
   resolveProjectPath: vi.fn().mockReturnValue('/default/project'),
   _resetProjectPathCache: vi.fn(),
 }));
