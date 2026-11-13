@@ -405,6 +405,7 @@ export function enumerateTestScripts(projectDir: string, resScript: string): str
  *  "Failed: N";9.7 Totals 对齐空格式 "Tests<sp>N"/"Failing Tests<sp>N"(Failing 行
  *  非零才打印,缺行=0)。新格式行首锚定防误匹配 "Passing Tests";输出实含 ANSI 色码,
  *  解析前剥离。返回全部匹配的数字串(调用方按需 join 或求和)。 */
+// eslint-disable-next-line no-control-regex -- 有意匹配 ANSI ESC 控制符:GUT 输出剥色码(D6),\x1b 是 ESC 本体,纯本地解析非注入面
 const ANSI_COLOR_RE = /\x1b\[[0-9;]*m/g;
 const GUT_TESTS_PATTERNS = [/Tests:\s*(\d+)/g, /^Tests[ \t]+(\d+)/gm];
 const GUT_FAILED_PATTERNS = [/Failed:\s*(\d+)/g, /^Failing Tests[ \t]+(\d+)/gm];
