@@ -3,7 +3,7 @@ description: "game bridge game_query game_input game_write game_wait game_bridge
 alwaysApply: false
 ---
 
-> 适用于 godot-mcp-enhanced v0.36.5+
+> 适用于 godot-mcp-enhanced v0.36.6+
 
 ## 概述与架构
 
@@ -193,6 +193,13 @@ dev_loop 的 `bridge` 参数可在执行 GDScript 后自动进行 Bridge 查询�
 }
 ```
 
+## CI/连跑场景（v0.36.6+）
+
+- **禁用 Bridge（B2）**：CI 只做静态校验/编译检查（`validate_scripts`、`run_tests`、`--headless --quit` 探针）时，游戏进程内的 Bridge autoload 也会启动——写 `.godot/mcp_bridge_*.secret` + machine registry 心跳污染连跑环境。设 `GODOT_MCP_BRIDGE_DISABLE=1`（非空且非 `0`/`false` 即禁用，`buildSafeEnv` 天然透传给 spawn 的游戏进程），`_ready` 顶部直接 return：不起监听、不写 secret、不写 registry，游戏本身照常运行。
+- **端口按次错开（B1）**：多实例并行连跑用 `GODOT_MCP_BRIDGE_PORT` 显式指定起点（如首个 job 9095、次个 9096）——显式起点**线性向上**避让（candidate = start_port + i，被占 +1，越界 65535 停），不再钳回 9081-9090 十口窗；TS 侧对窗外端口靠 instance registry 心跳定位（非窗口扫描）。
+- **连跑前清 secret**：上一轮残留的 `.godot/mcp_bridge_*.secret` 会误导端口解析（mtime 语义）与 auth（连错/删错实例）——连跑前删除，或 `game_bridge_install` 带 `clean_stale_secrets: true`（判活护栏防误删在跑实例）。
+- **冷缓存 .import 重写**：CI 冷缓存 clone 缺 `.gd.uid`/`.godot/` 导入缓存时，首次 headless 运行会触发全项目 `.import` 重写（大量文件变更干扰 git 状态且耗时）——连跑前先跑一次 `godot --headless --import --path <project>` 补齐导入缓存再进测试。
+
 ## 调用示例
 
 ### 检查游戏运行状态
@@ -279,7 +286,7 @@ game_query(method="ping")
 - **密钥权限循环**：Bridge 首次运行后将密钥文件权限收紧为只读（Windows: `(R)` only），导致后续启动时无法重写密钥而中止（"Failed to write secret — aborting Bridge startup"）。**解决**：手动恢复写入权限 `icacls ".godot/mcp_bridge_9081.secret" /grant "%USERNAME%:(W)"`，或删除密钥文件让 Bridge 重新生成。**S4 治本（v0.18.x+）**：设置环境变量 `GODOT_MCP_BRIDGE_PERSISTENT_SECRET=true`，Bridge 复用现有 secret 文件（不重生、不收紧、`_exit_tree` 不删除），彻底打破权限循环并与 MCP 端 5min TTL 缓存保持同步。仅本地测试用（安全降级，生产保持默认 false）。
 - **节点路径必须用绝对路径**：`game_write`、`game_wait` 等的 `path` 参数必须以 `/root/` 开头（如 `/root/Main/Player`），不接受 `root/Main/Player` 格式。`game_query(method="get_tree")` 返回的路径可用于参考。
 - **与录制系统**：`runtime(action="record_start")` 依赖 Bridge 连接。确保 Bridge 可用后再录制。
-- **端口 9081 冲突**：端口被占时自动递增避让（9081 起，最多尝试 10 个候选）；可用环境变量 `GODOT_MCP_BRIDGE_PORT` 设起点，无需修改 autoload 脚本。
+- **端口 9081 冲突**：端口被占时自动递增避让（9081 起，最多尝试 10 个候选）；可用环境变量 `GODOT_MCP_BRIDGE_PORT` 设起点（显式起点线性向上不钳窗，v0.36.6+——默认随机起点仍在 9081-9090 窗内取模），无需修改 autoload 脚本。
 - **密钥缓存**：5 分钟 TTL 后首次调用会重新读取密钥文件，可能有短暂延迟。
 - **monitor 最大属性数**：单次监控最多 20 个属性（MONITOR_MAX_PROPERTIES），超出会报错。
 - **monitor 自动停止**：采样达到 500 条（_monitor_max_samples）后自动停止。

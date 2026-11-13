@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.36.5"
+const BRIDGE_SCRIPT_VERSION := "0.36.6"
 const INACTIVITY_TIMEOUT := 60.0
 # 批次2(2026-10-04 幂等层,对齐 unity-mcp-server queue-transport):requestId 去重表 ——
 # 客户端超时后按原 requestId 重试(而非按命令重试),命中缓存直接回首次响应,杜绝
@@ -217,6 +217,15 @@ func _no_bridge_env() -> bool:
 
 
 func _ready() -> void:
+	# B2 (2026-11-12 反馈症状②③): 显式禁用开关——CI/连跑场景 headless --quit 也会起
+	# bridge 留 secret(污染工作区)+ registry 心跳。env 非空且非 "0"/"false"(大小写不敏感)
+	# 即禁用:print 一行提示后直接 return(不起监听/不写 secret/不写 registry)。优先级最高
+	# (先于 EXPORT-1 导出守卫——DISABLE 语义即"彻底不要 bridge",无豁免通道);命名对齐
+	# GODOT_MCP_BRIDGE_* 前缀,上游 buildSafeEnv 天然透传(run_tests/run_project spawn 均可达)。
+	var _disable_env := OS.get_environment("GODOT_MCP_BRIDGE_DISABLE").strip_edges().to_lower()
+	if _disable_env != "" and _disable_env != "0" and _disable_env != "false":
+		print("[MCP Bridge] Disabled via GODOT_MCP_BRIDGE_DISABLE — no listener, no secret, no registry.")
+		return
 	# Godot 4.6+: extends 原生类(Node)的虚函数不可调 super()(4.6.2 Parse error "hasn't been defined"),移除 IMP-4 super()。该 convention 仅适用于 extends 自定义基类。
 	if Engine.is_editor_hint():
 		return

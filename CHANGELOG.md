@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.36.6] - 2026-11-13
+
+> 反馈批次 2026-11-12 修复 Task B1+B2（bridge 生命周期两小修:显式端口起点线性避让 + GODOT_MCP_BRIDGE_DISABLE env + CI/连跑指南文档）。规则模板 bridge.md 新增「CI/连跑场景」段触发 bump 硬门禁,按 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更。同批 Task B4（install force 响应补编辑器写回提示,纯 TS 文案）合入本版。
+
+- **fix(bridge): B1 显式端口起点线性避让——CI 连跑可按次错开（反馈 2026-11-07 症状①）**:`_bind_available_port` 的候选端口计算旧为环形取模 `PORT_DEFAULT + ((start_port - PORT_DEFAULT + i) % PORT_ATTEMPTS)`,把 env `GODOT_MCP_BRIDGE_PORT` 显式指定的任何起点折回 [9081,9090] 十口窗（9095 被钳回 9085）,CI 多实例连跑无法按次错开端口。修复:env 显式起点时 candidate = start_port + i **线性向上**（被占 +1,越界 65535 break 停,不回绕）;crypto 随机起点保持窗口内取模（默认行为不变,候选集与 TS instance-manager 扫描窗口对称,审查Nit-A 语义保留）;env 起点在窗外时 TS 侧端口解析靠 instance registry 心跳定位（与 run_project 多实例语义一致）。新增源码契约 4 条（env 线性分支无取模/65535 越界停/默认分支取模保留/clampi 前置不变）+ 真机双实例 e2e（`test/e2e-bridge-port-linear-b1b2.test.ts`:GODOT_PATH 门控 headless spawn + Node TCP 探测,PORT=9095 起两实例 → 9095/9096 线性监听,钳窗回归锚断言监听口 ≥9095;4.7.2/4.6.3 双端实测通过）。
+- **fix(bridge): B2 GODOT_MCP_BRIDGE_DISABLE env——CI/连跑场景免 secret 残留（反馈 2026-11-07 症状②③）**:headless `--quit` 探针/run_tests 等非交互场景下 bridge autoload 照常启动——写 `.godot/mcp_bridge_*.secret`（污染工作区/误导下轮端口解析）+ machine registry 心跳。新增 `_ready` 顶部守卫:env `GODOT_MCP_BRIDGE_DISABLE` 非空且非 `0`/`false`（大小写不敏感）→ print 一行提示 + return（不起监听/不写 secret/不写 registry,游戏照常跑）;优先级最高（先于 EXPORT-1 导出守卫,DISABLE 语义即彻底不要 bridge,无豁免通道）;命名对齐 `GODOT_MCP_BRIDGE_*` 前缀,`buildSafeEnv` 天然透传给 run_tests/run_project spawn 的游戏进程。新增源码契约 3 条（读取与假值白名单/优先级顺序/守卫段内无 server·secret·registry 写入）+ 真机 e2e（DISABLE=1 spawn → 无 Listening 日志、无窗口 secret 文件、进程存活）。
+- **docs(bridge): 「CI/连跑场景」段（B2 交付物,双副本）**:①DISABLE env 用法;②端口按次错开（B1 显式起点线性语义）;③连跑前清 `.godot/mcp_bridge_*.secret`（或 install `clean_stale_secrets: true` 判活护栏）;④冷缓存缺 `.gd.uid` 触发全项目 `.import` 重写——连跑前先 `godot --headless --import --path` 补齐。另「端口 9081 冲突」陷阱 bullet 补显式起点线性语义。双副本（rule-templates.ts + .claude/rules/godot-mcp-bridge.md,版本行 v0.36.5+→v0.36.6+）同步。
+
 ## [0.36.5] - 2026-11-13
 
 > 反馈批次 2026-11-12 修复 Task A5（输入注入 flush + 时序/坐标系文档）。规则模板 bridge.md 触发 bump 硬门禁,按 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更。
