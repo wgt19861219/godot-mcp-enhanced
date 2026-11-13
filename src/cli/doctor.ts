@@ -7,9 +7,10 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { createHash } from 'crypto';
-import { join, dirname, relative } from 'path';
+import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
-import { findGodot, detectGodotVersion } from '../core/godot-finder.js';
+import { findGodot, detectGodotVersion, readGodotPathsConfig } from '../core/godot-finder.js';
+import { safeRealPath } from '../core/path-utils.js';
 import { PKG_VERSION } from '../core/update-checker.js';
 import { inspectRulesDistribution, type RulesDistInfo } from '../tools/project.js';
 import { ALL_ADAPTERS } from './clients/index.js';
@@ -150,6 +151,21 @@ export function compareBridgeScript(projectScript: string, bundledScript: string
   }
 }
 
+// ─── 反馈批次 C1 (2026-11-12): godot-paths.json 命中判定纯函数(可单测) ──────────
+
+/** 判定候选路径是否命中白名单条目——与 godot-finder.isGodotPathAllowed 的匹配语义
+ *  同源(realpath 归一,失败回落原串;本身相等或目录边界子路径),但不读 env/json:
+ *  条目由调用方传入,便于 doctor 展示「当前发现结果是否在 godot-paths.json 里」。 */
+export function godotWhitelistHit(candidatePath: string, allowed: string[]): boolean {
+  let realCandidate: string;
+  try { realCandidate = safeRealPath(candidatePath); } catch { realCandidate = candidatePath; }
+  return allowed.some(a => {
+    let realA: string;
+    try { realA = safeRealPath(a); } catch { realA = a; }
+    return realCandidate === realA || realCandidate.startsWith(realA + sep) || realCandidate.startsWith(realA + '/');
+  });
+}
+
 export async function runDoctor(_args: string[]): Promise<void> {
   let hasError = false;
 
@@ -168,8 +184,12 @@ export async function runDoctor(_args: string[]): Promise<void> {
   // 易用性批4 (2026-09-19):版本不查时,装 Godot 3.x 的用户 doctor 全绿但工具全挂
   // (本项目支持 4.5–4.7)。detectGodotVersion 会 throw(白名单拒/--version 失败),须 try-catch。
   const projectDir = process.cwd();
+  // 反馈批次 C1: 记录本节发现结果,供 2.7b 的 godot-paths.json 命中判定消费
+  // (findGodot 抛错时回落 GODOT_PATH env 值——反馈场景:json 白名单拒了显式 env 配置)
+  let discoveredGodot: string | null = null;
   try {
     const godotPath = await findGodot();
+    discoveredGodot = godotPath;
     console.log(status(true, `Godot found: ${godotPath}`));
     try {
       const ver = await detectGodotVersion(godotPath);  // 如 "4.7.2.stable"
@@ -207,13 +227,31 @@ export async function runDoctor(_args: string[]): Promise<void> {
     console.log(warn('ALLOWED_PROJECT_PATHS not set — deny-by-default(仅当前工作目录可访问)。多项目使用时在 MCP 配置 env 设置:ALLOWED_PROJECT_PATHS="D:/proj/A;D:/proj/B"'));
   }
 
-  // 2.7b GODOT_MCP_ALLOWED_GODOT_PATHS 可见性(2026-09-19 安全加固 D2 裁决 (a) 组成)
-  // 未设为 back-compat 放行(godot-finder.ts isGodotPathAllowed:env 与 godot-paths.json
-  // 皆空=放行+签名校验兜底)——warn 不 fail;显式设置可硬隔离"AI 可控 godot_path 参数
-  // 指向任意二进制被 spawn"面(评估完整 M5)
+  // 2.7b GODOT_MCP_ALLOWED_GODOT_PATHS / godot-paths.json 可见性
+  // (2026-09-19 安全加固 D2 裁决 (a) 组成;反馈批次 C1 2026-11-12 补 json 接管可见性)
+  // 白名单优先级链(与 godot-finder.isGodotPathAllowed 同源):env > ~/.godot-mcp/
+  // godot-paths.json(CLI install 登记生成,非空即接管 whitelist)> 双空 back-compat
+  // 放行(签名校验兜底)。此前 doctor 只读 env 不读 json——json 生效且不命中时用户
+  // 只看到"env 未设"的误导文案,机制完全不可见(2026-11-12 反馈)。
   const allowedGodot = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
-  if (allowedGodot) {
+  const godotPathsJson = readGodotPathsConfig();
+  if (allowedGodot && allowedGodot.trim() !== '') {
     console.log(status(true, `GODOT_MCP_ALLOWED_GODOT_PATHS set (${allowedGodot.split(';').length} path(s))`));
+    if (godotPathsJson.length > 0) {
+      console.log(warn(`godot-paths.json ignored (env takes precedence) — ~/.godot-mcp/godot-paths.json has ${godotPathsJson.length} entries but env GODOT_MCP_ALLOWED_GODOT_PATHS overrides it`));
+    }
+  } else if (godotPathsJson.length > 0) {
+    console.log(status(true, `godot-paths.json active (${godotPathsJson.length} entries) — env not set, ~/.godot-mcp/godot-paths.json (CLI install 登记) takes over the godot whitelist`));
+    const discovered = discoveredGodot ?? process.env.GODOT_PATH ?? null;
+    if (discovered && godotWhitelistHit(discovered, godotPathsJson)) {
+      console.log(status(true, `discovered Godot is whitelisted by godot-paths.json: ${discovered}`));
+    } else if (discovered) {
+      // ✗ 不重复置 hasError:该候选已被第 2 节 findGodot 校验/报错过(json 拒绝显式
+      // GODOT_PATH 时 findGodot 已带 stage 消息置 ✗)——此处 ✗ 是机制解释,非新增错误
+      console.log(status(false, `discovered Godot is NOT in godot-paths.json: ${discovered} — add the executable or its parent directory to the "paths" array in ~/.godot-mcp/godot-paths.json, e.g. {"version":1,"paths":["C:/Godot/Godot_v4.7.exe","C:/Godot"]}`));
+    } else {
+      console.log(warn('godot-paths.json active but no Godot discovered — add the executable or its parent directory to the "paths" array in ~/.godot-mcp/godot-paths.json, or set GODOT_PATH'));
+    }
   } else {
     console.log(warn('GODOT_MCP_ALLOWED_GODOT_PATHS not set — back-compat 放行(签名校验兜底)。收紧 godot 二进制白名单可设置:GODOT_MCP_ALLOWED_GODOT_PATHS="C:/Program Files/Godot;D:/godot"'));
   }

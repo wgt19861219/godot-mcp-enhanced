@@ -7,6 +7,9 @@ vi.mock('../../src/core/godot-finder.js', () => ({
   findGodot: vi.fn().mockResolvedValue('/usr/bin/godot'),
   // 易用性批4:默认返回受支持版本,个别用例用 mockResolvedValueOnce 覆盖
   detectGodotVersion: vi.fn().mockResolvedValue('4.7.2.stable'),
+  // 反馈批次 C1 (2026-11-12):2.7b godot-paths.json 可见性——mock 隔离,
+  // 默认空(本机 ~/.godot-mcp/godot-paths.json 真实存在且非空,勿漏进断言)
+  readGodotPathsConfig: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('../../src/cli/clients/claude-code.js', () => ({
@@ -203,6 +206,121 @@ describe('doctor', () => {
     logSpy.mockRestore(); exitSpy.mockRestore();
   });
 
+  // ─── 反馈批次 C1 (2026-11-12): 2.7b godot-paths.json 接管可见性 ───
+  // 三分支:env 非空(json 被忽略提示)/ env 空 json 非空(接管+命中判定)/ 双空(back-compat)。
+  // readGodotPathsConfig 全程 mock——本机 ~/.godot-mcp/godot-paths.json 真实存在且非空,
+  // 不 mock 会让分支判定依赖开发机状态(测试隔离教训)。
+
+  it('branch ②: env 未设 + json 非空 → godot-paths.json active (N entries) + 发现结果命中 ✓', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { readGodotPathsConfig } = await import('../../src/core/godot-finder.js');
+    vi.mocked(readGodotPathsConfig).mockReturnValue(['/usr/bin/godot', '/opt/godot/Godot_v4.exe']);
+    const origEnv = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    delete process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('godot-paths.json active (2 entries)');
+      expect(output).toContain('✓ discovered Godot is whitelisted by godot-paths.json: /usr/bin/godot');
+      expect(output).not.toContain('GODOT_MCP_ALLOWED_GODOT_PATHS not set');
+      expect(output).not.toContain('godot-paths.json ignored');
+    } finally {
+      if (origEnv !== undefined) process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = origEnv;
+      vi.mocked(readGodotPathsConfig).mockReturnValue([]);
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  it('branch ② miss: 发现结果不在 json → ✗ + 加行示例', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { readGodotPathsConfig } = await import('../../src/core/godot-finder.js');
+    vi.mocked(readGodotPathsConfig).mockReturnValue(['/opt/other/Godot_v4.exe', '/opt/other2/Godot_v4.exe']);
+    const origEnv = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    delete process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('godot-paths.json active (2 entries)');
+      expect(output).toContain('✗ discovered Godot is NOT in godot-paths.json: /usr/bin/godot');
+      expect(output).toContain('~/.godot-mcp/godot-paths.json');
+      expect(output).toContain('"paths"');
+    } finally {
+      if (origEnv !== undefined) process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = origEnv;
+      vi.mocked(readGodotPathsConfig).mockReturnValue([]);
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  it('branch ② + findGodot 抛错: 回落 GODOT_PATH env 值做命中判定(反馈场景)', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { findGodot, readGodotPathsConfig } = await import('../../src/core/godot-finder.js');
+    vi.mocked(findGodot).mockRejectedValueOnce(new Error('GODOT_PATH is rejected by the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist. Add the executable (or its parent directory) to the whitelist, or unset GODOT_PATH to fall back to auto-discovery.'));
+    vi.mocked(readGodotPathsConfig).mockReturnValue(['/opt/godot/Godot_v4.exe', '/opt/godot2/Godot_v4.exe']);
+    const origEnv = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    delete process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    const origGodotPath = process.env.GODOT_PATH;
+    process.env.GODOT_PATH = '/custom/godot';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('godot-paths.json active (2 entries)');
+      expect(output).toContain('✗ discovered Godot is NOT in godot-paths.json: /custom/godot');
+    } finally {
+      if (origEnv !== undefined) process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = origEnv;
+      if (origGodotPath !== undefined) process.env.GODOT_PATH = origGodotPath; else delete process.env.GODOT_PATH;
+      vi.mocked(readGodotPathsConfig).mockReturnValue([]);
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  it('branch ①: env 已设 + json 非空 → env 优先 + json 被忽略提示', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { readGodotPathsConfig } = await import('../../src/core/godot-finder.js');
+    vi.mocked(readGodotPathsConfig).mockReturnValue(['/opt/godot/Godot_v4.exe']);
+    const origEnv = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = 'C:/Godot;D:/godot';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('GODOT_MCP_ALLOWED_GODOT_PATHS set (2 path(s))');
+      expect(output).toContain('godot-paths.json ignored (env takes precedence)');
+      expect(output).not.toContain('godot-paths.json active');
+    } finally {
+      if (origEnv !== undefined) process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = origEnv;
+      else delete process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+      vi.mocked(readGodotPathsConfig).mockReturnValue([]);
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  it('branch ③: 双空 → 现 back-compat 文案不变', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const { readGodotPathsConfig } = await import('../../src/core/godot-finder.js');
+    vi.mocked(readGodotPathsConfig).mockReturnValue([]);
+    const origEnv = process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    delete process.env.GODOT_MCP_ALLOWED_GODOT_PATHS;
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('GODOT_MCP_ALLOWED_GODOT_PATHS not set — back-compat 放行');
+      expect(output).not.toContain('godot-paths.json active');
+      expect(output).not.toContain('godot-paths.json ignored');
+    } finally {
+      if (origEnv !== undefined) process.env.GODOT_MCP_ALLOWED_GODOT_PATHS = origEnv;
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
   it('handles BOM in mcp-godot.json without throwing', async () => {
     const { runDoctor } = await import('../../src/cli/doctor.js');
     const tempDir = join(tmpdir(), 'doctor-test-' + Math.random().toString(36).slice(2));
@@ -374,6 +492,31 @@ describe('doctor addons sync — 集成检查', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── 反馈批次 C1 (2026-11-12): godotWhitelistHit 纯函数(与 isGodotPathAllowed 同语义的
+// 只读命中判定:realpath 归一 + 本身/子路径匹配,不读 env/json——条目由调用方传入) ──
+
+describe('doctor — godotWhitelistHit 纯函数', () => {
+  it('精确匹配(假路径 realpath 失败回落字符串比较)', async () => {
+    const { godotWhitelistHit } = await import('../../src/cli/doctor.js');
+    expect(godotWhitelistHit('/usr/bin/godot', ['/opt/g', '/usr/bin/godot'])).toBe(true);
+  });
+
+  it('条目是父目录 → 子路径命中(可执行文件或其父目录均可登记)', async () => {
+    const { godotWhitelistHit } = await import('../../src/cli/doctor.js');
+    expect(godotWhitelistHit('/opt/g/godot4.exe', ['/opt/g', '/other'])).toBe(true);
+  });
+
+  it('无交集 → 未命中', async () => {
+    const { godotWhitelistHit } = await import('../../src/cli/doctor.js');
+    expect(godotWhitelistHit('/usr/bin/godot', ['/opt/g', '/other/godot'])).toBe(false);
+  });
+
+  it('前缀串非目录边界不误命中(/usr/bin-x 不算 /usr/bin 子路径)', async () => {
+    const { godotWhitelistHit } = await import('../../src/cli/doctor.js');
+    expect(godotWhitelistHit('/usr/bin-x/godot', ['/usr/bin'])).toBe(false);
   });
 });
 
