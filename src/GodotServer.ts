@@ -53,7 +53,7 @@ import { cancelAndAwaitWorkingRun, getRun, listRuns, requestCancel, setTerminalN
 import { toWireTask, toTaskPayload, assertTaskWire } from './tools/qa/task-view.js';
 import { appendAuditLine, isAuditEnabled, appendMachineAuditLine } from './core/audit-log.js';
 import { buildAuthHeaders } from './core/instance-api-auth.js';
-import { InstanceHttpServer } from './core/instance-http-server.js';
+import { InstanceHttpServer, resolveForwardTimeoutMs } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
 import { WebGuiServer } from './web-gui/server.js';
@@ -437,6 +437,10 @@ export class GodotServer {
    *  2026-08-10 行225：补全接收端 HTTP server——此前 send-side only，现 verifyApiToken 闭环。 */
   private async initMultiInstance(): Promise<void> {
     if (!isFeatureEnabled('MULTI_INSTANCE')) return;
+    // C4（反馈 2026-11-11）：转发超时 30s 硬编码可配——sender 两处 fetch AbortSignal 与
+    // receiver（InstanceHttpServer 构造默认）统一经 resolveForwardTimeoutMs() 读
+    // GODOT_MCP_FORWARD_TIMEOUT_MS（默认 30000 行为兼容，收发对称不破坏）。
+    const forwardTimeoutMs = resolveForwardTimeoutMs();
     const projectDir = ps.getProjectDir();
     const manager = new InstanceManager({
       projectRegistryDir: projectDir
@@ -488,7 +492,7 @@ export class GodotServer {
           method: 'POST',
           headers: buildAuthHeaders(instance.id),
           body: JSON.stringify(args),
-          signal: AbortSignal.timeout(30000),
+          signal: AbortSignal.timeout(forwardTimeoutMs),
         });
         if (!response.ok) {
           return {
@@ -526,7 +530,7 @@ export class GodotServer {
         method: 'POST',
         headers: buildAuthHeaders(selected.id),
         body: JSON.stringify(toolArgs),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(forwardTimeoutMs),
       });
       if (!response.ok) {
         return { content: [{ type: 'text' as const, text: `Dynamic route ${route} error: HTTP ${response.status}` }], isError: true };

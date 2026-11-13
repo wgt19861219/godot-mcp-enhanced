@@ -182,6 +182,9 @@ export class EditorConnectionManager {
       maxReconnectAttempts: readPositiveIntEnv('GODOT_MCP_EDITOR_RECONNECT_ATTEMPTS', 20),
       reconnectInterval: readPositiveIntEnv('GODOT_MCP_EDITOR_RECONNECT_INTERVAL', 1000),
       maxReconnectInterval: readPositiveIntEnv('GODOT_MCP_EDITOR_RECONNECT_MAX_INTERVAL', 60000),
+      // C4（反馈 2026-11-11）：editor 单请求 30s 硬超时可配——此前 establish 构造漏传
+      // requestTimeout，EditorConnection 恒用默认 30000。默认不变（行为兼容）。
+      requestTimeout: readPositiveIntEnv('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS', 30000),
     });
     this.conn = conn;
     try {
@@ -336,12 +339,16 @@ export class EditorConnectionManager {
   }
 }
 
-/** 运行时读 env(连接低频,且避免测试需在 import 前设 env;对齐原 GodotServer 实现)。 */
+/** 运行时读 env(连接低频,且避免测试需在 import 前设 env;对齐原 GodotServer 实现)。
+ * 非法值(非正整数)回落默认并 console.warn 一行(C4,反馈 2026-11-11——静默回落会让
+ * 用户以为设大了超时而实际没生效)。 */
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
   const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  if (Number.isFinite(n) && n > 0) return n;
+  console.warn(`[godot-mcp] invalid ${name}="${raw}", falling back to ${fallback}`);
+  return fallback;
 }
 
 /** CMP-1: 路径归一化用于跨端比对(editor res:// 绝对路径 vs 配置 projectPath)。 */

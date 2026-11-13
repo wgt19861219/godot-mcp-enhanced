@@ -23,9 +23,11 @@ vi.mock('../../src/core/ToolDispatcher.js', () => {
   };
 });
 
-import { InstanceHttpServer } from '../../src/core/instance-http-server.js';
+import { InstanceHttpServer, resolveForwardTimeoutMs } from '../../src/core/instance-http-server.js';
 import { generateApiToken, clearCachedSecret } from '../../src/core/instance-api-auth.js';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync, readFileSync } from 'fs';
+import { resolve as pathResolve, dirname as pathDirname } from 'path';
+import { fileURLToPath } from 'node:url';
 import type { ToolDispatcher } from '../../src/core/ToolDispatcher.js';
 
 const TEST_INSTANCE_ID = 'ts-test-12345-abcdef';
@@ -293,4 +295,70 @@ describe('InstanceHttpServer 可靠性加固 (P2-2R/P2-3R/P3-1R)', () => {
     const result = await fetchPromise;
     expect(result).toBeDefined();
   }, 15000);
+});
+
+// ── C4: GODOT_MCP_FORWARD_TIMEOUT_MS env 可配（反馈 2026-11-11，30s 硬超时收口）──
+// 定谳：多实例转发的 30s 硬编码共三处——sender 两处 AbortSignal.timeout(30000)
+// （GodotServer.ts sendToInstance / dynamicSender）+ receiver DEFAULT_FORWARD_TIMEOUT_MS。
+// 修复：三处统一改读 GODOT_MCP_FORWARD_TIMEOUT_MS（默认 30000 行为兼容，非法回落 + warn）。
+describe('C4: GODOT_MCP_FORWARD_TIMEOUT_MS env 可配', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it('env 设 60000 → resolveForwardTimeoutMs()=60000，且构造默认（未注入 forwardTimeoutMs）同步生效', () => {
+    vi.stubEnv('GODOT_MCP_FORWARD_TIMEOUT_MS', '60000');
+    expect(resolveForwardTimeoutMs()).toBe(60000);
+    const srv = new InstanceHttpServer({
+      port: 1, // 不 start，仅构造读默认值
+      instanceId: TEST_INSTANCE_ID,
+      dispatcher: { handleCall: vi.fn() } as unknown as ToolDispatcher,
+    });
+    expect((srv as unknown as { forwardTimeoutMs: number }).forwardTimeoutMs).toBe(60000);
+  });
+
+  it('env 未设 → 默认 30000（行为兼容）', () => {
+    vi.stubEnv('GODOT_MCP_FORWARD_TIMEOUT_MS', undefined);
+    expect(resolveForwardTimeoutMs()).toBe(30000);
+    const srv = new InstanceHttpServer({
+      port: 1,
+      instanceId: TEST_INSTANCE_ID,
+      dispatcher: { handleCall: vi.fn() } as unknown as ToolDispatcher,
+    });
+    expect((srv as unknown as { forwardTimeoutMs: number }).forwardTimeoutMs).toBe(30000);
+  });
+
+  it('env 非法值 → 回落 30000 + console.warn 一行提示', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* 静音 */ });
+    vi.stubEnv('GODOT_MCP_FORWARD_TIMEOUT_MS', 'not-a-number');
+    expect(resolveForwardTimeoutMs()).toBe(30000);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0])).toContain('GODOT_MCP_FORWARD_TIMEOUT_MS');
+  });
+
+  it('构造显式注入 forwardTimeoutMs 优先于 env（测试注入通道语义不变）', () => {
+    vi.stubEnv('GODOT_MCP_FORWARD_TIMEOUT_MS', '60000');
+    const srv = new InstanceHttpServer({
+      port: 1,
+      instanceId: TEST_INSTANCE_ID,
+      dispatcher: { handleCall: vi.fn() } as unknown as ToolDispatcher,
+      forwardTimeoutMs: 200,
+    });
+    expect((srv as unknown as { forwardTimeoutMs: number }).forwardTimeoutMs).toBe(200);
+  });
+
+  // 源码契约（先例：bridge-idempotency-contract.test.ts）：sender 两处 fetch 超时
+  // 不得再出现 30000 硬编码，必须走 resolveForwardTimeoutMs() 派生。
+  it('源码契约: GodotServer sender 两处 AbortSignal 无 30000 硬编码，统一走 resolveForwardTimeoutMs', () => {
+    const here = pathDirname(fileURLToPath(import.meta.url));
+    const src = readFileSync(pathResolve(here, '../../src/GodotServer.ts'), 'utf-8');
+    expect(src).not.toContain('AbortSignal.timeout(30000)');
+    const uses = src.match(/AbortSignal\.timeout\(forwardTimeoutMs\)/g) ?? [];
+    expect(uses.length).toBe(2); // sendToInstance + dynamicSender 两处
+    expect(src).toContain('resolveForwardTimeoutMs()');
+    // receiver 侧 DEFAULT_FORWARD_TIMEOUT_MS 常量本身仍在（resolveForwardTimeoutMs 的回落基准），
+    // 但不应再有裸 `?? DEFAULT_FORWARD_TIMEOUT_MS` 之外的第三处独立硬编码 30_000 转发超时。
+    expect(src).toContain("import { InstanceHttpServer, resolveForwardTimeoutMs }");
+  });
 });

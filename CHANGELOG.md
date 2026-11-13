@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **fix(core): editor/转发 30s 超时 env 可配（反馈批次 2026-11-12 Task C4，反馈 2026-11-11）**:勘察定谳 stdio 主路径工具 deadline 本就是 1h（`GODOT_MCP_TOOL_DEADLINE_MS` 可配），代码内真实 30s 硬编码仅两处：①editor WebSocket 单请求超时——`EditorConnection` 构造默认 30000 且 `EditorConnectionManager.establish` 构造时漏传 `requestTimeout`（env 无从覆盖）；②多实例 HTTP 转发——sender 两处 `AbortSignal.timeout(30000)`（`GodotServer.ts` sendToInstance/dynamicSender）+ receiver `DEFAULT_FORWARD_TIMEOUT_MS`。修复：新增 `GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS`（establish 透传 requestTimeout）与 `GODOT_MCP_FORWARD_TIMEOUT_MS`（新增导出 `resolveForwardTimeoutMs()`，sender 两处与 receiver 构造默认统一经其派生，收发对称不破坏），默认均 30000 行为兼容，非法值回落默认并 console.warn 一行（`readPositiveIntEnv` 同步补 warn）。README/使用指南 env 表补两 env,含定性说明——**宿主侧 MCP 客户端自己的请求超时不在 server 管辖**（11-11 根因为宿主侧/进程卡死,本任务是防御性收口,待用户重启验证）。新增测试 7 条（env 设 60000 透传/未设默认 30000/非法回落+warn/显式注入优先于 env/GodotServer sender 两处无 30000 硬编码源码契约）。
+
 ## [0.36.6] - 2026-11-13
 
 > 反馈批次 2026-11-12 修复 Task B1+B2（bridge 生命周期两小修:显式端口起点线性避让 + GODOT_MCP_BRIDGE_DISABLE env + CI/连跑指南文档）。规则模板 bridge.md 新增「CI/连跑场景」段触发 bump 硬门禁,按 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更。同批 Task B4（install force 响应补编辑器写回提示,纯 TS 文案）合入本版。

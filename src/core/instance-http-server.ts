@@ -37,10 +37,28 @@ const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 /**
  * 默认工具转发超时（毫秒）。对齐 sender 侧 sendToInstance 的 30s AbortSignal
- * （GodotServer.ts:416/:454）——receiver 须与 sender 对称，否则 sender 已 abort 后
+ * （GodotServer.ts sender 两处）——receiver 须与 sender 对称，否则 sender 已 abort 后
  * receiver 仍执行成孤儿请求（nav bake 110s/test_run 290s 等长操作尤其严重）。
+ *
+ * C4（反馈 2026-11-11）：30s 可经 `GODOT_MCP_FORWARD_TIMEOUT_MS` 覆盖——sender 两处
+ * AbortSignal 与本 receiver 默认值统一走 resolveForwardTimeoutMs() 派生（默认 30000
+ * 行为兼容；非法值回落默认并 console.warn 一行）。
  */
 const DEFAULT_FORWARD_TIMEOUT_MS = 30_000;
+
+/**
+ * 解析 `GODOT_MCP_FORWARD_TIMEOUT_MS`（毫秒）。未设 → 默认 30000；非法（非正整数）
+ * → 回落默认并 console.warn 一行。sender（GodotServer 两处 fetch AbortSignal）与
+ * receiver（InstanceHttpServer 构造默认）共用，保证收发两端读同一 env。
+ */
+export function resolveForwardTimeoutMs(): number {
+  const raw = process.env.GODOT_MCP_FORWARD_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_FORWARD_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  if (Number.isFinite(n) && n > 0) return n;
+  console.warn(`[godot-mcp] invalid GODOT_MCP_FORWARD_TIMEOUT_MS="${raw}", falling back to ${DEFAULT_FORWARD_TIMEOUT_MS}ms`);
+  return DEFAULT_FORWARD_TIMEOUT_MS;
+}
 
 /** withTimeout 超时 reject 的 error；catch 用 instanceof TimeoutError 区分超时 vs 其他异常。 */
 class TimeoutError extends Error {
@@ -76,8 +94,9 @@ export interface InstanceHttpServerOptions {
   /** 工具调度器（复用 GodotServer 的 dispatcher）。 */
   dispatcher: ToolDispatcher;
   /**
-   * 工具转发超时（毫秒），默认 30s（对齐 sender）。测试可注入小值（如 200）避免等 30s。
-   * P2-2R/P3-1R（2026-08-11 可靠性审查）。
+   * 工具转发超时（毫秒），默认读 `GODOT_MCP_FORWARD_TIMEOUT_MS`（未设 30s，对齐 sender）。
+   * 显式注入优先于 env（测试注入小值如 200 避免等 30s）。P2-2R/P3-1R（2026-08-11 可靠性审查）；
+   * env 派生为 C4（反馈 2026-11-11）。
    */
   forwardTimeoutMs?: number;
 }
@@ -89,7 +108,7 @@ export class InstanceHttpServer {
 
   constructor(opts: InstanceHttpServerOptions) {
     this.opts = opts;
-    this.forwardTimeoutMs = opts.forwardTimeoutMs ?? DEFAULT_FORWARD_TIMEOUT_MS;
+    this.forwardTimeoutMs = opts.forwardTimeoutMs ?? resolveForwardTimeoutMs();
   }
 
   /** 启动 HTTP server 监听 127.0.0.1:<port>。 */

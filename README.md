@@ -721,6 +721,8 @@ npx godot-mcp-enhanced rules --paths "D:/proj/A;D:/proj/B"
 | `GODOT_MCP_OVERRIDES` | 分号分隔的 override 脚本路径(启动时注入为 MCPOVERRIDE_* autoload;与 CLI `--overrides` 等价) | 未设 |
 | `GODOT_MCP_PRETTY_JSON` | `1`=工具输出缩进 JSON(调试可读性用) | `0`(紧凑) |
 | `GODOT_MCP_UNTRUSTED_ENVELOPE` | `0`=关闭输出侧 untrusted 内容信封(默认启用:读路径返回的游戏侧内容包防注入信封,防 GDScript 伪造 MCP 输出;只包读路径,不包写确认/错误消息) | 开(信封启用) |
+| `GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS` | editor WebSocket 单请求超时(毫秒)。stdio 主路径工具 deadline 本就是 1h(`GODOT_MCP_TOOL_DEADLINE_MS`),此值只管 editor 连接的单请求等待。注意:**宿主侧 MCP 客户端自己的请求超时不在 server 管辖**——宿主(如 Claude Code)先超时掐断时,调大 server 侧各超时无效,需同步调宿主配置。非法值回落默认并 warn | `30000` |
+| `GODOT_MCP_FORWARD_TIMEOUT_MS` | 多实例 HTTP 转发超时(毫秒),sender 两处 fetch AbortSignal 与 receiver 默认值共用同一 env(收发对称)。注意:**宿主侧 MCP 客户端超时不在 server 管辖**(同上)。非法值回落默认并 warn | `30000` |
 
 > **⚠️ BREAKING(G7)**:默认 profile 从 `full` 改 `basic`(对齐 GoPeak compact,省 AI context window)。升级后 tools/list 只暴露 basic(lite 9 组:core/bridge/animation/audio/signal/visual/code/test/profiler)。回退全量 46 工具:`GODOT_MCP_PROFILE=full`;或 AI 运行时 `manage_tools activate <groups>` 动态扩容(无需重启)。RCE action(execute_gdscript 等)始终经 action-gate gated,需 `GODOT_MCP_PRIVILEGED_GROUPS=code-execution` 解锁。
 

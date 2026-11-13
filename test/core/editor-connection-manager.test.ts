@@ -44,7 +44,10 @@ vi.mock('../../src/core/EditorConnection.js', () => ({
     addOnDisconnectHandler = vi.fn();
     removeOnDisconnectHandler = vi.fn();
     removeOnReconnectHandler = vi.fn();
-    constructor(_opts: unknown) {
+    /** C4: establish 构造参数透传断言用——捕获 constructor opts 供测试读取。 */
+    constructorOpts: unknown = null;
+    constructor(opts: unknown) {
+      this.constructorOpts = opts;
       mockInstances.push(this as unknown as Record<string, unknown>);
     }
   },
@@ -180,5 +183,51 @@ describe('EditorConnectionManager A-2: 并发 rebuild 竞态', () => {
     // 胜者 connB 不被断开、不被清(修复前: connB.disconnect 被调 + this.conn=null)
     expect((connB as unknown as { disconnect: ReturnType<typeof vi.fn> }).disconnect).not.toHaveBeenCalled();
     expect(mgr.getConn()).toBe(connB);
+  });
+});
+
+// ─── C4: editor requestTimeout env 可配（反馈 2026-11-11，30s 硬超时收口）────
+// 定谳背景：stdio 主路径 deadline 本就是 1h（GODOT_MCP_TOOL_DEADLINE_MS），
+// 真实 30s 硬编码之一是 EditorConnection requestTimeoutMs 默认 30000——
+// EditorConnectionManager.establish 构造时漏传 requestTimeout，env 无法覆盖。
+// 修复：establish 透传 readPositiveIntEnv('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS', 30000)。
+describe('C4: GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS → establish 透传 requestTimeout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockInstances.length = 0;
+    connectQueue.length = 0;
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  /** 跑一次 establish，返回捕获的 constructor opts（含 requestTimeout）。 */
+  async function establishOpts(): Promise<Record<string, unknown>> {
+    const mgr = makeManager();
+    await callEstablish(mgr);
+    expect(mockInstances).toHaveLength(1);
+    return mockInstances[0]!.constructorOpts as Record<string, unknown>;
+  }
+
+  it('env 设 60000 → requestTimeout=60000 透传给 EditorConnection', async () => {
+    vi.stubEnv('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS', '60000');
+    const opts = await establishOpts();
+    expect(opts.requestTimeout).toBe(60000);
+  });
+
+  it('env 未设 → 默认 30000（行为兼容）', async () => {
+    vi.stubEnv('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS', undefined);
+    const opts = await establishOpts();
+    expect(opts.requestTimeout).toBe(30000);
+  });
+
+  it('env 非法值 → 回落 30000 + console.warn 一行提示', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { /* 静音 */ });
+    vi.stubEnv('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS', 'not-a-number');
+    const opts = await establishOpts();
+    expect(opts.requestTimeout).toBe(30000);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0])).toContain('GODOT_MCP_EDITOR_REQUEST_TIMEOUT_MS');
   });
 });
