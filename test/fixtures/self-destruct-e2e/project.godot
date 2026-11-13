@@ -1,0 +1,24 @@
+; Engine configuration file.
+; A2 (2026-11-12 反馈批次) fixture: 自毁钮——Button pressed handler 内 queue_free 自身,
+; 复刻 2026-10-10/09-24/09-28/11-02 三项目反馈场景:click_button real_event 的 verify
+; 协程等帧窗口内节点被 handler 释放,修复前末尾读 btn 属性 → Debugger Break 挂死。
+; 注:game_bridge_install 会在运行时放置 mcp_bridge.gd(运行时产物,不入库,对齐
+; mouse-gui-e2e 惯例);[autoload] 段预置对齐 mouse-gui-e2e 现状(install 幂等)。
+config_version=5
+
+[application]
+
+config/name="self-destruct-e2e"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.5")
+
+; P0-2 (2026-09-11): dual-key file logging off — concurrent instances share user://logs,
+; RotatedFileLogger rotate race makes abort look like engine_crashed (aigengame pit).
+[debug]
+
+file_logging/enable_file_logging=false
+file_logging/enable_file_logging.pc=false
+
+[autoload]
+
+MCPBridge="*res://mcp_bridge.gd"

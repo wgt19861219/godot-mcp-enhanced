@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.36.3"
+const BRIDGE_SCRIPT_VERSION := "0.36.4"
 const INACTIVITY_TIMEOUT := 60.0
 # 批次2(2026-10-04 幂等层,对齐 unity-mcp-server queue-transport):requestId 去重表 ——
 # 客户端超时后按原 requestId 重试(而非按命令重试),命中缓存直接回首次响应,杜绝
@@ -2086,11 +2086,24 @@ func _cmd_call_method(params: Dictionary) -> Variant:
 		return {"error": {"code": -1, "message": "Node not found: %s" % path}}
 	if player_mode and method in PLAYER_BLOCKED_ENUM_METHODS:
 		return {"error": {"code": -22, "message": "Structure-enumeration method '%s' is not available under observation_profile=player (the player-view tree is pruned; enumerate via get_tree with observation_profile=player instead)" % method}}
+	# A3 (2026-11-12 反馈批次): BLOCKLIST 预检前置——此前硬黑名单分支只在
+	# (_extra_ok or _gda_ok) 命中后才查(P1-6),普通调用 blocklist 方法(如 set)落进 -2
+	# 白名单首条报错,文案却建议 "allow via env/GDA_CALLABLE";照做设 env 后再撞 -6
+	# 硬底线——误导死路(2026-09-25 反馈)。预检前移到判定链最前:无论 allowlist 状态,
+	# blocklist 方法首条报错即 -6 终判。语义不变且更强:无条件拦截,env/声明均不可越过。
+	# B-2 (2026-08-14): 内层检查——间接调用入口(args[0]=内层方法名)命中 BLOCKLIST 时,
+	# 若 args[0] 也是 BLOCKLIST 方法(如 call_thread_safe + set_script),拒绝信息一并标注
+	# 内外两层(纵深防御 + 诊断增强)。仅 BLOCKLIST 命中分支内检查,正常方法不受影响。
+	if method in EXTRA_METHODS_BLOCKLIST:
+		var _inner_note := ""
+		if args.size() > 0 and args[0] is String and args[0] in EXTRA_METHODS_BLOCKLIST:
+			_inner_note = " Inner method '%s' is also blocked." % args[0]
+		return {"error": {"code": -6, "message": "Method blocked even with GODOT_MCP_BRIDGE_EXTRA_METHODS / GDA_CALLABLE declaration (dangerous, changes runtime structure; the blocklist is a hard floor no allowlist channel can bypass): %s%s" % [method, _inner_note]}}
 	# S5 (2026-06-23): env GODOT_MCP_BRIDGE_EXTRA_METHODS 扩展白名单(opt-in,默认只读安全)。
 	# ALLOWED_METHODS 设计为只读(get/has_*/get_meta 等),防 call_method 任意执行;信任环境
 	# 可显式加方法(如 emit_signal)用此 env。注意 emit_signal 会触发已连接的任意回调,慎用。
 	# CMP-9-B (2026-08-08): 同一 env 也覆盖写/副作用方法(take_damage/add_velocity 等),
-	# 对标竞品 runtime.call。EXTRA_METHODS_BLOCKLIST 仍是不可覆盖硬底线。
+	# 对标竞品 runtime.call。EXTRA_METHODS_BLOCKLIST 仍是不可覆盖硬底线(上方预检)。
 	var _extra_env := OS.get_environment("GODOT_MCP_BRIDGE_EXTRA_METHODS")
 	var _extra_ok := false
 	if _extra_env != "":
@@ -2103,17 +2116,8 @@ func _cmd_call_method(params: Dictionary) -> Variant:
 	# 静态读 get_script_constant_map() 枚举(零项目代码执行,default deny:不声明=不可调)。
 	# 信任边界:白名单是声明者的断言(副作用由声明方自查,进游戏方 code review),bridge
 	# 保证"未声明的方法绝不可调"。粒度比 env 全局白名单细,粒度单位=节点而非进程。
-	# BLOCKLIST 仍是不可覆盖硬底线(声明也拦,见下方统一 BLOCKLIST 检查)。
+	# BLOCKLIST 仍是不可覆盖硬底线(声明也拦,上方预检无条件拦截)。
 	var _gda_ok := method in _declared_callables(node)
-	# P1-6: EXTRA/GDA 声明即使显式列出,危险方法仍拒绝(防 env 误设/声明滥用致 RCE)
-	if (_extra_ok or _gda_ok) and method in EXTRA_METHODS_BLOCKLIST:
-		# B-2 (2026-08-14): 内层检查——间接调用入口(args[0]=内层方法名)命中 BLOCKLIST 时,
-		# 若 args[0] 也是 BLOCKLIST 方法(如 call_thread_safe + set_script),拒绝信息一并标注
-		# 内外两层(纵深防御 + 诊断增强)。仅 BLOCKLIST 命中分支内检查,正常方法不受影响。
-		var _inner_note := ""
-		if args.size() > 0 and args[0] is String and args[0] in EXTRA_METHODS_BLOCKLIST:
-			_inner_note = " Inner method '%s' is also blocked." % args[0]
-		return {"error": {"code": -6, "message": "Method blocked even with GODOT_MCP_BRIDGE_EXTRA_METHODS / GDA_CALLABLE declaration (dangerous, changes runtime structure; the blocklist is a hard floor no allowlist channel can bypass): %s%s" % [method, _inner_note]}}
 	if not method in ALLOWED_METHODS and not _extra_ok and not _gda_ok:
 		return {"error": {"code": -2, "message": "Method not allowed: %s (allow via: env GODOT_MCP_BRIDGE_EXTRA_METHODS, or declare const GDA_CALLABLE := [\"%s\"] in the node's script — per-node allowlist, see aigengame GDA_CALLABLE convention)" % [method, method]}}
 	if not node.has_method(method):
@@ -4325,6 +4329,16 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 		else:
 			var recorder := _ClickSignalRecorder.new()
 			recorder.attach(btn)
+			# A2 (2026-11-12 反馈批次): 自毁钮守卫——press handler 内 queue_free 自身的按钮
+			# 会在 verify 等帧窗口内被引擎释放(2026-10-10/09-24/09-28/11-02 三项目三踩:
+			# 末尾读 btn 属性对已释放对象取值 → Debugger Break 挂死主循环,bridge 全堵)。
+			# 守卫策略:①text 在 press 注入前缓存为局部变量,末尾不再读节点;②每次 await
+			# 归来后、任何 btn 访问前先 is_instance_valid(btn)——已 free = 点击已生效
+			# (handler 释放按钮即证明信号链走通),跳过 release 注入,signal_counts 按已收
+			# 计数、verified 如实标记,正常返回响应不崩;button_pressed 已 free 读不到,
+			# 诚实给 null(不得误报 false)。
+			var _btn_text_raw: Variant = btn.get("text")
+			var btn_text := str(_btn_text_raw) if _btn_text_raw != null else ""
 			var center := btn.get_global_rect().get_center()
 			var press := InputEventMouseButton.new()
 			press.button_index = MOUSE_BUTTON_LEFT
@@ -4336,25 +4350,31 @@ func _await_click_verify_and_respond(peer_id: int, id: Variant, path: String) ->
 			vp.push_input(press)
 			await get_tree().process_frame
 			await get_tree().process_frame
-			var release := InputEventMouseButton.new()
-			release.button_index = MOUSE_BUTTON_LEFT
-			release.pressed = false
-			release.position = center
-			release.global_position = center
-			release.device = 0
-			vp.push_input(release)
-			await get_tree().process_frame
-			await get_tree().process_frame
-			recorder.detach(btn)
+			if is_instance_valid(btn):
+				var release := InputEventMouseButton.new()
+				release.button_index = MOUSE_BUTTON_LEFT
+				release.pressed = false
+				release.position = center
+				release.global_position = center
+				release.device = 0
+				vp.push_input(release)
+				await get_tree().process_frame
+				await get_tree().process_frame
+			# detach 调用点守卫:向类型化参数(btn: BaseButton)传已 free 对象,在 Debugger
+			# 下参数传递即 Break(detach 内部 is_instance_valid 守卫执行不到——真机铁证
+			# 2026-11-13:"Invalid type in function 'detach'... argument 1 (previously
+			# freed)")。必须调用方先判存活再调。
+			if is_instance_valid(btn):
+				recorder.detach(btn)
 			var counts: Dictionary = recorder.to_dictionary()
 			var pressed_count := int(counts.get("pressed", 0))
 			payload = {"id": id, "result": {
 				"clicked": pressed_count > 0,
 				"button_path": path,
-				"button_text": str(btn.get("text")) if btn.get("text") != null else "",
+				"button_text": btn_text,
 				"mode": "real_event",
 				"signal_counts": counts,
-				"button_pressed": btn.button_pressed,
+				"button_pressed": btn.button_pressed if is_instance_valid(btn) else null,
 				"verified": pressed_count > 0,
 			}}
 	var target_peer: StreamPeerTCP = null

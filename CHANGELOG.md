@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.36.4] - 2026-11-13
+
+> 反馈批次 2026-11-12 修复 Task A2+A3（bridge `mcp_bridge.gd` 两处小修,合并一版）。BRIDGE_SCRIPT_VERSION 随 mcp_bridge.gd 内容变更 bump（bump≠发版,npm publish/tag 待用户明确指令）。
+
+- **fix(bridge): A2 real_event verify 窗口全路径存活守卫——自毁钮不再挂死（反馈 2026-10-10/09-24/09-28/11-02,三项目三踩）**:click_button real_event 的 verify 协程（press/release 注入 + 等 4 帧读信号计数）此前在 await 归来后仍读按钮节点——被点击 handler 内 `queue_free` 自身的「自毁钮」在等帧窗口内已释放,末尾读 `btn.get("text")`/`btn.button_pressed`/`recorder.detach(btn)` 对已释放对象操作 → **Debugger Break 挂死主循环,bridge 全堵不再响应任何命令**。修复三件套:①`button_text` 在 press 注入前缓存为局部变量（单次读取）,末尾不再读节点;②每次 await 归来后、任何 btn 访问前 `is_instance_valid(btn)` 守卫——已 free = 点击已生效（handler 释放按钮即证明信号链走通）,跳过 release 注入、signal_counts 按已收计数、verified 如实标记,正常返回响应不崩;`button_pressed` 已 free 读不到诚实给 null（不误报 false）。③**detach 调用点守卫（真机定谳关键）**——勘察认为 `detach()` 内部已有 is_instance_valid 守卫即可,但真机铁证（Godot 4.7 带窗口,"Invalid type in function 'detach'... argument 1 (previously freed)"）证明**向类型化参数（btn: BaseButton）传已 free 对象在参数传递时即 Debugger Break,函数体内守卫执行不到**——调用方必须先判存活再调。新增 5 条源码契约（text 缓存位置/press 后守卫分支/button_pressed null/detach 调用点守卫/device=0 回归）+ 真机 e2e 2 条（`test/e2e-bridge-self-destruct.test.ts`:自毁钮 fixture——Button pressed handler 内 queue_free 自身,click_button real_event 点击后 bridge 仍响应不超时、verify 如实;修复前该 e2e 实测 15s 超时 + bridge 全堵）。
+- **fix(bridge): A3 call_method 硬黑名单预检前置——首条报错不再误导（反馈 2026-09-25）**:`_cmd_call_method` 的 EXTRA_METHODS_BLOCKLIST 分支此前挂 `(_extra_ok or _gda_ok)` 前缀,普通调用 blocklist 方法（如 set）落进 -2 白名单首条报错,文案却建议「allow via: env GODOT_MCP_BRIDGE_EXTRA_METHODS / GDA_CALLABLE」;照做设 env 后再撞 -6 硬底线——**误导死路**。预检前移到判定链最前（env/GDA 解析之前）:无论 allowlist 状态,blocklist 方法首条报错即 -6 硬底线终判（文案保留 hard floor 措辞,B-2 内层 args[0] 检查随迁）;非 blocklist 方法的 -2 allow via 指引不变。真机 e2e 锚定（call_method set 无 env 命中 → 首条即 code -6 + "hard floor"、不含 "allow via"）+ 源码契约 4 条;`p1-gda-callable.test.ts` GDA-c 断言同步新形态（语义不变且更强:无条件拦截）。
+- **e2e 侧引擎行为定谳（副产品,已写入测试文件头注释）**:headless（--headless）下普通 Control.gui_input 派发正常（C2 既有结论成立）,但 **BaseButton 点击链不响应注入**（press 无论 push_input 还是 parse_input_event,button_down/pressed 均零计数;headless viewport 仅 64x64）——real_event 自毁钮 e2e 必须带窗口模式（run_project）验证;另实测 4.7/4.6.3 双端同行为。动态未命名 Button 默认名为 `@Button@N` 形态（非同名叠加,排查时的误判来源）。
+
 ## [0.36.3] - 2026-11-12
 
 > 反馈批次修复 Task D4（scene 加载失败诊断增强）。规则模板 core.md 新增 B 轨段落触发 `check-rules-version-bump` 硬门禁,按 2026-08-20 N-C 例外条款走 bump(≠发版,npm publish/tag 待用户明确指令)。

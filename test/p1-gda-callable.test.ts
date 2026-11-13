@@ -84,7 +84,12 @@ describe('P1-4: 白名单分支接线契约', () => {
     const slice = gd.slice(fnStart, fnEnd);
     expect(slice.includes('_gda_ok := method in _declared_callables(node)'), '缺 _gda_ok 声明').toBe(true);
     expect(slice.includes('if not method in ALLOWED_METHODS and not _extra_ok and not _gda_ok:'), '白名单三分支').toBe(true);
-    expect(slice.includes('if (_extra_ok or _gda_ok) and method in EXTRA_METHODS_BLOCKLIST:'), 'BLOCKLIST 统一拦(env/声明均不可越过)').toBe(true);
+    // A3 (2026-11-12 反馈批次): BLOCKLIST 预检前置为无条件形态(旧 (_extra_ok or _gda_ok)
+    // 前缀使普通调用 blocklist 方法先落 -2 "allow via" 误导文案,照做设 env 后再撞 -6,
+    // 误导死路)。语义不变且更强:无条件拦截,env/声明均不可越过。
+    const blIdx = slice.indexOf('if method in EXTRA_METHODS_BLOCKLIST:');
+    expect(blIdx, 'BLOCKLIST 预检须为无条件形态').toBeGreaterThanOrEqual(0);
+    expect(slice.indexOf('var _extra_env :='), 'env 解析须在预检之后(首条报错即终判)').toBeGreaterThan(blIdx);
     expect(slice.includes('GDA_CALLABLE'), '拒绝消息教开发者声明').toBe(true);
   });
 
