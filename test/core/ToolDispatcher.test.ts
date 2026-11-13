@@ -1360,7 +1360,7 @@ describe('ToolDispatcher.handleCall', () => {
   // [P2b] Task C5(反馈批次 2026-11-12): PATH_NOT_ALLOWED 文案统一回显 Allowed roots
   // ——与 requireProjectPath(args-validation) 的消息对齐,用户被拒时直接看到该列哪些根,
   // 不再是干巴巴的 "Check your setting."(4 项目复现"全拒"时无法自查配置差在哪)。
-  // 回显走 describeAllowedRoots(basename 级同源生成,与判定链一致;不拼 project_path 原值,PII 护栏 G2 保持)。
+  // 回显走 describeAllowedRoots(allowlist 完整路径,与判定链同源生成;不拼被拒路径原值,PII 护栏 G2 保持)。
   it('PATH_NOT_ALLOWED message echoes allowed roots (Task C5)', async () => {
     const guard = createMockGuard(false);
     mockIsPathInAllowedRoots.mockReturnValue(false);

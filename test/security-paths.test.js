@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 import { join } from 'node:path';
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolveWithinRoot } from '../src/core/path-utils.js';
 import { isPathInAllowedRoots } from '../src/core/path-utils.js';
@@ -326,10 +326,16 @@ describe('isPathInAllowedRoots — Task C5 prefix semantics', () => {
   it('C5: 同前缀名的兄弟目录被拒(分隔符边界,非字符串 startsWith)', () => {
     // D:/workspace/wt-evil 不在 D:/workspace/wt 之下——ensureSep 分隔符边界防误放行。
     // 防止未来有人把 startsWith(ensureSep(normP)) "简化"成裸 startsWith(normP)。
-    const root = mkdtempSync(join(tmpdir(), 'mcp-c5-wt'));
-    tmpRoots.push(root);
-    const sibling = mkdtempSync(join(tmpdir(), 'mcp-c5-wt-evil'));
-    tmpRoots.push(sibling);
+    // 注:mkdtemp 会追加 6 位随机后缀,直接 mkdtemp 两个"前缀相关"名得到的兄弟目录在随机段
+    // 分叉、根本不构成字符串前缀——负例对裸 startsWith 回归无鉴别力。故 mkdtemp 只作父目录,
+    // 其下 mkdirSync 固定名兄弟(wt / wt-evil):wt-evil 严格以 wt 为字符串前缀(仅差分隔符),
+    // 裸 startsWith(normP) 回归会误放行 → 本测试立刻红,真钉死分隔符边界。
+    const parent = mkdtempSync(join(tmpdir(), 'mcp-c5-'));
+    tmpRoots.push(parent);
+    const root = join(parent, 'wt');
+    const sibling = join(parent, 'wt-evil');
+    mkdirSync(root);
+    mkdirSync(sibling);
     process.env.ALLOWED_PROJECT_PATHS = root;
     expect(isPathInAllowedRoots(sibling)).toBe(false);
     expect(isPathInAllowedRoots(join(sibling, 'game'))).toBe(false);

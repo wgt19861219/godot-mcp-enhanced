@@ -860,8 +860,8 @@ export class ToolDispatcher {
   private validatePathArgs(args: Record<string, unknown>): ToolResult | null {
     if (typeof args.project_path === 'string' && !isPathInAllowedRoots(args.project_path)) {
       // G2: PII 护栏 — 不把 project_path 原值拼进 message(含绝对路径=PII)。errorCategory 走结构化枚举。
-      // Task C5(反馈批次 2026-11-12): 追加回显 Allowed roots(describeAllowedRoots 同源生成,basename 级),
-      // 与 requireProjectPath(args-validation) 的消息对齐——用户被拒时直接看到当前生效根列表,不必猜配置差在哪。
+      // Task C5(反馈批次 2026-11-12): 追加回显 Allowed roots——describeAllowedRoots() 返回用户配置的
+      // allowlist 完整路径(与判定同源生成;既有先例 requireProjectPath 同款回显),被拒路径不回显原值。
       return opsErrorResult('PATH_NOT_ALLOWED',
         `project_path is not in ALLOWED_PROJECT_PATHS. Allowed roots: ${describeAllowedRoots()}. ` +
         'Fix: move the project under an allowed root (entries cover their subtrees), or extend ALLOWED_PROJECT_PATHS (semicolon-separated).',
