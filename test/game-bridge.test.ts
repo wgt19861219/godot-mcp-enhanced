@@ -261,6 +261,9 @@ describe('game-bridge error & path validation', () => {
       expect(result).not.toBeNull();
       const parsed = JSON.parse(result!.content[0].text);
       expect(parsed.error_code).toBe('BRIDGE_TIMEOUT');
+      // 批B 顺手修(竞品综述落地批 2026-11-13): 手拼 JSON → opsError 组装,补齐
+      // success/error/warnings 契约字段(与全部 opsErrorResult 响应同构)
+      expect(parsed.success).toBe(false);
       expect(parsed.suggestion).toContain('不是连接问题');
     }, 5000);
   });
@@ -409,6 +412,8 @@ describe('game-bridge error & path validation', () => {
       expect(result!.isError).toBe(true);
       const parsed = JSON.parse(result!.content[0].text);
       expect(parsed.error_code).toBe('BRIDGE_TIMEOUT');
+      // 批B 顺手修(竞品综述落地批 2026-11-13): success 契约字段补齐(手拼 JSON 曾缺失)
+      expect(parsed.success).toBe(false);
       expect(parsed.outcomeUnknown).toBe(true);
       expect(parsed.request_id).toMatch(/^[0-9a-f-]{36}$/);
       expect(parsed.retry_guidance).toContain('同一 request_id');

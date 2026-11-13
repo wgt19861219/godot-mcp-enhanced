@@ -301,6 +301,17 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     }
     if (proc.pid) unregisterSpawnedGodotPid(proc.pid);  // 守卫外（ADVISORY-3）：旧 proc 被替换时守卫 false 但仍需移除
     if (autoStopTimer) clearTimeout(autoStopTimer);
+    // B3(竞品综述落地批 2026-11-13): 游戏进程退出(崩溃/用户手杀窗口/正常退出)时补
+    // best-effort 死实例 secret 清理——覆盖"游戏死了但 server 活"窗口(stop_project 通道
+    // 只在显式 stop 时清,游戏自然死亡不走它)。复用 B3 通道 cleanDeadInstanceSecrets
+    // 判活护栏(只清 pid 已死者,活实例 secret 保留);try-catch 包裹,清理失败仅记
+    // 日志不影响 close 收尾(fire-and-forget)。正常 stop 路径 stop_project 已清过一轮,
+    // 此处幂等空跑无害。
+    try {
+      cleanDeadInstanceSecrets(p, undefined, isPidAlive);
+    } catch (err) {
+      getLogger().warn('runtime', `dead-instance secret cleanup after game exit failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   });
 
   proc.on('error', (err) => {
@@ -688,6 +699,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // I-SEC-08: Validate test_script starts with res:// to prevent filesystem traversal
         if (!rawTestScript.startsWith('res://')) {
           return textResult(`Error: test_script must start with "res://", got: "${rawTestScript}"`);
+        }
+        // B5(竞品综述落地批 2026-11-13): 段级 ".." 拒绝——前缀检查挡不住 res://../<项目外>
+        // 枚举越界;对齐 path-utils.ts:196 段级精确形态(分隔符先统一防 ..\ 混合形态漏网,
+        // 含 .. 的合法文件名如 foo..bar.gd 不误伤)。
+        if (rawTestScript.replace(/\\/g, '/').split('/').some(seg => seg === '..')) {
+          return textResult(`Error: test_script must not contain ".." path segments, got: "${rawTestScript}"`);
         }
         const testScript = rawTestScript;
         const godot = await ctx.findGodot();

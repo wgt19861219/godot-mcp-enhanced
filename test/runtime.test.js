@@ -651,6 +651,49 @@ describe('runtime handleTool — run_tests', () => {
       vi.useRealTimers();
     }
   });
+
+  // B5(竞品综述落地批 2026-11-13): run_tests I-SEC-08 前缀检查后补段级 ".." 拒绝——
+  // 前缀挡不住 res://../<项目外> 枚举越界;对齐 path-utils.ts:196 段级精确形态,
+  // 含 .. 的合法文件名(foo..bar.gd / ..hidden)不误伤。
+  it('test_script 含 ".." 段(res://../evil)拒绝——spawn 不发生', async () => {
+    const ctx = createMockCtx();
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      test_script: 'res://../evil',
+    }, ctx);
+    expect(result.content[0].text).toContain('".." path segments');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('test_script 混合分隔符段级 ".."(res://a/../..\\\\evil)同样拒绝', async () => {
+    const ctx = createMockCtx();
+    const result = await handleTool('runtime', {
+      action: 'run_tests',
+      project_path: '/fake/project',
+      test_script: 'res://a/../..\\evil',
+    }, ctx);
+    expect(result.content[0].text).toContain('".." path segments');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('合法路径不误伤: res://tests/foo.gd 与含 ".." 文件名(res://tests/foo..bar.gd)放行', async () => {
+    for (const script of ['res://tests/foo.gd', 'res://tests/foo..bar.gd', 'res://tests/..hidden.gd']) {
+      const proc = mockProc();
+      setupSpawnMock(proc);
+      const ctx = createMockCtx();
+      const rp = handleTool('runtime', {
+        action: 'run_tests',
+        project_path: '/fake/project',
+        test_script: script,
+      }, ctx);
+      emitProcessEvents(proc, 'Tests: 5 Passed');
+      const result = await rp;
+      expect(JSON.parse(result.content[0].text).exit_code).toBe(0);   // 正常走 GUT spawn
+      const spawnArgs = spawn.mock.calls.at(-1);
+      expect(spawnArgs[1]).toContain(script);   // 原样透传给 -gdir
+    }
+  });
 });
 
 // ─── handleTool — run_tests 分片模式(D6, 2026-11-12 反馈:单进程全量 22.5GB 死机) ───

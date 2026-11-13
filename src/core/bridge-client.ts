@@ -216,8 +216,10 @@ export function liveHeartbeatPortsFor(
  *  仍新鲜,按新鲜度判活会误保留;本函数在 kill 后立即调用,pid 探测才是当下真实状态。
  *  过滤同 resolveBridgePort:capabilities 含 registry-heartbeat(排除 server 自注册条目)
  *  + projectPath 归一化匹配。保守边界:pid 缺失/非法(旧条目)无法判死 → 保留;pid 复用
- *  误报活 → 保留(方向安全:垃圾 secret 无害,误删活实例 secret 才有害,同 web-gui registry
- *  哲学)。只删 secret 文件,不动 registry 条目(GD 侧心跳生命周期自管)。
+ *  误报活 → 保留;同 (project, port) 有任一活实例 → 该端口 secret 跳过(死实例端口被复用
+ *  场景,2026-11-13 审查 blocking 修复,见实现内注释)(方向安全:垃圾 secret 无害,误删
+ *  活实例 secret 才有害,同 web-gui registry 哲学)。只删 secret 文件,不动 registry 条目
+ *  (GD 侧心跳生命周期自管)。
  *  返回实际删除的端口清单(secret 本就不存在不计入);registry 不可读/全损坏 → [](保守不清)。 */
 export function cleanDeadInstanceSecrets(
   projectPath: string,
@@ -226,6 +228,9 @@ export function cleanDeadInstanceSecrets(
 ): number[] {
   const cleaned: number[] = [];
   const want = normalizeProjectKey(projectPath);
+  // 第一遍:收集同项目全部可判死条目(过滤面与既有语义一致)——secret unlink 前须先看全
+  // registry 才能知道端口是否被活实例占用,单遍边扫边删做不到。
+  const matched: { port: number; projectPath: string; pid: number }[] = [];
   try {
     for (const name of readdirSync(registryDir)) {
       if (!name.endsWith('.json')) continue;
@@ -237,16 +242,92 @@ export function cleanDeadInstanceSecrets(
         if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
         if (typeof entry.projectPath !== 'string' || normalizeProjectKey(entry.projectPath) !== want) continue;
         if (typeof entry.pid !== 'number' || !Number.isInteger(entry.pid) || entry.pid <= 0) continue;  // pid 缺失无法判死
-        if (isAlive(entry.pid)) continue;  // 活实例保留
-        try {
-          unlinkSync(bridgeSecretPathFor(entry.projectPath, entry.port));
-          cleaned.push(entry.port);
-        } catch { /* 删除失败(权限/已不存在):best-effort 跳过该条 */
-        }
+        matched.push({ port: entry.port, projectPath: entry.projectPath, pid: entry.pid });
       } catch { /* 损坏条目容错跳过 */ }
     }
   } catch { /* registry 目录不可读 → 空清单(无法判死,保守不清) */ }
+  // 审查修复(2026-11-13 blocking): 同项目活实例端口集合 —— 死实例端口被活实例复用场景
+  // (GD _bind_available_port 是 connect 探测:实例 A 硬杀后端口释放,同项目实例 B 复用同
+  // 端口并覆盖写同路径 secret,文件名只含端口),死条目与活实例的 (project, port) 同值指向
+  // **同一 secret 文件**,按死条目 pid unlink 删的是活实例 B 正在用的 secret(TS 端缓存
+  // TTL 过期后重读 ENOENT → 认证断,须重启游戏恢复)。同端口有任一活实例 → 该端口 secret
+  // 跳过清理;调用方(如 sweepStaleBridgeArtifacts)对死 registry 条目本身的 unlink 不受
+  // 影响——条目与 secret 是两个文件,死条目仍是永久垃圾照删。
+  const livePorts = new Set<number>(matched.filter(e => isAlive(e.pid)).map(e => e.port));
+  for (const e of matched) {
+    if (livePorts.has(e.port)) continue;  // 活实例条目保留;死条目端口被活实例复用 → secret 跳过(保守不清)
+    try {
+      unlinkSync(bridgeSecretPathFor(e.projectPath, e.port));
+      cleaned.push(e.port);
+    } catch { /* 删除失败(权限/已不存在):best-effort 跳过该条 */
+    }
+  }
   return cleaned;
+}
+
+/** Task B2(竞品综述落地批 2026-11-13): 启动自愈 sweep —— 扫 machine registry 死条目
+ *  (对齐竞品 Erodenn v4 "硬杀自清理")。server 重启后内存 PID 集合丢失,游戏硬杀
+ *  (崩溃/用户手杀窗口)留下的 registry 心跳 JSON 永久 stale,无人清。
+ *
+ *  两层设计(方案 Task B2):
+ *  - 默认面(flag 关):只做无副作用的**死 pid 心跳条目 unlink**——死进程不再写心跳,
+ *    条目永久垃圾;活 pid/pid 缺失(无法判死)/非心跳条目(server 自注册,生命周期归
+ *    owner server)/损坏条目一律保留。
+ *  - flag 开(cleanSecrets: true,由 GodotServer 接线读 GODOT_MCP_STARTUP_CLEANUP 传入):
+ *    连带死实例 secret 清理——**先**对死条目所属项目逐个调 cleanDeadInstanceSecrets
+ *    (判活护栏全复用:capabilities/projectPath/pid 过滤,活进程 secret 必须保留,
+ *    误删在跑实例 = 事故),**后** unlink 死条目(顺序关键:条目删早了
+ *    cleanDeadInstanceSecrets 就失去判死依据)。
+ *
+ *  isAlive 缺省 () => true(保守全保留,与 cleanDeadInstanceSecrets 同哲学:无探测
+ *  能力即不清);生产接线显式传 process-state.isPidAlive。同步函数(0.36.8 审查 Minor-3
+ *  措辞修正:非异步 fire-and-forget),内部全 try-catch,失败仅记日志,绝不向上抛。 */
+export function sweepStaleBridgeArtifacts(
+  registryDir: string = machineRegistryInstancesDir(),
+  isAlive: (pid: number) => boolean = () => true,
+  opts: { cleanSecrets?: boolean } = {},
+): { removedEntries: number; secretsCleanedPorts: number[] } {
+  const secretsCleanedPorts: number[] = [];
+  const deadFiles: string[] = [];
+  const deadProjects = new Set<string>();
+  try {
+    for (const name of readdirSync(registryDir)) {
+      if (!name.endsWith('.json')) continue;
+      const full = join(registryDir, name);
+      try {
+        const entry = JSON.parse(readFileSync(full, 'utf-8')) as {
+          pid?: unknown; projectPath?: unknown; capabilities?: unknown;
+        };
+        // 过滤同 cleanDeadInstanceSecrets:只认 bridge 心跳条目(server 自注册条目不属 sweep 面)
+        if (!Array.isArray(entry.capabilities) || !entry.capabilities.includes('registry-heartbeat')) continue;
+        if (typeof entry.pid !== 'number' || !Number.isInteger(entry.pid) || entry.pid <= 0) continue;  // pid 缺失无法判死 → 保留
+        if (isAlive(entry.pid)) continue;   // 活实例条目保留
+        deadFiles.push(full);
+        if (typeof entry.projectPath === 'string' && entry.projectPath !== '') deadProjects.add(entry.projectPath);
+      } catch { /* 损坏条目容错跳过(sweep 不负责修数据) */ }
+    }
+  } catch { /* registry 目录不可读 → no-op(无法判死,保守不清) */ }
+
+  // secret 清理先于条目 unlink(顺序见函数头注释);best-effort,单项目失败不阻断其余
+  if (opts.cleanSecrets) {
+    for (const projectPath of deadProjects) {
+      try {
+        secretsCleanedPorts.push(...cleanDeadInstanceSecrets(projectPath, registryDir, isAlive));
+      } catch { /* best-effort 跳过该项目 */ }
+    }
+  }
+
+  let removedEntries = 0;
+  for (const full of deadFiles) {
+    try {
+      unlinkSync(full);
+      removedEntries++;
+    } catch { /* 删除失败(权限/已不存在):best-effort 跳过 */ }
+  }
+  if (removedEntries > 0 || secretsCleanedPorts.length > 0) {
+    getLogger().info('bridge', `startup sweep: removed ${removedEntries} stale registry entr${removedEntries === 1 ? 'y' : 'ies'}${secretsCleanedPorts.length > 0 ? `, cleaned ${secretsCleanedPorts.length} dead-instance secret(s)` : ''}`);
+  }
+  return { removedEntries, secretsCleanedPorts };
 }
 
 /** registry 未命中时的回落:按 secret 文件存在性扫 DEFAULT_PORT_START..END(9081-9090)。

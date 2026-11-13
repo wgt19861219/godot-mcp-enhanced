@@ -48,7 +48,15 @@ describe('A1: machineRegistryInstancesDir(与 GD 侧推导对齐)', () => {
   it('三平台统一 ~/.godot-mcp/instances(GD OS.get_data_dir() 两次 base_dir 归一到 home)', () => {
     // GD 实测(Windows 4.6.3): get_data_dir()=%APPDATA%,两次 base_dir=用户主目录;
     // Linux(~/.local/share)/macOS(~/Library/Application Support)两次上跳同样到 ~。
-    expect(machineRegistryInstancesDir()).toBe(join(homedir(), '.godot-mcp', 'instances'));
+    // setup.js(0.36.8 审查 Important-3)全局设了 GODOT_MCP_BRIDGE_REGISTRY_DIR 重定向,
+    // 本用例测的是**无 override 的默认推导**——先摘掉再断言,finally 恢复防泄漏。
+    const saved = process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+    delete process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+    try {
+      expect(machineRegistryInstancesDir()).toBe(join(homedir(), '.godot-mcp', 'instances'));
+    } finally {
+      if (saved !== undefined) process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = saved;
+    }
   });
 });
 

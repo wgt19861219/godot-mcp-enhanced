@@ -111,6 +111,41 @@ describe('validateConfigValue', () => {
     expect(r.error).toContain('*')
     expect(r.error).toMatch(/auto-injected|omit|去掉|前导/)
   })
+
+  // B5(竞品综述落地批 2026-11-13): res:// 值段级 ".." 拒绝——前缀检查挡不住
+  // res://../<项目外>;对齐 path-utils.ts:196 段级精确形态(分隔符先统一防 ..\ 混合
+  // 形态,含 .. 的合法文件名 foo..bar.gd 不误伤)。autoload 与 res_path 两分支同款。
+  describe('B5: segment-level ".." rejection', () => {
+    it('autoload 分支: res://../evil 拒绝', () => {
+      const r = validateConfigValue('autoload/GameMgr', 'res://../evil.gd')
+      expect(r.valid).toBe(false)
+      expect(r.error).toContain('".." path segments')
+    })
+
+    it('autoload 分支: 混合分隔符 res://a/../..\\\\evil 拒绝', () => {
+      const r = validateConfigValue('autoload/GameMgr', 'res://a/../..\\evil.gd')
+      expect(r.valid).toBe(false)
+      expect(r.error).toContain('".." path segments')
+    })
+
+    it('autoload 分支: 合法路径与含 ".." 文件名不误伤', () => {
+      expect(validateConfigValue('autoload/GameMgr', 'res://scripts/game.gd').valid).toBe(true)
+      expect(validateConfigValue('autoload/GameMgr', 'res://scripts/foo..bar.gd').valid).toBe(true)
+      expect(validateConfigValue('autoload/GameMgr', 'res://scripts/..hidden.gd').valid).toBe(true)
+    })
+
+    it('res_path 分支: res://../evil 拒绝(含混合分隔符)', () => {
+      expect(validateConfigValue('run/main_scene', 'res://../evil.tscn').valid).toBe(false)
+      const mixed = validateConfigValue('run/main_scene', 'res://a/..\\evil.tscn')
+      expect(mixed.valid).toBe(false)
+      expect(mixed.error).toContain('".." path segments')
+    })
+
+    it('res_path 分支: 合法路径与含 ".." 文件名不误伤', () => {
+      expect(validateConfigValue('run/main_scene', 'res://scenes/main.tscn').valid).toBe(true)
+      expect(validateConfigValue('run/main_scene', 'res://scenes/foo..bar.tscn').valid).toBe(true)
+    })
+  })
 })
 
 // ─── projectWriteConfig ──────────────────────────────────────────────────

@@ -3,7 +3,7 @@ description: "godot-mcp 核心指南 模式选择 Headless Editor Bridge execute
 alwaysApply: true
 ---
 
-> 适用于 godot-mcp-enhanced v0.36.3+
+> 适用于 godot-mcp-enhanced v0.36.8+
 
 ## 概述与架构
 
@@ -151,7 +151,7 @@ Headless 模式下场景截图可能完全空白——headless 进程默认用 *
 - **Bridge 密钥过期**：Bridge 密钥有 5 分钟 TTL 缓存，长时间未操作后首次调用可能稍慢。
 - **Headless 截图空白（2D/3D）**：Headless 用 RendererDummy 无渲染后端，2D CanvasItem 与 3D mesh 均不渲染像素。使用 Bridge take_screenshot（GPU viewport）或手动/GUI 截图替代。
 - **run_and_verify 可能残留进程**：headless 模式下交互式场景（不自动退出）可能残留 Godot 进程。如果后续 `run_project` 报 "another Godot process is running"，先调用 `stop_project` 清理残留进程。
-- **orphan 扫描会话隔离（多会话安全，v0.x+）**：`stop_project` 的 orphan 清理**默认只清本会话 `run_project` 启动过、脱离管理且仍存活的 Godot 进程**（按 PID 集合，非全系统扫描）。多个并发会话操作同一项目时，互不误杀对方的编辑器/游戏进程。`launch_editor` 启动的编辑器**不纳入** orphan 清理（detached，用户有意长期运行，永不被自动杀）。崩溃恢复场景（MCP server 重启后内存 PID 集合丢失）：设环境变量 `GODOT_MCP_FULL_SYSTEM_SCAN=true` 后调 `stop_project`，恢复 V-01 全系统扫描兜底（按项目目录匹配，会清所有匹配的 Godot，慎用）。**此 opt-in 非缺陷，是多会话安全的有意设计（B9）**。
+- **orphan 扫描会话隔离（多会话安全，v0.x+）**：`stop_project` 的 orphan 清理**默认只清本会话 `run_project` 启动过、脱离管理且仍存活的 Godot 进程**（按 PID 集合，无任何 env 可开全系统兜底）。多个并发会话操作同一项目时，互不误杀对方的编辑器/游戏进程。`launch_editor` 启动的编辑器**不纳入** orphan 清理（detached，用户有意长期运行，永不被自动杀）。崩溃恢复（MCP server 重启后内存 PID 集合丢失）不走 `stop_project`，走**启动时清理**：设环境变量 `GODOT_MCP_STARTUP_CLEANUP=true`（feature flag，默认关）后重启 MCP server——启动 sweep 先清死 pid 的 bridge registry 心跳条目（默认面，v0.36.8+），flag 开时再执行两层 Godot 进程清理（第一层 PID 集合毫秒级 + 第二层全系统扫描 15s，按项目目录匹配、跳过 --editor）并连带清死实例 secret。⚠️ 旧名 `GODOT_MCP_FULL_SYSTEM_SCAN` 是无消费者的历史 env 名，设了不生效。**默认关非缺陷，是多会话安全的 opt-in 有意设计（B9）**——全系统扫描按目录匹配会清所有匹配的 Godot，多会话环境慎开。
 - **load_autoloads=true 片段模式差异**：`load_autoloads=true` 时片段包装为 `extends Node`（非 `extends SceneTree`），`get_root()` 不可用。需要手写 `extends SceneTree` 完整类模式来访问 SceneTree API。
 - **load_autoloads autoload 层级**：`load_autoloads=true` 时 autoload 节点不直接挂在 `get_root()` 下，而是通过 autoload 系统加载。使用 `Engine.get_main_loop().get_root().get_node("autoload/Xxx")` 访问。
 - **remove_node 路径格式**：使用 `父名#子名` 格式（如 `Main#ValidationLabel`），而非 `/` 分隔路径。先用 `query_scene_tree` 确认节点名。

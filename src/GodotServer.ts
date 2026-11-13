@@ -79,7 +79,7 @@ import { FileStateStore } from './core/state-store.js';
 // 顶层副作用迁入控制面(下方 run() 装配 / close() 对称置 null);launcher 经控制面引用,
 // game-bridge 不再 import dashboard
 import { launchDashboardOnce } from './dashboard/launcher.js';
-import { setOnBridgeConnected } from './core/bridge-client.js';
+import { setOnBridgeConnected, sweepStaleBridgeArtifacts } from './core/bridge-client.js';
 
 // Re-export for backward compatibility (tests import from GodotServer)
 export { clearGodotPathCache, getCachedGodotPath };
@@ -144,6 +144,14 @@ export class GodotServer {
     // P4-3 (2026-09-11): 启动时报丧——上个 server 进程非正常退出时留下的 in-flight 记录
     // 走 stderr(stdout 是 MCP transport),把"进程被杀的静默损失"变成可诊断事件。
     reportOrphanedInflight();
+    // B2(竞品综述落地批 2026-11-13): 启动自愈 sweep——对齐竞品 Erodenn v4 "硬杀自清理"。
+    // 默认(flag 关)只做无副作用的死 pid registry 心跳条目 unlink;GODOT_MCP_STARTUP_CLEANUP
+    // =true 时连带死实例 secret 清理(sweep 内部复用 cleanDeadInstanceSecrets 判活护栏,
+    // 只清 pid 探活失败者——活进程 secret 必须保留)。同步执行、不抛不拖(0.36.8 审查
+    // Minor-3 措辞修正:sweep 是同步函数,构造器内同步跑完,非异步 fire-and-forget;
+    // "失败不拖垮"指内部全 try-catch,失败仅记日志)。flag 经 isFeatureEnabled 直读(无缓存),
+    // 与 :785 STARTUP_CLEANUP 进程清理接线同 flag 同语义(IPC-R1/R5 显式传参哲学)。
+    sweepStaleBridgeArtifacts(undefined, ps.isPidAlive, { cleanSecrets: isFeatureEnabled('STARTUP_CLEANUP') });
     this.connectionMode = options.connectionMode ?? 'headless';
     this.noFallback = options.noFallback ?? false;
     this.agentCtx = new AgentContextManager();
@@ -774,7 +782,8 @@ export class GodotServer {
 
     // 报告②P1：启动时清理上一会话残留 Godot 进程（opt-in，默认关）。
     // 2026-08-07 审查 P1 修复：原 STARTUP_CLEANUP 单独开启时是 no-op（_spawnedGodotPids
-    // 新会话为空 → 第一层 0 kill，需 FULL_SYSTEM_SCAN 才触发第二层）。用户按文档开
+    // 新会话为空 → 第一层 0 kill，旧 env 全系统扫描开关已无消费者、第二层无从触发）。
+    // 用户按文档开
     // STARTUP_CLEANUP 期望清理崩溃残留，实际无效果（虚假安全感）。
     // 修复：STARTUP_CLEANUP 启用时传 { fullSystemScan: true }，让第二层
     // fullSystemScanGodot 也跑（只扫命令行含 projectPath 的 Godot，跳过 --editor，15s

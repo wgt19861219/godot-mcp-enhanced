@@ -13,7 +13,7 @@ import { join, dirname } from 'path';
 import type { Tool } from "@modelcontextprotocol/server";
 import type { ToolContext, ToolResult } from '../types.js';
 import { textResult, errorResult, getErrorMessage, structuredResult } from '../types.js';
-import { opsErrorResult } from './shared.js';
+import { opsError, opsErrorResult } from './shared.js';
 import { requireProjectPath } from '../core/args-validation.js';
 import { PathError } from '../core/tool-errors.js';
 import type { RiskLevel } from '../core/tool-registry.js';
@@ -1228,21 +1228,24 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       // "已执行但响应丢失"(Godot 卡主线程:编译/场景切换)。带 requestId 的写命令给出
       // 原身份重试指引(bridge 支持 idempotent-v1 时重试命中 GD 侧去重,不重复执行;
       // 旧版 GD 无去重,指引如实降级为"必须先核实")。读命令超时保持原文案。
+      // 批B 顺手修(竞品综述落地批 2026-11-13): 手拼 JSON 缺 success/error/warnings
+      // 字段(opsError 契约缺口)——改经 opsError 组装与其余 opsErrorResult 响应同构;
+      // requestId 分支的幂等三字段(outcomeUnknown/request_id/retry_guidance)在
+      // opsError 之上展开保留(message 键统一为 error 键,契约对齐的有意变更)。
       const idemCapable = getBridgeIdentity()?.capabilities.includes('idempotent-v1') ?? false;
-      const payload: Record<string, unknown> = {
-        error_code: ERROR_CODES.BRIDGE_TIMEOUT,
-        message: msg,
-      };
       if (err.requestId !== undefined) {
-        payload.outcomeUnknown = true;
-        payload.request_id = err.requestId;
-        payload.retry_guidance = idemCapable
-          ? '原命令可能已在游戏中执行(outcomeUnknown)。先用 game_query 核实游戏状态;确认需要重试时,本次调用传同一 request_id——bridge 侧按其去重,不会重复执行。'
-          : '原命令可能已在游戏中执行(outcomeUnknown)。当前 bridge 不支持幂等去重(旧版 GD):重试前必须先 game_query 核实状态,避免重复执行;建议 game_bridge_install force 同步 bridge。';
-        return errorResult(JSON.stringify(payload));
+        return errorResult(JSON.stringify({
+          ...opsError(ERROR_CODES.BRIDGE_TIMEOUT, msg),
+          outcomeUnknown: true,
+          request_id: err.requestId,
+          retry_guidance: idemCapable
+            ? '原命令可能已在游戏中执行(outcomeUnknown)。先用 game_query 核实游戏状态;确认需要重试时,本次调用传同一 request_id——bridge 侧按其去重,不会重复执行。'
+            : '原命令可能已在游戏中执行(outcomeUnknown)。当前 bridge 不支持幂等去重(旧版 GD):重试前必须先 game_query 核实状态,避免重复执行;建议 game_bridge_install force 同步 bridge。',
+        }));
       }
-      payload.suggestion = '游戏在运行但无响应(可能被 runtime error 卡住)——这不是连接问题。检查游戏是否报错,或加大 timeout 重试';
-      return errorResult(JSON.stringify(payload));
+      return opsErrorResult(ERROR_CODES.BRIDGE_TIMEOUT, msg, {
+        suggestion: '游戏在运行但无响应(可能被 runtime error 卡住)——这不是连接问题。检查游戏是否报错,或加大 timeout 重试',
+      });
     }
     return opsErrorResult(ERROR_CODES.BRIDGE_ERROR, msg);
   }

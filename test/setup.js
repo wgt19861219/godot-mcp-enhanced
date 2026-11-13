@@ -18,3 +18,14 @@ import { join } from 'node:path';
 process.env.GODOT_MCP_AUDIT_EXTERNAL_DIR = join(
   mkdtempSync(join(tmpdir(), 'mcp-audit-ext-')), 'audit',
 );
+
+// 0.36.8 审查 Important-3: bridge registry 目录重定向到临时目录——GodotServer 构造器的
+// 启动 sweep(bridge-client.ts sweepStaleBridgeArtifacts,读 machineRegistryInstancesDir)
+// 默认面会 unlink 真实 ~/.godot-mcp/instances/ 的死 pid 条目;未重定向时每个 new GodotServer
+// 的既有测试(godot-server/editor-fallback/b4-typed-outputs 等)都在清扫真实机器 registry
+// (违反"测试不碰真实 ~/.godot-mcp/"纪律且行为依赖机器状态不可重现)。对齐上方
+// AUDIT_EXTERNAL_DIR 模式,instances 子目录不预创建(与真实机器"目录可能不存在"语义一致,
+// sweep/read 均容不存在)。bridge 专属注入测试自行覆盖本值。
+process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = join(
+  mkdtempSync(join(tmpdir(), 'mcp-reg-')), 'instances',
+);

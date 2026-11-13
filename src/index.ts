@@ -6,6 +6,7 @@ import { GodotServer } from './GodotServer.js';
 import { getLogger } from './core/logger.js';
 import { isAuditEnabled } from './core/audit-log.js';
 import { applyUserSettingsAtStartup } from './core/user-settings.js';
+import { handleUncaughtException, setUncaughtCleanup } from './core/uncaught-cleanup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,14 +15,14 @@ const __dirname = dirname(__filename);
 // floating promise 在 Node 15+ 默认语义下会 crash 整个进程(客户端断连/QA run 失管/
 // 孤儿进程扫描随进程死亡)。rejection 记 stderr 日志保留进程(未观察对象不必然致命,
 // 与 GodotServer 其余 void 调用带 .catch 的防御同级);uncaughtException 同步栈已损坏,
-// 记日志后以非零码退出,不静默带病运行。stderr 不污染 stdio 协议通道(stdout)。
+// 记日志后进入限时清理链(5s 硬上限 best-effort 清理 + 一律 exit(1),不静默带病运行——
+// B1 竞品综述落地批 2026-11-13,见 core/uncaught-cleanup.ts 头注释)。stderr 不污染
+// stdio 协议通道(stdout)。清理动作在 startMcpServer 注入(server 建立前保持 null
+// = 跳过清理直接退,与 CLI/daemon 早期路径的既有行为等价)。
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection]', reason instanceof Error ? (reason.stack ?? reason.message) : String(reason));
 });
-process.on('uncaughtException', (err) => {
-  console.error('[uncaughtException]', err instanceof Error ? (err.stack ?? err.message) : String(err));
-  process.exit(1);
-});
+process.on('uncaughtException', handleUncaughtException);
 
 /**
  * daemon 批(spec §3.3):启动序共享段——stdio 入口(startMcpServer)与 daemon 入口
@@ -178,6 +179,15 @@ export async function startMcpServer(args: string[]): Promise<void> {
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+  // B1(竞品综述落地批 2026-11-13): uncaughtException 限时清理链——注入与 gracefulShutdown
+  // 同源的进程停止步骤(server.close 内部幂等且逐项 best-effort:杀全部桶进程/in-flight/
+  // DAP/WebGUI...)。同步栈已损坏,由 core/uncaught-cleanup 的 5s 硬上限兜底;清理完成/
+  // 抛错/超时一律 exit(1)(uncaught 不可恢复,不学 graceful 的 exit(0))。
+  setUncaughtCleanup(async () => {
+    await server.close();
+    getLogger().close();
+  });
 
   // MCP clients that die without signaling this child (crash, force-quit, a
   // closed terminal window) leave it running as an orphan: StdioServerTransport

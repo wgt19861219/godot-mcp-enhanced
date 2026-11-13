@@ -55,9 +55,14 @@ export function forceKillTree(proc: ChildProcess, opts: { ignoreKilled?: boolean
 }
 
 /** 探测 PID 是否存活（signal 0，不发信号）。Task B3 起导出(stop_project 死实例 secret
- *  清理注入 bridge-client.cleanDeadInstanceSecrets 复用,勿另造同语义函数)。 */
+ *  清理注入 bridge-client.cleanDeadInstanceSecrets 复用,勿另造同语义函数)。
+ *  EPERM = 进程存在但无权限(≠不存在)——探活语义保守视为活,防 sweep/secret 清理把
+ *  高权限存活进程误判死而清其 artifact(0.36.8 审查 Minor-1)。 */
 export function isPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try { process.kill(pid, 0); return true; } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'EPERM') return true;
+    return false;
+  }
 }
 
 /**

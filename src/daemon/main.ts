@@ -17,6 +17,7 @@ import { controlledRestart, spawnDaemonDetached } from './controlled-restart.js'
 import { getOrCreateSharedToken, listRegistrations, removeRegistrationVerified } from '../web-gui/registry.js';
 import { killPidTree } from '../core/process-state.js';
 import { getLogger } from '../core/logger.js';
+import { setUncaughtCleanup } from '../core/uncaught-cleanup.js';
 import { appendMachineAuditLine, isAuditEnabled } from '../core/audit-log.js';
 
 /** CLI 壳(spawn)与受控交接(§3.7 respawn)传入的进程参数。 */
@@ -112,6 +113,15 @@ export async function runDaemon(args: string[]): Promise<void> {
   // 工厂 + connectTransport);工具档位 mode 与 stdio 同源接 env(终审 Fix-2 收口,缺省
   // basic 对齐 stdio 生产默认,不再落 GodotServer 兜底 full)。
   const server = new GodotServer(daemonOpsScript(), { mode: resolveDaemonToolMode(process.env) });
+
+  // B1(竞品综述落地批 2026-11-13,审查 Important-2 补覆盖): daemon 是第二长驻入口,同样建
+  // GodotServer——uncaughtException 裸退会让 daemon 拉起的 Godot 游戏进程/DAP socket 孤儿化,
+  // 与 stdio 入口(index.ts:187)同款注入限时清理链(5s 硬上限 best-effort,完成/抛错/超时一律
+  // exit(1))。CLI 子命令路径不建 server,仍走无钩子=裸退(与旧行为等价)。
+  setUncaughtCleanup(async () => {
+    await server.close();
+    getLogger().close();
+  });
 
   // /mcp 端点与面板的鸡生蛋(spec §3.2):mcpHandler 须在 WebGuiServer 构造期注入
   // (构造器注入面,无 setMcpHandler),而 endpoint 的 deps.port 要 gui.start() 后

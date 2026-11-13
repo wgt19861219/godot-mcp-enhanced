@@ -61,6 +61,13 @@ const EXPLICIT_KEYS: Record<string, KeyRule> = {
 
 const AUTOLOAD_PREFIX = 'autoload/'
 
+// B5(竞品综述落地批 2026-11-13): res:// 值的段级 ".." 拒绝——前缀检查挡不住
+// res://../<项目外> 越界;对齐 path-utils.ts:196 段级精确形态(分隔符先统一防
+// ..\ 混合形态漏网,含 .. 的合法文件名 foo..bar.gd 不误伤)。
+function hasParentSegment(value: string): boolean {
+  return value.replace(/\\/g, '/').split('/').some(seg => seg === '..')
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────
 
 /**
@@ -94,6 +101,10 @@ export function validateConfigValue(key: string, value: string): { valid: boolea
       const starHint = value.startsWith('*') ? ' — omit the leading "*" (it is auto-injected at write time)' : ''
       return { valid: false, error: `Autoload value must start with res://, got: "${value}"${starHint}` }
     }
+    // B5(竞品综述落地批 2026-11-13): 段级 ".." 拒绝(防 res://../<项目外> 越界)
+    if (hasParentSegment(value)) {
+      return { valid: false, error: `Autoload value must not contain ".." path segments, got: "${value}"` }
+    }
     return { valid: true }
   }
 
@@ -106,6 +117,10 @@ export function validateConfigValue(key: string, value: string): { valid: boolea
     case 'res_path':
       if (!value.startsWith('res://')) {
         return { valid: false, error: `Resource path must start with res://, got: "${value}"` }
+      }
+      // B5(竞品综述落地批 2026-11-13): 段级 ".." 拒绝(防 res://../<项目外> 越界,同 autoload 分支)
+      if (hasParentSegment(value)) {
+        return { valid: false, error: `Resource path must not contain ".." path segments, got: "${value}"` }
       }
       return { valid: true }
 
