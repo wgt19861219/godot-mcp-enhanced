@@ -3,6 +3,7 @@
 import type { ExecuteGdscriptResult } from '../../gdscript-executor.js';
 import { textResult, errorResult } from '../../types.js';
 import type { ToolResult } from '../../types.js';
+import { ERROR_CODES, warnIfUnregisteredCode } from '../error-codes.js';
 
 /** Common error codes shared across tool modules. */
 export const COMMON_ERROR_CODES = {
@@ -24,6 +25,19 @@ export function opsError(
   message: string,
   opts?: { suggestion?: string; retryable?: boolean; errorCategory?: string; traceId?: string },
 ) {
+  // 竞品综述建议⑤(2026-11-13 批 A/A1): opts.retryable/errorCategory 未显式传时按
+  // ERROR_CODES 注册表(src/core/error-codes.ts)补全——显式传参优先(已带 retryable 的
+  // 调用点行为零变化);未登记码保守 retryable=false 并 warn 一次(不拒调用)。
+  const spec = ERROR_CODES[errorCode];
+  let retryable = opts?.retryable;
+  if (retryable === undefined) {
+    if (spec) retryable = spec.retryable;
+    else {
+      retryable = false;
+      warnIfUnregisteredCode(errorCode);
+    }
+  }
+  const errorCategory = opts?.errorCategory ?? spec?.category;
   return {
     success: false,
     error: message,
@@ -32,8 +46,8 @@ export function opsError(
     ...(opts?.suggestion ? { suggestion: opts.suggestion } : {}),
     // G2: 结构化错误三元组(借鉴 xulek _err)。errorCategory 是结构化枚举(非 err.message 文本),
     // 无 PII 外传风险 — 见 tool-errors.ts PII 护栏。
-    ...(opts?.retryable !== undefined ? { retryable: opts.retryable } : {}),
-    ...(opts?.errorCategory ? { error_category: opts.errorCategory } : {}),
+    ...(retryable !== undefined ? { retryable } : {}),
+    ...(errorCategory ? { error_category: errorCategory } : {}),
     ...(opts?.traceId ? { trace_id: opts.traceId } : {}),
   };
 }

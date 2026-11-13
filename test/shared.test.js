@@ -34,8 +34,10 @@ describe('opsSuccess', () => {
 
 describe('opsError', () => {
   it('returns error result with code and message', () => {
+    // 批 A/A1 (2026-11-13): 未登记码自动补 retryable:false(保守,不拒调用)——
+    // 详见 test/core/error-codes.test.ts 与 docs/error-codes.md。
     const r = opsError('TEST_CODE', 'test msg');
-    expect(r).toEqual({ success: false, error: 'test msg', error_code: 'TEST_CODE', warnings: [] });
+    expect(r).toEqual({ success: false, error: 'test msg', error_code: 'TEST_CODE', warnings: [], retryable: false });
   });
 });
 

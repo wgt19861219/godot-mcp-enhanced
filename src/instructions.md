@@ -17,6 +17,10 @@
 4. **节点路径须 /root/ 前缀**：凡带 path/node_path 的 game_* 工具（game_query / game_write / game_wait / game_input / click_button / monitor / watch）必须 `/root/` 开头（如 `/root/Main/Player`）。
 5. **Bridge 密钥 5min TTL**：长时间未操作后首次调用可能稍慢；权限循环设 `GODOT_MCP_BRIDGE_PERSISTENT_SECRET=true`（由 bridge 游戏进程读取，须启动游戏前设置、重启生效）。
 
+## 失败处理契约
+
+错误响应带 `retryable`：`true`＝瞬态，等 1-2s 或修复环境（连接/游戏进程）后重试；`false`＝按 `suggestion` 改参数/换路径，原样重试会被熔断器拒。错误码语义与自愈动作全表见 `docs/error-codes.md`。
+
 ## 安全模型
 
 deny-by-default 路径白名单（`ALLOWED_PROJECT_PATHS`）+ GDScript 沙箱是**防误操作层**，非不可绕过的安全边界；不可信环境用容器/VM。

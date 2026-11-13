@@ -24,6 +24,11 @@ describe('instructions.md 内容契约', () => {
     expect(content).toMatch(/godot_get_context/);
   });
 
+  it('含失败处理契约（批 A/A3: retryable 语义 + 语义表入口）', () => {
+    expect(content).toMatch(/retryable/);
+    expect(content).toMatch(/error-codes\.md/);
+  });
+
   it('长度 < 2000 字符（精简速查卡防膨胀）', () => {
     expect(content.length).toBeLessThan(2000);
   });
