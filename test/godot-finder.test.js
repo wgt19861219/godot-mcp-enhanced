@@ -151,6 +151,9 @@ describe('findGodot', () => {
     mockExecFileSuccess('Godot v4.3');
 
     await expect(findGodot()).rejects.toThrow(/GODOT_MCP_ALLOWED_GODOT_PATHS whitelist/);
+    // C2 (2026-11-13 反馈批次): 拒绝消息须附 doctor 指引(B-7③ 延伸——光知道被白名单拒
+    // 不够,还须告诉用户用 doctor 看 env 与 godot-paths.json 哪个在生效)
+    await expect(findGodot()).rejects.toThrow('Run `godot-mcp-enhanced doctor` (or `npx godot-mcp-enhanced doctor`) to inspect the active whitelist (env GODOT_MCP_ALLOWED_GODOT_PATHS vs ~/.godot-mcp/godot-paths.json)');
   });
 
   it('B-7③: GODOT_PATH 运行失败(--version 不可执行)→ 显性报错带指引', async () => {

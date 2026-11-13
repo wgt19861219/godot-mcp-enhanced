@@ -172,7 +172,9 @@ export type GodotBinaryCheck =
  *  与搜索链候选不同——显式配置是强意图信号,失败须报错而非静默换下一个;
  *  消息不含路径值(PII-safe,完整路径见 server 日志)。 */
 const GODOT_PATH_STAGE_MESSAGES: Record<Exclude<GodotBinaryCheck, { ok: true }>['stage'], string> = {
-  'path-not-allowed': 'GODOT_PATH is rejected by the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist. Add the executable (or its parent directory) to the whitelist, or unset GODOT_PATH to fall back to auto-discovery.',
+  // C2 (2026-11-13 反馈批次): 拒绝消息附 doctor 指引——env 与 godot-paths.json 双源白名单
+  // 谁在生效,doctor 一眼可见(B-7③ 延伸;仍 PII-safe,不带具体路径值)
+  'path-not-allowed': 'GODOT_PATH is rejected by the GODOT_MCP_ALLOWED_GODOT_PATHS whitelist. Add the executable (or its parent directory) to the whitelist, or unset GODOT_PATH to fall back to auto-discovery. Run `godot-mcp-enhanced doctor` (or `npx godot-mcp-enhanced doctor`) to inspect the active whitelist (env GODOT_MCP_ALLOWED_GODOT_PATHS vs ~/.godot-mcp/godot-paths.json).',
   'is-directory': 'GODOT_PATH points to a directory, not an executable (set it to the Godot executable file path).',
   'version-run-failed': 'GODOT_PATH exists but failed to run --version (corrupted binary or permissions). Fix the file or unset GODOT_PATH to fall back to auto-discovery.',
   'not-godot-signature': 'GODOT_PATH does not look like a Godot binary (--version output lacks the Godot signature). Set it to a valid Godot 4.x executable.',
