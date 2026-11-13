@@ -19,7 +19,8 @@
 //   ALLOWLIST   = 首轮(2026-10-13)人工逐文件核对的豁免,理由见各条注释。
 //
 // 模式:默认 advisory(exit 0);--strict 时差集 - ALLOWLIST 非空 exit 1。
-// 接线:npm run check:path-coverage(CI 未接,观察期;差集清零后可升 strict 接 CI)。
+// 接线:npm script 已固化 --strict(package.json check:path-coverage);CI check job 已接
+// (ci.yml "Check path param coverage" 步,2026-10-22 审查 Low-1 接线,strict 阻断)。
 //
 // 已知边界(诚实声明):正则静态匹配,识别不了「参数经二次包装传共享层」的间接
 // 防护——ALLOWLIST 条目注释写清下游校验位置,防豁免清单烂掉。

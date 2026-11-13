@@ -11,6 +11,11 @@
  * 用法:throw new PathError() / new ConnectionError() 等;主 catch 用 classifyError(err)
  * 拿 {category, retryable, code, safeMessage},safeMessage 进 client 响应,
  * 完整 err.message 只 log() 到 server 日志。
+ *
+ * 批 A/A1 (2026-11-13): 9 个异常类的默认码已收编 ERROR_CODES 注册表
+ * (src/core/error-codes.ts)——异常路径与 opsErrorResult 返回路径同一张表背书
+ * (修复 TIMEOUT 等同码不同义断裂)。新增异常类默认码须同步进注册表,
+ * 对齐关系由 test/core/error-codes.test.ts 逐字段锚定。
  */
 
 import { randomUUID } from 'crypto';
@@ -146,7 +151,13 @@ export function classifyError(err: unknown): ClassifiedError {
   return { category: 'internal', retryable: false, code: 'INTERNAL', safeMessage: 'Internal error' };
 }
 
-/** Generate a 16-hex trace id(对齐 xulek `_new_trace_id`,AI 易读)。单 server 不用 W3C traceparent。 */
+/**
+ * Generate a 32-hex trace id(randomUUID 全长)。
+ *
+ * 批 C/C1 (2026-11-13,竞品综述建议② OTel 半边): 16-hex → 32-hex 统一 OTel traceId 口径,
+ * 并与 logger trace_id 贯通(用户拿响应 _meta.trace_id 可直接 grep 日志)。
+ * 对外展示位(如截前 8 位)由消费方自行处理。单 server 不用 W3C traceparent。
+ */
 export function newTraceId(): string {
-  return randomUUID().replace(/-/g, '').slice(0, 16);
+  return randomUUID().replace(/-/g, '');
 }

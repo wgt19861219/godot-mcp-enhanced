@@ -34,6 +34,10 @@ export interface LogEntry {
   /** §3.3.1(设计):进程标识——Web GUI 多 server 共写同一日志文件时的过滤键。
    *  可选字段,模块级 getServerId() 惰性生成一次,5 个写点全覆盖写入。 */
   srv?: string;
+  /** 批 C/C1 (2026-11-13,竞品综述建议② OTel 半边): 关联工具响应 trace_id
+   *  (DispatchContext.traceId 透传)——此前响应 trace_id 与日志 call_id 互不引用,
+   *  用户拿 trace_id 无法 grep 日志。可选字段,调用方未透传时不写(向后兼容)。 */
+  trace_id?: string;
   meta?: Record<string, unknown>;
 }
 
@@ -49,8 +53,8 @@ export interface Logger {
   info(module: string, msg: string, meta?: Record<string, unknown>): void;
   warn(module: string, msg: string, meta?: Record<string, unknown>): void;
   error(module: string, msg: string, meta?: Record<string, unknown>): void;
-  toolStart(tool: string, args?: Record<string, unknown>, project?: string): string;
-  toolEnd(callId: string, tool: string, durationMs: number, error?: string): void;
+  toolStart(tool: string, args?: Record<string, unknown>, project?: string, traceId?: string): string;
+  toolEnd(callId: string, tool: string, durationMs: number, error?: string, traceId?: string): void;
   flush(): void;
   pendingCount(): number;
   close(): void;
@@ -237,6 +241,8 @@ interface PendingTool {
   startTime: number;
   /** §4.6:toolStart 时记录的项目归属,toolEnd/超时配对携带(调用方不重传)。 */
   project?: string;
+  /** 批 C/C1 (2026-11-13):toolStart 时记录的 trace_id,toolEnd(未显式传时)/超时配对携带。 */
+  traceId?: string;
 }
 
 interface LoggerImpl extends Logger {
@@ -395,6 +401,8 @@ function createLogger(opts: LoggerOptions = {}): Logger {
         error: 'timeout',
       };
       if (pending.project) entry.project = pending.project;
+      // 批 C/C1: 超时补记同样携带 trace_id(pending 配对恢复)
+      if (pending.traceId) entry.trace_id = pending.traceId;
       entry.srv = getServerId();
       buffer.push(entry);
     }
@@ -433,10 +441,10 @@ function createLogger(opts: LoggerOptions = {}): Logger {
 
   // ---- tool 配对 ----
 
-  function toolStart(tool: string, args?: Record<string, unknown>, project?: string): string {
+  function toolStart(tool: string, args?: Record<string, unknown>, project?: string, traceId?: string): string {
     const id = nanoid8();
     const callId = `${tool}:${id}`;
-    pendingTools.set(callId, { tool, startTime: Date.now(), project });
+    pendingTools.set(callId, { tool, startTime: Date.now(), project, traceId });
 
     const entry: LogEntry = {
       v: 1,
@@ -449,6 +457,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       call_id: callId,
     };
     if (project) entry.project = project;
+    if (traceId) entry.trace_id = traceId;
     entry.srv = getServerId();
     if (args && Object.keys(args).length > 0) {
       entry.meta = { arg_keys: Object.keys(args) };
@@ -457,7 +466,7 @@ function createLogger(opts: LoggerOptions = {}): Logger {
     return callId;
   }
 
-  function toolEnd(callId: string, tool: string, durationMs: number, err?: string): void {
+  function toolEnd(callId: string, tool: string, durationMs: number, err?: string, traceId?: string): void {
     const pending = pendingTools.get(callId);
     if (!pending) {
       // 未知 callId → warn
@@ -478,6 +487,9 @@ function createLogger(opts: LoggerOptions = {}): Logger {
       duration_ms: durationMs,
     };
     if (pending.project) entry.project = pending.project;
+    // 批 C/C1: 显式 traceId 优先;未显式传时从 toolStart 的 pending 配对恢复(同一调用同源)
+    const tid = traceId ?? pending.traceId;
+    if (tid) entry.trace_id = tid;
     if (err) entry.error = sanitizeMsg(err);
     entry.srv = getServerId();
     writeEntry(entry);

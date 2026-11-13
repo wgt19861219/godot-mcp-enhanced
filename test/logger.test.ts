@@ -243,6 +243,62 @@ describe('tool 配对', () => {
     expect(timeoutEntry.level).toBe('warn');
     vi.useRealTimers();
   });
+
+  // ─── 批 C/C1 (2026-11-13): trace_id 贯通——DispatchContext.traceId 透传,
+  //     同一调用的日志行可被响应 _meta.trace_id grep 定位 ───
+
+  it('toolStart 第四参 traceId → tool_start/tool_end 行携带同一 trace_id', () => {
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const traceId = 'a'.repeat(32);
+    const callId = logger.toolStart('read_scene', { a: 1 }, undefined, traceId);
+    logger.toolEnd(callId, 'read_scene', 42);
+    logger.flush();
+    const entries = readJsonl();
+    const start = entries.find(e => e.type === 'tool_start');
+    const end = entries.find(e => e.type === 'tool_end');
+    expect(start?.trace_id).toBe(traceId);
+    expect(end?.trace_id).toBe(traceId);
+  });
+
+  it('未传 traceId → 不写 trace_id 字段(向后兼容,既有日志消费不破)', () => {
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const callId = logger.toolStart('read_scene', { a: 1 });
+    logger.toolEnd(callId, 'read_scene', 10);
+    logger.flush();
+    const entries = readJsonl();
+    const start = entries.find(e => e.type === 'tool_start');
+    const end = entries.find(e => e.type === 'tool_end');
+    expect('trace_id' in start!).toBe(false);
+    expect('trace_id' in end!).toBe(false);
+  });
+
+  it('60s 超时补记的 tool_end 也带 trace_id(pendingTools 配对携带)', () => {
+    vi.useFakeTimers();
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const traceId = 'b'.repeat(32);
+    const callId = logger.toolStart('slow_tool', { a: 1 }, undefined, traceId);
+    vi.advanceTimersByTime(61_000);
+    logger.flush();
+    const entries = readJsonl();
+    const timeoutEntry = entries.find(e => e.type === 'tool_end' && e.error === 'timeout');
+    expect(timeoutEntry?.trace_id).toBe(traceId);
+    expect(timeoutEntry?.call_id).toBe(callId);
+    vi.useRealTimers();
+  });
+
+  it('toolEnd 显式 traceId 优先于 toolStart 记录(显式传参覆盖 pending 恢复)', () => {
+    const logger = getLogger({ logDir: TEST_LOG_DIR });
+    const startTrace = 'c'.repeat(32);
+    const endTrace = 'd'.repeat(32);
+    const callId = logger.toolStart('read_scene', { a: 1 }, undefined, startTrace);
+    logger.toolEnd(callId, 'read_scene', 10, undefined, endTrace);
+    logger.flush();
+    const entries = readJsonl();
+    const start = entries.find(e => e.type === 'tool_start');
+    const end = entries.find(e => e.type === 'tool_end');
+    expect(start?.trace_id).toBe(startTrace);
+    expect(end?.trace_id).toBe(endTrace);
+  });
 });
 
 // ---------------------------------------------------------------------------

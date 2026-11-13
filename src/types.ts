@@ -77,7 +77,9 @@ export interface DispatchContext {
   args: Record<string, unknown>;
   startTime: number;
   phase: 'before' | 'after';
-  /** G2 (2026-08-13): per-request trace id (16 hex),注入 result._meta 供 client/可观测追踪。 */
+  /** G2 (2026-08-13): per-request trace id,注入 result._meta 供 client/可观测追踪。
+   *  批 C/C1 (2026-11-13): 16-hex → 32-hex(OTel traceId 口径,randomUUID 全长),
+   *  并透传 logger.toolStart(tool_start/tool_end 日志行可被响应 trace_id grep)。 */
   traceId: string;
   /** 1C (2026-09-19): best-effort 调用者标识(_meta.agentId/agent_id)。MCP 规范未定义
    *  caller 身份字段、主流客户端通常不注入 → 多数请求为 undefined。仅供审计 caller 归因,

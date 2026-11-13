@@ -482,7 +482,9 @@ describe('ToolDispatcher audit middleware 集成', () => {
           arguments: { action: 'write_script', project_path: tmpProject, script_path: 'res://proj.gd' },
         },
       });
-      expect(startSpy).toHaveBeenCalledWith('script', expect.objectContaining({ project_path: tmpProject }), tmpProject);
+      // 批 C/C1 (2026-11-13): toolStart 第 4 参透传 ctx.traceId(32-hex)——trace_id 贯通
+      expect(startSpy).toHaveBeenCalledWith('script', expect.objectContaining({ project_path: tmpProject }), tmpProject,
+        expect.stringMatching(/^[0-9a-f]{32}$/));
     } finally {
       startSpy.mockRestore();
     }

@@ -9,6 +9,10 @@ import type { EditorToolExecutor } from '../../src/core/EditorToolExecutor.js';
 import type { ToolResult } from '../../src/types.js';
 import type { Tool } from "@modelcontextprotocol/server";
 import { resolveProjectPath as _mockResolveProjectPath } from '../../src/core/path-utils.js';
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { getLogger, resetLogger } from '../../src/core/logger.js';
 
 // ─── Hoisted Mocks (vi.hoisted ensures these are available inside vi.mock factories) ──
 
@@ -1108,7 +1112,7 @@ describe('ToolDispatcher.handleCall', () => {
     expect(parsed.error).toBe('Internal error');
     expect(parsed.error).not.toContain('boom');        // err.message 不外泄
     expect(parsed.error).not.toContain('secret');      // PII 路径不外泄
-    expect(parsed.trace_id).toMatch(/^[0-9a-f]{16}$/); // G2 trace_id 注入
+    expect(parsed.trace_id).toMatch(/^[0-9a-f]{32}$/); // G2 trace_id 注入(批 C/C1: 32-hex)
   });
 
   // [G2-meta] 成功路径注入 _meta.trace_id + _meta.duration_ms(审查 I-2 补强:
@@ -1120,8 +1124,48 @@ describe('ToolDispatcher.handleCall', () => {
     const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
     const result = await dispatcher.handleCall({ params: { name: 'scene', arguments: {} } });
     const meta = (result as { _meta?: Record<string, unknown> })._meta;
-    expect(meta?.trace_id).toMatch(/^[0-9a-f]{16}$/);
+    expect(meta?.trace_id).toMatch(/^[0-9a-f]{32}$/);
     expect(typeof meta?.duration_ms).toBe('number');
+  });
+
+  // [批 C/C2] _meta.gen_ai.operation.* 语义命名(对齐 fastmcp #6429 / typescript-sdk #3115
+  //   趋同语义,零新依赖)——LLM observability 消费端按此键归因工具调用。
+  it('injects _meta.gen_ai.operation.name/type on success path (批 C/C2)', async () => {
+    const guard = createMockGuard(false);
+    const mockModule = { handleTool: vi.fn().mockResolvedValue({ content: [{ type: 'text' as const, text: '{"success":true,"data":{}}' }] }) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+    const result = await dispatcher.handleCall({ params: { name: 'scene', arguments: {} } });
+    const meta = (result as { _meta?: Record<string, unknown> })._meta;
+    expect(meta?.['gen_ai.operation.name']).toBe('scene');
+    expect(meta?.['gen_ai.operation.type']).toBe('execute_tool');
+  });
+
+  // [批 C/C1 (2026-11-13)] trace_id 贯通——DispatchContext.traceId 透传 logger.toolStart,
+  //   同一调用的 tool_start/tool_end 日志行与响应 _meta.trace_id 同源,可 grep 互查
+  //   (此前响应 trace_id 与日志 call_id 互不引用,用户拿 trace_id 无法定位日志)。
+  it('toolStart 携带 ctx.traceId 且与响应 _meta.trace_id 同值 (批 C/C1)', async () => {
+    const tmpLogDir = join(tmpdir(), 'godot-mcp-test-dispatcher-trace');
+    resetLogger();
+    const logger = getLogger({ logDir: tmpLogDir });
+    const startSpy = vi.spyOn(logger, 'toolStart');
+    try {
+      const guard = createMockGuard(false);
+      const mockModule = { handleTool: vi.fn().mockResolvedValue({ content: [{ type: 'text' as const, text: '{"success":true,"data":{}}' }] }) };
+      mockGetModuleForTool.mockReturnValue(mockModule);
+      const dispatcher = createDispatcherForHandleCall({ readOnlyGuard: guard });
+      const result = await dispatcher.handleCall({ params: { name: 'scene', arguments: {} } });
+      const meta = (result as { _meta?: Record<string, unknown> })._meta;
+      expect(meta?.trace_id).toMatch(/^[0-9a-f]{32}$/);
+      // headless 路径 handleCall → dispatchTool → toolStart,本调用是首个(也是唯一)toolStart
+      const startTraceId = startSpy.mock.calls[0]?.[3];
+      expect(startTraceId).toBe(meta?.trace_id);
+      expect(String(startTraceId)).toMatch(/^[0-9a-f]{32}$/);
+    } finally {
+      startSpy.mockRestore();
+      resetLogger();
+      rmSync(tmpLogDir, { recursive: true, force: true });
+    }
   });
 
   // ── validateCommonArgs 类型校验 ──────────────────────────────────────────

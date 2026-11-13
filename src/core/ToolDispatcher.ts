@@ -430,7 +430,7 @@ export class ToolDispatcher {
       }
 
       // ── 4+5. editor/headless dispatch(抽到 _dispatchEditorOrHeadless,与 _confirmExecute 复用)──
-      return await this._dispatchEditorOrHeadless(name, args, currentMode, currentExecutor, startTime, findGodotOverride, progressEmitter, clientTasksCapable);
+      return await this._dispatchEditorOrHeadless(name, args, currentMode, currentExecutor, startTime, findGodotOverride, progressEmitter, clientTasksCapable, traceId);
     } catch (err) {
       // G2 (2026-08-13): 结构化错误分类 + PII 护栏。classifyError 从异常【类型】映射,
       // 绝不读 err.message。safeMessage 进 client 响应(PII-safe);完整 err.message 只 log。
@@ -506,7 +506,7 @@ export class ToolDispatcher {
           `Please call the original tool again — the server will re-generate a fresh token with the full args.`);
         console.warn(`[SECURITY] GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true — confirm_and_execute 跳过 elicitation (token:${String(token).slice(0, 8)} tool:${pending.toolName})。仅可信本地/CI,生产保持默认未设。`);
         // 跳到执行段（下面 confirmedPending 赋值后共用）
-        const __confirmedResult = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
+        const __confirmedResult = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable, traceId);
         const __audit = await this._auditConfirmedExecution(pending, startTime, __confirmedResult, traceId, callerAgentId);
         if (__audit.strict) {
           // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
@@ -551,7 +551,7 @@ export class ToolDispatcher {
 
       const pending = consumeToken(token);
       if (!pending) return opsErrorResult('TOKEN_EXPIRED', 'Confirmation token expired during MRTR round-trip');
-      const __confirmedResult2 = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable);
+      const __confirmedResult2 = await this._confirmExecute(pending, startTime, progressEmitter, currentMode, currentExecutor, clientTasksCapable, traceId);
       const __audit2 = await this._auditConfirmedExecution(pending, startTime, __confirmedResult2, traceId, callerAgentId);
       if (__audit2.strict) {
         // 1A STRICT:审计落盘失败 → 操作判失败(副作用可能已发生,诚实标注)
@@ -594,9 +594,13 @@ export class ToolDispatcher {
           recorder.record(ctx.toolName, true, duration);
         }
         // G2: trace_id/duration_ms 注入 _meta(MCP 标准,SDK ResultMetaObjectSchema looseObject 透传到 wire)。
+        // 批 C/C2 (2026-11-13,竞品综述建议②): gen_ai.operation.name/type 语义命名
+        // (对齐 fastmcp #6429 / typescript-sdk #3115 趋同语义,零新依赖)——OTel gen_ai
+        // 约定的操作级属性,LLM observability 消费端按此键归因工具调用。
         // TS caveat:CallToolResult._meta 推断类型只声明 serverInfo key,用断言放宽(运行时/wire 已验证)。
         const __g2Meta = (result as ToolResult & { _meta?: Record<string, unknown> })._meta ?? {};
-        return { ...result, _meta: { ...__g2Meta, trace_id: ctx.traceId, duration_ms: duration } } as ToolResult;
+        return { ...result, _meta: { ...__g2Meta, trace_id: ctx.traceId, duration_ms: duration,
+          'gen_ai.operation.name': ctx.toolName, 'gen_ai.operation.type': 'execute_tool' } } as ToolResult;
       },
     });
 
@@ -942,6 +946,8 @@ export class ToolDispatcher {
     currentMode: 'headless' | 'editor',
     currentExecutor: EditorToolExecutor | null,
     clientTasksCapable?: boolean,
+    /** 批 C/C1: 外层 confirm_and_execute 调用的 traceId,透传 toolStart 日志行。 */
+    traceId?: string,
   ): Promise<ToolResult> {
     // R4-core(2026-10-14 审查): 对 (pending.toolName, pending.args) 重跑前置双门
     // (profile 硬隔离 + action-gate)。token TTL 120s 内若管理员停用工具组或收紧
@@ -982,7 +988,7 @@ export class ToolDispatcher {
     log('[CONFIRM] Executing confirmed tool: %s', pending.toolName);
     let confirmedResult: ToolResult;
     try {
-      confirmedResult = await this._dispatchEditorOrHeadless(pending.toolName, pending.args, currentMode, currentExecutor, startTime, confirmedFindGodotOverride, progressEmitter, clientTasksCapable);
+      confirmedResult = await this._dispatchEditorOrHeadless(pending.toolName, pending.args, currentMode, currentExecutor, startTime, confirmedFindGodotOverride, progressEmitter, clientTasksCapable, traceId);
     } catch (err) {
       // I-1(2026-10-29 独立审查):dispatch 抛异常(handler/执行器 bug)时下方 recordOutcome
       // 会被跳过——throw 型失败同样计入熔断(仅入内存首错摘要,响应仍由外层 G2 结构化处理),
@@ -1087,16 +1093,19 @@ export class ToolDispatcher {
     findGodotOverride: ((projectPath?: string) => Promise<string>) | undefined,
     progressEmitter: ProgressEmitter | undefined,
     taskAugmented?: boolean,
+    /** 批 C/C1 (2026-11-13): DispatchContext.traceId 透传 logger.toolStart——
+     *  同一调用的 tool_start/tool_end 日志行与响应 _meta.trace_id 同源可 grep。 */
+    traceId?: string,
   ): Promise<ToolResult> {
     if (currentMode === 'editor' && currentExecutor) {
       const logger = getLogger();
-      const callId = logger.toolStart(toolName, args, this._toolLogProject(args));
+      const callId = logger.toolStart(toolName, args, this._toolLogProject(args), traceId);
       const editorResult = await currentExecutor.execute(toolName, args);
       // isError 前置:只在 editor 报错时才检测 -32601,避免 plugin 成功响应顶层带数字 code
       // 被误判 unknown method 触发静默降级(见 ToolDispatcher.test「isError guard」负面用例)。
       if (editorResult.isError === true && this._isUnknownMethod(editorResult)) {
         logger.toolEnd(callId, toolName, Date.now() - startTime, 'editor_unknown_method_fallback');
-        return this.attachFallbackWarning(await this.dispatchTool(toolName, args, startTime, findGodotOverride, progressEmitter, taskAugmented));
+        return this.attachFallbackWarning(await this.dispatchTool(toolName, args, startTime, findGodotOverride, progressEmitter, taskAugmented, traceId));
       }
       const duration = Date.now() - startTime;
       logger.toolEnd(callId, toolName, duration);
@@ -1110,7 +1119,7 @@ export class ToolDispatcher {
     }
     // CR-1: 必须传入 findGodotOverride,否则 perCallCtx 回退 this.ctx.findGodot,
     // 导致 godot_path 参数和项目感知 findGodot 在最常用路径失效。
-    return this.attachFallbackWarning(await this.dispatchTool(toolName, args, startTime, findGodotOverride, progressEmitter, taskAugmented));
+    return this.attachFallbackWarning(await this.dispatchTool(toolName, args, startTime, findGodotOverride, progressEmitter, taskAugmented, traceId));
   }
 
   /** §4.6(设计):tool 日志的 project 归属——args.project_path 优先(runtime 域工具自然
@@ -1121,7 +1130,7 @@ export class ToolDispatcher {
     return ps.getProjectDir() || undefined;
   }
 
-  private async dispatchTool(toolName: string, args: Record<string, unknown>, startTime: number, findGodotOverride?: ((projectPath?: string) => Promise<string>), progressEmitter?: ProgressEmitter, taskAugmented?: boolean): Promise<ToolResult> {
+  private async dispatchTool(toolName: string, args: Record<string, unknown>, startTime: number, findGodotOverride?: ((projectPath?: string) => Promise<string>), progressEmitter?: ProgressEmitter, taskAugmented?: boolean, traceId?: string): Promise<ToolResult> {
     let targetMod = getModuleForTool(toolName);
     let effectiveToolName = toolName;
     let effectiveArgs = args;
@@ -1141,7 +1150,7 @@ export class ToolDispatcher {
     }
 
     const logger = getLogger();
-    const callId = logger.toolStart(effectiveToolName, effectiveArgs, this._toolLogProject(effectiveArgs));
+    const callId = logger.toolStart(effectiveToolName, effectiveArgs, this._toolLogProject(effectiveArgs), traceId);
 
     let result: ToolResult | null;
     try {

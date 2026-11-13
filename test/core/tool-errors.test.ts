@@ -101,10 +101,10 @@ describe('classifyError — 自定义构造参数透传', () => {
 
 // ─── newTraceId ───────────────────────────────────────────────────────────────
 describe('newTraceId', () => {
-  it('生成 16 字符 hex(对齐 xulek _new_trace_id)', () => {
+  it('生成 32 字符 hex(批 C/C1 2026-11-13: randomUUID 全长,对齐 OTel traceId 32-hex 口径)', () => {
     const id = newTraceId();
-    expect(id).toHaveLength(16);
-    expect(id).toMatch(/^[0-9a-f]{16}$/);
+    expect(id).toHaveLength(32);
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it('每次调用唯一(CSPRNG 随机源)', () => {
