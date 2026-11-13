@@ -1,5 +1,5 @@
 // test/web-gui/portal.test.ts(2026-09-16 入口简化批补强:file:// 入口页)
-import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, statSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -103,5 +103,73 @@ describe('项目目录入口页 面板入口.html(2026-09-16 项目入口批)', 
     expect(html).toContain('var TOKEN = "";');         // 退化为空 token(纯跳转)
     const plain = buildPortalHtml();
     expect(plain).toContain('var TOKEN = "";');        // 项目目录/registry 版永不内嵌
+  });
+});
+
+// ─── Task C3(2026-11-12 反馈批次):写前内容比对——端口未变零写盘 ────────────────
+// 反馈 2026-11-08:server 每次启动以自身端口重写入口页,PREFERRED 未变也写盘,
+// 打破 git 干净态 ≥4 次。修法:三 ensure 函数统一 diff-before-write——目标已存在且
+// 内容完全相同 → 跳过写盘;不同或不存在 → 正常写。断言手段:先 utimesSync 钉住
+// 旧 mtime(若实现重写文件,mtime 必然刷新为当前时间 → toBe 失败,测试确定性成立)。
+describe('写前内容比对——端口未变零写盘(Task C3,反馈 2026-11-08)', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'webgui-portal-diff-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  /** 把文件 mtime 钉到 2 分钟前——跳过写盘则 mtime 不变,重写则必变(>秒级差,无粒度歧义)。 */
+  const pinOldMtime = (p: string) => {
+    const past = new Date(Date.now() - 120_000);
+    utimesSync(p, past, past);
+    return statSync(p).mtimeMs;
+  };
+
+  it('内容相同(PREFERRED 未变):ensurePortalPage 跳过写盘,mtime 不变', () => {
+    const p = ensurePortalPage(dir, 9553);
+    const pinned = pinOldMtime(p);
+    ensurePortalPage(dir, 9553);                       // 同端口再启动(反馈场景:每次 server 启动都重写)
+    expect(statSync(p).mtimeMs).toBe(pinned);
+  });
+
+  it('内容相同:ensureProjectPortalEntry 跳过写盘,mtime 不变', () => {
+    writeFileSync(join(dir, 'project.godot'), '', 'utf-8');
+    const p = ensureProjectPortalEntry(dir, 9553)!;
+    const pinned = pinOldMtime(p);
+    ensureProjectPortalEntry(dir, 9553);
+    expect(statSync(p).mtimeMs).toBe(pinned);
+  });
+
+  it('内容相同:ensurePackageRootEntry 跳过写盘,mtime 不变且权限语义保留', () => {
+    const tok = 'a'.repeat(32);
+    const p = ensurePackageRootEntry(dir, tok, 9553);
+    const pinned = pinOldMtime(p);
+    ensurePackageRootEntry(dir, tok, 9553);
+    expect(statSync(p).mtimeMs).toBe(pinned);
+    if (process.platform !== 'win32') {
+      // 跳过 = 不触碰文件 → 上次写入设的 0o600 原样保留(icacls 同理,win32 无 mode 断言)
+      expect((statSync(p).mode & 0o777).toString(8)).toBe('600');
+    }
+  });
+
+  it('端口变化(PREFERRED 不同):正常覆写为新端口', () => {
+    const p = ensurePortalPage(dir, 9553);
+    ensurePortalPage(dir, 9555);                       // 新实例占不同端口 → 入口页须反映最近实例
+    expect(readFileSync(p, 'utf-8')).toContain('var PREFERRED = 9555;');
+    expect(readFileSync(p, 'utf-8')).not.toContain('var PREFERRED = 9553;');
+  });
+
+  it('token 轮换(内容不同):正常覆写为新 token', () => {
+    const oldTok = 'a'.repeat(32);
+    const newTok = 'b'.repeat(32);
+    const p = ensurePackageRootEntry(dir, oldTok, 9553);
+    ensurePackageRootEntry(dir, newTok, 9553);         // rotateSharedToken 场景:token 变了必须重写
+    const html = readFileSync(p, 'utf-8');
+    expect(html).toContain(newTok);
+    expect(html).not.toContain(oldTok);
+  });
+
+  it('文件不存在(ENOENT):正常写入', () => {
+    const p = ensurePortalPage(dir, 9553);
+    expect(existsSync(p)).toBe(true);
+    expect(readFileSync(p, 'utf-8')).toContain('var PREFERRED = 9553;');
   });
 });

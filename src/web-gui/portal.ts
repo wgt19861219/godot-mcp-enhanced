@@ -10,7 +10,7 @@
 // token 进公开仓库会配合恶意网页形成攻击链),registry 版保持纯净模板。
 // 2B (2026-09-19 安全加固批2): 传递形态 query → hash——token 不进服务器访问日志/Referer。
 
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { webGuiRegistryDir, hardenFilePermissionsWindows, SHARED_TOKEN_RE } from './registry.js';
 import { serializeI18nForInline } from './i18n.js';
@@ -121,13 +121,25 @@ Promise.all(probes.map(function (p) { return probe(p); })).then(function (alive)
 `;
 }
 
+/** 写前内容比对(Task C3,2026-11-12 反馈批次):目标已存在且内容完全相同 → 跳过写盘返回
+ *  false;不同或读取失败(ENOENT 等)→ 正常写返回 true。
+ *  动机:server 每次启动以自身端口重写入口页,PREFERRED 未变也写盘——打破 git 干净态
+ *  (反馈 2026-11-08,≥4 次)。diff-before-write 后端口/token 未变时零写盘。 */
+function writeFileIfChanged(filePath: string, content: string, options: { encoding: 'utf-8'; mode?: number }): boolean {
+  try {
+    if (readFileSync(filePath, 'utf-8') === content) return false;
+  } catch { /* ENOENT / 读失败 → 视为需写 */ }
+  writeFileSync(filePath, content, options);
+  return true;
+}
+
 /** 幂等写入口页到 registry 目录,返回绝对路径(dashboard --web 与 server.start 共用)。
  *  preferredPort 由 server 侧传入(自身端口);CLI 调用方无实例上下文,缺省不内嵌(回退最大端口)。 */
 export function ensurePortalPage(dir?: string, preferredPort?: number): string {
   const d = dir ?? webGuiRegistryDir();
   mkdirSync(d, { recursive: true, mode: 0o700 });
   const filePath = join(d, 'portal.html');
-  writeFileSync(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
+  writeFileIfChanged(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
   return filePath;
 }
 
@@ -141,7 +153,7 @@ export const PROJECT_ENTRY_NAME = '面板入口.html';
 export function ensureProjectPortalEntry(dir: string, preferredPort?: number): string | null {
   if (!existsSync(join(dir, 'project.godot'))) return null;
   const filePath = join(dir, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
+  writeFileIfChanged(filePath, buildPortalHtml(undefined, preferredPort), { encoding: 'utf-8' });
   return filePath;
 }
 
@@ -151,7 +163,8 @@ export function ensureProjectPortalEntry(dir: string, preferredPort?: number): s
  * token 落盘按 registry 同款收紧:0o600 + Windows icacls(同机多用户防读)。 */
 export function ensurePackageRootEntry(root: string, token: string, preferredPort?: number): string {
   const filePath = join(root, PROJECT_ENTRY_NAME);
-  writeFileSync(filePath, buildPortalHtml(token, preferredPort), { encoding: 'utf-8', mode: 0o600 });
-  hardenFilePermissionsWindows(filePath);
+  const written = writeFileIfChanged(filePath, buildPortalHtml(token, preferredPort), { encoding: 'utf-8', mode: 0o600 });
+  // 跳过写盘时不做权限操作:文件未被触碰,上次写入已设的 0o600/icacls 原样保留。
+  if (written) hardenFilePermissionsWindows(filePath);
   return filePath;
 }
