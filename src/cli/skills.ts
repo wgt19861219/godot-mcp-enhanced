@@ -44,6 +44,17 @@ export function installSkills(
   return { installed, skipped };
 }
 
+/** C6(2026-11-13,反馈 2026-10-05): 判断目录是否已是 skills 目录本身(含 <name>/SKILL.md 子结构) */
+export function hasSkillSubdirs(dir: string): boolean {
+  for (const entry of readdirSync(dir)) {
+    try {
+      const p = join(dir, entry);
+      if (statSync(p).isDirectory() && existsSync(join(p, 'SKILL.md'))) return true;
+    } catch { /* 竞态/权限:按无结构处理 */ }
+  }
+  return false;
+}
+
 /** B3 (2026-10-19): --client 安装面映射——只收有真实用户级 skills 目录机制的客户端,
  * 不确定的客户端不加(装到无效目录 = 假成功,比不装更糟)。新客户端支持 skills 时
  * 在此表加条目即可。注意与 clients/ 的 15 个 MCP server 适配器是两个概念:
@@ -79,7 +90,9 @@ export async function runSkills(args: string[]): Promise<void> {
   }
 
   if (sub === 'install') {
-    // --target <dir>:装入指定目录(项目级 .claude/skills/);默认 ~/.claude/skills/(用户级)
+    // --target <dir>:skills 目录本身(裸透传);默认 ~/.claude/skills/(用户级)。
+    // 传项目根(下有 .claude/ 且无 */SKILL.md 结构)时 C6 自动检测拼 .claude/skills,
+    // 防 skills 散装到仓库根(反馈 2026-10-05)。
     // P2-9(七维度审核): 双形式(此前 indexOf 精确匹配只认空格形式,--target=<dir>
     // 静默落回用户级目录装错位置)
     const explicitTarget = opt(args, 'target');
@@ -112,6 +125,16 @@ export async function runSkills(args: string[]): Promise<void> {
       targetDir = factory();
     } else {
       targetDir = explicitTarget ?? join(homedir(), '.claude', 'skills');
+      // C6(2026-11-13): --target 项目根智能检测——target 非 skills 目录本身(无 */SKILL.md
+      // 子结构)且其下存在 .claude/ → 自动拼 .claude/skills;裸目录(两者皆无)保持透传
+      if (
+        explicitTarget &&
+        existsSync(join(explicitTarget, '.claude')) &&
+        !hasSkillSubdirs(explicitTarget)
+      ) {
+        targetDir = join(explicitTarget, '.claude', 'skills');
+        console.log(`ℹ detected project layout, installing into ${targetDir}`);
+      }
     }
     const { installed, skipped } = installSkills(skillsDir, targetDir, force);
     // 批4-T9(五维评估 P2): CLI 写面留痕——写 ~/.claude/skills/(机器级,非项目内)
@@ -126,5 +149,6 @@ export async function runSkills(args: string[]): Promise<void> {
 
   console.error(`Unknown subcommand: ${sub}`);
   console.error('Usage: godot-mcp-enhanced skills [list|install] [--force] [--client <name> | --target <dir>]');
+  console.error('  --target 即 skills 目录本身;传项目根(含 .claude/)时自动检测装入 <root>/.claude/skills/');
   process.exit(1);
 }

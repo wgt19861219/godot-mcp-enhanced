@@ -124,6 +124,54 @@ describe('runSkills CLI', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  // C6(反馈 2026-10-05): --target 三态——项目根(自动拼 .claude/skills)/skills 目录本身/裸目录
+  it('C6: --target 传项目根(有 .claude/ 无 */SKILL.md 结构)→ 自动装入 .claude/skills 并提示', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'skills-projroot-'));
+    try {
+      mkdirSync(join(root, '.claude'), { recursive: true });
+      writeFileSync(join(root, '.claude', 'settings.json'), '{}');
+      await runSkills(['install', '--target', root]);
+      const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(out).toContain('detected project layout');
+      expect(out).toContain(join(root, '.claude', 'skills'));
+      // 实际装入 <root>/.claude/skills/,不散装到仓库根
+      expect(existsSync(join(root, '.claude', 'skills', 'godot-router', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(root, 'godot-router'))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('C6: --target 传 skills 目录本身(有 */SKILL.md 结构)→ 行为不变,不拼 .claude/skills', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skills-isdir-'));
+    try {
+      // 既有 skill 子结构 = target 本身就是 skills 目录
+      mkdirSync(join(dir, 'some-existing-skill'), { recursive: true });
+      writeFileSync(join(dir, 'some-existing-skill', 'SKILL.md'), 'existing');
+      await runSkills(['install', '--target', dir]);
+      const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(out).not.toContain('detected project layout');
+      expect(existsSync(join(dir, 'godot-router', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(dir, '.claude'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('C6: --target 传裸目录(无 */SKILL.md 也无 .claude/)→ 保持裸透传', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skills-bare-'));
+    try {
+      writeFileSync(join(dir, 'README.md'), 'placeholder'); // 非空但非项目根非 skills 目录
+      await runSkills(['install', '--target', dir]);
+      const out = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(out).not.toContain('detected project layout');
+      expect(existsSync(join(dir, 'godot-router', 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(dir, '.claude'))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('B3: install --client 装入映射目录;--client 与 --target 互斥;未知 client 报错', async () => {
     // 映射重定向 tmp(测试隔离,不写真 ~/.zcode/skills)
     const target = mkdtempSync(join(tmpdir(), 'skills-client-'));
