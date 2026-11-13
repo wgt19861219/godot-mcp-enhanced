@@ -143,14 +143,34 @@ describe('shader 生成脚本快照锁定', () => {
       		if coerced != null:
       			node.set(key, coerced)
       			return
-      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
-      		var res: Variant = load(String(val))
+      	elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res_path: String = String(val)
+      		if not res_path.begins_with("res://"):
+      			_mcp_output("prop_error", "Property " + key + " expects Resource, got plain String '" + res_path + "' (use res:// path)")
+      			return
+      		if not _mcp_res_path_ok(res_path):
+      			_mcp_output("prop_error", "Unsafe res:// path blocked for " + key + ": " + res_path)
+      			return
+      		var res: Variant = load(res_path)
       		if res != null:
       			node.set(key, res)
       		else:
-      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + res_path)
       		return
       	node.set(key, val)
+
+      func _mcp_res_path_ok(path: String) -> bool:
+      	if path.find(char(0)) != -1:
+      		return false
+      	var decoded: String = path
+      	if path.find("%") != -1:
+      		decoded = path.uri_decode()
+      	if decoded.find(char(0)) != -1 or decoded.find("\\\\") != -1:
+      		return false
+      	for part in decoded.substr(6).split("/"):
+      		if part == ".." or part == ".":
+      			return false
+      	return true
 
       func _mcp_prop_declared_type(node: Node, key: String) -> int:
       	for p in node.get_property_list():
@@ -338,14 +358,34 @@ describe('shader 生成脚本快照锁定', () => {
       		if coerced != null:
       			node.set(key, coerced)
       			return
-      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
-      		var res: Variant = load(String(val))
+      	elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res_path: String = String(val)
+      		if not res_path.begins_with("res://"):
+      			_mcp_output("prop_error", "Property " + key + " expects Resource, got plain String '" + res_path + "' (use res:// path)")
+      			return
+      		if not _mcp_res_path_ok(res_path):
+      			_mcp_output("prop_error", "Unsafe res:// path blocked for " + key + ": " + res_path)
+      			return
+      		var res: Variant = load(res_path)
       		if res != null:
       			node.set(key, res)
       		else:
-      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + res_path)
       		return
       	node.set(key, val)
+
+      func _mcp_res_path_ok(path: String) -> bool:
+      	if path.find(char(0)) != -1:
+      		return false
+      	var decoded: String = path
+      	if path.find("%") != -1:
+      		decoded = path.uri_decode()
+      	if decoded.find(char(0)) != -1 or decoded.find("\\\\") != -1:
+      		return false
+      	for part in decoded.substr(6).split("/"):
+      		if part == ".." or part == ".":
+      			return false
+      	return true
 
       func _mcp_prop_declared_type(node: Node, key: String) -> int:
       	for p in node.get_property_list():
@@ -546,14 +586,34 @@ describe('shader 生成脚本快照锁定', () => {
       		if coerced != null:
       			node.set(key, coerced)
       			return
-      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
-      		var res: Variant = load(String(val))
+      	elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res_path: String = String(val)
+      		if not res_path.begins_with("res://"):
+      			_mcp_output("prop_error", "Property " + key + " expects Resource, got plain String '" + res_path + "' (use res:// path)")
+      			return
+      		if not _mcp_res_path_ok(res_path):
+      			_mcp_output("prop_error", "Unsafe res:// path blocked for " + key + ": " + res_path)
+      			return
+      		var res: Variant = load(res_path)
       		if res != null:
       			node.set(key, res)
       		else:
-      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + res_path)
       		return
       	node.set(key, val)
+
+      func _mcp_res_path_ok(path: String) -> bool:
+      	if path.find(char(0)) != -1:
+      		return false
+      	var decoded: String = path
+      	if path.find("%") != -1:
+      		decoded = path.uri_decode()
+      	if decoded.find(char(0)) != -1 or decoded.find("\\\\") != -1:
+      		return false
+      	for part in decoded.substr(6).split("/"):
+      		if part == ".." or part == ".":
+      			return false
+      	return true
 
       func _mcp_prop_declared_type(node: Node, key: String) -> int:
       	for p in node.get_property_list():
@@ -742,14 +802,34 @@ describe('shader 生成脚本快照锁定', () => {
       		if coerced != null:
       			node.set(key, coerced)
       			return
-      	elif val is String and String(val).begins_with("res://") and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
-      		var res: Variant = load(String(val))
+      	elif val is String and _mcp_prop_declared_type(node, key) == TYPE_OBJECT:
+      		var res_path: String = String(val)
+      		if not res_path.begins_with("res://"):
+      			_mcp_output("prop_error", "Property " + key + " expects Resource, got plain String '" + res_path + "' (use res:// path)")
+      			return
+      		if not _mcp_res_path_ok(res_path):
+      			_mcp_output("prop_error", "Unsafe res:// path blocked for " + key + ": " + res_path)
+      			return
+      		var res: Variant = load(res_path)
       		if res != null:
       			node.set(key, res)
       		else:
-      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + String(val))
+      			_mcp_output("prop_error", "Failed to load resource for " + key + ": " + res_path)
       		return
       	node.set(key, val)
+
+      func _mcp_res_path_ok(path: String) -> bool:
+      	if path.find(char(0)) != -1:
+      		return false
+      	var decoded: String = path
+      	if path.find("%") != -1:
+      		decoded = path.uri_decode()
+      	if decoded.find(char(0)) != -1 or decoded.find("\\\\") != -1:
+      		return false
+      	for part in decoded.substr(6).split("/"):
+      		if part == ".." or part == ".":
+      			return false
+      	return true
 
       func _mcp_prop_declared_type(node: Node, key: String) -> int:
       	for p in node.get_property_list():
