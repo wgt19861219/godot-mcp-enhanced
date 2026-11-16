@@ -19,11 +19,12 @@ import { genUiImportSingleScript } from './ui-import-single.js';
 import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds } from './layout-diff.js';
 import type { MeasuredNode } from './layout-diff.js';
 import { buildQualityReport } from './quality-check.js';
+import { parseAuthoredGeometry, planRebase, applyRebasePatch } from './anchor-rebase.js';
 import { parseGeometry, translateGeometry } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
 import { textResult } from '../../types.js';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 
 // ─── Tool Definitions ──────────────────────────────────────────────────────
 
@@ -31,7 +32,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'ui',
-      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。${NON_PERSIST}`,
+      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。${NON_PERSIST}`,
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -39,10 +40,10 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, draw_recipe=绘制, theme_*=主题',
+            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题',
           },
-          scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景)' },
-          node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe）' },
+          scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)' },
+          node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)）' },
           node_type: {
             type: 'string',
             enum: [...CONTROL_TYPES],
@@ -223,6 +224,15 @@ export function getToolDefinitions(): Tool[] {
             properties: { w: { type: 'number', description: '宽(px)' }, h: { type: 'number', description: '高(px)' } },
           },
           persist: { type: 'boolean', description: 'ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）' },
+          include: {
+            type: 'array', items: { type: 'string' },
+            description: 'solve_from_current: 节点名白名单',
+          },
+          exclude: {
+            type: 'array', items: { type: 'string' },
+            description: 'solve_from_current: 节点名黑名单(优先于 include)',
+          },
+          dry_run: { type: 'boolean', description: 'solve_from_current: 默认 true 只出计划;false 写盘' },
         },
         required: ['action'],
       },
@@ -246,6 +256,11 @@ export async function handleTool(
 
   try {
     const projectPath = requireProjectPath(args);
+    // Task 5(批1 1d):solve_from_current 纯 TS 文本 patch,不 spawn Godot——在 findGodot
+    // 之前分流(无 Godot 环境也可用;dry_run 只读)。写盘链路见 handleSolveFromCurrent。
+    if (action === 'solve_from_current') {
+      return await handleSolveFromCurrent(args, projectPath, ctx);
+    }
     const godot = await ctx.findGodot();
     const loadAutoloads = args.load_autoloads !== false;
     let script: string;
@@ -608,6 +623,116 @@ export async function handleTool(
   }
 }
 
+// ─── solve_from_current 内部链(批1 1d Task5)────────────────────────────────
+
+/** include/exclude 节点名白名单校验(Godot 节点名约束,防非法名进后续匹配)。 */
+function validateNameList(v: unknown, field: string): string[] | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (!Array.isArray(v)) {
+    throw new Error(`INVALID_PARAMS: ${field} must be an array of node names`);
+  }
+  for (const item of v) {
+    if (typeof item !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(item)) {
+      throw new Error(`INVALID_PARAMS: ${field} contains invalid node name: ${JSON.stringify(item)} (must match ^[A-Za-z_][A-Za-z0-9_]*$)`);
+    }
+  }
+  return v as string[];
+}
+
+/**
+ * solve_from_current:既有场景锚点改造(批1 1d)——授权几何解析 → planRebase 反解
+ * (f32 感知,引擎重算位级恒等,见 anchor-rebase.ts 头注)→ dry_run 默认 true 只出计划;
+ * dry_run=false 段落级文本 patch 原子写(tmp+rename;仅动目标 [node] 段内布局行,段外
+ * 字节与注释不动)。scene_path 必填 res:// 形式且过 sanitizeResPath。
+ */
+async function handleSolveFromCurrent(
+  args: Record<string, unknown>,
+  projectPath: string,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const sceneRaw = args.scene_path as string | undefined;
+  if (!sceneRaw || !String(sceneRaw).trim()) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'solve_from_current 需要 scene_path(res:// 形式,指向待改造场景)');
+  }
+  try { sanitizeResPath(sceneRaw, 'scene_path'); } catch {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'scene_path contains path traversal');
+  }
+  let absPath: string;
+  try { absPath = resolveWithinRoot(projectPath, normalizeUserProjectPath(sceneRaw)); } catch (err) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, `scene_path 非法: ${getErrorMessage(err)}`);
+  }
+  if (!existsSync(absPath)) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, `scene file not found: ${sceneRaw}`);
+  }
+  const text = readFileSync(absPath, 'utf-8');
+  const parsedGeo = parseAuthoredGeometry(text);
+
+  // node_path → subtree(measure 风格路径;剥 /root 前缀与场景根名,add_node B2 同款剥离链)
+  let subtree: string | undefined;
+  const npRaw = args.node_path as string | undefined;
+  if (npRaw !== undefined && npRaw !== null && String(npRaw).trim() !== '') {
+    const np = normalizeNodePath(String(npRaw));
+    let cleaned: string;
+    if (np === '/root') cleaned = '';
+    else if (np.startsWith('/root/')) cleaned = np.slice('/root/'.length);
+    else cleaned = np.replace(/^\//, '');
+    const rootName = parsedGeo.find(n => n.parentPath === '')?.name;
+    if (rootName && cleaned === rootName) cleaned = '';
+    else if (rootName && cleaned.startsWith(rootName + '/')) cleaned = cleaned.slice(rootName.length + 1);
+    subtree = cleaned;
+    if (subtree !== '' && !parsedGeo.some(n => n.path === subtree)) {
+      return opsErrorResult(ERROR_CODES.NODE_NOT_FOUND, `node_path 未在场景中找到: ${String(npRaw)}(解析为子树 "${subtree}")`);
+    }
+  }
+
+  let include: string[] | undefined;
+  let exclude: string[] | undefined;
+  try {
+    include = validateNameList(args.include, 'include');
+    exclude = validateNameList(args.exclude, 'exclude');
+  } catch (err) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, getErrorMessage(err));
+  }
+
+  const plan = planRebase(parsedGeo, { include, exclude, subtree });
+  const planPayload = {
+    subtree: subtree ?? null,
+    toWrite: plan.toWrite,
+    skippedContainerChildren: plan.skippedContainerChildren,
+    skippedByFilter: plan.skippedByFilter,
+    skippedUnresolvedParent: plan.skippedUnresolvedParent,
+    skippedNoGeometry: plan.skippedNoGeometry,
+  };
+  const dryRun = args.dry_run !== false;   // 默认 true——先看计划再写盘
+  if (dryRun) {
+    return textResult(JSON.stringify(opsSuccess({
+      dry_run: true, scene: sceneRaw, ...planPayload,
+      note: 'dry_run 默认 true:只返回计划不写盘;确认后传 dry_run=false 执行 tscn 文本 patch(注释保留)',
+    })));
+  }
+
+  // 写盘前编辑器场景守卫(同 add_node P1-2:防覆盖编辑器内存状态)
+  if (ctx.checkEditorSceneSave) {
+    const guard = await ctx.checkEditorSceneSave(absPath);
+    if (guard.blocked) {
+      return opsErrorResult('EDITOR_SCENE_OPEN', guard.message ?? `Scene open in editor: ${absPath}`);
+    }
+  }
+  const patch = applyRebasePatch(text, plan.toWrite);
+  if (patch.patched === 0) {
+    return textResult(JSON.stringify(opsSuccess({
+      dry_run: false, written: 0, scene: sceneRaw, ...planPayload,
+    }, patch.warnings)));
+  }
+  // 原子写:tmp → rename(patch 语义下 rename 覆盖目标)
+  const tmpPath = absPath + '.mcp-rebase-tmp';
+  writeFileSync(tmpPath, patch.text, 'utf-8');
+  renameSync(tmpPath, absPath);
+  return textResult(JSON.stringify(opsSuccess({
+    dry_run: false, written: patch.patched, scene: sceneRaw, ...planPayload,
+  }, patch.warnings)));
+}
+
 // ─── ui_import_prototype 内部链(spec §2.3)──────────────────────────────────
 
 /** GDScript error 输出 → 错误码映射(handleTool 公共段与 ui_import_prototype 共用)。 */
@@ -848,6 +973,7 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
       ui_draw_recipe: 'write', ui_build_layout: 'write', ui_measure_layout: 'read',
       ui_import_prototype: 'write', ui_pixel_verify: 'write',
       theme_create: 'write', theme_set_property: 'write',
+      solve_from_current: 'write',
     } satisfies Record<typeof ACTIONS[number], RiskLevel>,
   },
 };

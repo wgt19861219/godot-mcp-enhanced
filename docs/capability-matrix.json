@@ -6097,7 +6097,7 @@
     {
       "name": "ui",
       "group": "ui",
-      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
+      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6120,17 +6120,18 @@
               "ui_import_prototype",
               "ui_pixel_verify",
               "theme_create",
-              "theme_set_property"
+              "theme_set_property",
+              "solve_from_current"
             ],
-            "description": "操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, draw_recipe=绘制, theme_*=主题"
+            "description": "操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题"
           },
           "scene_path": {
             "type": "string",
-            "description": "场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景)"
+            "description": "场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)"
           },
           "node_path": {
             "type": "string",
-            "description": "节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe）"
+            "description": "节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)）"
           },
           "node_type": {
             "type": "string",
@@ -6736,6 +6737,24 @@
           "persist": {
             "type": "boolean",
             "description": "ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）"
+          },
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "solve_from_current: 节点名白名单"
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "solve_from_current: 节点名黑名单(优先于 include)"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "solve_from_current: 默认 true 只出计划;false 写盘"
           }
         },
         "required": [
@@ -6783,7 +6802,10 @@
         "tree",
         "load_autoloads",
         "viewport",
-        "persist"
+        "persist",
+        "include",
+        "exclude",
+        "dry_run"
       ],
       "readonly": false,
       "longRunning": false,
@@ -6791,7 +6813,7 @@
       "securityLevel": "danger-api",
       "riskDistribution": {
         "read": 2,
-        "write": 11,
+        "write": 12,
         "destructive": 0,
         "process": 0
       },
@@ -6817,9 +6839,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 561,
-        "schemaBytes": 11489,
-        "totalBytes": 12050
+        "descBytes": 703,
+        "schemaBytes": 11961,
+        "totalBytes": 12664
       },
       "annotations": {
         "readOnlyHint": false,

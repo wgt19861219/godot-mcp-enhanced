@@ -20,6 +20,7 @@ export const ACTIONS = [
   'ui_pixel_verify',
   'theme_create',
   'theme_set_property',
+  'solve_from_current',
 ] as const;
 
 export const CONTROL_TYPES = [
