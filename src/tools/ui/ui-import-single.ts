@@ -15,7 +15,7 @@
 // 顺序;原两阶段流程的 TS 侧 hint-append 随第二次 spawn 删除,阶段语义由模板自持)。
 import { escapeForGdLiteral } from '../shared.js';
 import { genUiBuildLayoutScript } from './ui-layout.js';
-import { genUiMeasureScript, genStyleExpectInit } from './ui-measure.js';
+import { genUiMeasureScript, genStyleExpectInit, genThemeMountInit } from './ui-measure.js';
 import type { UiNodeSpec } from './types.js';
 
 export function genUiImportSingleScript(
@@ -24,6 +24,7 @@ export function genUiImportSingleScript(
   tree: UiNodeSpec,
   viewport: { w: number; h: number },
   styleExpect?: ReadonlyArray<{ path: string; slots: readonly string[] }>,
+  themePath?: string,
 ): string {
   // sp/np 内嵌 reload load/npLookup/错误信息均为纯字面量(不参与 % 格式化),走
   // escapeForGdLiteral——gdEscape 会把路径中 % 双写成 %%(Task 2 根因,reload 加载失败源)。
@@ -56,7 +57,7 @@ ${genStyleExpectInit(styleExpect)}\t# --- reload(spec §6 B-1:绕过 ResourceCac
 \t_mcp_scene_instance = _rl.instantiate()
 \troot.add_child(_mcp_scene_instance)
 \t_target = _mcp_scene_instance
-${npLookup}\tprocess_frame.connect(_on_measure_frame)
+${genThemeMountInit(themePath)}${npLookup}\tprocess_frame.connect(_on_measure_frame)
 `;
 
   // ① build 段尾替换。锚点守卫:genUiBuildLayoutScript 结构变更导致替换未命中时,静默
@@ -68,6 +69,8 @@ ${npLookup}\tprocess_frame.connect(_on_measure_frame)
   }
 
   // ② measure 核心截取。锚点守卫同上:indexOf -1 会让 slice 静默产出损坏脚本。
+  // themePath 不传给 genUiMeasureScript:其 _initialize(含 themeMount 注入位)在下一步
+  // 整体剥离,本链真正的挂载点在上方 _measure_go 的 genThemeMountInit(themePath)。
   const measureFull = genUiMeasureScript(scenePath, parentPath, 16, styleExpect);
   const anchorIdx = measureFull.indexOf('var _frames := 0');
   if (anchorIdx < 0) {

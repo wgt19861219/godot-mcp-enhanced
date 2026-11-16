@@ -6287,7 +6287,7 @@
           },
           "theme_path": {
             "type": "string",
-            "description": "ui_set_theme: Theme 资源路径（save/load 时必填）"
+            "description": "ui_set_theme: Theme 资源路径（save/load 时必填）;ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传（theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload）"
           },
           "params": {
             "type": "object",
@@ -6818,8 +6818,8 @@
       },
       "size": {
         "descBytes": 561,
-        "schemaBytes": 11095,
-        "totalBytes": 11656
+        "schemaBytes": 11276,
+        "totalBytes": 11837
       },
       "annotations": {
         "readOnlyHint": false,

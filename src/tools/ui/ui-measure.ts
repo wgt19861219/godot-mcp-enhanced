@@ -23,11 +23,35 @@ export function genStyleExpectInit(
   return `\tvar _se_parsed = JSON.parse_string("${escapeForGdLiteral(JSON.stringify(Object.fromEntries(styleExpect.map(e => [e.path, [...e.slots]]))))}")\n\t_style_expect = _se_parsed if typeof(_se_parsed) == TYPE_DICTIONARY else _style_expect\n`;
 }
 
+/** 批1 1a(theme_path 挂载):root 主题挂载注入行。与 genStyleExpectInit 同款共用构造——
+ * genUiMeasureScript._initialize 与 ui-import-single._measure_go 各注入一份,防双份漂移
+ * (measure 核心经 'var _frames := 0' 截取后 _initialize 整体剥离,import 链必须在
+ * _measure_go 内重注)。背景(spec P0-2):theme_type_variation 节点的字号/行高取自
+ * 主题,无主题语境下 rect 是错语境——显式挂载让测量不依赖项目自身是否挂了根主题
+ * (spike 实测注:--headless --path --script 模式下引擎仍加载项目 autoload,自带
+ * ThemeManager 的项目两轮同语境 Δ=0;无 autoload fixture 实测 24→42,见
+ * test/ui-measure-theme.test.ts)。
+ * null/非 Theme 显式报错退出(Review Focus 1,不静默吞)。转义走 escapeForGdLiteral
+ * (纯字符串字面量内插,同 sp/np 先例——gdEscape 为 % 格式化设计会把 % 双写)。
+ * 空路径返回 ''(向后兼容:不传 theme_path 时生成脚本与旧版逐字节一致)。 */
+export function genThemeMountInit(themePath?: string): string {
+  if (!themePath) return '';
+  const tp = escapeForGdLiteral(themePath);
+  return `\tvar _theme_res = load("${tp}")
+\tif _theme_res == null or not _theme_res is Theme:
+\t\t_mcp_output("error", "theme_path load failed: ${tp}")
+\t\t_mcp_done()
+\t\treturn
+\troot.set_theme(_theme_res)
+`;
+}
+
 export function genUiMeasureScript(
   scenePath: string,
   nodePath: string | undefined,
   maxDepth: number,
   styleExpect?: ReadonlyArray<{ path: string; slots: readonly string[] }>,
+  opts?: { themePath?: string },
 ): string {
   const sp = escapeForGdLiteral(scenePath);
   const np = nodePath ? escapeForGdLiteral(nodePath) : '';
@@ -46,6 +70,10 @@ export function genUiMeasureScript(
   // 格式化场景设计会把路径中 % 双写成 %%,含 % 的文件名(如 res://a%b.tscn)被静默改写
   // 导致加载失败;引号/反斜杠/换行/Tab 等共享转义两入口相同(escapeGdStringCore),切换零损失。
   const styleInit = genStyleExpectInit(styleExpect);
+  // 批1 1a:theme_path 挂载注入(_mcp_load_scene 成功、场景 add_child 挂树之后——
+  // root.set_theme 触发的主题传播作用于已进树的子树;置于 _initialize 语句区,
+  // 不进 class body 声明区——ui-import-single 的截取拼接只保留锚点后的函数体)。
+  const themeMount = genThemeMountInit(opts?.themePath);
   return `${SCENE_TREE_HEADER}
 
 var _frames := 0
@@ -61,7 +89,7 @@ ${styleInit}\tif not _mcp_load_scene("${sp}"):
 \t\t_mcp_done()
 \t\treturn
 \t_target = _mcp_scene_instance
-${np ? `\tif "${np}" != "":
+${themeMount}${np ? `\tif "${np}" != "":
 \t\tvar _n = _mcp_get_scene_node("${np}")
 \t\tif _n == null:
 \t\t\t_mcp_output("error", "Node not found: ${np}")

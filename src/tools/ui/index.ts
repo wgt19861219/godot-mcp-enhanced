@@ -99,7 +99,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['set_params', 'create', 'save', 'load'],
             description: 'ui_set_theme: 操作类型（set_params/create/save/load）',
           },
-          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径（save/load 时必填）' },
+          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径（save/load 时必填）;ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传（theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload）' },
           params: {
             type: 'object',
             description: 'ui_set_theme(set_params): 键值对（number/bool/string/array[4]→Color）',
@@ -460,7 +460,14 @@ export async function handleTool(
         }
         // PR-2:expect_tree 带 styleboxes → 期望清单内嵌 measure 脚本(读回判定并集左侧)
         const styleExpect = expectTree ? styleExpectList(flattenStyleTargets(expectTree)) : undefined;
-        script = genUiMeasureScript(scenePath, nodePathRaw ? normalizeNodePath(nodePathRaw) : undefined, maxDepth, styleExpect);
+        // 批1 1a:theme_path 挂载(sanitize 同 ui_set_theme 先例——路径进 load(),防穿越)
+        const themePath = args.theme_path as string | undefined;
+        if (themePath) {
+          try { sanitizeResPath(themePath, 'theme_path'); } catch {
+            return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
+          }
+        }
+        script = genUiMeasureScript(scenePath, nodePathRaw ? normalizeNodePath(nodePathRaw) : undefined, maxDepth, styleExpect, { themePath });
         break;
       }
       case 'ui_pixel_verify':
@@ -605,6 +612,14 @@ async function handleUiImportPrototype(
   const tolRaw = args.tolerance;
   const tolerance = typeof tolRaw === 'number' && Number.isFinite(tolRaw) && tolRaw >= 0 ? tolRaw : 2;
 
+  // 批1 1a:theme_path 挂载透传进合成脚本(_measure_go 注入;sanitize 同 ui_set_theme 先例)
+  const themePath = args.theme_path as string | undefined;
+  if (themePath) {
+    try { sanitizeResPath(themePath, 'theme_path'); } catch {
+      return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
+    }
+  }
+
   // viewport:显式优先,默认 geometry.viewport(合成根 rect 的求解基准)
   let viewport = geo.viewport;
   if (args.viewport !== undefined) {
@@ -623,7 +638,7 @@ async function handleUiImportPrototype(
   // 「build 已持久化,可重跑 ui_measure_layout」恢复语义(persist 先于 measure),TS 侧
   // 不再二次拼接(原两阶段流程的 hint-append 逻辑随第二次 spawn 一起删除)。
   const styleTargets = flattenStyleTargets(translated.tree);
-  const singleScript = genUiImportSingleScript(scenePath, parentPath, translated.tree, viewport, styleExpectList(styleTargets));
+  const singleScript = genUiImportSingleScript(scenePath, parentPath, translated.tree, viewport, styleExpectList(styleTargets), themePath);
   const singleResult = await executeGdscriptTrusted({
     godotPath: godot, projectPath, code: singleScript, timeout: 30, loadAutoloads,
   });
