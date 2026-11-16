@@ -30,9 +30,11 @@ const fr = Math.fround;
 const CONTAINER_TYPES = new Set<string>(CONTAINER_CONTROL_TYPES);
 
 // Godot LayoutPreset 枚举值 → [anchor_left, anchor_right, anchor_top, anchor_bottom]。
+// 枚举顺时针序:top-left(0)→top-right(1)→bottom-right(2)→bottom-left(3)——Task5 审查
+// Important#1 曾把 2/3 值对调(bottom-left 锚 [0,0,1,1] 误填成 [1,1,1,1]),已修+表驱动测试锚定。
 // 引擎属性应用顺序:anchors_preset 先设四锚,显式 anchor_* 行后覆盖——缺边由 preset 补全。
 const PRESET_ANCHORS: Record<number, readonly [number, number, number, number]> = {
-  0: [0, 0, 0, 0], 1: [1, 1, 0, 0], 2: [0, 0, 1, 1], 3: [1, 1, 1, 1],
+  0: [0, 0, 0, 0], 1: [1, 1, 0, 0], 2: [1, 1, 1, 1], 3: [0, 0, 1, 1],
   4: [0, 0, 0.5, 0.5], 5: [0.5, 0.5, 0, 0], 6: [1, 1, 0.5, 0.5], 7: [0.5, 0.5, 1, 1],
   8: [0.5, 0.5, 0.5, 0.5], 9: [0, 0, 0, 1], 10: [0, 1, 0, 0], 11: [1, 1, 0, 1],
   12: [0, 1, 1, 1], 13: [0.5, 0.5, 0, 1], 14: [0, 1, 0.5, 0.5], 15: [0, 1, 0, 1],

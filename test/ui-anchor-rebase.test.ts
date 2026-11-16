@@ -182,6 +182,44 @@ describe('parseAuthoredGeometry', () => {
     // 交错 ext_resource 后的深层节点也在(RuleMark)
     expect(byPath.get('Panel/MoneyLay/RuleButt/RuleMark')).toBeDefined();
   });
+
+  // ─── 表驱动:全部 16 项 LayoutPreset 缺边填充(Task5 审查 Important#1 盲区)───
+  // 枚举顺时针序:top-left(0)→top-right(1)→bottom-right(2)→bottom-left(3)。
+  it('preset-only 段:16 项 preset 缺边全部按 Godot 枚举填充', () => {
+    const expected: Record<number, [number, number, number, number]> = {
+      0: [0, 0, 0, 0], 1: [1, 1, 0, 0], 2: [1, 1, 1, 1], 3: [0, 0, 1, 1],
+      4: [0, 0, 0.5, 0.5], 5: [0.5, 0.5, 0, 0], 6: [1, 1, 0.5, 0.5], 7: [0.5, 0.5, 1, 1],
+      8: [0.5, 0.5, 0.5, 0.5], 9: [0, 0, 0, 1], 10: [0, 1, 0, 0], 11: [1, 1, 0, 1],
+      12: [0, 1, 1, 1], 13: [0.5, 0.5, 0, 1], 14: [0, 1, 0.5, 0.5], 15: [0, 1, 0, 1],
+    };  // [left, right, top, bottom]
+    const sections = Array.from({ length: 16 }, (_, n) =>
+      `[node name="P${n}" type="Control" parent="."]\nanchors_preset = ${n}\n`).join('\n');
+    const parsed = parseAuthoredGeometry(
+      `[gd_scene format=3]\n\n[node name="Root" type="Control"]\n\n${sections}`);
+    for (let n = 0; n < 16; n++) {
+      const node = parsed.find(p => p.name === `P${n}`)!;
+      expect(node, `preset ${n} 节点已解析`).toBeDefined();
+      const [l, r, t, b] = expected[n]!;
+      expect(node.anchors, `preset ${n} 缺边填充`).toEqual({ left: l, right: r, top: t, bottom: b });
+      expect(node.hasLayout, `preset ${n} 计为布局节点`).toBe(true);
+    }
+  });
+
+  it('saver 真实形态:preset 3(BOTTOM_LEFT)仅写 anchor_top/bottom 行 → 解析 [0,0,1,1](Important#1 回归)', () => {
+    const parsed = parseAuthoredGeometry(`[gd_scene format=3]
+
+[node name="Root" type="Control"]
+
+[node name="BlNode" type="Control" parent="."]
+anchors_preset = 3
+anchor_top = 1.0
+anchor_bottom = 1.0
+`);
+    const n = parsed.find(p => p.name === 'BlNode')!;
+    expect(n).toBeDefined();
+    expect(n.anchors).toEqual({ left: 0, right: 0, top: 1, bottom: 1 });
+    expect(n.offsets).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
+  });
 });
 
 describe('planRebase', () => {
