@@ -18,6 +18,7 @@ import { genUiMeasureScript, checkViewportEffect } from './ui-measure.js';
 import { genUiImportSingleScript } from './ui-import-single.js';
 import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds } from './layout-diff.js';
 import type { MeasuredNode } from './layout-diff.js';
+import { buildQualityReport } from './quality-check.js';
 import { parseGeometry, translateGeometry } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
@@ -566,6 +567,35 @@ export async function handleTool(
         // measure 输出异常时保持原样返回(与 expect_tree 注入段同款契约)
       }
     }
+    // Task 4(批1 1c):quality/order 报告节——四类品质检查(裸壳/应跟随/等距组/溢出)
+    // 聚合挂节。D8 输出纪律:stalled !== true 且对应节有发现才挂(无发现省略字段,null
+    // 语义);stalled 时不出判定只报 stalled(调用方契约,buildQualityReport 注释同款)。
+    // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化。
+    if (action === 'ui_measure_layout' && !r.isError) {
+      try {
+        const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
+          success?: boolean;
+          data?: { measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stalled?: boolean } };
+        };
+        if (parsed.success === true && parsed.data?.measure) {
+          const m = parsed.data.measure;
+          const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport });
+          if (report?.quality || report?.order) {
+            const merged = {
+              ...parsed,
+              data: {
+                ...parsed.data,
+                ...(report?.quality ? { quality: report.quality } : {}),
+                ...(report?.order ? { order: report.order } : {}),
+              },
+            };
+            r = { ...r, content: [{ type: 'text', text: JSON.stringify(merged) }] };
+          }
+        }
+      } catch {
+        // measure 输出异常时保持原样返回(与前两段注入同款契约,diff 缺失由 AI 视为未验证)
+      }
+    }
     // persist=true 的 ui_build_layout 已原子写落盘,不再 append "headless 退出即丢" 提示;其余照旧。
     if (UI_PERSIST_ACTIONS.has(action) && !(action === 'ui_build_layout' && args.persist === true)) {
       return appendRuntimePersistWarning(r, action);
@@ -744,6 +774,11 @@ async function handleUiImportPrototype(
       ...translated.coverage,
       _note: 'targets 为受 layout_verify 几何覆盖的节点数(含合成根 _PrototypeRoot,无 flow 时 = 输入节点数+1);flow 直接子节点丢 rect 不在 layout_verify 覆盖内,由 flow_verify 数字覆盖(期望=输入视口 rect);孙层由 layout_verify 近似覆盖(期望相对输入父原点,容器排布后天然带偏移)',
     };
+    // Task 4(批1 1c):quality/order 报告节(D8:stalled !== true 且有发现才挂;
+    // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化)
+    const qualityReport = measure?.stalled === true
+      ? null
+      : buildQualityReport(measured, { viewport: measure?.viewport });
     return textResult(JSON.stringify(opsSuccess({
       tree: translated.tree,
       build_warnings: buildWarnings,
@@ -756,6 +791,8 @@ async function handleUiImportPrototype(
       layout_verify: layoutVerify,
       style_verify: styleVerify,
       flow_verify: flowVerify,
+      ...(qualityReport?.quality ? { quality: qualityReport.quality } : {}),
+      ...(qualityReport?.order ? { order: qualityReport.order } : {}),
       persist: out.data?.persist,
     }, out.warnings ?? [])));
   } catch {

@@ -97,6 +97,7 @@ Refero Styles 把知名网站的设计系统逆向成 AI 可读的 DESIGN.md,核
 - 溢出门禁阈值默认 4px;quality/order **默认仅在有发现时输出**(空则省略,不增常态 token 负担;全量可 `checks` opt-in)(P1-4)。
 - `stalled=true`(布局未收敛)时**不出判定**,只报 stalled(P1-4)。
 - 报告量预估(N2,验收前置):daily_login 28 节点,Panel/TopRigLay/MoneyLay 壳预计全部命中 A.1——**预期行为**。验收标准相应从"清零"改为**"名单化处置"**:每个报告项要么改造、要么标注豁免(纯静态装饰,A.2/A.3 同理),处置记录随基线归档。
+- 报告量实测(2026-11-16 Task 4 靶子 e2e,挂主题 g960 measure 一次):**裸壳 A.1 ×3**(Panel / Panel/MoneyLay / Panel/TopRigLay,与预估名单完全一致)/ **应跟随 A.2 ×1**(Panel/Bj)/ 父级越界 ×0 / 视口溢出 ×0(g960 全在内,g800 档才会暴露 Panel 越宽)/ **等距组 A.3 ×0**——等距判定限正间距(等量叠压堆叠非容器化候选,靶子实测 6 组负间距全被正确抑制)。锚定测试 `test/ui-quality-check.test.ts`(双 skipIf:GODOT_PATH + 靶子项目存在)。
 
 ### 1d. `solve_from_current`(唯一写盘新工具,P0-3 语义全部本节定死)
 
