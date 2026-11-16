@@ -44,6 +44,10 @@ export interface GeometryNode {
   align?: ProtoAlign;
   value?: number;
   flow?: 'row' | 'column';
+  /** 批1 1e(Task 6):flow 容器间距(px)——落地 _Flow 容器 separation(theme override 常量,经 layout.gap)。 */
+  flow_gap?: number;
+  /** 批1 1e(Task 6):flow 跨轴对齐(align-items 词表)——映射 FlexLayout.align(flex-start/center/flex-end)。 */
+  flow_align?: 'start' | 'center' | 'end';
   justify?: 'flex-start' | 'center' | 'flex-end' | 'space-between' | 'space-around' | 'space-evenly';
   interactive?: boolean;
 }
@@ -131,6 +135,9 @@ const NodeSchema = z.strictObject({
   align: z.enum(['left', 'center', 'right']).optional(),
   value: z.number().finite().min(0).max(1).optional(),
   flow: z.enum(['row', 'column']).optional(),
+  // 批1 1e(Task 6):平级可选键(枚举形态不动,与 flow 无 schema 级依赖——无 flow 时翻译层忽略+warning)
+  flow_gap: z.number().finite().min(0).optional(),
+  flow_align: z.enum(['start', 'center', 'end']).optional(),
   justify: z.enum(['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly']).optional(),
   interactive: z.boolean().optional(),
 });
@@ -247,6 +254,11 @@ export function normalizeColor(c: string | number[], field: string, name: string
 
 const ALIGN_MAP: Record<ProtoAlign, number> = { left: 0, center: 1, right: 2 };
 
+/** 批1 1e(Task 6):flow_align(align-items 词表)→ FlexLayout.align 词表映射。 */
+const FLOW_ALIGN_MAP: Record<'start' | 'center' | 'end', 'flex-start' | 'center' | 'flex-end'> = {
+  start: 'flex-start', center: 'center', end: 'flex-end',
+};
+
 /**
  * Godot 4.7 默认主题 ProgressBar 最小高度(px)——默认主题 stylebox 的最小高把
  * Control.minimum_size 顶到该值,rect.h 更小会被引擎钳制(clamp)。
@@ -338,6 +350,15 @@ function buildSpec(
   if (nd.borderNotice !== undefined) {
     warnings.push(`节点 "${node.cleanName}": ${nd.borderNotice}`);
   }
+  // 批1 1e(Task 6):flow_gap/flow_align 是 flow 容器的伴生键——无 flow 声明时无处落地,
+  // 显式 warning 消静默丢弃(对齐 borderNotice 的透传精神,不进 schema 依赖约束以保持平级可选)。
+  if (nd.flow === undefined && (nd.flow_gap !== undefined || nd.flow_align !== undefined)) {
+    const dropped = [
+      nd.flow_gap !== undefined ? 'flow_gap' : null,
+      nd.flow_align !== undefined ? 'flow_align' : null,
+    ].filter(x => x !== null).join('/');
+    warnings.push(`节点 "${node.cleanName}": ${dropped} 需与 flow 同节点声明才生效,当前 flow 未声明,已忽略`);
+  }
   // PR-1 规则 9v2:样式三件套 → StyleBoxFlat(modulate 近似通道删除)。
   // (规则 7 曾依赖本段产出的 styleboxes 变量做条件预警,2026-08-17 实测后恢复无条件,不再依赖。)
   const hasBg = nd.bg !== undefined;
@@ -412,9 +433,16 @@ function buildSpec(
   if (nd.flow !== undefined) {
     // 规则 5:flow 壳 + _Flow 容器;直接子节点丢 rect、min_size 取原尺寸。
     // 孙层相对化基准 = 直接子节点输入 abs(统一公式 rel = child.abs − parent.abs)。
+    // 嵌套 flow(直接子自身也是 flow 壳)经 buildSpec 递归天然展开——任意深度 flow 壳
+    // 的子节点都进自己的 _Flow 容器(批1 1e 多层 flow 语义,回归锚测试锁定)。
     const flowType = nd.flow === 'row' ? 'HBoxContainer' : 'VBoxContainer';
     const flowLayout: UiNodeSpec['layout'] = { direction: nd.flow };
     if (nd.justify !== undefined) flowLayout.justify = nd.justify;
+    // 批1 1e(Task 6):flow_gap → layout.gap(下游 genFlexContainerProps 落 add_theme_constant_override
+    // h/v_separation,即 HBox/VBox 的 separation theme override 常量);
+    // flow_align → layout.align(词表映射,作用于子节点跨轴 size_flags)。
+    if (nd.flow_gap !== undefined) flowLayout.gap = nd.flow_gap;
+    if (nd.flow_align !== undefined) flowLayout.align = FLOW_ALIGN_MAP[nd.flow_align];
     // containerName 提前提取:children 的 map 回调同步执行,若在此引用 container.name
     // 会触发 TDZ ReferenceError(const container 尚未完成初始化)。
     const containerName = uniqueName(`${node.cleanName}_Flow`, taken);

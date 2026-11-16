@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.36.9] - 2026-11-16
+
+> refero 批 1 布局约束 Task 6（1e）：提取脚本 flex 自动检测 + `flow_gap`/`flow_align` 平级新键 + 多层 flow 翻译锚定。≠发版,npm publish/tag 待用户明确指令。ui.md 规则内容变更（evaluate 模板 flex/grid 自动检测段）触发 bump 硬门禁,版本行 v0.17.0+→v0.36.9+。
+
+- **feat(ui): 提取脚本 flex 自动检测+flow_gap/flow_align 平级新键+多层 flow 翻译(批1 1e)**:proto-geometry strictObject 新增平级可选键 `flow_gap`（`z.number().finite().min(0)`，flow 容器间距 px）与 `flow_align`（`z.enum(['start','center','end'])`，跨轴对齐 align-items 词表）——`flow` 枚举形态不动（BC 锚：`{flow:{dir}}` 仍拒），既有 geometry 生产者（不带新键）零影响（无新键逐字节基线回归锚锁定）。翻译器（纯函数零 Godot 依赖保持）：`_Flow` 容器落地 `layout.gap`（下游 genFlexContainerProps 产 `add_theme_constant_override` h/v_separation）与 `layout.align`（start/center/end→flex-start/center/flex-end 词表映射）；两键无 flow 同节点声明时忽略+warning（不静默丢弃）；多层 flow 任意深度嵌套经 buildSpec 递归展开为 Container 子树——每层 flow 的直接子进各自 `_Flow` 容器（既有行为,新增三层嵌套锚定：根 flow row＞子 flow column＞孙 Label,孙不走 rect 锚点、flow_expect 全链不因嵌套丢失）。evaluate 取数模板（双副本 rule-templates.ts + .claude/rules/godot-mcp-ui.md）升级：对每个 `[data-name]` 元素读 computed style 的 `display`——flex/inline-flex/grid/inline-grid 时自动输出 flow（flex-direction 定向,column/row-reverse 就近归 column/row；grid 暂映射 row 不扩枚举并附 data-justify）+ `flow_gap`（gap 计算值＞0 才填,normal 跳过）+ `flow_align`（align-items 的 start/center/end 映射；stretch/normal 默认不输出）,显式 `data-flow` 标注优先于自动检测。新增测试 12 条（schema 6/翻译 5/回归锚 1）。门禁：vitest 101 绿 + check:rules-sync + version bump + build-matrix + ssot-params + budget。
+
 ## [0.36.8] - 2026-11-13
 
 > 竞品综述落地批 A/B/C/D 四批（综述建议②③④⑤;方案 docs/plans/2026-11-13-竞品综述落地批方案.md;建议① 4.8-dev6 预跑验证记录于 ADR）。≠发版,npm publish/tag 待用户明确指令。core.md 规则内容变更（orphan 段文档谎言修复）触发 bump 硬门禁,版本行 v0.36.3+→v0.36.8+。同版收编反馈批次 C4（editor/转发超时 env 可配,原 [Unreleased] 条目）。

@@ -3,7 +3,7 @@ description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layo
 alwaysApply: false
 ---
 
-> 适用于 godot-mcp-enhanced v0.17.0+
+> 适用于 godot-mcp-enhanced v0.36.9+
 
 ## 概述与架构
 
@@ -153,7 +153,7 @@ Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VS
 ```
 
 - **扁平列表，视口绝对坐标**（rect 为浏览器/原型视口绝对值）；树由翻译器按 rect 包含关系自动推导（容差 1px，≤500 节点）；**两节点 rect 交叉重叠（互不包含）或完全相等 → INVALID_PARAMS**（不静默落平级）。
-- 字段全可选（除 name/rect）：`type`（CONTROL_TYPES 白名单）/`text`/`fontSize`（px）/`color`/`bg`/`fill`（ProgressBar fill 槽色，取 `[data-fill]` 子元素背景）/`borderRadius`（统一四角 number 或 `{tl,tr,br,bl}` 对象）/`border`（`{width,color}` 统一四边 + 可选 `perSides:{top,right,bottom,left}` 四边各异信息——提取脚本在 top>0 且四边各异时附上，width 恒取 top；**四边各异时翻译器发 warning**（border sides differ...; using top），仍取 top 渲染、行为不变；top=0 其余边>0 时不产 border spec（防「有 border 无 bg」被设 draw_center=false 全透明），提取脚本以 `borderNotice` 提示字段透传成 warning；style_verify 无法暴露该差异（期望与实测同源于同一翻译产出，恒绿），ui_pixel_verify 采样点不采边框本身、只能间接暴露）/`align`（left|center|right，缺省 center）/`value`（0-1，ProgressBar）/`flow`（row|column，容器排布语义）/`justify`/`interactive`（text+interactive→Button）。
+- 字段全可选（除 name/rect）：`type`（CONTROL_TYPES 白名单）/`text`/`fontSize`（px）/`color`/`bg`/`fill`（ProgressBar fill 槽色，取 `[data-fill]` 子元素背景）/`borderRadius`（统一四角 number 或 `{tl,tr,br,bl}` 对象）/`border`（`{width,color}` 统一四边 + 可选 `perSides:{top,right,bottom,left}` 四边各异信息——提取脚本在 top>0 且四边各异时附上，width 恒取 top；**四边各异时翻译器发 warning**（border sides differ...; using top），仍取 top 渲染、行为不变；top=0 其余边>0 时不产 border spec（防「有 border 无 bg」被设 draw_center=false 全透明），提取脚本以 `borderNotice` 提示字段透传成 warning；style_verify 无法暴露该差异（期望与实测同源于同一翻译产出，恒绿），ui_pixel_verify 采样点不采边框本身、只能间接暴露）/`align`（left|center|right，缺省 center）/`value`（0-1，ProgressBar）/`flow`（row|column，容器排布语义；多层 flow 任意深度嵌套均递归展开为 Container 子树，每层 flow 的直接子进各自 `_Flow` 容器）/`flow_gap`（≥0 有限数，flow 容器间距 px——落地 `_Flow` 容器 separation 的 theme override 常量）/`flow_align`（start|center|end，flow 跨轴对齐 align-items——映射 flex-start/center/flex-end；`flow_gap`/`flow_align` 无 `flow` 同节点声明时忽略+warning，不静默）/`justify`/`interactive`（text+interactive→Button）。
 - **颜色仅三种格式**：`#rrggbb` / `[r,g,b]` 0-255 / `[r,g,b,a]` 0-1。CSS `rgb()/rgba()` 字符串**不支持**——evaluate 模板已内置转换（见下节）。
 - **bg 缺省 = 透明壳契约（责任归 JSON 生产者）**：推断为布局壳 Panel（无显式 type、无 text、无 bg、无 value 的纯布局节点，及 flow 壳）→ `self_modulate:[1,1,1,0]`（禁 modulate，级联陷阱见 godot-mcp-engine-quirks.md）。**该有背景的面板务必在原型侧显式填 bg**，否则被当透明壳（build_warnings 会提示 "set bg or type to keep it visible"）。**自带视觉控件不会被设透明壳**：ProgressBar（推断或显式）、Button（推断或显式）、任何显式 type（含显式 Panel）——显式 type 说明有意为之，一律保留可见性。
 - **翻译规则要点**（12+1 条）：类型推断（显式 type > flow > value→ProgressBar > text+interactive→Button > text→Label > Panel）；视口坐标逐层减父原点转相对父 rect（进锚点求解链）；Label 全部 `vertical_alignment:1`；bg/fill/borderRadius/border→StyleBoxFlat（槽位映射（`add_theme_stylebox_override` API；override 属性名为 `theme_override_styles/<slot>`，注意 `node.set()` 该路径 pack 落盘会丢 override，勿手写）：Panel→panel、ProgressBar→background+fill、Button/Label→normal；其余控件 warning+忽略；bg 缺省而 border/radius 存在→`draw_center=false` 保 CSS 透明底）；非白名单 type 降级 Panel + warning；深度 cap 10；name 非法字符清洗。
@@ -175,7 +175,7 @@ Button, Label, Panel, LineEdit, TextEdit, RichTextLabel, LinkButton, HSlider, VS
 
 ### 浏览器 evaluate 取数脚本模板（chrome-devtools / playwright 通用）
 
-HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名，须唯一）；flex 容器标 `data-flow="row|column"`（可选 `data-justify`）；整页视口容器标 `data-viewport`（可选，缺省取窗口尺寸）。在浏览器 MCP（如 chrome-devtools 的 evaluate_script / playwright 的 browser_evaluate）执行：
+HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名，须唯一）；flex/grid 容器可显式标 `data-flow="row|column"`（可选 `data-justify`），**不标也行——模板读 computed style 的 `display` 自动检测**（flex/inline-flex/grid/inline-grid 时按 `flex-direction` 输出方向，grid 暂映射 row 不扩枚举，并带出 `flow_gap`/`flow_align`）；整页视口容器标 `data-viewport`（可选，缺省取窗口尺寸）。在浏览器 MCP（如 chrome-devtools 的 evaluate_script / playwright 的 browser_evaluate）执行：
 
 ```js
 () => {
@@ -207,10 +207,25 @@ HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名�
     if (fg && !(fg[0]===0 && fg[1]===0 && fg[2]===0 && fg[3]===1)) node.color = fg;  // 跳过浏览器默认黑
     const bg = toRgba(cs.backgroundColor);                 // 背景色:非透明才填(透明壳契约由翻译器兜底)
     if (bg) node.bg = bg;
-    const flow = el.dataset.flow;
-    if (flow === 'row' || flow === 'column') {
-      node.flow = flow;
+    // flex/grid 自动检测:display 为 flex/inline-flex/grid/inline-grid 时输出 flow(方向按
+    // flex-direction,column-reverse/row-reverse 就近归 column/row)+ flow_gap(gap 计算值)
+    // + flow_align(align-items 映射 start/center/end;stretch/normal 是默认不输出)。
+    // 显式 data-flow 标注优先于自动检测;grid 暂输出 flow:row(白名单枚举内,不扩枚举)。
+    const dflow = el.dataset.flow;
+    const isFlexish = ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(cs.display);
+    let flowDir = null;
+    if (dflow === 'row' || dflow === 'column') {
+      flowDir = dflow;                                  // 显式标注优先
+    } else if (isFlexish) {
+      flowDir = cs.display.endsWith('grid') ? 'row' : (cs.flexDirection.startsWith('column') ? 'column' : 'row');
+    }
+    if (flowDir) {
+      node.flow = flowDir;
       if (el.dataset.justify) node.justify = el.dataset.justify;
+      const gap = parseFloat(cs.gap) || parseFloat(cs.columnGap) || parseFloat(cs.rowGap) || 0;  // "8px"→8,"normal"→NaN
+      if (gap > 0) node.flow_gap = gap;                 // gap 计算值>0 才填(0 是缺省,省键)
+      const itemsMap = { start: 'start', 'flex-start': 'start', center: 'center', end: 'end', 'flex-end': 'end' };
+      if (itemsMap[cs.alignItems]) node.flow_align = itemsMap[cs.alignItems];
     }
     if (el.dataset.value !== undefined) {                 // ProgressBar:value 必填 0-1 小数,百分数(如 72)请先除以 100——schema min(0).max(1) 会拒
       const v = Number(el.dataset.value);
@@ -248,7 +263,7 @@ HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名�
 }
 ```
 
-要点：**bg 只在 `getComputedStyle().backgroundColor` 非透明时填**（透明壳契约由翻译器兜底）；**颜色经 toRgba 转 `[r,g,b,a]` 0-1 数组**（保留 alpha，替代旧 toHex 的丢 alpha；翻译器三种颜色格式均认）；**border 四边语义**——top>0 才产 border spec（width 恒取 top），四边各异时附 `border.perSides` 由翻译器 warning 消静默（渲染仍取 top），top=0 其余边>0 时改发 `borderNotice` 提示字段（不产 border spec，防全透明回归）；`viewport` 取 `[data-viewport]` 容器或窗口尺寸，**必须与 Godot 项目 `display/window/size` 及后续 `screenshot(capture)` 的 viewport 参数一致**（不一致则几何比例全错）。
+要点：**bg 只在 `getComputedStyle().backgroundColor` 非透明时填**（透明壳契约由翻译器兜底）；**颜色经 toRgba 转 `[r,g,b,a]` 0-1 数组**（保留 alpha，替代旧 toHex 的丢 alpha；翻译器三种颜色格式均认）；**border 四边语义**——top>0 才产 border spec（width 恒取 top），四边各异时附 `border.perSides` 由翻译器 warning 消静默（渲染仍取 top），top=0 其余边>0 时改发 `borderNotice` 提示字段（不产 border spec，防全透明回归）；**flow 自动检测**——显式 `data-flow` 优先，否则 `display` 为 flex/inline-flex/grid/inline-grid 时自动输出 flow+`flow_gap`（gap 计算值 >0 才填）+`flow_align`（align-items 的 start/center/end 映射；stretch/normal 是默认不输出）；grid 映射 row 属近似（列数语义不迁移，差异回原型侧修）；`viewport` 取 `[data-viewport]` 容器或窗口尺寸，**必须与 Godot 项目 `display/window/size` 及后续 `screenshot(capture)` 的 viewport 参数一致**（不一致则几何比例全错）。
 
 ### draw_recipe 声明式绘图
 

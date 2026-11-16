@@ -779,3 +779,143 @@ describe('fill-only 灰底 warning(PR-2 顺手项 3/4,PR-1 终审转来)', () =>
     expect(w).not.toContain('灰底');
   });
 });
+
+// ─── 批1 1e(Task 6): flow_gap/flow_align 平级新键 + 多层 flow 翻译 ──────────
+
+describe('flow_gap/flow_align schema(批1 1e)', () => {
+  it('{flow:"row", flow_gap:8, flow_align:"center"} 通过(schema 新平级可选键)', () => {
+    const g = parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: 8, flow_align: 'center' })]));
+    expect(g.nodes[0]!.flow_gap).toBe(8);
+    expect(g.nodes[0]!.flow_align).toBe('center');
+  });
+
+  it('flow_gap: -1 → 拒(min(0))', () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: -1 })])))
+      .toThrow(/INVALID_PARAMS/);
+  });
+
+  it('flow_gap: NaN/Infinity → 拒(finite)', () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: NaN })])))
+      .toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: Infinity })])))
+      .toThrow(/INVALID_PARAMS/);
+  });
+
+  it('flow_gap: 0 合法(下界含 0);非数字 → 拒', () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: 0 })]))).not.toThrow();
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_gap: '8' as unknown as number })])))
+      .toThrow(/INVALID_PARAMS/);
+  });
+
+  it('flow_align 枚举外("justify"/"stretch")→ 拒', () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_align: 'justify' as never })])))
+      .toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: 'row', flow_align: 'stretch' as never })])))
+      .toThrow(/INVALID_PARAMS/);
+  });
+
+  it('BC 锚:flow 枚举形态不动——{flow:{dir:"row"}} 仍拒(不升级为对象形态)', () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { flow: { dir: 'row' } as unknown as 'row' })])))
+      .toThrow(/INVALID_PARAMS/);
+  });
+});
+
+describe('多层 flow + flow_gap/flow_align 翻译(批1 1e)', () => {
+  it('三层嵌套 flow 壳(根 flow row > 子 flow column > 孙 Label)→ Container 嵌套树,孙不再走 rect 锚点', () => {
+    const r = tr(geo([
+      n('Root', 0, 0, 600, 400, { flow: 'row' }),
+      n('Sub', 0, 0, 280, 400, { flow: 'column' }),
+      n('Label', 10, 10, 200, 30, { text: 'x' }),
+    ]));
+    // 根:_PrototypeRoot > Root(壳) > Root_Flow(HBox)
+    const rootFlow = findNode(r.tree, 'Root')!.children!.find(c => c.name === 'Root_Flow')!;
+    expect(rootFlow.type).toBe('HBoxContainer');
+    // 子:Root_Flow 内是 Sub(壳) > Sub_Flow(VBox)——任意深度 flow 壳子节点进 Container
+    const sub = rootFlow.children!.find(c => c.name === 'Sub')!;
+    expect(sub).toBeDefined();
+    const subFlow = sub.children!.find(c => c.name === 'Sub_Flow')!;
+    expect(subFlow.type).toBe('VBoxContainer');
+    // 孙 Label 挂 Sub_Flow 容器内,丢 rect(不走锚点求解)、min_size 取原尺寸
+    const label = subFlow.children!.find(c => c.name === 'Label')!;
+    expect(label.type).toBe('Label');
+    expect(label.rect).toBeUndefined();
+    expect(label.flex).toEqual({ min_width: 200, min_height: 30 });
+    // 两层 flow 直接子都进 flow_expect(数字覆盖不因嵌套丢失)
+    expect(r.flow_expect.map(e => e.path)).toEqual([
+      '_PrototypeRoot/Root/Root_Flow/Sub',
+      '_PrototypeRoot/Root/Root_Flow/Sub/Sub_Flow/Label',
+    ]);
+  });
+
+  it('flow_gap: 8 → _Flow 容器 layout.gap=8(HBox/VBox separation 的 theme override 常量载体)', () => {
+    const r = tr(geo([
+      n('Bar', 0, 0, 400, 100, { flow: 'row', flow_gap: 8 }),
+      n('A', 0, 0, 100, 100, { text: 'a' }),
+    ]));
+    expect(findNode(r.tree, 'Bar_Flow')!.layout).toEqual({ direction: 'row', gap: 8 });
+  });
+
+  it('flow_align start/center/end → layout.align flex-start/center/flex-end(跨轴对齐词表映射)', () => {
+    const mk = (flow_align: 'start' | 'center' | 'end') =>
+      tr(geo([
+        n('Bar', 0, 0, 400, 100, { flow: 'row', flow_align }),
+        n('A', 0, 0, 100, 100, { text: 'a' }),
+      ]));
+    expect(findNode(mk('start').tree, 'Bar_Flow')!.layout!.align).toBe('flex-start');
+    expect(findNode(mk('center').tree, 'Bar_Flow')!.layout!.align).toBe('center');
+    expect(findNode(mk('end').tree, 'Bar_Flow')!.layout!.align).toBe('flex-end');
+  });
+
+  it('多层 flow 各自携带 flow_gap/flow_align,各自落到自己的 _Flow 容器(不串层)', () => {
+    const r = tr(geo([
+      n('Root', 0, 0, 600, 400, { flow: 'row', flow_gap: 8, flow_align: 'center' }),
+      n('Sub', 0, 0, 280, 400, { flow: 'column', flow_gap: 4, flow_align: 'end' }),
+      n('Label', 10, 10, 200, 30, { text: 'x' }),
+    ]));
+    expect(findNode(r.tree, 'Root_Flow')!.layout).toEqual({ direction: 'row', gap: 8, align: 'center' });
+    expect(findNode(r.tree, 'Sub_Flow')!.layout).toEqual({ direction: 'column', gap: 4, align: 'flex-end' });
+  });
+
+  it('flow_gap/flow_align 无 flow → 忽略 + warning(不静默丢弃)', () => {
+    const r = tr(geo([
+      n('Plain', 0, 0, 400, 100, { flow_gap: 8, flow_align: 'center' }),
+      n('Kid', 10, 10, 100, 30, { text: 'k' }),
+    ]));
+    const plain = findNode(r.tree, 'Plain')!;
+    expect(plain.layout).toBeUndefined();
+    expect(r.warnings.some(w => w.includes('Plain') && w.includes('flow_gap') && w.includes('flow 未声明')))
+      .toBe(true);
+  });
+});
+
+describe('无新键回归锚(批1 1e,BC 三锚之一)', () => {
+  it('不带 flow_gap/flow_align 的既有输入 → 产出树/flow_expect/coverage 与改前逐字节一致', () => {
+    // 基线取自改动前代码的实际输出(2026-11-16,commit 9dbb188b 工作区)——JSON.stringify
+    // 键序由构造代码决定,同构对象重序列化恒定,可作逐字节锚。
+    const r = tr(geo([
+      n('Bar', 10, 20, 400, 40, { flow: 'row', justify: 'space-between' }),
+      n('L', 10, 20, 100, 40, { text: 'l' }),
+      n('R', 310, 20, 100, 40, { text: 'r' }),
+      n('Out', 0, 100, 400, 50, { bg: '#10141f' }),
+    ]));
+    expect(JSON.stringify(r.tree)).toBe(
+      '{"type":"Panel","name":"_PrototypeRoot","rect":{"x":0,"y":0,"w":1280,"h":720},'
+      + '"properties":{"self_modulate":[1,1,1,0]},"children":['
+      + '{"type":"Panel","name":"Bar","rect":{"x":10,"y":20,"w":400,"h":40},'
+      + '"properties":{"self_modulate":[1,1,1,0]},"children":['
+      + '{"type":"HBoxContainer","name":"Bar_Flow","anchor_preset":"full_rect",'
+      + '"layout":{"direction":"row","justify":"space-between"},"children":['
+      + '{"type":"Label","name":"L","properties":{"text":"l","horizontal_alignment":1,"vertical_alignment":1},'
+      + '"flex":{"min_width":100,"min_height":40}},'
+      + '{"type":"Label","name":"R","properties":{"text":"r","horizontal_alignment":1,"vertical_alignment":1},'
+      + '"flex":{"min_width":100,"min_height":40}}]}]},'
+      + '{"type":"Panel","name":"Out","rect":{"x":0,"y":100,"w":400,"h":50},'
+      + '"styleboxes":[{"slot":"panel","box":{"bg_color":[0.06274509803921569,0.0784313725490196,0.12156862745098039,1]}}]}]}',
+    );
+    expect(r.flow_expect).toEqual([
+      { path: '_PrototypeRoot/Bar/Bar_Flow/L', rect: { x: 10, y: 20, w: 100, h: 40 } },
+      { path: '_PrototypeRoot/Bar/Bar_Flow/R', rect: { x: 310, y: 20, w: 100, h: 40 } },
+    ]);
+    expect(r.coverage).toEqual({ targets: 3, total_nodes: 4 });
+  });
+});
