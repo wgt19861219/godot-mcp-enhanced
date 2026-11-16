@@ -11,6 +11,7 @@
 // 以默认主题数值 diff 暴露;右侧补手写树/手动 override 场景)。
 
 import { escapeForGdLiteral, SCENE_TREE_HEADER } from '../shared.js';
+import type { MeasuredNode } from './layout-diff.js';
 
 /** PR-4 抽取:styleExpect 期望清单 parse 注入行(genUiMeasureScript._initialize 与
  * ui-import-single._measure_go 共用一份构造与转义,防双份漂移)。
@@ -33,17 +34,99 @@ export function genStyleExpectInit(
  * test/ui-measure-theme.test.ts)。
  * null/非 Theme 显式报错退出(Review Focus 1,不静默吞)。转义走 escapeForGdLiteral
  * (纯字符串字面量内插,同 sp/np 先例——gdEscape 为 % 格式化设计会把 % 双写)。
- * 空路径返回 ''(向后兼容:不传 theme_path 时生成脚本与旧版逐字节一致)。 */
-export function genThemeMountInit(themePath?: string): string {
+ * 空路径返回 ''(向后兼容:不传 theme_path 时生成脚本与旧版逐字节一致)。
+ * mountTarget(Task 2):viewport 覆写激活时必须 'scene-root'——root.set_theme 的主题
+ * 传播不跨 Viewport 边界(spike 探针实测:root 主题 + SubViewport 挂载 → variation
+ * 节点拿不到主题,字号 24 不顶开;场景根挂主题 → 42 正常),SubViewport 内子树的主题
+ * 祖先只能是场景根自己。非 Control 场景根显式报错(不静默不崩)。 */
+export function genThemeMountInit(themePath?: string, mountTarget?: 'root' | 'scene-root'): string {
   if (!themePath) return '';
   const tp = escapeForGdLiteral(themePath);
+  const mountLine = mountTarget === 'scene-root'
+    ? `\tif _mcp_scene_instance is Control:
+\t\t(_mcp_scene_instance as Control).set_theme(_theme_res)
+\telse:
+\t\t_mcp_output("error", "theme_path requires a Control scene root when viewport override is active")
+\t\t_mcp_done()
+\t\treturn
+`
+    : `\troot.set_theme(_theme_res)\n`;
   return `\tvar _theme_res = load("${tp}")
 \tif _theme_res == null or not _theme_res is Theme:
 \t\t_mcp_output("error", "theme_path load failed: ${tp}")
 \t\t_mcp_done()
 \t\treturn
-\troot.set_theme(_theme_res)
-`;
+${mountLine}`;
+}
+
+/** 批1 1a(Task 2):viewport 覆写注入段——g800 复测通道。
+ * spike 实测(2026-11-16,Godot 4.7 headless --path --script,探针不留仓库):
+ * ① root.content_scale_size 直接赋值:当刻读回新值,但后续帧被引擎复位回项目设置
+ *    (960×540),布局不重排——不生效;
+ * ② root.set_size(Vector2i):同样被复位(WIN 回 64×64,headless DisplayServer 窗口尺寸
+ *    不可控)——不生效;
+ * ③ SubViewport 通道:场景实例挂进指定尺寸 SubViewport,Control 树按注入视口重排
+ *    (靶子 960×540 默认,注入 800×480 → 全铺节点 rect.w 960→800)——生效。
+ * 三段产物:
+ *  - declare:class body 声明 `var _vp_sub: SubViewport = null`(须在 'var _frames := 0'
+ *    锚点之后——import 链截取保留;_emit 引用);
+ *  - create:_initialize/_measure_go 内、场景加载(_mcp_load_scene / reload load)之前
+ *    ——视口先于场景加载设置,布局才按新视口算;
+ *  - adopt:场景加载成功后把实例从 root 转挂进 _vp_sub(_mcp_load_scene 固定挂 root,
+ *    转挂后 Control 按新 parent 的视口尺寸重排,measure 的等帧稳定判定覆盖重排过程)。
+ * 空 viewport 返回三段 ''(向后兼容:不传时生成脚本与旧版逐字节一致)。
+ * w/h 为生成期数字字面量内插(handler 侧已校验正整数)。 */
+export function genViewportInit(viewport?: { w: number; h: number }): { declare: string; create: string; adopt: string } {
+  if (!viewport) return { declare: '', create: '', adopt: '' };
+  const { w, h } = viewport;
+  return {
+    declare: `var _vp_sub: SubViewport = null  # viewport 参数覆写目标(Task 2,spike:SubViewport 通道)\n`,
+    create: `\t# --- viewport 覆写(g800 复测通道,spike 结论:root.content_scale_size/set_size 均被引擎
+\t# 复位,SubViewport 通道生效;须先于场景加载设置)---
+\t_vp_sub = SubViewport.new()
+\t_vp_sub.size = Vector2i(${w}, ${h})
+\troot.add_child(_vp_sub)
+`,
+    adopt: `\tif _vp_sub != null and _mcp_scene_instance != null and _mcp_scene_instance.get_parent() != null:
+\t\t_mcp_scene_instance.get_parent().remove_child(_mcp_scene_instance)
+\t\t_vp_sub.add_child(_mcp_scene_instance)
+`,
+  };
+}
+
+/** 批1 1a(Task 2 假绿防护,Review Focus 2):viewport 覆写生效性判定(纯函数)。
+ * 上报 viewport 值被注入覆写,本身不能证明布局按新视口算——须有独立于上报值的
+ * 布局证据,否则假绿(viewport 报 800、布局实际仍按默认视口):
+ * ① 全铺判据(无需基线,handler 主判据):存在 anchor_left==0 且 anchor_right==1 的
+ *    节点且 |rect.w - vp.w| <= 1 → 全铺节点 rect.w 跟随注入视口宽,直接证据
+ *    (e2e 硬断言的 TS 版);
+ * ② 基线判据(可选 baseline 形参):存在非全铺节点(rect.w < vp.w)相对基线 rect 四值
+ *    任一变化 → 布局语境切换。**handler 侧实测弃用此辅判据**:默认视口基线只能挂
+ *    root 取,与覆写轮 SubViewport 通道语境不同(headless Window 不可信 + stretch
+ *    字体度量失真),非视口变化会被误读为生效——假绿检测器自身假绿。形参保留给
+ *    未来干净的同通道基线(见 index.ts 后处理注释)。
+ * 判据不满足 → 'inconclusive'(诚实降级,调用方附警告,不得静默)。 */
+export function checkViewportEffect(
+  nodes: ReadonlyArray<MeasuredNode>,
+  vp: { w: number; h: number },
+  baseline?: ReadonlyArray<MeasuredNode>,
+): 'effective' | 'inconclusive' {
+  // ① 全铺判据:anchor 全宽 + rect.w 贴注入视口宽(1px 容差吸收浮点)
+  if (nodes.some(n => n.anchors?.left === 0 && n.anchors?.right === 1 && Math.abs(n.rect.w - vp.w) <= 1)) {
+    return 'effective';
+  }
+  // ② 基线判据:非全铺节点(rect.w < vp.w)相对默认视口基线发生变化
+  if (baseline) {
+    const baseMap = new Map(baseline.map(n => [n.path, n]));
+    const changed = nodes.some(n => {
+      const b = baseMap.get(n.path);
+      if (!b || n.rect.w >= vp.w) return false;
+      return n.rect.x !== b.rect.x || n.rect.y !== b.rect.y
+        || n.rect.w !== b.rect.w || n.rect.h !== b.rect.h;
+    });
+    if (changed) return 'effective';
+  }
+  return 'inconclusive';
 }
 
 export function genUiMeasureScript(
@@ -51,7 +134,7 @@ export function genUiMeasureScript(
   nodePath: string | undefined,
   maxDepth: number,
   styleExpect?: ReadonlyArray<{ path: string; slots: readonly string[] }>,
-  opts?: { themePath?: string },
+  opts?: { themePath?: string; viewport?: { w: number; h: number } },
 ): string {
   const sp = escapeForGdLiteral(scenePath);
   const np = nodePath ? escapeForGdLiteral(nodePath) : '';
@@ -70,10 +153,15 @@ export function genUiMeasureScript(
   // 格式化场景设计会把路径中 % 双写成 %%,含 % 的文件名(如 res://a%b.tscn)被静默改写
   // 导致加载失败;引号/反斜杠/换行/Tab 等共享转义两入口相同(escapeGdStringCore),切换零损失。
   const styleInit = genStyleExpectInit(styleExpect);
+  // 批1 1a(Task 2):viewport 覆写注入(SubViewport 通道,spike 结论)。create 段在
+  // _mcp_load_scene 之前(视口先于场景加载设置),adopt 段在加载成功后转挂,declare 段
+  // 在锚点之后的 class body 声明区(import 链截取保留 + _emit 引用)。
+  const vp = genViewportInit(opts?.viewport);
   // 批1 1a:theme_path 挂载注入(_mcp_load_scene 成功、场景 add_child 挂树之后——
-  // root.set_theme 触发的主题传播作用于已进树的子树;置于 _initialize 语句区,
+  // set_theme 触发的主题传播作用于已进树的子树;置于 _initialize 语句区,
   // 不进 class body 声明区——ui-import-single 的截取拼接只保留锚点后的函数体)。
-  const themeMount = genThemeMountInit(opts?.themePath);
+  // viewport 激活时挂场景根:root 主题传播不跨 Viewport 边界(spike 探针实测)。
+  const themeMount = genThemeMountInit(opts?.themePath, opts?.viewport ? 'scene-root' : 'root');
   return `${SCENE_TREE_HEADER}
 
 var _frames := 0
@@ -83,13 +171,13 @@ var _target: Node = null
 var _count := 0
 const _all_slots := ["panel", "normal", "background", "fill", "hover", "pressed", "disabled"]  # 与 types.ts STYLEBOX_SLOTS 双份硬编码,扩槽须两处同步
 var _style_expect: Dictionary = {}
-
+${vp.declare}
 func _initialize():
-${styleInit}\tif not _mcp_load_scene("${sp}"):
+${styleInit}${vp.create}\tif not _mcp_load_scene("${sp}"):
 \t\t_mcp_done()
 \t\treturn
 \t_target = _mcp_scene_instance
-${themeMount}${np ? `\tif "${np}" != "":
+${vp.adopt}${themeMount}${np ? `\tif "${np}" != "":
 \t\tvar _n = _mcp_get_scene_node("${np}")
 \t\tif _n == null:
 \t\t\t_mcp_output("error", "Node not found: ${np}")
@@ -133,7 +221,11 @@ func _emit() -> void:
 \t# 根级 rect 的参照系。注意用 content_scale_size 而非 Window.size / get_visible_rect()——
 \t# headless --script 模式下 Window 实际尺寸不反映 project 设置(实测 100x100/2496x?),
 \t# content_scale_size 才是 display/window/size 的直接映射(实测 1280x720)。
-\tvar _vp := root.content_scale_size
+\t# Task 2:viewport 参数注入时优先返回注入值(SubViewport 尺寸,spike 结论)——布局
+\t# 语境按 SubViewport 算,root.content_scale_size 此时仍是项目默认值(不复位 _vp_sub)。
+${opts?.viewport
+    ? '\tvar _vp := root.content_scale_size\n\tif _vp_sub != null:\n\t\t_vp = Vector2(_vp_sub.size)'
+    : '\tvar _vp := root.content_scale_size'}
 \t_mcp_output("measure", JSON.stringify({
 \t\t"stable_after_frames": _frames,
 \t\t"stalled": _frames >= 5 and _stable_count < 2,

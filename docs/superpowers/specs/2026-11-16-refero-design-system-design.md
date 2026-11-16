@@ -174,7 +174,7 @@ Theme `DesignTokens` type 下声明 spacing 档位(`set_constant("space_1".."spa
 
 ## 开放问题(N9,v2 新增)
 
-1. headless viewport 控制可行性(1a spike 定:root size 直控 vs 窗口模式 vs dump_layout_tree)。
+1. headless viewport 控制可行性——**已实测(批1 1a Task 2 spike,2026-11-16,Godot 4.7 headless --path --script,探针不留仓库)**:①`root.content_scale_size = Vector2(w,h)` 直接赋值不生效——当刻读回新值,后续帧被引擎复位回项目设置(960×540),布局不重排;②`root.set_size(Vector2i(w,h))` 同样被复位(WIN 回 64×64,headless DisplayServer 窗口尺寸不可控);③**SubViewport 通道生效(已采用)**——场景实例挂进 `SubViewport(size=w×h)`,Control 树按注入视口重排:靶子 960×540 默认注入 800×480,全铺场景根 rect.w 960→800(e2e 硬断言锚定)。附带实测:root.set_theme 的主题传播不跨 Viewport 边界,viewport 注入时 themeMount 须改挂场景根;假绿防护的"非全铺节点 vs 默认视口基线"辅判据因挂 root 基线与 SubViewport 覆写轮的语境噪声(headless Window 不可信 + stretch 字体度量失真)弃用,主判据(全铺节点 rect.w 贴合注入视口宽)未命中即 `viewport_check: inconclusive` 诚实降级。锚定测试 `test/ui-measure-viewport.test.ts`。
 2. 窗口模式下 800 宽与 `window_width_override=1920` 的相互作用(spike)。
 3. 主题敏感高度偏差量级——**已实测(批1 1a spike,2026-11-16,Godot 4.7)**:①无 autoload 的最小 fixture(theme_type_variation Label,显式高 24px):无主题 rect.h=24(默认 16 号行高不顶开),挂主题(30 号)=42——**+18px,远超 2px verify 容差**,推理链成立且量级可观;②靶子项目 DotaLegendGodot `daily_login_content.tscn` 的 LoginMonthLabel:无 theme_path 与挂 theme_path 两轮 rect.h 均 28、Δ=0——**根因是实测新发现**:`--headless --path <project> --script` 模式下引擎仍加载 project autoload(loadAutoloads=false 只影响 TS 侧包装路径),ThemeManager._ready 自动挂根主题,两轮同在主题语境——P0-2「headless 无 autoload 主题管理」的前提在**自带 ThemeManager autoload 的项目**不成立,theme_path 的价值在无 autoload 挂载的项目/场景与显式指定异于项目默认主题的语境。锚定测试 `test/ui-measure-theme.test.ts`。
 4. A.1 "非渲染件"判定细则(纯 Control 无 texture/text/stylebox 即视为壳?Panel 带 stylebox 算不算?)——实现前用一个真实场景标定,避免报告量失控。

@@ -6721,7 +6721,7 @@
           },
           "viewport": {
             "type": "object",
-            "description": "ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport",
+            "description": "ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport(求解语境=测量语境);ui_measure_layout: 覆写测量视口(SubViewport 通道,布局按注入视口重排——g800 复测;响应 data.measure.viewport_check 报生效性,inconclusive 时勿信视口语境)",
             "properties": {
               "w": {
                 "type": "number",
@@ -6818,8 +6818,8 @@
       },
       "size": {
         "descBytes": 561,
-        "schemaBytes": 11276,
-        "totalBytes": 11837
+        "schemaBytes": 11489,
+        "totalBytes": 12050
       },
       "annotations": {
         "readOnlyHint": false,

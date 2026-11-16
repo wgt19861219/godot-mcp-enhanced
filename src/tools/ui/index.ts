@@ -14,7 +14,7 @@ import { genUiCreateControlScript, genUiContainerAddScript, genUiAnchorPresetScr
 import { genUiSetLayoutScript, genUiGetLayoutScript, genUiBuildLayoutScript } from './ui-layout.js';
 import { genUiSetThemeScript, genThemeCreateScript, genThemeSetPropertyScript } from './ui-theme.js';
 import { genUiDrawRecipeScript } from './ui-draw.js';
-import { genUiMeasureScript } from './ui-measure.js';
+import { genUiMeasureScript, checkViewportEffect } from './ui-measure.js';
 import { genUiImportSingleScript } from './ui-import-single.js';
 import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds } from './layout-diff.js';
 import type { MeasuredNode } from './layout-diff.js';
@@ -218,7 +218,7 @@ export function getToolDefinitions(): Tool[] {
           load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           viewport: {
             type: 'object',
-            description: 'ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport',
+            description: 'ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport(求解语境=测量语境);ui_measure_layout: 覆写测量视口(SubViewport 通道,布局按注入视口重排——g800 复测;响应 data.measure.viewport_check 报生效性,inconclusive 时勿信视口语境)',
             properties: { w: { type: 'number', description: '宽(px)' }, h: { type: 'number', description: '高(px)' } },
           },
           persist: { type: 'boolean', description: 'ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）' },
@@ -248,6 +248,8 @@ export async function handleTool(
     const godot = await ctx.findGodot();
     const loadAutoloads = args.load_autoloads !== false;
     let script: string;
+    // Task 2(批1 1a):ui_measure_layout 的 viewport 覆写(假绿防护后处理读)
+    let measureViewport: { w: number; h: number } | undefined;
 
     switch (action) {
       case 'ui_create_control': {
@@ -467,7 +469,20 @@ export async function handleTool(
             return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
           }
         }
-        script = genUiMeasureScript(scenePath, nodePathRaw ? normalizeNodePath(nodePathRaw) : undefined, maxDepth, styleExpect, { themePath });
+        // Task 2(批1 1a):viewport 覆写(g800 复测通道)——正整数校验(brief Interfaces),
+        // 同 build C1 先例在 handler 侧拒,生成器只接已校验值
+        const nodePathNorm = nodePathRaw ? normalizeNodePath(nodePathRaw) : undefined;
+        if (args.viewport !== undefined) {
+          const vp = args.viewport as { w?: unknown; h?: unknown };
+          const w = typeof vp.w === 'number' ? vp.w : NaN;
+          const h = typeof vp.h === 'number' ? vp.h : NaN;
+          if (!(Number.isInteger(w) && w > 0) || !(Number.isInteger(h) && h > 0)) {
+            return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'viewport must be an object {w, h} with positive integers');
+          }
+          measureViewport = { w, h };
+        }
+        script = genUiMeasureScript(scenePath, nodePathNorm, maxDepth, styleExpect,
+          measureViewport ? { themePath, viewport: measureViewport } : { themePath });
         break;
       }
       case 'ui_pixel_verify':
@@ -521,6 +536,34 @@ export async function handleTool(
         }
       } catch {
         // measure 输出异常时保持原样返回,diff 缺失由 AI 视为未验证
+      }
+    }
+    // Task 2(批1 1a)假绿防护(Review Focus 2):viewport 覆写生效性检查。上报 viewport 值
+    // 被注入覆写,本身不构成布局证据——checkViewportEffect 判据(独立于上报值):
+    // 全铺节点(anchor 0→1)rect.w 贴合注入视口宽 = 直接证据(e2e 硬断言的 TS 版)。
+    // brief 预设的"非全铺节点相对默认视口基线变化"辅判据**实测弃用**:默认视口基线只能
+    // 挂 root 取,与覆写轮的 SubViewport 通道语境不同(headless Window 尺寸不可信 +
+    // stretch 字体度量失真,实测 Label 自适应 h/w 20↔23、56↔64 类噪声)——非视口变化
+    // 会被误读为视口生效,假绿检测器自身假绿。故主判据未命中即 inconclusive(诚实降级,
+    // checkViewportEffect 的 baseline 形参保留给未来干净的同通道基线),附指引不得静默。
+    if (action === 'ui_measure_layout' && measureViewport && !r.isError) {
+      try {
+        const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
+          success?: boolean;
+          data?: { measure?: { nodes?: MeasuredNode[] } };
+          warnings?: string[];
+        };
+        if (parsed.success === true && parsed.data?.measure) {
+          const verdict = checkViewportEffect(parsed.data.measure.nodes ?? [], measureViewport);
+          const warnings = [...(parsed.warnings ?? [])];
+          if (verdict === 'inconclusive') {
+            warnings.push('viewport_check: inconclusive —— 测量结果中无全铺节点(anchor 0→1)rect.w 贴合注入视口宽,无法确认布局按注入视口重排(上报 viewport 值不可作为布局证据)。硬证据请用含全铺节点的场景复核,或窗口模式 run_project + dump_layout_tree(g800 复测通道)');
+          }
+          const merged = { ...parsed, data: { ...parsed.data, measure: { ...parsed.data.measure, viewport_check: verdict } }, warnings };
+          r = { ...r, content: [{ type: 'text', text: JSON.stringify(merged) }] };
+        }
+      } catch {
+        // measure 输出异常时保持原样返回(与 expect_tree 注入段同款契约)
       }
     }
     // persist=true 的 ui_build_layout 已原子写落盘,不再 append "headless 退出即丢" 提示;其余照旧。

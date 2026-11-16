@@ -15,7 +15,7 @@
 // 顺序;原两阶段流程的 TS 侧 hint-append 随第二次 spawn 删除,阶段语义由模板自持)。
 import { escapeForGdLiteral } from '../shared.js';
 import { genUiBuildLayoutScript } from './ui-layout.js';
-import { genUiMeasureScript, genStyleExpectInit, genThemeMountInit } from './ui-measure.js';
+import { genUiMeasureScript, genStyleExpectInit, genThemeMountInit, genViewportInit } from './ui-measure.js';
 import type { UiNodeSpec } from './types.js';
 
 export function genUiImportSingleScript(
@@ -30,6 +30,11 @@ export function genUiImportSingleScript(
   // escapeForGdLiteral——gdEscape 会把路径中 % 双写成 %%(Task 2 根因,reload 加载失败源)。
   const sp = escapeForGdLiteral(scenePath);
   const np = escapeForGdLiteral(parentPath);
+  // Task 2:viewport 覆写双通道之二——measure _initialize 整体剥离,SubViewport 创建/转挂
+  // 必须在 _measure_go 内重注(create 段在 reload load 之前,与 genUiMeasureScript 的
+  // "_mcp_load_scene 之前"语义对齐);挂载行 root.add_child → _vp_sub.add_child(场景实例
+  // 挂进 SubViewport,布局按注入视口重排——spike 结论,见 ui-measure.ts genViewportInit)。
+  const vp = genViewportInit(viewport);
   // np 定位段:与 genUiMeasureScript _initialize 同款(_mcp_get_scene_node 支持场景根名
   // 前缀剥离,parentPath="/root" 时 _target=场景根;非 root 挂载时定位挂载父——measure
   // path 与 flattenTargets 树根名起算的对齐前提)。
@@ -42,7 +47,7 @@ export function genUiImportSingleScript(
 \t\t_target = _n
 `;
   const measureGo = `func _measure_go() -> void:
-${genStyleExpectInit(styleExpect)}\t# --- reload(spec §6 B-1:绕过 ResourceCache 读新落盘场景;裸 load 同进程
+${genStyleExpectInit(styleExpect)}${vp.create}\t# --- reload(spec §6 B-1:绕过 ResourceCache 读新落盘场景;裸 load 同进程
 \t# 二载命中缓存返回旧实例(无新子树)→ verify 全红,故必须 CACHE_MODE_IGNORE)---
 \tif _mcp_scene_instance != null:
 \t\tif _mcp_scene_instance.get_parent() != null:
@@ -55,9 +60,9 @@ ${genStyleExpectInit(styleExpect)}\t# --- reload(spec §6 B-1:绕过 ResourceCac
 \t\t_mcp_done()
 \t\treturn
 \t_mcp_scene_instance = _rl.instantiate()
-\troot.add_child(_mcp_scene_instance)
+${viewport ? '\t_vp_sub.add_child(_mcp_scene_instance)' : '\troot.add_child(_mcp_scene_instance)'}
 \t_target = _mcp_scene_instance
-${genThemeMountInit(themePath)}${npLookup}\tprocess_frame.connect(_on_measure_frame)
+${genThemeMountInit(themePath, viewport ? 'scene-root' : 'root')}${npLookup}\tprocess_frame.connect(_on_measure_frame)
 `;
 
   // ① build 段尾替换。锚点守卫:genUiBuildLayoutScript 结构变更导致替换未命中时,静默
@@ -71,7 +76,9 @@ ${genThemeMountInit(themePath)}${npLookup}\tprocess_frame.connect(_on_measure_fr
   // ② measure 核心截取。锚点守卫同上:indexOf -1 会让 slice 静默产出损坏脚本。
   // themePath 不传给 genUiMeasureScript:其 _initialize(含 themeMount 注入位)在下一步
   // 整体剥离,本链真正的挂载点在上方 _measure_go 的 genThemeMountInit(themePath)。
-  const measureFull = genUiMeasureScript(scenePath, parentPath, 16, styleExpect);
+  // viewport 则必须传:class body 的 _vp_sub 声明与 _emit 的注入行落在锚点后的截取
+  // 保留区(与 _measure_go 的 vp.create/挂载行配对,漏传会引用未声明标识符)。
+  const measureFull = genUiMeasureScript(scenePath, parentPath, 16, styleExpect, viewport ? { viewport } : undefined);
   const anchorIdx = measureFull.indexOf('var _frames := 0');
   if (anchorIdx < 0) {
     throw new Error('ui-import-single: ui-measure 截取锚点 "var _frames := 0" 缺失——genUiMeasureScript 结构变更需同步本模板');

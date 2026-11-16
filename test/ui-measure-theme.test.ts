@@ -48,11 +48,13 @@ describe('genUiImportSingleScript theme 挂载(import 链注入通道)', () => {
   });
   it('有 themePath 时挂载行在 _measure_go:场景 add_child 之后、process_frame.connect 之前', () => {
     const s = gen('res://themes/x.tres');
-    expect(s).toContain('root.set_theme(_theme_res)');
-    const mount = s.indexOf('root.set_theme(_theme_res)');
-    // root.add_child(_mcp_scene_instance) 在合成产物中仅 _measure_go 出现一次
+    // Task 2(批1 1a)后 import 链 viewport(必填形参)驱动 SubViewport 挂载,主题传播不跨
+    // Viewport 边界(spike 探针4 实测)——挂载行从 root.set_theme 改为场景根挂载
+    expect(s).toContain('(_mcp_scene_instance as Control).set_theme(_theme_res)');
+    const mount = s.indexOf('(_mcp_scene_instance as Control).set_theme(_theme_res)');
+    // _vp_sub.add_child(_mcp_scene_instance) 在合成产物中仅 _measure_go 出现一次
     // (header 的 _mcp_load_scene 用 _r.add_child,build 段不重复该行)
-    expect(mount).toBeGreaterThan(s.lastIndexOf('root.add_child(_mcp_scene_instance)'));
+    expect(mount).toBeGreaterThan(s.lastIndexOf('_vp_sub.add_child(_mcp_scene_instance)'));
     expect(mount).toBeLessThan(s.indexOf('process_frame.connect'));
   });
 });
