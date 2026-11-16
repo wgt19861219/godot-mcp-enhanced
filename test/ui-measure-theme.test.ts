@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, writeFileSync, rmSync, copyFileSync, mkdirSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { genUiMeasureScript } from '../src/tools/ui/ui-measure.js';
+import { genUiImportSingleScript } from '../src/tools/ui/ui-import-single.js';
 import { executeGdscriptTrusted } from '../src/gdscript-executor.js';
 
 // 批1 1a(spec §「开放问题 3」spike):measure 链 theme_path 挂载。
@@ -27,6 +28,32 @@ describe('genUiMeasureScript theme 挂载', () => {
     expect(script).toContain('load("res://resources/themes/default_theme.tres")');
     expect(script).toContain('root.set_theme(_theme_res)');
     expect(script.indexOf('set_theme')).toBeGreaterThan(script.indexOf('_mcp_load_scene'));
+  });
+});
+
+// import 链注入通道锚定(Task1 审查 Important#1):genUiImportSingleScript 与 measure 链
+// materially 不同——不同函数体、不同截取拼接机制(_initialize 整体剥离,挂载必须由
+// _measure_go 重注),本组锚定注入存在性与位置(reload add_child 之后、connect 之前)。
+// 注:该函数 themePath 为第 6 位裸形参(非 genUiMeasureScript 的 opts 对象),以代码现状为准。
+describe('genUiImportSingleScript theme 挂载(import 链注入通道)', () => {
+  const tree = {
+    type: 'VBoxContainer', name: 'Root',
+    children: [{ type: 'Label', name: 'L', properties: { text: '你好' } }],
+  };
+  function gen(themePath?: string): string {
+    return genUiImportSingleScript('D:/proj/main.tscn', 'root', tree, { w: 1280, h: 720 }, undefined, themePath);
+  }
+  it('无 themePath 时产物不含 set_theme 行', () => {
+    expect(gen()).not.toContain('set_theme');
+  });
+  it('有 themePath 时挂载行在 _measure_go:场景 add_child 之后、process_frame.connect 之前', () => {
+    const s = gen('res://themes/x.tres');
+    expect(s).toContain('root.set_theme(_theme_res)');
+    const mount = s.indexOf('root.set_theme(_theme_res)');
+    // root.add_child(_mcp_scene_instance) 在合成产物中仅 _measure_go 出现一次
+    // (header 的 _mcp_load_scene 用 _r.add_child,build 段不重复该行)
+    expect(mount).toBeGreaterThan(s.lastIndexOf('root.add_child(_mcp_scene_instance)'));
+    expect(mount).toBeLessThan(s.indexOf('process_frame.connect'));
   });
 });
 
