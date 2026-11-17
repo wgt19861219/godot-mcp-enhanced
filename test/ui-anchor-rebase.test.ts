@@ -468,13 +468,20 @@ describe.skipIf(!hasE2e)('solve_from_current 靶子 e2e(0 容差闭环)', () => 
     return (JSON.parse(String(raw!.value)) as { nodes: MeasuredNode[] }).nodes;
   }
 
-  it('基线→dry_run=false 改造→复测:compareBaseline ok===true + TS 边距模拟恒等 + 注释保留', async () => {
+  it('基线→dry_run=false 改造→复测:compareBaseline ok===true + TS 边距模拟恒等 + 注释保留(靶子改造后两态自适应)', async () => {
     copyFileSync(SRC, COPY_ABS);
     try {
       const textBefore = readFileSync(COPY_ABS, 'utf-8');
+      // 批1 Task7 验收(2026-11-17)后靶子可能已整体锚点化,且去留由用户裁决——工作区
+      // 「改造前/改造后」两态皆合法。改造后 Panel 比例锚定于视口,授权几何链在 Panel 处
+      // 不可解 → MoneyLay 子树全员进 skippedUnresolvedParent、written=0 不动盘——这是
+      // anchor-rebase.ts 头注边界的真数据回归锚(工具对已改造场景的诚实拒绝);改造前
+      // 状态走原 0 容差闭环主链。验收证据:docs/superpowers/plans/2026-11-16-refero-batch1-acceptance.md。
+      const panelRebased = /layout_mode = 1/.test(textBefore.split('[node name="Panel"')[1]!.split('[node')[0]);
       const baseline = await measure();
 
-      // 交叉验证:授权几何的 float32 模拟与引擎实测一致(dyadic 链节点抽检)
+      // 交叉验证:授权几何的 float32 模拟与引擎实测一致(dyadic 链节点抽检;两态下引擎
+      // rect 相同——改造保 g960 位级不变)
       const di = baseline.find(n => n.path === 'Panel/MoneyLay/DataImg2')!;
       expect(di).toBeDefined();
       expect(di.rect.x).toBe(112.25 + 8.5);   // Panel.global.x 100.75 + MoneyLay 11.5 + DataImg2 8.5
@@ -487,10 +494,20 @@ describe.skipIf(!hasE2e)('solve_from_current 靶子 e2e(0 容差闭环)', () => 
       }, {} as ToolContext);
       expect(r?.isError).toBeFalsy();
       const body = JSON.parse((r!.content?.[0] as { text?: string }).text ?? '{}') as {
-        success: boolean; data: { dry_run: boolean; written: number };
+        success: boolean; data: {
+          dry_run: boolean; written: number;
+          toWrite: Array<{ path: string }>; skippedUnresolvedParent: string[];
+        };
       };
       expect(body.success).toBe(true);
       expect(body.data.dry_run).toBe(false);
+      if (panelRebased) {
+        expect(body.data.written).toBe(0);
+        expect(body.data.toWrite).toEqual([]);
+        expect(body.data.skippedUnresolvedParent).toContain('Panel/MoneyLay');
+        expect(readFileSync(COPY_ABS, 'utf-8')).toBe(textBefore);   // written=0 盘未动
+        return;
+      }
       expect(body.data.written).toBe(6);   // MoneyLay + DataImg2 + MonthNum + LoginMonthLabel + RuleButt + RuleMark
 
       const after = await measure();

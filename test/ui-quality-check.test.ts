@@ -5,7 +5,7 @@
 // fixture 手写 MeasuredNode(类型从 layout-diff.ts 导入)。
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, buildQualityReport } from '../src/tools/ui/quality-check.js';
@@ -405,7 +405,7 @@ describe.skipIf(!hasE2e)('quality 靶子 e2e(DotaLegendGodot daily_login,挂主�
   });
   afterAll(() => { execMock.mockReset(); });
 
-  it('quality 报告命中 MoneyLay 裸壳(名单化基线),全部命中量落日志 → 记入 spec §1c 报告量预估行', async () => {
+  it('quality 报告:改造前命中 MoneyLay 裸壳(名单化基线);批1 改造后全零——靶子两态自适应', async () => {
     const r = await handleTool('ui', {
       action: 'ui_measure_layout', project_path: TARGET_PROJECT,
       scene_path: 'res://scenes/ui/daily_login_content.tscn',
@@ -419,8 +419,20 @@ describe.skipIf(!hasE2e)('quality 靶子 e2e(DotaLegendGodot daily_login,挂主�
       should_follow: Array<{ path: string }>;
       out_of_bounds: unknown[];
       viewport_overflow: unknown[];
-    };
-    expect(q, 'quality 节存在(靶子预期有发现)').toBeDefined();
+    } | undefined;
+    // 批1 Task7 验收(2026-11-17)可能已把靶子 daily_login 改造为比例锚点,且去留由用户
+    // 裁决——工作区「改造前/改造后」两态皆合法,e2e 不硬绑历史状态:quality 节存在 =
+    // 改造前(下方原断言全保留);缺席 = 改造后,须实证场景确已锚点化(而非检测器哑火),
+    // 报告全零是名单化处置完毕的结果(证据:docs/superpowers/plans/2026-11-16-refero-batch1-acceptance.md)。
+    if (q === undefined) {
+      const sceneText = readFileSync(join(TARGET_PROJECT, 'scenes/ui/daily_login_content.tscn'), 'utf-8');
+      const panelSec = sceneText.split('[node name="Panel"')[1]!.split('[node')[0];
+      expect(panelSec, 'quality 全零须以场景已锚点化为证(防检测器哑火假绿)').toMatch(/layout_mode = 1/);
+      expect(panelSec).toMatch(/anchor_left = 0\.1/);
+      expect(body.data.order).toBeUndefined();
+      console.log('[task4-e2e] 靶子已处批1改造后状态:裸壳/应跟随/溢出/等距全零(名单化处置完毕,见 docs/superpowers/plans/2026-11-16-refero-batch1-acceptance.md)');
+      return;
+    }
     const shells = q.bare_shells.map(b => b.path);
     expect(shells).toContain('Panel/MoneyLay');
     console.log(`[task4-e2e] 裸壳 x${q.bare_shells.length}: ${JSON.stringify(shells)}`);

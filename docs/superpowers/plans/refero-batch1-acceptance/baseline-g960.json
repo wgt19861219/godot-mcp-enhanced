@@ -1,0 +1,884 @@
+{
+ "measure": {
+  "nodes": [
+   {
+    "anchors": {
+     "bottom": 1,
+     "left": 0,
+     "right": 1,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": ".",
+    "rect": {
+     "h": 540,
+     "w": 960,
+     "x": 0,
+     "y": 0
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 529.75,
+     "left": 100.75,
+     "right": 859.25,
+     "top": 36.25
+    },
+    "path": "Panel",
+    "rect": {
+     "h": 493.5,
+     "w": 758.5,
+     "x": 100.75,
+     "y": 36.25
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 493.5,
+     "left": 0,
+     "right": 758.5,
+     "top": 0
+    },
+    "path": "Panel/Bj",
+    "rect": {
+     "h": 493.5,
+     "w": 758.5,
+     "x": 100.75,
+     "y": 36.25
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 45.2000007629395,
+     "left": 709.799987792969,
+     "right": 736.200012207031,
+     "top": 18.7999992370605
+    },
+    "path": "Panel/CloseBtn",
+    "rect": {
+     "h": 26.4000015258789,
+     "w": 26.4000244140625,
+     "x": 810.549987792969,
+     "y": 55.0499992370605
+    },
+    "type": "TextureButton",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 72.5,
+     "left": 11.5,
+     "right": 236.5,
+     "top": 8.5
+    },
+    "path": "Panel/MoneyLay",
+    "rect": {
+     "h": 64,
+     "w": 225,
+     "x": 112.25,
+     "y": 44.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 46.5,
+     "left": 8.5,
+     "right": 51.5,
+     "top": 3.5
+    },
+    "path": "Panel/MoneyLay/DataImg2",
+    "rect": {
+     "h": 43,
+     "w": 43,
+     "x": 120.75,
+     "y": 48.25
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 44.75,
+     "left": 43.75,
+     "right": 90.25,
+     "top": 8.25
+    },
+    "path": "Panel/MoneyLay/MonthNum",
+    "rect": {
+     "h": 36.5,
+     "w": 46.5,
+     "x": 156,
+     "y": 53
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 41,
+     "left": 87,
+     "right": 187,
+     "top": 17
+    },
+    "path": "Panel/MoneyLay/LoginMonthLabel",
+    "rect": {
+     "h": 28,
+     "w": 100,
+     "x": 199.25,
+     "y": 61.75
+    },
+    "text": "月签到",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 37.2750015258789,
+     "left": 156.225006103516,
+     "right": 174.774993896484,
+     "top": 18.7250003814697
+    },
+    "path": "Panel/MoneyLay/RuleButt",
+    "rect": {
+     "h": 18.5500011444092,
+     "w": 18.5499877929688,
+     "x": 268.475006103516,
+     "y": 63.4749984741211
+    },
+    "type": "TextureButton",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 17.8500003814697,
+     "left": 6.125,
+     "right": 12.4250001907349,
+     "top": 0.699999988079071
+    },
+    "path": "Panel/MoneyLay/RuleButt/RuleMark",
+    "rect": {
+     "h": 17.1499996185303,
+     "w": 6.30000019073486,
+     "x": 274.600006103516,
+     "y": 64.1749954223633
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 72.5,
+     "left": 346,
+     "right": 746,
+     "top": 8.5
+    },
+    "path": "Panel/TopRigLay",
+    "rect": {
+     "h": 64,
+     "w": 400,
+     "x": 446.75,
+     "y": 44.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 60,
+     "left": 5.5,
+     "right": 304.5,
+     "top": 49
+    },
+    "path": "Panel/TopRigLay/ProgressBar",
+    "rect": {
+     "h": 11,
+     "w": 299,
+     "x": 452.25,
+     "y": 93.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 60,
+     "left": 5.5,
+     "right": 304.5,
+     "top": 49
+    },
+    "path": "Panel/TopRigLay/ProgressBj",
+    "rect": {
+     "h": 11,
+     "w": 299,
+     "x": 452.25,
+     "y": 93.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 61,
+     "left": 55.75,
+     "right": 68.25,
+     "top": 48
+    },
+    "path": "Panel/TopRigLay/Pot1",
+    "rect": {
+     "h": 13,
+     "w": 12.5,
+     "x": 502.5,
+     "y": 92.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 61,
+     "left": 133.75,
+     "right": 146.25,
+     "top": 48
+    },
+    "path": "Panel/TopRigLay/Pot2",
+    "rect": {
+     "h": 13,
+     "w": 12.5,
+     "x": 580.5,
+     "y": 92.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 61,
+     "left": 214.25,
+     "right": 226.75,
+     "top": 48
+    },
+    "path": "Panel/TopRigLay/Pot3",
+    "rect": {
+     "h": 13,
+     "w": 12.5,
+     "x": 661,
+     "y": 92.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 61,
+     "left": 294.75,
+     "right": 307.25,
+     "top": 48
+    },
+    "path": "Panel/TopRigLay/Pot4",
+    "rect": {
+     "h": 13,
+     "w": 12.5,
+     "x": 741.5,
+     "y": 92.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 6,
+     "right": 36,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/DayNum1",
+    "rect": {
+     "h": 20,
+     "w": 30,
+     "x": 452.75,
+     "y": 75.75
+    },
+    "text": "3",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 84.5,
+     "right": 114.5,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/DayNum2",
+    "rect": {
+     "h": 20,
+     "w": 30,
+     "x": 531.25,
+     "y": 75.75
+    },
+    "text": "7",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 161,
+     "right": 191,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/DayNum3",
+    "rect": {
+     "h": 20,
+     "w": 30,
+     "x": 607.75,
+     "y": 75.75
+    },
+    "text": "15",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 241,
+     "right": 271,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/DayNum4",
+    "rect": {
+     "h": 20,
+     "w": 30,
+     "x": 687.75,
+     "y": 75.75
+    },
+    "text": "30",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 19,
+     "right": 39,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/Tian1",
+    "rect": {
+     "h": 20,
+     "w": 20,
+     "x": 465.75,
+     "y": 75.75
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 97.5,
+     "right": 117.5,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/Tian2",
+    "rect": {
+     "h": 20,
+     "w": 20,
+     "x": 544.25,
+     "y": 75.75
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 177.5,
+     "right": 197.5,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/Tian3",
+    "rect": {
+     "h": 20,
+     "w": 20,
+     "x": 624.25,
+     "y": 75.75
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 48,
+     "left": 257.5,
+     "right": 277.5,
+     "top": 31
+    },
+    "path": "Panel/TopRigLay/Tian4",
+    "rect": {
+     "h": 20,
+     "w": 20,
+     "x": 704.25,
+     "y": 75.75
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 30,
+     "left": 62,
+     "right": 77,
+     "top": 15
+    },
+    "path": "Panel/TopRigLay/MsItem1",
+    "rect": {
+     "h": 15,
+     "w": 15,
+     "x": 508.75,
+     "y": 59.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 30,
+     "left": 140.5,
+     "right": 155.5,
+     "top": 15
+    },
+    "path": "Panel/TopRigLay/MsItem2",
+    "rect": {
+     "h": 15,
+     "w": 15,
+     "x": 587.25,
+     "y": 59.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 30,
+     "left": 220.5,
+     "right": 235.5,
+     "top": 15
+    },
+    "path": "Panel/TopRigLay/MsItem3",
+    "rect": {
+     "h": 15,
+     "w": 15,
+     "x": 667.25,
+     "y": 59.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 30,
+     "left": 300.5,
+     "right": 315.5,
+     "top": 15
+    },
+    "path": "Panel/TopRigLay/MsItem4",
+    "rect": {
+     "h": 15,
+     "w": 15,
+     "x": 747.25,
+     "y": 59.75
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 112.5,
+     "left": 24.75,
+     "right": 36.25,
+     "top": 100.5
+    },
+    "path": "Panel/TimeImg",
+    "rect": {
+     "h": 12,
+     "w": 11.5,
+     "x": 125.5,
+     "y": 136.75
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 114.5,
+     "left": 40.5,
+     "right": 240.5,
+     "top": 97.5
+    },
+    "path": "Panel/CountdownPre",
+    "rect": {
+     "h": 20,
+     "w": 200,
+     "x": 141.25,
+     "y": 133.75
+    },
+    "text": "每日签到刷新倒计时：",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 114.5,
+     "left": 190,
+     "right": 240,
+     "top": 97.5
+    },
+    "path": "Panel/CountdownTime",
+    "rect": {
+     "h": 20,
+     "w": 56,
+     "x": 290.75,
+     "y": 133.75
+    },
+    "text": "00:00:00",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 114.5,
+     "left": 712,
+     "right": 732,
+     "top": 97.5
+    },
+    "path": "Panel/MonthTotalSuf",
+    "rect": {
+     "h": 20,
+     "w": 20,
+     "x": 812.75,
+     "y": 133.75
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 114.5,
+     "left": 682,
+     "right": 712,
+     "top": 97.5
+    },
+    "path": "Panel/MonthTotalNum",
+    "rect": {
+     "h": 20,
+     "w": 30,
+     "x": 782.75,
+     "y": 133.75
+    },
+    "text": "0",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 114.5,
+     "left": 562,
+     "right": 682,
+     "top": 97.5
+    },
+    "path": "Panel/MonthTotalPre",
+    "rect": {
+     "h": 20,
+     "w": 120,
+     "x": 662.75,
+     "y": 133.75
+    },
+    "text": "本月已累计签到",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 473,
+     "left": 18.5,
+     "right": 738.5,
+     "top": 118
+    },
+    "path": "Panel/DayItemPos",
+    "rect": {
+     "h": 355,
+     "w": 720,
+     "x": 119.25,
+     "y": 154.25
+    },
+    "type": "Control",
+    "visible": true
+   }
+  ],
+  "stable_after_frames": 3,
+  "stalled": false,
+  "viewport": {
+   "h": 540,
+   "w": 960
+  }
+ },
+ "quality": {
+  "bare_shells": [
+   {
+    "path": "Panel",
+    "childCount": 11,
+    "suggestion": "裸 Control 壳下 11 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)"
+   },
+   {
+    "path": "Panel/MoneyLay",
+    "childCount": 4,
+    "suggestion": "裸 Control 壳下 4 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)"
+   },
+   {
+    "path": "Panel/TopRigLay",
+    "childCount": 18,
+    "suggestion": "裸 Control 壳下 18 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)"
+   }
+  ],
+  "should_follow": [
+   {
+    "path": "Panel/Bj",
+    "parent": "Panel",
+    "suggestion": "子 rect 已贴合父 rect(四边差 ≤2px)但 anchor 全 0,resize 不跟随——建议 solve_from_current 反解为跟随锚点"
+   }
+  ],
+  "out_of_bounds": [],
+  "viewport_overflow": []
+ },
+ "order": null,
+ "warnings": []
+}

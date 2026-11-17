@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **docs(ui): refero 批1 靶子手工验收记录（daily_login 双档闭环）**:新增 `docs/superpowers/plans/2026-11-16-refero-batch1-acceptance.md` + `docs/superpowers/plans/refero-batch1-acceptance/` 四份快照 JSON + 驱动脚本 `scripts/refero-batch1-acceptance.mjs`（stage 机 baseline→plan→write→verify→g800,`GODOT_PATH`+靶子存在双门控,git 干净幂等护栏,0 容差失败自动 `git checkout` 回滚,`ACCEPTANCE_SCENE` env 排练通道）。验收结果（真靶子 DotaLegendGodot `daily_login_content.tscn`,挂主题 g960 基线 36 节点）:① 报告全命中 4 项（裸壳×3/应跟随×1/等距×0/溢出×0,与 Task 4 实测一致）名单化处置零豁免;② `solve_from_current` 写盘 34 节点 + Panel 本体人工补笔 1 节点（工具 `skippedUnresolvedParent` 已知边界——场景根直接子节点父尺寸=视口依赖;补笔用同一导出原语与 f32 感知数学,父尺寸实读 project.godot 960×540,写前位级守卫）;③ **g960 档 compareBaseline ok=true（36 节点 rect 四值严格 ===,0 容差不放宽）**;④ g800（viewport 800×480 SubViewport 通道）:视口生效硬证据=全铺场景根 rect=800×480,一级 Panel 右缘 716.04≤800/下缘 470.89≤480（改造前 859.25/529.75 双越界）,水平中心 400.0000=视口中心,7 节点位置比例落位 Δ=0.000px,Bj rect===Panel rect（应跟随改造生效）,尺寸容偏 h ×8/9 相对美术等比 5/6 偏 +6.7%（D2 声明区间）,g800 档 quality 报告全零。靶子改动仅 `scenes/ui/daily_login_content.tscn` 一文件（+315/−172,注释逐字节保留）,**未 commit——去留由用户裁决**。随动:两个靶子 e2e 改为「改造前/改造后」两态自适应（`test/ui-quality-check.test.ts` quality 全零须以场景已锚点化为证,防检测器哑火假绿;`test/ui-anchor-rebase.test.ts` 改造后 MoneyLay 子树进 skippedUnresolvedParent、written=0 盘未动——anchor-rebase 头注边界的真数据回归锚）——仓库测试不再依赖外部靶子工作区的历史状态。
+
 ## [0.36.9] - 2026-11-16
 
 > refero 批 1 布局约束 Task 6（1e）：提取脚本 flex 自动检测 + `flow_gap`/`flow_align` 平级新键 + 多层 flow 翻译锚定。≠发版,npm publish/tag 待用户明确指令。ui.md 规则内容变更（evaluate 模板 flex/grid 自动检测段）触发 bump 硬门禁,版本行 v0.17.0+→v0.36.9+。
