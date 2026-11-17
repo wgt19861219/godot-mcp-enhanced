@@ -21,7 +21,7 @@ alwaysApply: true
 
 ## 概述与架构
 
-godot-mcp-enhanced 提供 46 个 MCP 工具（274 个 action，权威数据见 docs/capability-matrix.md，由 \`npm run build-matrix\` 生成），通过三层架构操作 Godot：
+godot-mcp-enhanced 提供 46 个 MCP 工具（277 个 action，权威数据见 docs/capability-matrix.md，由 \`npm run build-matrix\` 生成），通过三层架构操作 Godot：
 
 1. **Headless CLI** — 独立 Godot 进程执行 GDScript，适合文件读写和一次性验证
 2. **Editor WebSocket** — 连接运行中的编辑器插件，适合实时场景操作
@@ -590,7 +590,7 @@ editor_sync_start(project_path="D:/projects/my-game")
 `,
 
   'godot-mcp-ui.md': `---
-description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中 迁移 PanelContainer clip_contents 圆角 对齐"
+description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property token_set token_list DesignTokens 设计 token CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中 迁移 PanelContainer clip_contents 圆角 对齐"
 alwaysApply: false
 ---
 
@@ -643,6 +643,8 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 | \`ui_set_theme\` | 设置/创建/保存/加载 Theme |
 | \`theme_create\` | 创建空 Theme 或从节点提取 |
 | \`theme_set_property\` | 设置 Theme 属性（font/color/constant/stylebox） |
+| \`token_set\` | 向 theme 的 DesignTokens 命名空间写一个 token（color/constant）并原子落盘（v0.37.0） |
+| \`token_list\` | 审计 theme 的 DesignTokens 全量 token（colors+constants 双通道，只读） |
 
 ### 支持的 31 种 Control 子类
 
@@ -855,6 +857,14 @@ HTML 原型侧约定：每个待还原元素标 \`data-name\`（=Godot 节点名
 \`\`\`
 
 要点：**bg 只在 \`getComputedStyle().backgroundColor\` 非透明时填**（透明壳契约由翻译器兜底）；**颜色经 toRgba 转 \`[r,g,b,a]\` 0-1 数组**（保留 alpha，替代旧 toHex 的丢 alpha；翻译器三种颜色格式均认）；**border 四边语义**——top>0 才产 border spec（width 恒取 top），四边各异时附 \`border.perSides\` 由翻译器 warning 消静默（渲染仍取 top），top=0 其余边>0 时改发 \`borderNotice\` 提示字段（不产 border spec，防全透明回归）；**flow 自动检测**——显式 \`data-flow\` 优先，否则 \`display\` 为 flex/inline-flex/grid/inline-grid 时自动输出 flow+\`flow_gap\`（gap 计算值 >0 才填）+\`flow_align\`（align-items 的 start/center/end 映射；stretch/normal 是默认不输出）；grid 映射 row 属近似（列数语义不迁移，差异回原型侧修）；\`viewport\` 取 \`[data-viewport]\` 容器或窗口尺寸，**必须与 Godot 项目 \`display/window/size\` 及后续 \`screenshot(capture)\` 的 viewport 参数一致**（不一致则几何比例全错）。
+
+### DesignTokens token 层（v0.37.0，批3）
+
+- **真源约定**：设计 token 的唯一真源是 **theme 资源文件**的 \`DesignTokens\` 自定义 typevariation 命名空间（约定路径 \`res://ui/theme.tres\`，可用任意路径但须全项目一致）——colors（\`DesignTokens/colors/<name>\`，色板）与 constants（\`DesignTokens/constants/<name>\`，间距/字号档位如 \`space_1..8\`）。场景/原型里不重复定义色值，一律 \`$name\` 引用。
+- **\`$name\` 引用语法与 \`theme_path\` 四语义**：geometry 的颜色字段（\`color\`/\`bg\`/\`fill\`/\`border.color\`）支持 \`"$name"\` 引用 theme token（名须匹配 \`^[A-Za-z_][A-Za-z0-9_-]*$\`；缺键报 TOKEN_NOT_FOUND 点名 token 与 theme 路径）。\`theme_path\` 一个参数四种语义：① \`ui_set_theme\` save/load 的资源路径；② \`ui_measure_layout\`/\`ui_import_prototype\` 的 measure 前挂载；③ \`ui_import_prototype\`/\`ui_pixel_verify\` 的 \`$token\` 解析源；④ \`token_set\`/\`token_list\` 的读写目标主题（必填、须已存在）。
+- **预取成本提示**：geometry 含 \`$\` 引用时，import/pixel_verify 会**多一次 Godot spawn** 预取 token map（loadAutoloads=false 只 load 资源）；无 \`$\` 引用零开销透传。频繁迭代原型时先落字面量调试、定稿再换 \`$name\` 可省 spawn。
+- **\`token_set\` 落盘与建主题前置**：\`token_set(theme_path, token_name, token_value)\`——theme 文件**必须已存在**（\`theme_create(scene_path+save_path)\` 或 \`ui_set_theme create+save\` 先建；缺失报 THEME_NOT_FOUND 附建主题指引）；token_value 为 color 数组 \`[r,g,b](,[a])\` 0-1 → \`set_color\`，有限数字 → \`set_constant\`；**原子落盘**（tmp+rename，theme 文件要么旧值要么新值，无中间态）；同名覆盖 = 原位重写。
+- **\`token_list\` 审计**：\`token_list(theme_path)\` 返回 \`{colors: {name: [r,g,b,a]}, constants: {name: number}}\` 双通道全量清单（Color 先转数组再进 JSON 通道，数值可精确比较）；裸 Theme（无 DesignTokens type）返回空双 dict **不报错**（审计语义，缺失≠错误）——先 token_list 确认现状再 token_set，避免盲写。
 
 ### draw_recipe 声明式绘图
 

@@ -772,3 +772,165 @@ describe('ui_pixel_verify $token 预取(批3 Task 3)', () => {
     expect(shotMock).not.toHaveBeenCalled();
   });
 });
+
+// ─── 批3 Task 4: token_set/token_list handler 接线 ───────────────────────────
+
+describe('token_set/token_list(批3 Task 4)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('契约:ACTIONS 含两新值;actionRisks token_set=write/token_list=read;schema 声明 token_name/token_value', () => {
+    expect(ACTIONS).toContain('token_set');
+    expect(ACTIONS).toContain('token_list');
+    expect(TOOL_META.ui!.actionRisks!.token_set).toBe('write');
+    expect(TOOL_META.ui!.actionRisks!.token_list).toBe('read');
+    const defs = getToolDefinitions();
+    const schema = defs[0]!.inputSchema as { properties: Record<string, unknown> };
+    // action enum 登记两新值(unknown-action 语义下 enum 是路由 SSOT)
+    expect((schema.properties.action as { enum: string[] }).enum).toContain('token_set');
+    expect((schema.properties.action as { enum: string[] }).enum).toContain('token_list');
+    // SSOT:schema 声明两新参数(handler 私读键须入 schema,check:ssot-params 锚)
+    expect(schema.properties.token_name).toBeTruthy();
+    expect(schema.properties.token_value).toBeTruthy();
+    // 白名单提示留在 token_name description
+    expect(String((schema.properties.token_name as { description?: string }).description)).toContain('A-Za-z');
+  });
+
+  it('token_set 缺 theme_path → INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', token_name: 'brand', token_value: 8,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('theme_path');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_set 缺 token_name → INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres', token_value: 8,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('token_name');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_set 缺 token_value → INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres', token_name: 'brand',
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('token_value');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['1abc', 'a b'])('token_set token_name 非白名单(%s)→ INVALID_PARAMS,零 spawn', async (bad) => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+      token_name: bad, token_value: 8,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('token_name');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_set token_value 非法字符串("red")→ INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+      token_name: 'brand', token_value: 'red',
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('token_value');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_set color 数组含非有限数([0.5, "x", 1])→ INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+      token_name: 'brand', token_value: [0.5, 'x', 1],
+    } as Record<string, unknown>, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_set 合法 color → 一次 spawn,code 含 set_color + 原子落盘段', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'token_set', value: JSON.stringify({ name: 'brand', path: 'res://themes/t.tres', kind: 'color' }) },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+      token_name: 'brand', token_value: [0.5, 0.25, 0.75, 1],
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const call = execMock.mock.calls[0]![0] as { code: string };
+    expect(call.code).toContain('set_color("brand"');
+    expect(call.code).toContain('Color(0.5, 0.25, 0.75, 1)');
+    expect(call.code).toContain('ResourceSaver.save');
+  });
+
+  it('token_set 合法 number → code 含 set_constant', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'token_set', value: JSON.stringify({ name: 'space_1', path: 'res://themes/t.tres', kind: 'constant' }) },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'token_set', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+      token_name: 'space_1', token_value: 8,
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const call = execMock.mock.calls[0]![0] as { code: string };
+    expect(call.code).toContain('set_constant("space_1"');
+  });
+
+  it('token_list 缺 theme_path → INVALID_PARAMS,零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'token_list', project_path: '/fake/p',
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('theme_path');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('token_list 合法 → 一次 spawn,code 含 get_color_list + get_constant_list', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'token_list', value: JSON.stringify({ colors: {}, constants: {} }) },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'token_list', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const call = execMock.mock.calls[0]![0] as { code: string };
+    expect(call.code).toContain('get_color_list');
+    expect(call.code).toContain('get_constant_list');
+  });
+
+  it('mapper 顺序修正:theme file not found → THEME_NOT_FOUND(非 NODE_NOT_FOUND,不被首位 not found 截胡)', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'error', value: 'theme file not found: res://themes/t.tres(先 theme_create(scene_path+save_path) 或 ui_set_theme create+save 建主题)' },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'token_list', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('THEME_NOT_FOUND');
+    expect(body.error).toContain('theme file not found');
+  });
+});

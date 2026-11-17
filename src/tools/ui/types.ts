@@ -21,6 +21,9 @@ export const ACTIONS = [
   'theme_create',
   'theme_set_property',
   'solve_from_current',
+  // 批3 Task 4:DesignTokens token 文件级读写(主题资源直改,不走场景)
+  'token_set',
+  'token_list',
 ] as const;
 
 export const CONTROL_TYPES = [
@@ -74,8 +77,7 @@ export const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyl
  * 批3 Task 3:DesignTokens 类型名(Godot Theme 自定义 typevariation 命名空间)。
  * 同步点登记——全部 GD 生成点共用此常量,扩名(改名)须全点同步:
  * - ui-measure.ts themeConstEmit(constants 导出)
- * - ui-tokens.ts genTokenPrefetchScript(colors 预取)
- * - 后续 Task 4 的 token_set/token_list 生成点
+ * - ui-tokens.ts genTokenPrefetchScript(colors 预取)/genTokenSetScript/genTokenListScript(Task 4)
  */
 export const DESIGN_TOKENS_TYPE = 'DesignTokens';
 

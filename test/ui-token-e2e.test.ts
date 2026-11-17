@@ -52,6 +52,12 @@ DesignTokens/colors/brand = Color(0.5, 0.25, 0.75, 1)
 [resource]
 Other/colors/x = Color(1, 1, 1, 1)
 `);
+    // 批3 Task 4:token_set 可写目标(空 Theme;token_set 只写已存在主题,缺失分支报
+    // THEME_NOT_FOUND——独立文件防污染共享 tokens.tres)
+    writeFileSync(join(dir, 'themes', 'writable.tres'), `[gd_resource type="Theme" format=3]
+
+[resource]
+`);
     restore = isolatePathEnv({ allowed: [dir] });
   });
   afterAll(() => { restore(); rmSync(dir, { recursive: true, force: true }); });
@@ -64,6 +70,8 @@ Other/colors/x = Color(1, 1, 1, 1)
       tokens_resolved?: { theme_path: string; refs: number; tokens: string[] };
       style_verify?: Array<{ path: string; slot: string; field: string; delta: number[] | null; ok: boolean }>;
       pixel_verify?: { nodes: Array<{ target: number[]; ok: boolean }>; pass: number; fail: number };
+      token_set?: { name: string; path: string; kind: string };
+      token_list?: { colors: Record<string, number[]>; constants: Record<string, number> };
     };
   } {
     return JSON.parse((r.content?.[0] as { text?: string }).text ?? '{}');
@@ -143,5 +151,92 @@ Other/colors/x = Color(1, 1, 1, 1)
     const body = bodyOf(r);
     expect(body.success).toBe(false);
     expect(body.error_code).toBe('THEME_NOT_FOUND');
+  }, 120_000);
+
+  // ─── 批3 Task 4:token_set/token_list 文件级读写真机锚 ─────────────────────
+
+  it('token_set(color float32 安全值 + constant)→ token_list 精确读回(逐值 ===)', async () => {
+    const WRITABLE = 'res://themes/writable.tres';
+    // color [0.5,0.25,0.75,1] 全 2 的幂次,float32 位级无损(同 tokens.tres 锚值);constant 8
+    const setColor = await handleTool('ui', {
+      action: 'token_set', project_path: dir, theme_path: WRITABLE,
+      token_name: 'brand2', token_value: [0.5, 0.25, 0.75, 1],
+    }, ctx) as ToolResult;
+    expect(setColor.isError, JSON.stringify(setColor.content)).toBeFalsy();
+    expect(bodyOf(setColor).data!.token_set).toMatchObject({ name: 'brand2', kind: 'color' });
+
+    const setConst = await handleTool('ui', {
+      action: 'token_set', project_path: dir, theme_path: WRITABLE,
+      token_name: 'space_1', token_value: 8,
+    }, ctx) as ToolResult;
+    expect(setConst.isError, JSON.stringify(setConst.content)).toBeFalsy();
+    expect(bodyOf(setConst).data!.token_set).toMatchObject({ name: 'space_1', kind: 'constant' });
+
+    // 读回:逐值 ===(float32 安全值位级一致,非容差内)
+    const list = await handleTool('ui', {
+      action: 'token_list', project_path: dir, theme_path: WRITABLE,
+    }, ctx) as ToolResult;
+    expect(list.isError, JSON.stringify(list.content)).toBeFalsy();
+    const tl = bodyOf(list).data!.token_list!;
+    expect(tl.colors.brand2).toEqual([0.5, 0.25, 0.75, 1]);
+    expect(tl.colors.brand2!.every((v, i) => v === [0.5, 0.25, 0.75, 1][i])).toBe(true);
+    expect(tl.constants.space_1).toBe(8);
+    expect(tl.constants.space_1 === 8).toBe(true);
+  }, 120_000);
+
+  it('token_set 同名覆盖 → 再 list 验证新值(旧值不残留)', async () => {
+    const WRITABLE = 'res://themes/writable.tres';
+    // 覆盖 brand2 为新色(全 2 的幂次);space_1 覆盖为 16
+    const r1 = await handleTool('ui', {
+      action: 'token_set', project_path: dir, theme_path: WRITABLE,
+      token_name: 'brand2', token_value: [1, 0.5, 0.25, 1],
+    }, ctx) as ToolResult;
+    expect(r1.isError, JSON.stringify(r1.content)).toBeFalsy();
+    const r2 = await handleTool('ui', {
+      action: 'token_set', project_path: dir, theme_path: WRITABLE,
+      token_name: 'space_1', token_value: 16,
+    }, ctx) as ToolResult;
+    expect(r2.isError, JSON.stringify(r2.content)).toBeFalsy();
+
+    const list = await handleTool('ui', {
+      action: 'token_list', project_path: dir, theme_path: WRITABLE,
+    }, ctx) as ToolResult;
+    expect(list.isError, JSON.stringify(list.content)).toBeFalsy();
+    const tl = bodyOf(list).data!.token_list!;
+    expect(tl.colors.brand2).toEqual([1, 0.5, 0.25, 1]);
+    expect(tl.constants.space_1).toBe(16);
+    // 前序值不残留(space_1 8 已被 16 覆盖)
+    expect(tl.constants.space_1).not.toBe(8);
+  }, 120_000);
+
+  it('token_set/token_list theme 文件缺失 → THEME_NOT_FOUND(theme file not found 分流)', async () => {
+    const rSet = await handleTool('ui', {
+      action: 'token_set', project_path: dir, theme_path: 'res://themes/missing.tres',
+      token_name: 'brand', token_value: 8,
+    }, ctx) as ToolResult;
+    expect(rSet.isError).toBe(true);
+    const bodySet = bodyOf(rSet);
+    expect(bodySet.error_code).toBe('THEME_NOT_FOUND');
+    expect(bodySet.error).toContain('theme file not found');
+    // 指引文案(brief 逐字)
+    expect(bodySet.error).toContain('theme_create(scene_path+save_path)');
+
+    const rList = await handleTool('ui', {
+      action: 'token_list', project_path: dir, theme_path: 'res://themes/missing.tres',
+    }, ctx) as ToolResult;
+    expect(rList.isError).toBe(true);
+    const bodyList = bodyOf(rList);
+    expect(bodyList.error_code).toBe('THEME_NOT_FOUND');
+    expect(bodyList.error).toContain('theme file not found');
+  }, 120_000);
+
+  it('token_list 裸 Theme(无 DesignTokens type)→ 空 {colors:{}, constants:{}} 不报错', async () => {
+    const r = await handleTool('ui', {
+      action: 'token_list', project_path: dir, theme_path: 'res://themes/bare.tres',
+    }, ctx) as ToolResult;
+    expect(r.isError, JSON.stringify(r.content)).toBeFalsy();
+    const tl = bodyOf(r).data!.token_list!;
+    expect(tl.colors).toEqual({});
+    expect(tl.constants).toEqual({});
   }, 120_000);
 });

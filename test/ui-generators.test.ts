@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { genUiCreateControlScript, genUiContainerAddScript, genUiAnchorPresetScript } from '../src/tools/ui/ui-create.js';
 import { genUiSetLayoutScript } from '../src/tools/ui/ui-layout.js';
-import { genTokenPrefetchScript } from '../src/tools/ui/ui-tokens.js';
+import { genTokenPrefetchScript, genTokenSetScript, genTokenListScript } from '../src/tools/ui/ui-tokens.js';
 import { DESIGN_TOKENS_TYPE } from '../src/tools/ui/types.js';
 
 describe('P2-E: genUiCreateControlScript', () => {
@@ -174,5 +174,81 @@ describe('批3 Task 3: genTokenPrefetchScript', () => {
 
   it('DESIGN_TOKENS_TYPE === "DesignTokens" 同步锚(types.ts 常量与 GD 生成点共用)', () => {
     expect(DESIGN_TOKENS_TYPE).toBe('DesignTokens');
+  });
+});
+
+// ─── 批3 Task 4: token_set/token_list 脚本生成器 ─────────────────────────────
+
+describe('批3 Task 4: genTokenSetScript', () => {
+  it('color 形态:set_color + Color( + DesignTokens + 原子落盘段(ResourceSaver.save/rename) + token_set 输出键', () => {
+    const script = genTokenSetScript('res://themes/t.tres', 'brand', [0.5, 0.25, 0.75, 1]);
+    expect(script).toContain('load("res://themes/t.tres")');
+    expect(script).toContain('set_color("brand"');
+    expect(script).toContain(`"${DESIGN_TOKENS_TYPE}"`);
+    expect(script).toContain('Color(0.5, 0.25, 0.75, 1)');
+    // 原子落盘段(复制 ui-theme.ts save case 模式):make_dir_recursive → tmp → save → rename
+    expect(script).toContain('DirAccess.make_dir_recursive_absolute');
+    expect(script).toContain('ResourceSaver.save');
+    expect(script).toContain('DirAccess.rename_absolute');
+    expect(script).toContain('_mcp_output("token_set"');
+    expect(script).toContain('_mcp_done()');
+  });
+
+  it('color 3 元组不带 alpha:Color(r, g, b) 形态(引擎 alpha 默认 1)', () => {
+    const script = genTokenSetScript('res://themes/t.tres', 'ink', [0.1, 0.2, 0.3]);
+    expect(script).toContain('set_color("ink"');
+    expect(script).toContain('Color(0.1, 0.2, 0.3)');
+    expect(script).not.toContain('set_constant');
+  });
+
+  it('number 形态:set_constant + 数值,无 set_color 值行', () => {
+    const script = genTokenSetScript('res://themes/t.tres', 'space_1', 8);
+    expect(script).toContain(`_theme.set_constant("space_1", "${DESIGN_TOKENS_TYPE}", 8)`);
+    expect(script).not.toContain('set_color');
+    // set 值行非 Color 值形态(header 的 _mcp_set_prop coerce 段自带 Color(,故断言 set 行前缀)
+    expect(script).not.toMatch(/set_(color|constant)\("[^"]+", "[^"]+", Color\(/);
+  });
+
+  it('theme 缺失分支:theme file not found(含建主题指引文案)', () => {
+    const script = genTokenSetScript('res://themes/t.tres', 'brand', 8);
+    expect(script).toContain('theme file not found: res://themes/t.tres');
+    // brief 逐字指引文案(错误分支与成功分支同款)
+    expect(script).toContain('先 theme_create(scene_path+save_path) 或 ui_set_theme create+save 建主题');
+    expect(script).toContain('_mcp_done()');
+  });
+
+  it('路径与 token 名经 escapeForGdLiteral(反斜杠/引号安全)', () => {
+    const script = genTokenSetScript('res://a\\b"c.tres', 'brand', 1);
+    expect(script).toContain('load("res://a\\\\b\\"c.tres")');
+  });
+});
+
+describe('批3 Task 4: genTokenListScript', () => {
+  it('含 load + get_color_list + get_constant_list + DesignTokens 双通道 + token_list 输出键', () => {
+    const script = genTokenListScript('res://themes/t.tres');
+    expect(script).toContain('load("res://themes/t.tres")');
+    expect(script).toContain(`get_color_list("${DESIGN_TOKENS_TYPE}")`);
+    expect(script).toContain(`get_constant_list("${DESIGN_TOKENS_TYPE}")`);
+    expect(script).toContain('_mcp_output("token_list"');
+    expect(script).toContain('"colors"');
+    expect(script).toContain('"constants"');
+    expect(script).toContain('JSON.stringify');
+    expect(script).toContain('_mcp_done()');
+  });
+
+  it('Color 先转 [r,g,b,a] 数组(JSON roundtrip 通道,非裸 Color 对象)', () => {
+    const script = genTokenListScript('res://themes/t.tres');
+    expect(script).toMatch(/_colors\[str\(_name\)\] = \[_c\.r, _c\.g, _c\.b, _c\.a\]/);
+  });
+
+  it('constants 通道经 get_constant 数值直读', () => {
+    const script = genTokenListScript('res://themes/t.tres');
+    expect(script).toMatch(/_constants\[str\(_name\)\] = _theme\.get_constant\(_name, "DesignTokens"\)/);
+  });
+
+  it('theme 缺失分支:theme file not found(与 token_set 同款指引文案)', () => {
+    const script = genTokenListScript('res://themes/t.tres');
+    expect(script).toContain('theme file not found: res://themes/t.tres');
+    expect(script).toContain('先 theme_create(scene_path+save_path) 或 ui_set_theme create+save 建主题');
   });
 });

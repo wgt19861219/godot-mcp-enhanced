@@ -23,7 +23,7 @@ import { parseAuthoredGeometry, planRebase, applyRebasePatch } from './anchor-re
 import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
-import { genTokenPrefetchScript } from './ui-tokens.js';
+import { genTokenPrefetchScript, genTokenSetScript, genTokenListScript } from './ui-tokens.js';
 import { textResult } from '../../types.js';
 import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
 
@@ -33,7 +33,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'ui',
-      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。绘图: ui_draw_recipe。${NON_PERSIST}`,
+      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。设计 token: token_set(写 DesignTokens 落盘), token_list(审计全量)。绘图: ui_draw_recipe。${NON_PERSIST}(例外: theme_create(save_path)/token_set 直接落盘资源文件)`,
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -41,7 +41,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题',
+            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token',
           },
           scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)' },
           node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)）' },
@@ -102,7 +102,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['set_params', 'create', 'save', 'load'],
             description: 'ui_set_theme: 操作类型（set_params/create/save/load）',
           },
-          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);后续 token_set/token_list 同走此路径' },
+          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);token_set/token_list: token 读写目标主题(必填,须已存在)' },
           params: {
             type: 'object',
             description: 'ui_set_theme(set_params): 键值对（number/bool/string/array[4]→Color）',
@@ -136,6 +136,10 @@ export function getToolDefinitions(): Tool[] {
           theme_type: { type: 'string', description: 'theme_set_property: Theme 类型名（可选）' },
           value: {
             description: 'theme_set_property: 属性值（default_font/stylebox 为资源路径，color 为 [r,g,b,a]，constant 为数字）',
+          },
+          token_name: { type: 'string', description: 'token_set: token 名(白名单 ^[A-Za-z_][A-Za-z0-9_-]*$,与 $name 引用语法一致)' },
+          token_value: {
+            description: 'token_set: token 值——color 形态 [r,g,b] 或 [r,g,b,a]（0-1，元素须有限数）或数字常量（有限数）',
           },
           ops: {
             type: 'array',
@@ -413,6 +417,50 @@ export async function handleTool(
           itemType as 'default_font' | 'color' | 'constant' | 'stylebox',
           propName, value, themeType, resolvedScenePath,
         );
+        break;
+      }
+      case 'token_set': {
+        // 批3 Task 4:theme DesignTokens token 文件级写入(原子落盘)。校验全部前置在
+        // spawn 前(白名单/有限数守卫),非法输入零 Godot 开销。
+        const themePath = args.theme_path as string | undefined;
+        if (!themePath) {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path is required for token_set action');
+        }
+        try { sanitizeResPath(themePath, 'theme_path'); } catch {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
+        }
+        const tokenName = args.token_name as string | undefined;
+        // 白名单与 $name 引用语法(TOKEN_REF_RE)一致:首字符字母/下划线,余字符字母/数字/下划线/连字符
+        if (!tokenName || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(tokenName)) {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS,
+            `token_name must match ^[A-Za-z_][A-Za-z0-9_-]*$ (got: ${JSON.stringify(tokenName ?? null)})`);
+        }
+        const tokenValue = args.token_value;
+        if (Array.isArray(tokenValue)) {
+          // color 形态:3-4 元有限数(不足/超出/非数/NaN 全拒,防 Color(NaN,...) 无效 GDScript)
+          const nums = tokenValue as unknown[];
+          if (nums.length < 3 || nums.length > 4 || !nums.every(n => typeof n === 'number' && Number.isFinite(n))) {
+            return opsErrorResult(ERROR_CODES.INVALID_PARAMS,
+              'token_value color form must be [r, g, b] or [r, g, b, a] with finite numbers 0-1');
+          }
+        } else if (typeof tokenValue !== 'number' || !Number.isFinite(tokenValue)) {
+          // constant 形态:有限数(字符串/NaN/Infinity 全拒,防 set_constant(..., NaN))
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS,
+            'token_value must be a color array [r,g,b](,[a]) 0-1 or a finite number constant');
+        }
+        script = genTokenSetScript(themePath, tokenName, tokenValue);
+        break;
+      }
+      case 'token_list': {
+        // 批3 Task 4:theme DesignTokens token 全量审计(只读)。
+        const themePath = args.theme_path as string | undefined;
+        if (!themePath) {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path is required for token_list action');
+        }
+        try { sanitizeResPath(themePath, 'theme_path'); } catch {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
+        }
+        script = genTokenListScript(themePath);
         break;
       }
       case 'ui_draw_recipe': {
@@ -782,10 +830,13 @@ async function handleSolveFromCurrent(
 
 /** GDScript error 输出 → 错误码映射(handleTool 公共段与 ui_import_prototype 共用)。 */
 const uiErrorMapper = (msg: string) => {
+  // 批3 Task 4:'theme file not found'(genTokenSetScript/genTokenListScript 的缺失分支)
+  // → THEME_NOT_FOUND。该消息**含 'not found'**,排在通用 NODE_NOT_FOUND 分支会被截胡,
+  // 故必须前置;与下方 'load failed' 子串不相交,相对位置无谓。
+  if (msg.includes('theme file not found')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not found')) return ERROR_CODES.NODE_NOT_FOUND;
   // 批3 Task 3:theme_path load failed(genTokenPrefetchScript/genThemeMountInit 的 null/
-  // 非 Theme 分支)→ THEME_NOT_FOUND。与首位 'not found' 分支两子串不相交,顺序无歧义
-  // ('theme file not found' 前置修正是 Task 4 范畴,本任务不动首位分支)。
+  // 非 Theme 分支)→ THEME_NOT_FOUND。与首位 'not found' 分支两子串不相交,顺序无歧义。
   if (msg.includes('load failed')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not a Control')) return ERROR_CODES.INVALID_PARAMS;
   if (msg.includes('no theme')) return ERROR_CODES.THEME_NOT_FOUND;
@@ -1134,6 +1185,7 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
       ui_import_prototype: 'write', ui_pixel_verify: 'write',
       theme_create: 'write', theme_set_property: 'write',
       solve_from_current: 'write',
+      token_set: 'write', token_list: 'read',
     } satisfies Record<typeof ACTIONS[number], RiskLevel>,
   },
 };
