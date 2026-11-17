@@ -23,7 +23,7 @@ describe('checkBudget', () => {
   });
 
   it('per-tool schema over error threshold → error', () => {
-    const caps = [mkCap('huge', 100, 13000)]; // schema ≥ perToolSchema.error(12000)
+    const caps = [mkCap('huge', 100, 13000)]; // schema ≥ perToolSchema.error(13000)
     const r = checkBudget(caps as never);
     expect(r.errors.length).toBeGreaterThan(0);
     expect(r.errors.some(e => e.includes('huge'))).toBe(true);
@@ -40,7 +40,7 @@ describe('checkBudget', () => {
     expect(THRESHOLDS.perToolDesc.warn).toBe(800);
     expect(THRESHOLDS.perToolDesc.error).toBe(2000);
     expect(THRESHOLDS.perToolSchema.warn).toBe(6000);
-    expect(THRESHOLDS.perToolSchema.error).toBe(12000);
+    expect(THRESHOLDS.perToolSchema.error).toBe(13000);
     expect(THRESHOLDS.perToolTotal.warn).toBe(7000);
     expect(THRESHOLDS.perToolTotal.error).toBe(14000);
     // totalSum warn 2026-08-16 校准 80KB→90KB(实测 86412B 超旧线 5.5%,对齐覆盖率阈值
@@ -52,7 +52,9 @@ describe('checkBudget', () => {
     // B1 (2026-10-19) find_ui_elements role/match 参数正当增量推至 ~112.5KB——校准 112→116KB
     // 批 A (2026-10-26) 描述压缩治理 116975→111923B(-5.0KB)——校准 116→112KB(瘦身即校准
     // 惯例)。终值以 check-token-budget.mjs 注释为准(2026-10-29 审查 L-5:本注释曾写 111778B 漂移)。
-    expect(THRESHOLDS.totalSum.warn).toBe(112 * 1024);
+    // 2026-11-17 (Refero 批3 首任务) 校准 112→113KiB(批1/批2 增量后实测 114376B,批3 预计越旧线)
+    // + error 线首录 12000→13000(ui schema 11992B 余 8B,校准不瘦身)。见 check-token-budget.mjs 注释。
+    expect(THRESHOLDS.totalSum.warn).toBe(113 * 1024);
     expect(THRESHOLDS.totalSum.error).toBe(120 * 1024);
   });
 });

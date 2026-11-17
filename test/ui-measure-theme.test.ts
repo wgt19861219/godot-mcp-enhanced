@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { existsSync, mkdtempSync, writeFileSync, rmSync, copyFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { genUiMeasureScript } from '../src/tools/ui/ui-measure.js';
