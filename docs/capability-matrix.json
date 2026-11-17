@@ -1,5 +1,5 @@
 {
-  "version": "0.37.0",
+  "version": "0.38.0",
   "tools": [
     {
       "name": "analysis",
@@ -6097,7 +6097,7 @@
     {
       "name": "ui",
       "group": "ui",
-      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。设计 token: token_set(写 DesignTokens 落盘), token_list(审计全量)。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。(例外: theme_create(save_path)/token_set 直接落盘资源文件)",
+      "description": "UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。设计 token: token_set(写 DesignTokens 落盘), token_list(审计全量)。样式逆向: extract_tree(整树 override 扫描→聚类报告,可选 Theme 草稿), export_doc(Theme 巡检→DESIGN.md 视图,只读不落盘)。绘图: ui_draw_recipe。运行时操作，仅影响当前执行上下文。如需持久化，请编辑 .tscn 文件。(例外: theme_create(save_path)/token_set 直接落盘资源文件;extract_tree 带 draft_path 落草稿)",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -6123,9 +6123,11 @@
               "theme_set_property",
               "solve_from_current",
               "token_set",
-              "token_list"
+              "token_list",
+              "extract_tree",
+              "export_doc"
             ],
-            "description": "操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token"
+            "description": "操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token, extract_tree=整树样式逆向(可选草稿), export_doc=设计文档导出"
           },
           "scene_path": {
             "type": "string",
@@ -6290,7 +6292,7 @@
           },
           "theme_path": {
             "type": "string",
-            "description": "ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);token_set/token_list: token 读写目标主题(必填,须已存在)"
+            "description": "ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);token_set/token_list: token 读写目标主题(必填,须已存在);export_doc: 导出目标主题(必填,巡检+DESIGN.md 视图)"
           },
           "params": {
             "type": "object",
@@ -6390,6 +6392,10 @@
           },
           "token_value": {
             "description": "token_set: token 值——color 形态 [r,g,b] 或 [r,g,b,a]（0-1，元素须有限数）或数字常量（有限数）"
+          },
+          "draft_path": {
+            "type": "string",
+            "description": "extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告"
           },
           "ops": {
             "type": "array",
@@ -6811,6 +6817,7 @@
         "value",
         "token_name",
         "token_value",
+        "draft_path",
         "ops",
         "max_depth",
         "expect_tree",
@@ -6832,8 +6839,8 @@
       "guarded": true,
       "securityLevel": "danger-api",
       "riskDistribution": {
-        "read": 3,
-        "write": 13,
+        "read": 4,
+        "write": 14,
         "destructive": 0,
         "process": 0
       },
@@ -6859,9 +6866,9 @@
         "lastRun": null
       },
       "size": {
-        "descBytes": 848,
-        "schemaBytes": 12941,
-        "totalBytes": 13789
+        "descBytes": 1035,
+        "schemaBytes": 13241,
+        "totalBytes": 14276
       },
       "annotations": {
         "readOnlyHint": false,

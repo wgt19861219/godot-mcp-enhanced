@@ -24,6 +24,10 @@ import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs }
 import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
 import { genTokenPrefetchScript, genTokenSetScript, genTokenListScript } from './ui-tokens.js';
+import { genExtractTreeScript, extractTreeReport, genDraftSaveScript } from './ui-extract.js';
+import type { ExtractScanNode } from './ui-extract.js';
+import { genThemeInspectScript, buildDesignDoc } from './ui-export.js';
+import type { ThemeInspect } from './ui-export.js';
 import { textResult } from '../../types.js';
 import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
 
@@ -33,7 +37,7 @@ export function getToolDefinitions(): Tool[] {
   return [
     {
       name: 'ui',
-      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。设计 token: token_set(写 DesignTokens 落盘), token_list(审计全量)。绘图: ui_draw_recipe。${NON_PERSIST}(例外: theme_create(save_path)/token_set 直接落盘资源文件)`,
+      description: `UI 操作。节点: ui_create_control, ui_container_add, ui_build_layout。布局: ui_set/get/measure_layout, ui_anchor_preset。原型: ui_import_prototype(几何 JSON 一次调用翻译+构建+测量+校验+持久化;样式→StyleBoxFlat;返回 style_verify/flow_verify)。像素终验: ui_pixel_verify(bg 节点截图采样 vs 目标色 RGB 距离;Windows 窗口模式会弹窗)。锚点改造: solve_from_current(既有场景反解比例锚点+浮点 offset,tscn 文本 patch 保注释,dry_run 默认 true 只出计划)。主题: ui_set_theme, theme_create, theme_set_property。设计 token: token_set(写 DesignTokens 落盘), token_list(审计全量)。样式逆向: extract_tree(整树 override 扫描→聚类报告,可选 Theme 草稿), export_doc(Theme 巡检→DESIGN.md 视图,只读不落盘)。绘图: ui_draw_recipe。${NON_PERSIST}(例外: theme_create(save_path)/token_set 直接落盘资源文件;extract_tree 带 draft_path 落草稿)`,
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -41,7 +45,7 @@ export function getToolDefinitions(): Tool[] {
           action: {
             type: 'string',
             enum: [...ACTIONS],
-            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token',
+            description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token, extract_tree=整树样式逆向(可选草稿), export_doc=设计文档导出',
           },
           scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)' },
           node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)）' },
@@ -102,7 +106,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['set_params', 'create', 'save', 'load'],
             description: 'ui_set_theme: 操作类型（set_params/create/save/load）',
           },
-          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);token_set/token_list: token 读写目标主题(必填,须已存在)' },
+          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);token_set/token_list: token 读写目标主题(必填,须已存在);export_doc: 导出目标主题(必填,巡检+DESIGN.md 视图)' },
           params: {
             type: 'object',
             description: 'ui_set_theme(set_params): 键值对（number/bool/string/array[4]→Color）',
@@ -141,6 +145,7 @@ export function getToolDefinitions(): Tool[] {
           token_value: {
             description: 'token_set: token 值——color 形态 [r,g,b] 或 [r,g,b,a]（0-1，元素须有限数）或数字常量（有限数）',
           },
+          draft_path: { type: 'string', description: 'extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告' },
           ops: {
             type: 'array',
             description: 'ui_draw_recipe: 绘图操作数组（最多 200 个）',
@@ -470,6 +475,13 @@ export async function handleTool(
         script = genTokenListScript(themePath);
         break;
       }
+      case 'extract_tree':
+        // 特殊链(批4 Task 3):可能两次 spawn(扫描→聚类→可选草稿落盘),不走公共单次执行段,
+        // 提前 return——同 ui_import_prototype 模式。
+        return await handleExtractTree(args, projectPath, godot, loadAutoloads);
+      case 'export_doc':
+        // 特殊链(批4 Task 3):spawn 巡检 → TS 侧 buildDesignDoc 组装响应(非 GD 原样输出)。
+        return await handleExportDoc(args, projectPath, godot, loadAutoloads);
       case 'ui_draw_recipe': {
         const scenePath = resolveWithinRoot(projectPath, normalizeUserProjectPath(args.scene_path as string));
         const nodePath = normalizeNodePath(args.node_path as string);
@@ -1197,6 +1209,124 @@ async function handleUiPixelVerify(
   return textResult(JSON.stringify(opsSuccess({ pixel_verify: r.summary })));
 }
 
+// ─── 批4 Task 3: extract_tree / export_doc 内部链 ────────────────────────────
+
+/** extract_scan JSON 提取(公共执行段输出通道:data.extract_scan.nodes)。 */
+function parseExtractScan(parsed: ToolResult): ExtractScanNode[] | null {
+  try {
+    const out = JSON.parse((parsed.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
+      data?: { extract_scan?: { nodes?: unknown } };
+    };
+    const nodes = out.data?.extract_scan?.nodes;
+    return Array.isArray(nodes) ? (nodes as ExtractScanNode[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * extract_tree(批4 Task 3):scene_path 必填;node_path/max_depth 可选(默认 16/cap 64,
+ * 同 measure);draft_path 可选(sanitize 防穿越)。链路:spawn1 扫描(extract_scan)→
+ * extractTreeReport 聚类(纯函数)→ draft_path 且 draft 非空 → spawn2 落草稿(原子写)。
+ * 响应 {report, draft, notes, persist?};空扫描 draft=null 且不落盘(Review Focus 4)。
+ */
+async function handleExtractTree(
+  args: Record<string, unknown>,
+  projectPath: string,
+  godot: string,
+  loadAutoloads: boolean,
+): Promise<ToolResult> {
+  const sceneRaw = args.scene_path as string | undefined;
+  if (!sceneRaw || !String(sceneRaw).trim()) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'extract_tree 需要 scene_path(待逆向样式的场景)');
+  }
+  let scenePath: string;
+  try {
+    scenePath = resolveWithinRoot(projectPath, normalizeUserProjectPath(String(sceneRaw)));
+  } catch (err) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, `scene_path 非法: ${getErrorMessage(err)}`);
+  }
+  const npRaw = args.node_path as string | undefined;
+  const nodePath = npRaw !== undefined && npRaw !== null && String(npRaw).trim() !== ''
+    ? normalizeNodePath(String(npRaw)) : undefined;
+  const maxDepth = typeof args.max_depth === 'number' ? args.max_depth : 16;
+  const draftRaw = args.draft_path as string | undefined;
+  if (draftRaw !== undefined && draftRaw !== null && String(draftRaw).trim() !== '') {
+    try { sanitizeResPath(String(draftRaw), 'draft_path'); } catch {
+      return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'draft_path contains path traversal');
+    }
+  }
+
+  const scanResult = await executeGdscriptTrusted({
+    godotPath: godot, projectPath,
+    code: genExtractTreeScript(scenePath, nodePath, maxDepth),
+    timeout: 30, loadAutoloads,
+  });
+  const scanned = parseGdscriptResult(scanResult, [], uiErrorMapper);
+  if (scanned.isError) return scanned;
+  const scan = parseExtractScan(scanned);
+  if (scan === null) {
+    return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, 'extract_scan 输出解析失败(非合法 JSON 或 nodes 非数组)');
+  }
+
+  const { report, draft, notes } = extractTreeReport(scan);
+  const payload: Record<string, unknown> = { report, draft, notes };
+  // 草稿落盘:draft_path 提供**且** draft 非空才 spawn2(空扫描零写盘,诚实不落空文件)
+  if (draftRaw && draft) {
+    const saveResult = await executeGdscriptTrusted({
+      godotPath: godot, projectPath,
+      code: genDraftSaveScript(String(draftRaw), draft),
+      timeout: 30, loadAutoloads,
+    });
+    const saved = parseGdscriptResult(saveResult, [], uiErrorMapper);
+    if (saved.isError) return saved;
+    payload.persist = { path: String(draftRaw) };
+  } else if (draftRaw && !draft) {
+    notes.push('draft_path 已提供但扫描无可映射草稿(空扫描/全不可映射类型),未落盘');
+  }
+  return textResult(JSON.stringify(opsSuccess(payload)));
+}
+
+/**
+ * export_doc(批4 Task 3):theme_path 必填(sanitize 防穿越)。spawn 巡检
+ * (theme_inspect:DesignTokens 全量 + 逐类型四通道 top10 + default_font)→
+ * buildDesignDoc 组装 markdown。响应 {document, theme_path},不落盘(视图非真源)。
+ */
+async function handleExportDoc(
+  args: Record<string, unknown>,
+  projectPath: string,
+  godot: string,
+  loadAutoloads: boolean,
+): Promise<ToolResult> {
+  const themePath = args.theme_path as string | undefined;
+  if (!themePath) {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path is required for export_doc action');
+  }
+  try { sanitizeResPath(themePath, 'theme_path'); } catch {
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal');
+  }
+  const result = await executeGdscriptTrusted({
+    godotPath: godot, projectPath,
+    code: genThemeInspectScript(themePath),
+    timeout: 30, loadAutoloads,
+  });
+  const parsed = parseGdscriptResult(result, [], uiErrorMapper);
+  if (parsed.isError) return parsed;
+  let inspect: ThemeInspect | undefined;
+  try {
+    const out = JSON.parse((parsed.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
+      data?: { theme_inspect?: ThemeInspect };
+    };
+    inspect = out.data?.theme_inspect;
+  } catch {
+    inspect = undefined;
+  }
+  if (!inspect || typeof inspect !== 'object' || !inspect.tokens) {
+    return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, 'theme_inspect 输出解析失败(非合法 JSON 或缺 tokens)');
+  }
+  return textResult(JSON.stringify(opsSuccess({ document: buildDesignDoc(inspect), theme_path: themePath })));
+}
+
 // ─── Tool Meta ──────────────────────────────────────────────────────────────
 
 export const TOOL_META: Record<string, { readonly: boolean; long_running: boolean; actionRisks?: Record<string, RiskLevel> }> = {
@@ -1211,6 +1341,7 @@ export const TOOL_META: Record<string, { readonly: boolean; long_running: boolea
       theme_create: 'write', theme_set_property: 'write',
       solve_from_current: 'write',
       token_set: 'write', token_list: 'read',
+      extract_tree: 'write', export_doc: 'read',
     } satisfies Record<typeof ACTIONS[number], RiskLevel>,
   },
 };

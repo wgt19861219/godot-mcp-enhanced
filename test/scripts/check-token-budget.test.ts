@@ -23,7 +23,7 @@ describe('checkBudget', () => {
   });
 
   it('per-tool schema over error threshold → error', () => {
-    const caps = [mkCap('huge', 100, 13000)]; // schema ≥ perToolSchema.error(13000)
+    const caps = [mkCap('huge', 100, 13600)]; // schema ≥ perToolSchema.error(13600)
     const r = checkBudget(caps as never);
     expect(r.errors.length).toBeGreaterThan(0);
     expect(r.errors.some(e => e.includes('huge'))).toBe(true);
@@ -40,9 +40,11 @@ describe('checkBudget', () => {
     expect(THRESHOLDS.perToolDesc.warn).toBe(800);
     expect(THRESHOLDS.perToolDesc.error).toBe(2000);
     expect(THRESHOLDS.perToolSchema.warn).toBe(6000);
-    expect(THRESHOLDS.perToolSchema.error).toBe(13000);
+    // 2026-11-17 (Refero 批4 首任务) 二录校准 13000→13600/14000→14400(detail 参数+draft_path+
+    // enum+2+描述扩写增量水位);批4 首任务漏改本断言(既有红),Task 3 收口补齐。见 check-token-budget.mjs 注释。
+    expect(THRESHOLDS.perToolSchema.error).toBe(13600);
     expect(THRESHOLDS.perToolTotal.warn).toBe(7000);
-    expect(THRESHOLDS.perToolTotal.error).toBe(14000);
+    expect(THRESHOLDS.perToolTotal.error).toBe(14400);
     // totalSum warn 2026-08-16 校准 80KB→90KB(实测 86412B 超旧线 5.5%,对齐覆盖率阈值
     // ">4% 持续超额应上调"惯例);error 120KB 硬线不变。见 check-token-budget.mjs 注释。
     // P4-1 (2026-09-11) game 描述瘦身后全量 ~94KB,warn 90→95KB;P9 (2026-09-12) 校准 95→105KB

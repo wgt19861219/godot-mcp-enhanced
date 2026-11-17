@@ -24,6 +24,9 @@ export const ACTIONS = [
   // 批3 Task 4:DesignTokens token 文件级读写(主题资源直改,不走场景)
   'token_set',
   'token_list',
+  // 批4 Task 3:样式逆向(extract_tree 整树 override 扫描→聚类→可选草稿)与设计文档导出(export_doc 只读)
+  'extract_tree',
+  'export_doc',
 ] as const;
 
 export const CONTROL_TYPES = [
@@ -78,6 +81,7 @@ export const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyl
  * 同步点登记——全部 GD 生成点共用此常量,扩名(改名)须全点同步:
  * - ui-measure.ts themeConstEmit(constants 导出)
  * - ui-tokens.ts genTokenPrefetchScript(colors 预取)/genTokenSetScript/genTokenListScript(Task 4)
+ * - ui-extract.ts genDraftSaveScript(草稿 token 落盘)/ui-export.ts genThemeInspectScript(全量导出)(批4 Task 3)
  */
 export const DESIGN_TOKENS_TYPE = 'DesignTokens';
 
@@ -112,7 +116,8 @@ export interface FlexChild {
  * theme_override_styles/<slot>,spec 原文 styleboxes 系误写——Task 4 集成实测)。
  * hover/pressed/disabled 仅供 ui_build_layout 手写树入口,翻译器永不产出;
  * focus/read_only 等显式不进(YAGNI:每扩一槽须定义语义边界+测试面)。
- * 双份硬编码:GD 侧副本在 ui-measure.ts 生成脚本的 _all_slots(override 并集扫描),扩槽须两处同步。 */
+ * 三份硬编码:GD 侧副本在 ui-measure.ts 生成脚本的 _all_slots(override 并集扫描)与
+ * ui-extract.ts genExtractTreeScript 的 _all_slots(override 扫描,批4 Task 3),扩槽须三处同步。 */
 export type StyleBoxSlot = 'panel' | 'normal' | 'background' | 'fill' | 'hover' | 'pressed' | 'disabled';
 
 export const STYLEBOX_SLOTS: readonly StyleBoxSlot[] = [

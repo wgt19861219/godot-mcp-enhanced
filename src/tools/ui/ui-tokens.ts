@@ -42,10 +42,11 @@ func _initialize():
 
 // ─── 批3 Task 4:token_set / token_list(文件级读写)──────────────────────────
 
-/** theme 缺失分支的错误输出(两个 generator 同款;文案 brief 逐字)。消息含 'not found',
- * 会被 uiErrorMapper 通用 NODE_NOT_FOUND 首位截胡——Task 4 已在首位之前插入
- * 'theme file not found' → THEME_NOT_FOUND 分支(见 index.ts uiErrorMapper)。 */
-function themeFileNotFoundBlock(tp: string): string {
+/** theme 缺失分支的错误输出(genTokenSetScript/genTokenListScript 同款;文案 brief 逐字)。
+ * 批4 Task 3 起导出:ui-export.ts genThemeInspectScript 复用(错误文案单一真源,不再模块私有)。
+ * 消息含 'not found',会被 uiErrorMapper 通用 NODE_NOT_FOUND 首位截胡——Task 4 已在首位
+ * 之前插入 'theme file not found' → THEME_NOT_FOUND 分支(见 index.ts uiErrorMapper)。 */
+export function themeFileNotFoundBlock(tp: string): string {
   return `\tif _theme == null or not _theme is Theme:
 \t\t_mcp_output("error", "theme file not found: ${tp}(先 theme_create(scene_path+save_path) 或 ui_set_theme create+save 建主题)")
 \t\t_mcp_done()

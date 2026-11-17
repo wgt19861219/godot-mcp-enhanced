@@ -1,9 +1,9 @@
 ---
-description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property token_set token_list DesignTokens 设计 token CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中 迁移 PanelContainer clip_contents 圆角 对齐"
+description: "ui ui_create_control ui_build_layout ui_measure_layout ui_set_layout ui_get_layout ui_anchor_preset ui_set_theme ui_container_add ui_draw_recipe theme_create theme_set_property token_set token_list extract_tree export_doc DesignTokens 设计 token 逆向 聚类 草稿 DESIGN 文档 CSS flexbox grid 布局 测量 容器 锚点 rect Control HBoxContainer VBoxContainer GridContainer 全屏 居中 迁移 PanelContainer clip_contents 圆角 对齐"
 alwaysApply: false
 ---
 
-> 适用于 godot-mcp-enhanced v0.36.9+
+> 适用于 godot-mcp-enhanced v0.38.0+
 
 ## 概述与架构
 
@@ -54,6 +54,8 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 | `theme_set_property` | 设置 Theme 属性（font/color/constant/stylebox） |
 | `token_set` | 向 theme 的 DesignTokens 命名空间写一个 token（color/constant）并原子落盘（v0.37.0） |
 | `token_list` | 审计 theme 的 DesignTokens 全量 token（colors+constants 双通道，只读） |
+| `extract_tree` | 整树 theme override 逆向扫描→聚类报告（stylebox 规格/font_size/font_color 三组），可选 draft_path 落 Theme 草稿（v0.38.0） |
+| `export_doc` | Theme 只读巡检→DESIGN.md 视图（DesignTokens 全量表+类型槽位摘要 top 20，不落盘） |
 
 ### 支持的 31 种 Control 子类
 
@@ -274,6 +276,12 @@ HTML 原型侧约定：每个待还原元素标 `data-name`（=Godot 节点名�
 - **预取成本提示**：geometry 含 `$` 引用时，import/pixel_verify 会**多一次 Godot spawn** 预取 token map（loadAutoloads=false 只 load 资源）；无 `$` 引用零开销透传。频繁迭代原型时先落字面量调试、定稿再换 `$name` 可省 spawn。
 - **`token_set` 落盘与建主题前置**：`token_set(theme_path, token_name, token_value)`——theme 文件**必须已存在**（`theme_create(scene_path+save_path)` 或 `ui_set_theme create+save` 先建；缺失报 THEME_NOT_FOUND 附建主题指引）；token_value 为 color 数组 `[r,g,b](,[a])` 0-1 → `set_color`，有限数字 → `set_constant`；**原子落盘**（tmp+rename，theme 文件要么旧值要么新值，无中间态）；同名覆盖 = 原位重写。
 - **`token_list` 审计**：`token_list(theme_path)` 返回 `{colors: {name: [r,g,b,a]}, constants: {name: number}}` 双通道全量清单（Color 先转数组再进 JSON 通道，数值可精确比较）；裸 Theme（无 DesignTokens type）返回空双 dict **不报错**（审计语义，缺失≠错误）——先 token_list 确认现状再 token_set，避免盲写。
+
+### 样式逆向与设计文档（extract_tree / export_doc，v0.38.0，批4）
+
+- **`extract_tree(scene_path, node_path?, max_depth?, draft_path?)`**：整树 theme override 逆向——**只扫 override**（`has_theme_stylebox_override`/`has_theme_font_size_override("font_size")`/`has_theme_color_override("font_color")`），默认主题项不进扫描（契约独立于 ui_measure_layout 的「期望 ∪ override」并集——extract 关心「场景作者显式设置了什么」）；任一命中的节点才输出（无 override 的节点不进任何组）。GD 无 override-only getter，`get_theme_stylebox(` 只在 override 命中后调用。返回 `report` 三组聚类：① stylebox 规格（bg_color/corner/border/draw_center **精确匹配**分组，`{spec, count, nodes, slots, suggested_token}`）；② font_size 值分组；③ font_color 值分组；suggested_token 约定 `style_<slot>_<rrggbb>`（组内最高频 slot）/`font_size_<n>`/`text_<rrggbb>`。
+- **只产草稿**：`draft` 是四类控件（Panel/ProgressBar/Button/Label，按 styleboxSlotFor 默认槽）各取最高频 spec 组装的**新建 Theme**（不回写场景、不改既有主题）；`draft_path`（res:// 形式）提供**且 draft 非空**才落盘（tmp+rename 原子写，含 bg token 进 DesignTokens colors、font_size 组进 constants）；**空扫描（全无 override）→ draft=null 不落盘**，notes 一行说明；不可映射类型（如 TextureRect 带 override）报告含组、草稿跳过并在 notes 点名类型。
+- **`export_doc(theme_path)`**：Theme 只读巡检 → `{document, theme_path}`（markdown，不落盘）。文档结构：头部声明「本文档是 Theme 资源的视图，真源是 .tres；由 export_doc 生成」+ DesignTokens 全量表（空 → 一行空档说明）+ 类型槽位摘要表（**双截断**：类型按通道条目总数排序 top 20 超出 `(+N types)`；names 每通道 top 10（GD 侧截）+ 表内前 5 `(+N more)`）+ 引擎约束三条（ProgressBar 默认主题最小高 ~27px／Label 垂直对齐默认 TOP 需显式 CENTER／透明布局壳须 self_modulate 禁 modulate）。**视图非真源**——改设计先改 theme（token_set/ui_set_theme）再重导文档，不在文档侧手改。
 
 ### draw_recipe 声明式绘图
 
