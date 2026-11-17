@@ -290,6 +290,57 @@ describe('planRebase', () => {
   });
 });
 
+// ─── 批2 Task1:viewport 形参(一级子盲区根治,闭环批1终审 Important#1)─────────
+// 语义严格限定:仅父尺寸无法从 tscn 解析(将进 skippedUnresolvedParent)且 viewport 为正
+// 时以视口为父尺寸;已解析父的求解结果与不传 viewport 逐字节相同(场景③双锚)。
+describe('planRebase viewport 兜底(批2 Task1)', () => {
+  const parsed = parseAuthoredGeometry(FIXTURE);
+  const VP = { viewport: { w: 960, h: 540 } };
+
+  it('① 一级子(父=根)无 viewport → 进 skippedUnresolvedParent(现状锚,回归保护)', () => {
+    const plan = planRebase(parsed);
+    expect(plan.skippedUnresolvedParent).toContain('Panel');
+    expect(plan.toWrite.map(e => e.path)).not.toContain('Panel');
+  });
+
+  it('② 同节点传 {viewport:{w:960,h:540}} → 进 toWrite,四 anchor 按视口比例、offset 浮点、f32 位级恒等', () => {
+    const plan = planRebase(parsed, undefined, VP);
+    const e = plan.toWrite.find(x => x.path === 'Panel')!;
+    expect(e).toBeDefined();
+    expect(plan.skippedUnresolvedParent).not.toContain('Panel');
+    // 零锚 Panel 的当前边距 = offsets(静态已知,与父尺寸无关);引擎 float32 重算位级还原
+    const ml = fr(100.75), mt = fr(36.25), mr = fr(859.25), mb = fr(529.75);
+    expect(recompose(e.anchors.anchor_left, 960, e.anchors.offset_left)).toBe(ml);
+    expect(recompose(e.anchors.anchor_top, 540, e.anchors.offset_top)).toBe(mt);
+    expect(recompose(e.anchors.anchor_right, 960, e.anchors.offset_right)).toBe(mr);
+    expect(recompose(e.anchors.anchor_bottom, 540, e.anchors.offset_bottom)).toBe(mb);
+    // anchor 按视口比例求解(均不在 0/0.5/1 吸附邻域 → 保持精确比率值)
+    expect(e.anchors.anchor_left).toBeCloseTo(100.75 / 960, 7);
+    expect(e.anchors.anchor_bottom).toBeCloseTo(529.75 / 540, 7);
+    // 非零锚场景根('.')自身无静态边距(锚定视口,目标边距运行时才定)→ viewport 也救不了,
+    // 仍诚实 skip(与一级子可解形成对照:兜底只对边距静态已知的节点生效)
+    expect(plan.skippedUnresolvedParent).toContain('.');
+  });
+
+  it('③ 已解析父节点(Bj/MoneyLay 形态)传 viewport → 求解结果与不传逐字节相同(双锚)', () => {
+    // subtree 版:范围内全部节点父尺寸可解,全集逐字节对照
+    const noSub = planRebase(parsed, { subtree: 'Panel/MoneyLay' });
+    const vpSub = planRebase(parsed, { subtree: 'Panel/MoneyLay' }, VP);
+    expect(JSON.stringify(vpSub.toWrite)).toBe(JSON.stringify(noSub.toWrite));
+    expect(JSON.stringify(vpSub.skippedUnresolvedParent)).toBe(JSON.stringify(noSub.skippedUnresolvedParent));
+    // 整树版:对照集(不传时已可解的路径)条目逐字节相同;viewport 只新增 Panel 兜底条目
+    const noWhole = planRebase(parsed);
+    const vpWhole = planRebase(parsed, undefined, VP);
+    const noBy = new Map(noWhole.toWrite.map(e => [e.path, e]));
+    for (const e of vpWhole.toWrite) {
+      const a = noBy.get(e.path);
+      if (a) expect(JSON.stringify(e), `已解析父条目逐字节相同: ${e.path}`).toBe(JSON.stringify(a));
+    }
+    expect(vpWhole.toWrite.map(e => e.path)).toContain('Panel');
+    expect(noWhole.toWrite.map(e => e.path)).not.toContain('Panel');
+  });
+});
+
 describe('applyRebasePatch', () => {
   const parsed = parseAuthoredGeometry(FIXTURE);
   const plan = planRebase(parsed, { subtree: 'Panel/MoneyLay' });
@@ -442,6 +493,26 @@ describe('solve_from_current handler', () => {
       action: 'solve_from_current', project_path: dir,
     }, ctx());
     expect(r?.isError).toBeTruthy();
+  });
+
+  it('viewport 形参:正整数透传生效(一级子 Panel 兜底进 toWrite);非正整数/非整数拒(批2 Task1)', async () => {
+    // dry_run 默认 true——只出计划不写盘
+    const body = parseBody(await handleTool('ui', {
+      action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
+      viewport: { w: 960, h: 540 },
+    }, ctx()));
+    expect(body.success).toBe(true);
+    expect(body.data.toWrite.map(e => e.path)).toContain('Panel');
+    expect(body.data.skippedUnresolvedParent).not.toContain('Panel');
+
+    for (const bad of [{ w: 0, h: 540 }, { w: 960, h: 1.5 }, { w: -1, h: 540 }]) {
+      const r = await handleTool('ui', {
+        action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
+        viewport: bad,
+      }, ctx());
+      expect(r?.isError).toBeTruthy();
+      expect((r!.content?.[0] as { text?: string }).text).toContain('INVALID_PARAMS');
+    }
   });
 });
 

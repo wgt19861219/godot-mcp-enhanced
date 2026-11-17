@@ -19,6 +19,7 @@
 //
 // 【已知边界(诚实声明)】边距模拟不含 min-size 钳制与脚本运行时位移——静态 chrome 场景
 // (本工具靶子)不命中;命中时 dry_run 计划与 measure 基线的 0 容差比对会暴露差异,不会静默。
+// instance= 场景(子场景实例)的内部子节点不在宿主 tscn 文本节点段,不参与解析(终审 T5③)。
 
 import { parseTscn } from '../../tscn/tscn-parser.js';
 import type { ParsedNode } from '../../tscn/tscn-parser.js';
@@ -182,8 +183,14 @@ export interface RebasePlan {
 }
 
 /** 反解计划:对范围内每个可解节点,以其当前 float32 边距为目标求解比例锚点+浮点 offset。
- * 数值语义见文件头注(f32 感知推导,引擎重算位级恒等)。 */
-export function planRebase(parsed: AuthoredNode[], filter?: RebaseFilter): RebasePlan {
+ * 数值语义见文件头注(f32 感知推导,引擎重算位级恒等)。
+ * opts.viewport(批2 Task1,闭环批1终审 Important#1):父尺寸无法从 tscn 解析时(典型:
+ * 场景根直接子,父=根、根尺寸≈视口)的正数视口兜底——以视口为父尺寸继续既有求解。
+ * 语义严格限定:已解析父的节点求解结果与不传 viewport 逐字节相同(求解路径零改动)。 */
+export function planRebase(
+  parsed: AuthoredNode[], filter?: RebaseFilter,
+  opts?: { viewport?: { w: number; h: number } },
+): RebasePlan {
   const include = filter?.include ? new Set(filter.include) : undefined;
   const exclude = filter?.exclude ? new Set(filter.exclude) : undefined;
   const subtree = (filter?.subtree ?? '').replace(/\/+$/, '');
@@ -205,10 +212,20 @@ export function planRebase(parsed: AuthoredNode[], filter?: RebaseFilter): Rebas
     // ④ 无授权几何
     if (!n.hasLayout) { skippedNoGeometry.push(n.path); continue; }
     // ⑤ 父尺寸:场景根(父 = 视口)或锚定链不可解/非正
-    const ps = n.path === '.' ? undefined : sizes.get(n.parentPath);
-    if (!ps || !(ps.w > 0) || !(ps.h > 0)) { skippedUnresolvedParent.push(n.path); continue; }
+    let ps = n.path === '.' ? undefined : sizes.get(n.parentPath);
+    if (!ps || !(ps.w > 0) || !(ps.h > 0)) {
+      // 批2 Task1:viewport 兜底——父尺寸解析失败且 opts.viewport 为正时,以视口为父尺寸
+      // 继续既有求解(f32 感知推导同款)。仅当前边距静态已知的节点可解(零锚节点边距
+      // =offset 恒有);非零锚且父链断的节点目标边距本身依赖运行时,viewport 也救不了
+      // → 仍诚实 skip。
+      const vp = opts?.viewport;
+      if (!(vp && vp.w > 0 && vp.h > 0) || !margins.has(n.path)) {
+        skippedUnresolvedParent.push(n.path); continue;
+      }
+      ps = vp;
+    }
     // ⑥ f32 感知求解(文件头注):anchor 吸附后 fround 量化,offset = 边距 − fl32(anchor·p)
-    const mm = margins.get(n.path)!;  // ⑤ 通过 → 零锚节点边距恒有;锚定节点父尺寸已知 → 已算
+    const mm = margins.get(n.path)!;  // ⑤ 通过 → 零锚节点边距恒有;锚定节点父尺寸已知 → 已算;viewport 兜底路径经 margins.has 守卫
     const solve = (t: number, p: number): { a: number; o: number } => {
       const a = fr(snap(t / p));
       return { a, o: t - fr(a * p) };

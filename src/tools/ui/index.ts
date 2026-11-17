@@ -220,7 +220,7 @@ export function getToolDefinitions(): Tool[] {
           load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           viewport: {
             type: 'object',
-            description: 'ui_build_layout: 根节点 rect 求解基准 {w, h}(默认 1280x720;与项目窗口尺寸一致时根 rect=视口绝对几何);ui_import_prototype: 可选,默认取 geometry.viewport(求解语境=测量语境);ui_measure_layout: 覆写测量视口(SubViewport 通道,布局按注入视口重排——g800 复测;响应 data.measure.viewport_check 报生效性,inconclusive 时勿信视口语境)',
+            description: 'ui_build_layout: 根 rect 求解基准 {w,h}(默认 1280x720;与项目窗口一致=视口几何);ui_import_prototype: 默认取 geometry.viewport;ui_measure_layout: 覆写测量视口(SubViewport 注入重排;生效性见 data.measure.viewport_check,inconclusive 勿信);solve_from_current: 场景根直接子父尺寸兜底(父尺寸无法从 tscn 解析时以视口为父;须与项目视口一致,正整数)',
             properties: { w: { type: 'number', description: '宽(px)' }, h: { type: 'number', description: '高(px)' } },
           },
           persist: { type: 'boolean', description: 'ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）' },
@@ -694,9 +694,24 @@ async function handleSolveFromCurrent(
     return opsErrorResult(ERROR_CODES.INVALID_PARAMS, getErrorMessage(err));
   }
 
-  const plan = planRebase(parsedGeo, { include, exclude, subtree });
+  // 批2 Task1:viewport 形参——场景根直接子的父尺寸兜底。handler 校验正整数
+  // (Number.isInteger && >0,同 ui_measure_layout viewport 先例),planRebase 层再做
+  // 正数守卫(纯函数自洽,不依赖调用方)。
+  let viewport: { w: number; h: number } | undefined;
+  if (args.viewport !== undefined) {
+    const vp = args.viewport as { w?: unknown; h?: unknown };
+    const w = typeof vp.w === 'number' ? vp.w : NaN;
+    const h = typeof vp.h === 'number' ? vp.h : NaN;
+    if (!(Number.isInteger(w) && w > 0) || !(Number.isInteger(h) && h > 0)) {
+      return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'viewport must be an object {w, h} with positive integers');
+    }
+    viewport = { w, h };
+  }
+
+  const plan = planRebase(parsedGeo, { include, exclude, subtree }, viewport ? { viewport } : undefined);
   const planPayload = {
     subtree: subtree ?? null,
+    viewport: viewport ?? null,
     toWrite: plan.toWrite,
     skippedContainerChildren: plan.skippedContainerChildren,
     skippedByFilter: plan.skippedByFilter,
