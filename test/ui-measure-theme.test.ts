@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import { genUiMeasureScript } from '../src/tools/ui/ui-measure.js';
 import { genUiImportSingleScript } from '../src/tools/ui/ui-import-single.js';
 import { executeGdscriptTrusted } from '../src/gdscript-executor.js';
+import { handleTool } from '../src/tools/ui/index.js';
+import type { ToolContext, ToolResult } from '../src/types.js';
+import { isolatePathEnv } from './helpers/path-isolation.js';
 
 // 批1 1a(spec §「开放问题 3」spike):measure 链 theme_path 挂载。
 // 单测锚定生成器契约(无 themePath 逐字节不变/有 themePath 注入挂载行);
@@ -28,6 +31,32 @@ describe('genUiMeasureScript theme 挂载', () => {
     expect(script).toContain('load("res://resources/themes/default_theme.tres")');
     expect(script).toContain('root.set_theme(_theme_res)');
     expect(script.indexOf('set_theme')).toBeGreaterThan(script.indexOf('_mcp_load_scene'));
+  });
+});
+
+// 批2 Task2:theme_constants 导出(DesignTokens 档位)。GD 侧导出段注入 _emit(themePath
+// 存在才注入,无 themePath 逐字节兼容);挂载点读回与 genThemeMountInit 挂载目标一致——
+// viewport 激活时是场景根(root 主题传播不跨 Viewport 边界),否则 root。
+describe('genUiMeasureScript theme_constants 导出(批2 Task2)', () => {
+  it('无 themePath 时产物不含 constants 导出片段(逐字节兼容锚)', () => {
+    const script = genUiMeasureScript('res://a.tscn', undefined, 16);
+    expect(script).not.toContain('get_constant_list');
+    expect(script).not.toContain('"DesignTokens"');
+    expect(script).not.toContain('theme_constants');
+  });
+  it('有 themePath(无 viewport)时含 DesignTokens 导出片段,挂载点读回 root.theme', () => {
+    const script = genUiMeasureScript('res://a.tscn', undefined, 16, undefined, { themePath: 'res://resources/themes/default_theme.tres' });
+    expect(script).toContain('get_constant_list');
+    expect(script).toContain('"DesignTokens"');
+    expect(script).toContain('var _mounted_theme: Theme = root.theme');
+    expect(script).not.toContain('(_mcp_scene_instance as Control).theme');
+    expect(script).toContain('"theme_constants"');
+  });
+  it('有 themePath + viewport 时挂载点读回场景根 Theme(传播不跨 Viewport 边界)', () => {
+    const script = genUiMeasureScript('res://a.tscn', undefined, 16, undefined, { themePath: 'res://t.tres', viewport: { w: 800, h: 480 } });
+    expect(script).toContain('get_constant_list');
+    expect(script).toContain('(_mcp_scene_instance as Control).theme');
+    expect(script).not.toContain('var _mounted_theme: Theme = root.theme');
   });
 });
 
@@ -174,5 +203,81 @@ MyVar/font_sizes/font_size = 30
     expect(res.compile_success, res.compile_error).toBe(true);
     expect(res.run_success, res.run_error).toBe(true);
     expect(String(res.outputs.find(o => o.key === 'error')?.value)).toContain('theme_path load failed');
+  }, 120_000);
+});
+
+// 批2 Task2 e2e(Review Focus 2 之「有 tokens」侧):自建带 DesignTokens 的 fixture theme +
+// 兄弟间距 [8,16,13] 场景,走 handleTool 完整链——theme_constants 全量导出(GD 侧不过滤
+// space_*)、order.spacing_scale 挂节(档位取 space_* 值 [8,16],13 偏离最近档 16)。
+describe.skipIf(!hasGodot)('theme_constants 导出 e2e(无 autoload fixture,批2 Task2)', () => {
+  let dir: string;
+  let restore: () => void;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ui-theme-const-'));
+    writeFileSync(join(dir, 'project.godot'),
+      'config_version=5\n\n[display]\n\nwindow/size/viewport_width=1280\nwindow/size/viewport_height=720\n');
+    // 根用 Panel(非裸 Control,不触发裸壳检测);四兄弟同 y 行,x 相邻间距 [8,16,13]
+    writeFileSync(join(dir, 'main.tscn'), `[gd_scene format=3]
+
+[node name="Main" type="Panel"]
+offset_right = 500.0
+offset_bottom = 80.0
+
+[node name="A" type="TextureRect" parent="."]
+offset_right = 20.0
+offset_bottom = 10.0
+
+[node name="B" type="TextureRect" parent="."]
+offset_left = 28.0
+offset_right = 48.0
+offset_bottom = 10.0
+
+[node name="C" type="TextureRect" parent="."]
+offset_left = 64.0
+offset_right = 84.0
+offset_bottom = 10.0
+
+[node name="D" type="TextureRect" parent="."]
+offset_left = 97.0
+offset_right = 117.0
+offset_bottom = 10.0
+`);
+    mkdirSync(join(dir, 'themes'), { recursive: true });
+    // DesignTokens 带 space_1/space_2 档位 + 非 space 键(font_scale,验证 GD 全量导出、
+    // 档位提取按 space_* 前缀过滤)
+    writeFileSync(join(dir, 'themes', 'tokens.tres'), `[gd_resource type="Theme" format=3]
+
+[resource]
+DesignTokens/constants/space_1 = 8
+DesignTokens/constants/space_2 = 16
+DesignTokens/constants/font_scale = 14
+`);
+    restore = isolatePathEnv({ allowed: [dir] });
+  });
+  afterAll(() => { restore(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('theme_constants 全量导出,order.spacing_scale 挂节(13 偏离最近档 16)', async () => {
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: dir, scene_path: 'res://main.tscn',
+      theme_path: 'res://themes/tokens.tres',
+    }, { findGodot: async () => GODOT_PATH } as unknown as ToolContext) as ToolResult;
+    expect(r.isError).toBeFalsy();
+    const body = JSON.parse((r.content?.[0] as { text?: string }).text ?? '{}');
+    expect(body.success).toBe(true);
+    const measure = body.data.measure as { theme_constants?: Record<string, number>; stalled?: boolean };
+    expect(measure.stalled).not.toBe(true);
+    // GD 侧全量导出 DesignTokens constants(space_* 过滤在 index.ts 档位提取)
+    expect(measure.theme_constants).toEqual({ space_1: 8, space_2: 16, font_scale: 14 });
+    const order = body.data.order as {
+      equidistant?: unknown[];
+      spacing_scale?: { on_scale: number; total: number; rate: number; off_scale: Array<{ a: string; b: string; gap: number; nearest: number }> };
+    } | undefined;
+    expect(order, 'order 节因 spacing_scale 有值而挂出').toBeDefined();
+    expect(order!.equidistant).toEqual([]); // 间距 [8,16,13] 无等距 run(等距空数组照挂,quality 节同款先例)
+    expect(order!.spacing_scale).toEqual({
+      on_scale: 2, total: 3, rate: 2 / 3,
+      off_scale: [{ a: 'C', b: 'D', gap: 13, nearest: 16 }],
+    });
   }, 120_000);
 });

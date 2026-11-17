@@ -162,6 +162,23 @@ export function genUiMeasureScript(
   // 不进 class body 声明区——ui-import-single 的截取拼接只保留锚点后的函数体)。
   // viewport 激活时挂场景根:root 主题传播不跨 Viewport 边界(spike 探针实测)。
   const themeMount = genThemeMountInit(opts?.themePath, opts?.viewport ? 'scene-root' : 'root');
+  // 批2 Task2:DesignTokens constants 导出段(_emit 内,themePath 存在才注入——无
+  // themePath 逐字节兼容)。挂载点读回与 genThemeMountInit 挂载目标一致:viewport 激活
+  // 时是场景根(root 主题传播不跨 Viewport 边界,root.theme 此语境拿不到挂载 Theme),
+  // 否则 root(Window.theme 属性)。_mcp_scene_instance 是 SCENE_TREE_HEADER 的 class 级
+  // 声明,_emit 可直接引用;themeMount 的 scene-root 分支已保证非 Control 早退,此处
+  // as Control 安全。type 不存在 → get_constant_list 空 → 空 dict(无声明不发噪音,
+  // 不报错);键 str() 转 String(StringName 键进 JSON.stringify 前的显式归一)。
+  const themeConstEmit = opts?.themePath
+    ? `\t# 批2 Task2:DesignTokens constants 导出——从实际挂载点读回 Theme(与 genThemeMountInit
+\t# 挂载目标一致);type 不存在 → 空 dict(无声明不发噪音,不报错)
+\tvar _tc := {}
+\tvar _mounted_theme: Theme = ${opts.viewport ? '(_mcp_scene_instance as Control).theme' : 'root.theme'}
+\tif _mounted_theme != null:
+\t\tfor _cn in _mounted_theme.get_constant_list("DesignTokens"):
+\t\t\t_tc[str(_cn)] = _mounted_theme.get_constant(_cn, "DesignTokens")
+`
+    : '';
   return `${SCENE_TREE_HEADER}
 
 var _frames := 0
@@ -226,11 +243,11 @@ func _emit() -> void:
 ${opts?.viewport
     ? '\tvar _vp := root.content_scale_size\n\tif _vp_sub != null:\n\t\t_vp = Vector2(_vp_sub.size)'
     : '\tvar _vp := root.content_scale_size'}
-\t_mcp_output("measure", JSON.stringify({
+${themeConstEmit}\t_mcp_output("measure", JSON.stringify({
 \t\t"stable_after_frames": _frames,
 \t\t"stalled": _frames >= 5 and _stable_count < 2,
 \t\t"viewport": {"w": _vp.x, "h": _vp.y},
-\t\t"nodes": nodes}))
+\t\t"nodes": nodes${opts?.themePath ? ',\n\t\t"theme_constants": _tc' : ''}}))
 \t_mcp_done()
 
 func _walk(n: Node, depth: int, nodes: Array) -> void:

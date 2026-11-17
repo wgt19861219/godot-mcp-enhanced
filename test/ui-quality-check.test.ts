@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, buildQualityReport } from '../src/tools/ui/quality-check.js';
+import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, detectSpacingScale, buildQualityReport } from '../src/tools/ui/quality-check.js';
 import { handleTool } from '../src/tools/ui/index.js';
 import type { MeasuredNode } from '../src/tools/ui/layout-diff.js';
 import type { ToolContext, ToolResult } from '../src/types.js';
@@ -238,6 +238,83 @@ describe('detectEquidistant', () => {
   });
 });
 
+// ─── 批2 Task2: 间距档位检测 ─────────────────────────────────────────────────
+
+/** 同 y 行兄弟 fixture:相邻 x 间距按 gaps 逐个布放(节点宽 20,y 全同——y 轴相邻对
+ * 间距恒负跳过,隔离单轴)。 */
+function rowFixtureSpacing(gaps: number[]): MeasuredNode[] {
+  const nodes: MeasuredNode[] = [
+    { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 500, h: 80 } },
+    { path: 'P/A', type: 'TextureRect', rect: { x: 0, y: 0, w: 20, h: 10 } },
+  ];
+  let x = 20;
+  gaps.forEach((g, i) => {
+    x += g;
+    nodes.push({ path: `P/${'BCDEF'[i]}`, type: 'TextureRect', rect: { x, y: 0, w: 20, h: 10 } });
+    x += 20;
+  });
+  return nodes;
+}
+
+describe('detectSpacingScale(批2 Task2)', () => {
+  it('brief Step2 ①:兄弟间距 [8,8,16,13] 档位 [4,8,12,16,24] → rate=0.75,off_scale 含 13→nearest 12 一条', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([8, 8, 16, 13]), [4, 8, 12, 16, 24]);
+    expect(r).not.toBeNull();
+    expect(r!.on_scale).toBe(3);
+    expect(r!.total).toBe(4);
+    expect(r!.rate).toBe(0.75);
+    expect(r!.off_scale).toEqual([{ a: 'P/D', b: 'P/E', gap: 13, nearest: 12 }]);
+  });
+  it('brief Step2 ②:单档表 [8] 间距 [8,9] → rate=0.5(9 距最近档 8 仅 1px 仍算 off)', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([8, 9]), [8]);
+    expect(r).not.toBeNull();
+    expect(r!.on_scale).toBe(1);
+    expect(r!.total).toBe(2);
+    expect(r!.rate).toBe(0.5);
+    expect(r!.off_scale).toEqual([{ a: 'P/B', b: 'P/C', gap: 9, nearest: 8 }]);
+  });
+  it('brief Step2 ③:零兄弟对 → null(不发噪音)', () => {
+    const single: MeasuredNode[] = [{ path: '.', type: 'Control', rect: { x: 0, y: 0, w: 100, h: 50 } }];
+    expect(detectSpacingScale(single, [8])).toBeNull();
+  });
+  it('brief Step2 ④:scale 空 → null(无档位声明,Review Focus 3)', () => {
+    expect(detectSpacingScale(rowFixtureSpacing([8]), [])).toBeNull();
+  });
+  it('nearest 并列取较小档(间距 10 档 [8,12] 距均 2 → nearest 8)', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([10]), [12, 8]);
+    expect(r!.off_scale).toEqual([{ a: 'P/A', b: 'P/B', gap: 10, nearest: 8 }]);
+  });
+  it('贴邻 gap=0 不在档位 → off(合法紧排但非档位间距,如实报数)', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([0]), [8]);
+    expect(r!.on_scale).toBe(0);
+    expect(r!.off_scale).toEqual([{ a: 'P/A', b: 'P/B', gap: 0, nearest: 8 }]);
+  });
+  it('Container 父的兄弟组排除(间距是容器排布行为,与 detectEquidistant 同纪律)', () => {
+    const inBox: MeasuredNode[] = [
+      { path: 'P', type: 'HBoxContainer', rect: { x: 0, y: 0, w: 300, h: 80 } },
+      { path: 'P/A', type: 'TextureRect', rect: { x: 0, y: 0, w: 20, h: 10 } },
+      { path: 'P/B', type: 'TextureRect', rect: { x: 28, y: 0, w: 20, h: 10 } },
+    ];
+    expect(detectSpacingScale(inBox, [8])).toBeNull();
+  });
+});
+
+describe('buildQualityReport spacing_scale(批2 Task2)', () => {
+  it('有档位且有偏离 → order.spacing_scale 挂节;等距空数组照挂(quality 节同款先例),quality 无发现省略', () => {
+    // 间距 [8,16,13]:无等距 run(8|16 差 8、16|13 差 3 均切);档位 [8,16] → on 2 / off 1(nearest 16)
+    const r = buildQualityReport(rowFixtureSpacing([8, 16, 13]), { spacingScale: [8, 16] });
+    expect(r!.quality).toBeNull();
+    expect(r!.order!.equidistant).toEqual([]);
+    expect(r!.order!.spacing_scale).toEqual({
+      on_scale: 2, total: 3, rate: 2 / 3,
+      off_scale: [{ a: 'P/C', b: 'P/D', gap: 13, nearest: 16 }],
+    });
+  });
+  it('无 spacingScale 且无等距 → order 整节约略(无声明不发噪音)', () => {
+    expect(buildQualityReport(rowFixtureSpacing([8, 16, 13]))).toBeNull();
+  });
+});
+
 describe('buildQualityReport', () => {
   it('空输入集 → null(D8:无发现省略输出)', () => {
     expect(buildQualityReport([], { viewport: { w: 960, h: 540 } })).toBeNull();
@@ -295,11 +372,12 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     rmSync(tmpProj, { recursive: true, force: true });
   });
 
-  function mockMeasureOutput(nodes: MeasuredNode[], stalled = false) {
+  function mockMeasureOutput(nodes: MeasuredNode[], stalled = false, themeConstants?: Record<string, number>) {
     execMock.mockReset();
     execMock.mockResolvedValueOnce(mockSuccessResult({
       outputs: [{ key: 'measure', value: JSON.stringify({
-        stable_after_frames: 3, stalled, viewport: { w: 960, h: 540 }, nodes }) }],
+        stable_after_frames: 3, stalled, viewport: { w: 960, h: 540 }, nodes,
+        ...(themeConstants ? { theme_constants: themeConstants } : {}) }) }],
     }));
   }
 
@@ -331,6 +409,29 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
   it('无发现 → 两字段均省略(D8 null 语义)', async () => {
     mockMeasureOutput([{ path: '.', type: 'Panel', rect: { x: 0, y: 0, w: 960, h: 540 },
       anchors: { left: 0, right: 1, top: 0, bottom: 1 } }]);
+    const body = await runMeasure();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+  });
+  it('批2 Task2:measure 带 theme_constants(space_*)→ order.spacing_scale 挂节(非 space 键不进档位)', async () => {
+    mockMeasureOutput(rowFixtureSpacing([8, 16, 13]), false, { space_2: 16, space_1: 8, font_scale: 14 });
+    const body = await runMeasure();
+    const order = body.data.order as {
+      equidistant: unknown[];
+      spacing_scale: { on_scale: number; total: number; rate: number; off_scale: Array<{ gap: number; nearest: number }> };
+    };
+    expect(order.equidistant).toEqual([]);
+    expect(order.spacing_scale.on_scale).toBe(2);
+    expect(order.spacing_scale.total).toBe(3);
+    expect(order.spacing_scale.off_scale).toEqual([{ a: 'P/C', b: 'P/D', gap: 13, nearest: 16 }]);
+  });
+  it('批2 Task2:measure 无 theme_constants → order 不因档位挂出(无声明不发噪音)', async () => {
+    mockMeasureOutput(rowFixtureSpacing([8, 16, 13]));
+    const body = await runMeasure();
+    expect(body.data.order).toBeUndefined();
+  });
+  it('批2 Task2:stalled=true → spacing_scale 同样不挂(D8 布局未收敛不出判定)', async () => {
+    mockMeasureOutput(rowFixtureSpacing([8, 16, 13]), true, { space_1: 8, space_2: 16 });
     const body = await runMeasure();
     expect(body.data.quality).toBeUndefined();
     expect(body.data.order).toBeUndefined();
@@ -443,5 +544,21 @@ describe.skipIf(!hasE2e)('quality 靶子 e2e(DotaLegendGodot daily_login,挂主�
     for (const g of order?.equidistant ?? []) {
       console.log(`  - ${g.parent} ${g.axis} gap=${g.gap} members=${g.members.length}`);
     }
+  }, 180_000);
+
+  it('批2 Task2:default_theme.tres 无 DesignTokens type → theme_constants={} 且 order 不含 spacing_scale(Review Focus 2,空档静默跳过)', async () => {
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: TARGET_PROJECT,
+      scene_path: 'res://scenes/ui/daily_login_content.tscn',
+      theme_path: 'res://resources/themes/default_theme.tres',
+    }, { findGodot: async () => GODOT_PATH } as unknown as ToolContext) as ToolResult;
+    expect(r.isError).toBeFalsy();
+    const body = JSON.parse((r.content?.[0] as { text?: string }).text ?? '{}');
+    expect(body.success).toBe(true);
+    const measure = body.data.measure as { theme_constants?: Record<string, number>; stalled?: boolean };
+    expect(measure.stalled).not.toBe(true);
+    expect(measure.theme_constants).toEqual({});
+    const order = body.data.order as { spacing_scale?: unknown } | undefined;
+    expect(order?.spacing_scale, '空档跳过:order 或缺 spacing_scale').toBeUndefined();
   }, 180_000);
 });

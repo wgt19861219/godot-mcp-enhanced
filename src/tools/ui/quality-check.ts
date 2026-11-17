@@ -124,10 +124,10 @@ export function detectViewportOverflow(
  * 负 separation 属病理形态——切断 run 不报;贴邻 gap=0 是合法紧排,保留)。
  * 间距非有限(NaN rect 派生)→ 该间距处切断 run(无法判定,不命中——不引入 NaN 分支)。
  * Container 父的子已被容器排布(等距是容器行为而非容器化候选),整组排除。 */
-export function detectEquidistant(
-  measured: MeasuredNode[],
-  tolerancePx = 2,
-): Array<{ parent: string; axis: 'x' | 'y'; members: string[]; gap: number }> {
+/** 同父兄弟分组(A.3/批2 Task2 共享,提取自 detectEquidistant 原内联逻辑):跳过根
+ * 自身;Container 父的组整体排除(容器子已被排布,等距/间距是容器行为而非候选)。
+ * Task 3 对齐线/视觉组聚类复用本 helper。 */
+export function siblingsByParent(measured: MeasuredNode[]): Map<string, MeasuredNode[]> {
   const byPath = new Map(measured.map(m => [m.path, m]));
   const groups = new Map<string, MeasuredNode[]>();
   for (const m of measured) {
@@ -136,20 +136,40 @@ export function detectEquidistant(
     const arr = groups.get(key);
     if (arr) arr.push(m); else groups.set(key, [m]);
   }
+  for (const key of [...groups.keys()]) {
+    const pNode = byPath.get(key);
+    if (pNode && CONTAINER_TYPES.has(pNode.type)) groups.delete(key);
+  }
+  return groups;
+}
+
+/** 同父兄弟沿轴排序后的相邻对(间距 = 后缘−前缘,按 global rect 沿轴起点排序,
+ * 次键 path 定序防并列漂移)。detectEquidistant/detectSpacingScale 共享。 */
+function axisGapPairs(
+  sibs: MeasuredNode[],
+  axis: 'x' | 'y',
+): Array<{ a: MeasuredNode; b: MeasuredNode; gap: number }> {
+  const sizeKey = axis === 'x' ? 'w' : 'h';
+  const sorted = [...sibs].sort((p, q) =>
+    p.rect[axis] - q.rect[axis] || p.path.localeCompare(q.path));
+  const pairs: Array<{ a: MeasuredNode; b: MeasuredNode; gap: number }> = [];
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]!, cur = sorted[i]!;
+    pairs.push({ a: prev, b: cur, gap: cur.rect[axis] - (prev.rect[axis] + prev.rect[sizeKey]) });
+  }
+  return pairs;
+}
+
+export function detectEquidistant(
+  measured: MeasuredNode[],
+  tolerancePx = 2,
+): Array<{ parent: string; axis: 'x' | 'y'; members: string[]; gap: number }> {
   const out: Array<{ parent: string; axis: 'x' | 'y'; members: string[]; gap: number }> = [];
-  for (const [parent, sibs] of groups) {
+  for (const [parent, sibs] of siblingsByParent(measured)) {
     if (sibs.length < 3) continue;
-    const pNode = byPath.get(parent);
-    if (pNode && CONTAINER_TYPES.has(pNode.type)) continue;
     for (const axis of ['x', 'y'] as const) {
-      const sizeKey = axis === 'x' ? 'w' : 'h';
-      const sorted = [...sibs].sort((a, b) =>
-        a.rect[axis] - b.rect[axis] || a.path.localeCompare(b.path));
-      const gaps: number[] = [];
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1]!, cur = sorted[i]!;
-        gaps.push(cur.rect[axis] - (prev.rect[axis] + prev.rect[sizeKey]));
-      }
+      const pairs = axisGapPairs(sibs, axis);
+      const gaps: number[] = pairs.map(p => p.gap);
       let s = 0;
       while (s < gaps.length) {
         // 间距 <0(叠压)或非有限(NaN)→ 该处切断,run 不从此起
@@ -166,13 +186,62 @@ export function detectEquidistant(
         if (memberCount >= 3) {
           const runGaps = gaps.slice(s, e + 1);
           const gap = runGaps.reduce((a, b) => a + b, 0) / runGaps.length;
-          out.push({ parent, axis, members: sorted.slice(s, e + 2).map(x => x.path), gap });
+          // run 成员 = 首对 a + 各对 b(相邻对共享边界成员,与原 sorted.slice(s, e+2) 等价)
+          out.push({ parent, axis, members: [pairs[s]!.a, ...pairs.slice(s, e + 1).map(p => p.b)].map(x => x.path), gap });
         }
         s = e + 1; // 下一 run 从上一 run 末成员起(共享该成员)
       }
     }
   }
   return out;
+}
+
+// ─── A.4 间距档位(order 节,批2 Task2)───────────────────────────────────────
+
+/** 间距档位检测结果(brief Interfaces 形态)。 */
+export interface SpacingScaleResult {
+  on_scale: number;
+  total: number;
+  rate: number;
+  off_scale: Array<{ a: string; b: string; gap: number; nearest: number }>;
+}
+
+/** 批2 Task2:兄弟相邻间距对照档位表——报“落档率”+ 落档外清单(a/b 为相邻对路径,
+ * nearest = 距离最近档位值,并列取较小档)。
+ * null = scale 空或无可比对兄弟对(无声明不发噪音,Review Focus 3)。
+ * 间距 = 后缘−前缘(axisGapPairs 与 detectEquidistant 同语义);无效间距(负值叠压/
+ * NaN)跳过不计 total;Container 父组由 siblingsByParent 统一排除。
+ * 落档判定 = 间距与档位值**精确相等**(brief 用例标定:13 距最近档 12 仅 1px 仍算
+ * off、9 距 8 同理)——2px 容差在同族 detectEquidistant 是「同 run 间距互差」语义,
+ * 迁移到档位对照会吸收 1px 级偏离,故 tolerancePx 不放宽落档判定,仅保留签名。 */
+export function detectSpacingScale(
+  measured: MeasuredNode[],
+  scale: number[],
+  _tolerancePx = 2,
+): SpacingScaleResult | null {
+  if (scale.length === 0) return null;
+  // 升序副本供 nearest 遍历(严格小于更新 → 并列保留先遍历的较小档,与调用方传序无关)
+  const asc = [...scale].sort((p, q) => p - q);
+  let on = 0, total = 0;
+  const off: SpacingScaleResult['off_scale'] = [];
+  for (const sibs of siblingsByParent(measured).values()) {
+    for (const axis of ['x', 'y'] as const) {
+      for (const { a, b, gap } of axisGapPairs(sibs, axis)) {
+        if (!Number.isFinite(gap) || gap < 0) continue; // 同 detectEquidistant 纪律
+        total++;
+        let nearest = asc[0]!;
+        let best = Math.abs(gap - nearest);
+        for (let i = 1; i < asc.length; i++) {
+          const d = Math.abs(gap - asc[i]!);
+          if (d < best) { best = d; nearest = asc[i]!; }
+        }
+        if (scale.includes(gap)) on++;
+        else off.push({ a: a.path, b: b.path, gap, nearest });
+      }
+    }
+  }
+  if (total === 0) return null;
+  return { on_scale: on, total, rate: on / total, off_scale: off };
 }
 
 // ─── 聚合(spec §1c 报告节;D8 无发现省略)──────────────────────────────────
@@ -185,9 +254,12 @@ export interface QualitySection {
   viewport_overflow: Array<{ path: string; overflow: { w: number; h: number }; suggestion: string }>;
 }
 
-/** order 报告节(A.3 等距组;null = 无发现,调用方省略字段)。 */
+/** order 报告节(A.3 等距组 + 批2 Task2 间距档位;null = 无发现,调用方省略字段)。
+ * equidistant 空/非空照挂(quality 节四字段同款先例——节级省略、字段级全带);
+ * spacing_scale 仅在有档位声明且检测有产出时挂(可选字段)。 */
 export interface OrderSection {
   equidistant: Array<{ parent: string; axis: 'x' | 'y'; members: string[]; gap: number; suggestion: string }>;
+  spacing_scale?: SpacingScaleResult;
 }
 
 /** 质量报告(Task 3 空壳,本任务填充):quality/order 两节各自独立省略(D8)。
@@ -198,16 +270,19 @@ export interface QualityReport {
 }
 
 /** 聚合四类检测 + 既有 detectOutOfBounds(父级越界)。opts.viewport 缺省 → 跳过
- * 视口溢出检测(measure.viewport 缺失时无法判定,不造数)。全部无发现 → null。 */
+ * 视口溢出检测(measure.viewport 缺失时无法判定,不造数);opts.spacingScale 缺省 →
+ * 跳过间距档位检测(无 theme 档位声明,批2 Task2——空数组 detectSpacingScale 自返
+ * null,不造噪音)。全部无发现 → null。 */
 export function buildQualityReport(
   measured: MeasuredNode[],
-  opts?: { viewport?: { w: number; h: number } },
+  opts?: { viewport?: { w: number; h: number }; spacingScale?: number[] },
 ): QualityReport | null {
   const bare = detectBareShell(measured);
   const follow = detectShouldFollow(measured);
   const oob = detectOutOfBounds(measured);
   const vp = opts?.viewport ? detectViewportOverflow(measured, opts.viewport) : [];
   const equid = detectEquidistant(measured);
+  const spacing = opts?.spacingScale ? detectSpacingScale(measured, opts.spacingScale) : null;
 
   const quality: QualitySection | null = (bare.length + follow.length + oob.length + vp.length) > 0 ? {
     bare_shells: bare.map(b => ({ ...b,
@@ -222,9 +297,11 @@ export function buildQualityReport(
     viewport_overflow: vp.map(v => ({ ...v,
       suggestion: `节点越出视口(水平 ${v.overflow.w}px / 垂直 ${v.overflow.h}px)——建议 solve_from_current 按视口重排锚点` })),
   } : null;
-  const order: OrderSection | null = equid.length > 0 ? {
+  // 挂节条件:等距组或档位检测任一有产出(间距档位 null = 无声明/无兄弟对,不算发现)
+  const order: OrderSection | null = (equid.length > 0 || spacing !== null) ? {
     equidistant: equid.map(g => ({ ...g,
       suggestion: `同父 ${g.members.length} 个子节点沿 ${g.axis} 轴等距(间距 ≈${Math.round(g.gap * 10) / 10}px)——建议容器化为 ${g.axis === 'x' ? 'HBoxContainer' : 'VBoxContainer'}(ui_build_layout)` })),
+    ...(spacing ? { spacing_scale: spacing } : {}),
   } : null;
 
   if (!quality && !order) return null;

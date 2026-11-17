@@ -586,15 +586,17 @@ export async function handleTool(
     // 聚合挂节。D8 输出纪律:stalled !== true 且对应节有发现才挂(无发现省略字段,null
     // 语义);stalled 时不出判定只报 stalled(调用方契约,buildQualityReport 注释同款)。
     // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化。
+    // 批2 Task2:measure 输出带 theme_constants 时提取 space_* 档位传入(无声明跳过)。
     if (action === 'ui_measure_layout' && !r.isError) {
       try {
         const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
           success?: boolean;
-          data?: { measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stalled?: boolean } };
+          data?: { measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stalled?: boolean; theme_constants?: Record<string, number> } };
         };
         if (parsed.success === true && parsed.data?.measure) {
           const m = parsed.data.measure;
-          const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport });
+          const spacingScale = spacingScaleFromTheme(m.theme_constants);
+          const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
           if (report?.quality || report?.order) {
             const merged = {
               ...parsed,
@@ -624,6 +626,18 @@ export async function handleTool(
 }
 
 // ─── solve_from_current 内部链(批1 1d Task5)────────────────────────────────
+
+/** 批2 Task2:从 measure 导出的 DesignTokens constants 提取间距档位——键名约定
+ * space_*(如 space_1..space_8,spec 批2 节),取值升序去重;无 theme_constants 或无
+ * space_* 键 → undefined(调用方跳过档位检测,无声明不发噪音)。 */
+function spacingScaleFromTheme(tc: Record<string, number> | undefined): number[] | undefined {
+  if (!tc) return undefined;
+  const vals = Object.entries(tc)
+    .filter(([k, v]) => k.startsWith('space_') && Number.isFinite(v))
+    .map(([, v]) => v);
+  if (vals.length === 0) return undefined;
+  return [...new Set(vals)].sort((a, b) => a - b);
+}
 
 /** include/exclude 节点名白名单校验(Godot 节点名约束,防非法名进后续匹配)。 */
 function validateNameList(v: unknown, field: string): string[] | undefined {
@@ -865,7 +879,7 @@ async function handleUiImportPrototype(
     data?: {
       persist?: { saved?: boolean };
       warnings?: unknown[];
-      measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stable_after_frames?: number; stalled?: boolean };
+      measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stable_after_frames?: number; stalled?: boolean; theme_constants?: Record<string, number> };
     };
     warnings?: string[];
   };
@@ -918,10 +932,14 @@ async function handleUiImportPrototype(
       _note: 'targets 为受 layout_verify 几何覆盖的节点数(含合成根 _PrototypeRoot,无 flow 时 = 输入节点数+1);flow 直接子节点丢 rect 不在 layout_verify 覆盖内,由 flow_verify 数字覆盖(期望=输入视口 rect);孙层由 layout_verify 近似覆盖(期望相对输入父原点,容器排布后天然带偏移)',
     };
     // Task 4(批1 1c):quality/order 报告节(D8:stalled !== true 且有发现才挂;
-    // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化)
+    // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化)。
+    // 批2 Task2:import 链 GD 侧暂不导出 theme_constants(ui-import-single 不向
+    // genUiMeasureScript 传 themePath,_emit 无导出段)→ spacingScale 恒 undefined
+    // 跳过档位检测;接线与 measure 链对称,将来打通数据源即自动生效。
+    const importScale = spacingScaleFromTheme(measure?.theme_constants);
     const qualityReport = measure?.stalled === true
       ? null
-      : buildQualityReport(measured, { viewport: measure?.viewport });
+      : buildQualityReport(measured, { viewport: measure?.viewport, ...(importScale ? { spacingScale: importScale } : {}) });
     return textResult(JSON.stringify(opsSuccess({
       tree: translated.tree,
       build_warnings: buildWarnings,
