@@ -184,8 +184,9 @@ export interface RebasePlan {
 
 /** 反解计划:对范围内每个可解节点,以其当前 float32 边距为目标求解比例锚点+浮点 offset。
  * 数值语义见文件头注(f32 感知推导,引擎重算位级恒等)。
- * opts.viewport(批2 Task1,闭环批1终审 Important#1):父尺寸无法从 tscn 解析时(典型:
- * 场景根直接子,父=根、根尺寸≈视口)的正数视口兜底——以视口为父尺寸继续既有求解。
+ * opts.viewport(批2 Task1,闭环批1终审 Important#1):「父=根形态」节点(一级子;根自身
+ * 零锚)父尺寸无法从 tscn 解析时的正数视口兜底——以视口为父尺寸继续既有求解。深层链断
+ * 节点(父≠根)不兜底:真实父尺寸≠视口,以视口求解写盘即偏移(Task1 审查 Important 收紧)。
  * 语义严格限定:已解析父的节点求解结果与不传 viewport 逐字节相同(求解路径零改动)。 */
 export function planRebase(
   parsed: AuthoredNode[], filter?: RebaseFilter,
@@ -214,12 +215,14 @@ export function planRebase(
     // ⑤ 父尺寸:场景根(父 = 视口)或锚定链不可解/非正
     let ps = n.path === '.' ? undefined : sizes.get(n.parentPath);
     if (!ps || !(ps.w > 0) || !(ps.h > 0)) {
-      // 批2 Task1:viewport 兜底——父尺寸解析失败且 opts.viewport 为正时,以视口为父尺寸
-      // 继续既有求解(f32 感知推导同款)。仅当前边距静态已知的节点可解(零锚节点边距
-      // =offset 恒有);非零锚且父链断的节点目标边距本身依赖运行时,viewport 也救不了
-      // → 仍诚实 skip。
+      // 批2 Task1:viewport 兜底——仅「父=根形态」节点(一级子 parentPath='.';根自身
+      // path='.' 零锚时父=视口,几何亦成立)且 opts.viewport 为正时,以视口为父尺寸继续
+      // 既有求解(f32 感知推导同款)。深层链断节点(父≠根)即使零锚有静态边距也不兜底
+      // ——真实父尺寸≠视口,以视口求解写盘即偏移(Task1 审查 Important 收紧)。非零锚
+      // 且父链断的节点目标边距本身依赖运行时(margins 无值),viewport 也救不了。
       const vp = opts?.viewport;
-      if (!(vp && vp.w > 0 && vp.h > 0) || !margins.has(n.path)) {
+      const isRootParentForm = n.path === '.' || n.parentPath === '.';
+      if (!isRootParentForm || !(vp && vp.w > 0 && vp.h > 0) || !margins.has(n.path)) {
         skippedUnresolvedParent.push(n.path); continue;
       }
       ps = vp;

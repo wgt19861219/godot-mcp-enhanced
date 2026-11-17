@@ -338,6 +338,39 @@ describe('planRebase viewport 兜底(批2 Task1)', () => {
     }
     expect(vpWhole.toWrite.map(e => e.path)).toContain('Panel');
     expect(noWhole.toWrite.map(e => e.path)).not.toContain('Panel');
+    // 审查 Important ③:viewport 只新增一级子兜底条目,不增删其他(深层链断不兜底)
+    expect(vpWhole.toWrite.length).toBe(noWhole.toWrite.length + 1);
+  });
+
+  it('审查 Important 收紧:深层链断零锚孙层不被 viewport 兜底(真实父尺寸≠视口,写盘即偏移)', () => {
+    // 链断形态:非零锚根 → 非零锚一级子(锚定根,边距运行时才定)→ 零锚孙层(边距=offset
+    // 静态已知,但父尺寸不可解)。孙层若被以视口兜底求解,写盘后引擎按真实父尺寸 P 重算
+    // a×P+o ≠ 目标边距——写盘即偏移,且错误条目与正常条目在 toWrite 中不可区分。
+    const chainBroken = parseAuthoredGeometry(`[gd_scene format=3]
+
+[node name="Root" type="Control"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="AnchoredChild" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 10.0
+
+[node name="DeepZero" type="Control" parent="AnchoredChild"]
+offset_left = 50.0
+offset_top = 30.0
+offset_right = 150.0
+offset_bottom = 80.0
+`);
+    const plan = planRebase(chainBroken, undefined, VP);
+    // 非零锚一级子:根形态但无静态目标边距(margins 无值)→ 诚实 skip
+    expect(plan.skippedUnresolvedParent).toContain('AnchoredChild');
+    // 零锚孙层:有静态边距但父≠根形态(真实父=AnchoredChild,尺寸≠视口)→ 不兜底,诚实 skip
+    expect(plan.skippedUnresolvedParent).toContain('AnchoredChild/DeepZero');
+    expect(plan.toWrite).toEqual([]);   // 全员诚实 skip,不产出几何错误的写盘计划
   });
 });
 
