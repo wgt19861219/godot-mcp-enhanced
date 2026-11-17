@@ -13,7 +13,7 @@ import { DESIGN_TOKENS_TYPE } from './types.js';
  * 不碰 _mcp_load_scene),headless 单次 spawn(loadAutoloads=false,调用方约定)即出:
  * - `load(themePath)` → null/非 Theme → `_mcp_output("error", "theme_path load failed: <path>")`
  *   (消息不含 "not found",不撞 uiErrorMapper 首位 NODE_NOT_FOUND 分支;由
- *   `includes('load failed')` → THEME_NOT_FOUND 分流);
+ *   `includes('theme_path load failed')` 全前缀 → THEME_NOT_FOUND 分流);
  * - `get_color_list(DESIGN_TOKENS_TYPE)` 遍历,**Color 先转 [r,g,b,a] 数组再入 dict**
  *   (裸 Color 经 str() 序列化会退化成 "Color(r, g, b, a)" 字符串,JSON roundtrip 后
  *   无法还原数值——数组是 TS 侧 TokenColorMap 的直接形状);
