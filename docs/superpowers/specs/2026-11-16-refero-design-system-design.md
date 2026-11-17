@@ -170,7 +170,7 @@ Theme `DesignTokens` type 下声明 spacing 档位(`set_constant("space_1".."spa
 | D5 | 写回 = tscn 文本 patch(保注释),`layout_mode=1`,浮点 offset | 外部审查 P0-3 + 自核(Math.round 舍入) |
 | D6 | flow schema BC:平级新键 `flow_gap`/`flow_align`,不动枚举 | 外部审查 P1-2 |
 | D7 | token 通道 = GD 预取 map 注入,翻译器保持纯函数 | 外部审查 P1-3(方案自定) |
-| D8 | quality/order 报告输出纪律:**节级省略**(整节无发现不挂字段,null 语义——quality 四类全无发现省略 quality 节;order 四类检测任一无产出省略 order 节);**已挂节的必检字段空数组照挂**(`equidistant: []`/`alignment_lanes: []`——必检检测恒跑,空数组区分"检测了无发现"与"未检测");**条件性检测字段未触发时省略**(`spacing_scale` 依赖档位声明、`visual_groups` 依赖阈值缺省链,缺席 = 未跑不发噪音,接口层 optional);stalled 不判定 | 外部审查 P1-4;批3 Task 5 按实现实况(quality-check.ts OrderSection/QualitySection)补字段级纪律 |
+| D8 | quality/order 报告输出纪律:**节级省略**(整节无发现不挂字段,null 语义——quality 四类全无发现省略 quality 节;order 四类检测全无产出才省略 order 节);**已挂节的必检字段空数组照挂**(`equidistant: []`/`alignment_lanes: []`——必检检测恒跑,空数组区分"检测了无发现"与"未检测");**条件性检测字段未触发时省略**(`spacing_scale` 依赖档位声明、`visual_groups` 依赖阈值缺省链,缺席 = 未跑不发噪音,接口层 optional);stalled 不判定 | 外部审查 P1-4;批3 Task 5 按实现实况(quality-check.ts OrderSection/QualitySection)补字段级纪律 |
 | D9 | 验收 0 容差(2px 绿不承载"坐标是圣经");基线为 raw 快照非 expect_tree | 外部审查 P0-4 |
 | D10 | theme_path 无默认值——`$token` 引用必须显式传 theme_path;`res://ui/theme.tres` 仅为错误提示语中的约定路径建议(显式优于隐式,静默回落默认值会把 token 解析指向错误主题) | 批3 Task 3 实现(缺 theme_path 报 INVALID_PARAMS 附约定路径指引);批3 Task 5 spec 定档 |
 

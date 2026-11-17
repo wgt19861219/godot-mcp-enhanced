@@ -836,8 +836,10 @@ const uiErrorMapper = (msg: string) => {
   if (msg.includes('theme file not found')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not found')) return ERROR_CODES.NODE_NOT_FOUND;
   // 批3 Task 3:theme_path load failed(genTokenPrefetchScript/genThemeMountInit 的 null/
-  // 非 Theme 分支)→ THEME_NOT_FOUND。与首位 'not found' 分支两子串不相交,顺序无歧义。
-  if (msg.includes('load failed')) return ERROR_CODES.THEME_NOT_FOUND;
+  // 非 Theme 分支)→ THEME_NOT_FOUND。**全前缀匹配**而非 'load failed' 子串——后者会
+  // 误伤 ui-import-single.ts 的 "Scene reload failed (post-persist): ..."(import 链
+  // reload 失败应回落 SCRIPT_EXEC_FAILED,终审 Important-1 收紧)。
+  if (msg.includes('theme_path load failed')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not a Control')) return ERROR_CODES.INVALID_PARAMS;
   if (msg.includes('no theme')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not a Theme')) return ERROR_CODES.THEME_NOT_FOUND;
@@ -865,7 +867,7 @@ type TokenResolveOutcome =
  * 既有调用零开销零行为变化);true 而 theme_path 缺 → INVALID_PARAMS(附 DesignTokens
  * 约定路径指引);有 → `genTokenPrefetchScript` 预取 spawn(**loadAutoloads: false**
  * ——脚本只 load 资源,不跑 autoload,省启动;timeout 30)→ parseGdscriptResult
- * (error 输出经 uiErrorMapper 的 'load failed' → THEME_NOT_FOUND 分流)→ 从
+ * (error 输出经 uiErrorMapper 的 'theme_path load failed' → THEME_NOT_FOUND 分流)→ 从
  * `out.data.token_map.colors` 取 map → `resolveGeometryTokens` 换字面量。
  * resolveGeometryTokens 抛错(TOKEN_NOT_FOUND/INVALID_PARAMS)**不在本辅助内 catch**——
  * 冒给调用方的既有 catch 按消息前缀分流(两个 handler 的分流锚,单测锁定)。

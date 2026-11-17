@@ -933,4 +933,18 @@ describe('token_set/token_list(批3 Task 4)', () => {
     expect(body.error_code).toBe('THEME_NOT_FOUND');
     expect(body.error).toContain('theme file not found');
   });
+
+  it("mapper 'load failed' 收紧为全前缀:Scene reload failed → SCRIPT_EXEC_FAILED(非 THEME_NOT_FOUND,终审 Important-1)", async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'error', value: 'Scene reload failed (post-persist): res://x.tscn —— build 已持久化,可重跑 ui_measure_layout' },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'token_list', project_path: '/fake/p', theme_path: 'res://themes/t.tres',
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('SCRIPT_EXEC_FAILED');
+    expect(body.error).not.toContain('THEME_NOT_FOUND');
+  });
 });

@@ -69,7 +69,7 @@ export const ERROR_CODES: Readonly<Record<string, ErrorCodeSpec>> = {
   NOT_FOUND:                { retryable: false, category: 'validation', meaning: '目标节点/资源/记录不存在' },
   NODE_NOT_FOUND:           { retryable: false, category: 'validation', meaning: '场景中找不到目标节点' },
   SCENE_NOT_FOUND:          { retryable: false, category: 'validation', meaning: '场景文件不存在或加载失败' },
-  // 批3 Task 3 收编:uiErrorMapper 的 THEME_NOT_FOUND 分支('load failed'/'no theme'/
+  // 批3 Task 3 收编:uiErrorMapper 的 THEME_NOT_FOUND 分支('theme_path load failed'/'no theme'/
   // 'not a Theme')与 $token 缺键的 TOKEN_NOT_FOUND 均为既有码,首次被单测触发 warn——
   // 按语义表登记(保守 fallback retryable=false 与本行等价,仅消除 warn 噪音)。
   THEME_NOT_FOUND:          { retryable: false, category: 'validation', meaning: 'Theme 资源加载失败或节点未挂 Theme' },
