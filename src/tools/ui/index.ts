@@ -220,7 +220,7 @@ export function getToolDefinitions(): Tool[] {
           load_autoloads: { type: 'boolean', description: '加载 Autoload（默认 true）' },
           viewport: {
             type: 'object',
-            description: 'ui_build_layout: 根 rect 求解基准 {w,h}(默认 1280x720;与项目窗口一致=视口几何);ui_import_prototype: 默认取 geometry.viewport;ui_measure_layout: 覆写测量视口(SubViewport 注入重排;生效性见 data.measure.viewport_check,inconclusive 勿信);solve_from_current: 场景根直接子父尺寸兜底(父尺寸无法从 tscn 解析时以视口为父;须与项目视口一致,正整数)',
+            description: 'ui_build_layout: 根 rect 求解基准 {w,h}(默认 1280x720;与项目窗口一致=视口几何);ui_import_prototype: 默认取 geometry.viewport;ui_measure_layout: 覆写测量视口(SubViewport 尺寸,正整数;注入重排;生效性见 data.measure.viewport_check,inconclusive 勿信);solve_from_current: 场景根直接子父尺寸兜底(父尺寸无法从 tscn 解析时以视口为父;须与项目视口一致,正整数)',
             properties: { w: { type: 'number', description: '宽(px)' }, h: { type: 'number', description: '高(px)' } },
           },
           persist: { type: 'boolean', description: 'ui_build_layout: 持久化到 .tscn（原子写；默认 false 运行时）' },
@@ -442,7 +442,7 @@ export async function handleTool(
         const persist = args.persist === true;
         // C1: viewport 参数——根节点 rect 的求解基准;非正数(含缺项/NaN)→ INVALID_PARAMS
         let viewport: { w: number; h: number } | undefined;
-        if (args.viewport !== undefined) {
+        if (args.viewport != null) {
           const vp = args.viewport as { w?: unknown; h?: unknown };
           const w = typeof vp.w === 'number' ? vp.w : NaN;
           const h = typeof vp.h === 'number' ? vp.h : NaN;
@@ -488,7 +488,7 @@ export async function handleTool(
         // Task 2(批1 1a):viewport 覆写(g800 复测通道)——正整数校验(brief Interfaces),
         // 同 build C1 先例在 handler 侧拒,生成器只接已校验值
         const nodePathNorm = nodePathRaw ? normalizeNodePath(nodePathRaw) : undefined;
-        if (args.viewport !== undefined) {
+        if (args.viewport != null) {
           const vp = args.viewport as { w?: unknown; h?: unknown };
           const w = typeof vp.w === 'number' ? vp.w : NaN;
           const h = typeof vp.h === 'number' ? vp.h : NaN;
@@ -521,96 +521,108 @@ export async function handleTool(
     });
 
     let r = parseGdscriptResult(result, [], uiErrorMapper);
-    // Task 4: expect_tree 注入——measure 成功输出后,把逐节点 diff/重叠/越界问题清单
-    // 并回 data.layout_verify(Pascal verify_scene 模式,数字驱动收敛)。
-    if (action === 'ui_measure_layout' && (args.expect_tree as UiNodeSpec | undefined)) {
-      const expectTree = args.expect_tree as UiNodeSpec;
+    // 批2 Task4(终审顺手项):measure 后处理合并为单次 parse/单次重写——原三段(expect_tree
+    // 注入/viewport_check/quality+order 挂节,批1 Task1/2/4 分段累积)各自 JSON.parse 全响应
+    // 再重写,大响应重复解析浪费;现共享同一份 parsed 逐段就地修改、任一段有产出才一次
+    // 回写,段内条件与原三段一一对应(行为等价)。import 链(handleUiImportPrototype)本就
+    // 单次 parse 组装输出,无同款可并。
+    if (action === 'ui_measure_layout' && ((args.expect_tree as UiNodeSpec | undefined) || !r.isError)) {
+      const expectTree = args.expect_tree as UiNodeSpec | undefined;
       try {
         const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
           success?: boolean;
-          data?: { measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number } } };
           warnings?: string[];
-        };
-        // 仅成功结果注入:错误/异常输出保持原样,diff 缺失由 AI 视为未验证
-        if (parsed.success === true) {
-          const measure = parsed.data?.measure;
-          const measured = measure?.nodes ?? [];
-          const targets = flattenTargets(expectTree);
-          // PR-2:expect_tree 同构复用 style_verify(spec §4.1 挂两处之二)
-          const styleReadings = measured.flatMap(n => (n.styles ?? []).map(s => ({ ...s, path: n.path })));
-          const wrapped = {
-            targets,
-            diff: diffLayout(measured, targets, 2),
-            overlaps: detectOverlaps(measured),
-            out_of_bounds: detectOutOfBounds(measured),
-            // C1: 根级 rect 的参照系(measure 输出的 root Window 尺寸),供消费方核对
-            viewport: measure?.viewport,
+          data?: {
+            measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stalled?: boolean; theme_constants?: Record<string, number>; viewport_check?: string };
+            layout_verify?: unknown;
+            style_verify?: unknown;
+            quality?: unknown;
+            order?: unknown;
           };
-          const merged = { ...parsed, data: { ...parsed.data, layout_verify: wrapped,
-            style_verify: diffStyles(styleReadings, flattenStyleTargets(expectTree)) } };
-          r = { ...r, content: [{ type: 'text', text: JSON.stringify(merged) }] };
-        }
-      } catch {
-        // measure 输出异常时保持原样返回,diff 缺失由 AI 视为未验证
-      }
-    }
-    // Task 2(批1 1a)假绿防护(Review Focus 2):viewport 覆写生效性检查。上报 viewport 值
-    // 被注入覆写,本身不构成布局证据——checkViewportEffect 判据(独立于上报值):
-    // 全铺节点(anchor 0→1)rect.w 贴合注入视口宽 = 直接证据(e2e 硬断言的 TS 版)。
-    // brief 预设的"非全铺节点相对默认视口基线变化"辅判据**实测弃用**:默认视口基线只能
-    // 挂 root 取,与覆写轮的 SubViewport 通道语境不同(headless Window 尺寸不可信 +
-    // stretch 字体度量失真,实测 Label 自适应 h/w 20↔23、56↔64 类噪声)——非视口变化
-    // 会被误读为视口生效,假绿检测器自身假绿。故主判据未命中即 inconclusive(诚实降级,
-    // checkViewportEffect 的 baseline 形参保留给未来干净的同通道基线),附指引不得静默。
-    if (action === 'ui_measure_layout' && measureViewport && !r.isError) {
-      try {
-        const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
-          success?: boolean;
-          data?: { measure?: { nodes?: MeasuredNode[] } };
-          warnings?: string[];
         };
-        if (parsed.success === true && parsed.data?.measure) {
-          const verdict = checkViewportEffect(parsed.data.measure.nodes ?? [], measureViewport);
-          const warnings = [...(parsed.warnings ?? [])];
-          if (verdict === 'inconclusive') {
-            warnings.push('viewport_check: inconclusive —— 测量结果中无全铺节点(anchor 0→1)rect.w 贴合注入视口宽,无法确认布局按注入视口重排(上报 viewport 值不可作为布局证据)。硬证据请用含全铺节点的场景复核,或窗口模式 run_project + dump_layout_tree(g800 复测通道)');
-          }
-          const merged = { ...parsed, data: { ...parsed.data, measure: { ...parsed.data.measure, viewport_check: verdict } }, warnings };
-          r = { ...r, content: [{ type: 'text', text: JSON.stringify(merged) }] };
-        }
-      } catch {
-        // measure 输出异常时保持原样返回(与 expect_tree 注入段同款契约)
-      }
-    }
-    // Task 4(批1 1c):quality/order 报告节——四类品质检查(裸壳/应跟随/等距组/溢出)
-    // 聚合挂节。D8 输出纪律:stalled !== true 且对应节有发现才挂(无发现省略字段,null
-    // 语义);stalled 时不出判定只报 stalled(调用方契约,buildQualityReport 注释同款)。
-    // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化。
-    // 批2 Task2:measure 输出带 theme_constants 时提取 space_* 档位传入(无声明跳过)。
-    if (action === 'ui_measure_layout' && !r.isError) {
-      try {
-        const parsed = JSON.parse((r.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
-          success?: boolean;
-          data?: { measure?: { nodes?: MeasuredNode[]; viewport?: { w: number; h: number }; stalled?: boolean; theme_constants?: Record<string, number> } };
-        };
-        if (parsed.success === true && parsed.data?.measure) {
-          const m = parsed.data.measure;
-          const spacingScale = spacingScaleFromTheme(m.theme_constants);
-          const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
-          if (report?.quality || report?.order) {
-            const merged = {
-              ...parsed,
-              data: {
+        let mutated = false;
+        // 仅成功结果注入:错误/异常输出保持原样,diff 缺失由 AI 视为未验证(原三段共同契约)。
+        // 各段独立 try/catch——段内处理函数抛错只弃该段,后续段照常(原三段各自 try/catch
+        // 的等价保持;赋值均为整体表达式,抛错时赋值不发生,段内原子性同旧版 merged 局部量)。
+        if (parsed.success === true) {
+          // ── 段1(批1 Task4):expect_tree 注入——逐节点 diff/重叠/越界问题清单并回
+          // data.layout_verify(Pascal verify_scene 模式,数字驱动收敛);PR-2:expect_tree
+          // 同构复用 style_verify(spec §4.1 挂两处之二)。
+          if (expectTree) {
+            try {
+              const measure = parsed.data?.measure;
+              const measured = measure?.nodes ?? [];
+              const targets = flattenTargets(expectTree);
+              const styleReadings = measured.flatMap(n => (n.styles ?? []).map(s => ({ ...s, path: n.path })));
+              parsed.data = {
                 ...parsed.data,
-                ...(report?.quality ? { quality: report.quality } : {}),
-                ...(report?.order ? { order: report.order } : {}),
-              },
-            };
-            r = { ...r, content: [{ type: 'text', text: JSON.stringify(merged) }] };
+                layout_verify: {
+                  targets,
+                  diff: diffLayout(measured, targets, 2),
+                  overlaps: detectOverlaps(measured),
+                  out_of_bounds: detectOutOfBounds(measured),
+                  // C1: 根级 rect 的参照系(measure 输出的 root Window 尺寸),供消费方核对
+                  viewport: measure?.viewport,
+                },
+                style_verify: diffStyles(styleReadings, flattenStyleTargets(expectTree)),
+              };
+              mutated = true;
+            } catch {
+              // 段1 弃置,后续段照常(原段1 catch 同款)
+            }
+          }
+          // ── 段2(批1 Task2)假绿防护(Review Focus 2):viewport 覆写生效性检查。上报
+          // viewport 值被注入覆写,本身不构成布局证据——checkViewportEffect 判据(独立于
+          // 上报值):全铺节点(anchor 0→1)rect.w 贴合注入视口宽 = 直接证据(e2e 硬断言的
+          // TS 版)。brief 预设的"非全铺节点相对默认视口基线变化"辅判据**实测弃用**:默认
+          // 视口基线只能挂 root 取,与覆写轮的 SubViewport 通道语境不同(headless Window
+          // 尺寸不可信 + stretch 字体度量失真,实测 Label 自适应 h/w 20↔23、56↔64 类噪声)
+          // ——非视口变化会被误读为视口生效,假绿检测器自身假绿。故主判据未命中即
+          // inconclusive(诚实降级,checkViewportEffect 的 baseline 形参保留给未来干净的
+          // 同通道基线),附指引不得静默。
+          if (!r.isError && measureViewport && parsed.data?.measure) {
+            try {
+              const verdict = checkViewportEffect(parsed.data.measure.nodes ?? [], measureViewport);
+              const warnings = [...(parsed.warnings ?? [])];
+              if (verdict === 'inconclusive') {
+                warnings.push('viewport_check: inconclusive —— 测量结果中无全铺节点(anchor 0→1)rect.w 贴合注入视口宽,无法确认布局按注入视口重排(上报 viewport 值不可作为布局证据)。硬证据请用含全铺节点的场景复核,或窗口模式 run_project + dump_layout_tree(g800 复测通道)');
+              }
+              parsed.warnings = warnings;
+              parsed.data = { ...parsed.data, measure: { ...parsed.data.measure, viewport_check: verdict } };
+              mutated = true;
+            } catch {
+              // 段2 弃置,后续段照常(原段2 catch 同款)
+            }
+          }
+          // ── 段3(批1 1c):quality/order 报告节——四类品质检查(裸壳/应跟随/等距组/
+          // 溢出)聚合挂节。D8 输出纪律:stalled !== true 且对应节有发现才挂(无发现省略
+          // 字段,null 语义);stalled 时不出判定只报 stalled(调用方契约,buildQualityReport
+          // 注释同款)。视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/
+          // 容器化。批2 Task2:measure 输出带 theme_constants 时提取 space_* 档位传入
+          // (无声明跳过)。
+          if (!r.isError && parsed.data?.measure) {
+            try {
+              const m = parsed.data.measure;
+              const spacingScale = spacingScaleFromTheme(m.theme_constants);
+              const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
+              if (report?.quality || report?.order) {
+                parsed.data = {
+                  ...parsed.data,
+                  ...(report?.quality ? { quality: report.quality } : {}),
+                  ...(report?.order ? { order: report.order } : {}),
+                };
+                mutated = true;
+              }
+            } catch {
+              // 段3 弃置(原段3 catch 同款)
+            }
           }
         }
+        if (mutated) {
+          r = { ...r, content: [{ type: 'text', text: JSON.stringify(parsed) }] };
+        }
       } catch {
-        // measure 输出异常时保持原样返回(与前两段注入同款契约,diff 缺失由 AI 视为未验证)
+        // measure 输出异常时保持原样返回,diff 缺失由 AI 视为未验证(原三段同款契约)
       }
     }
     // persist=true 的 ui_build_layout 已原子写落盘,不再 append "headless 退出即丢" 提示;其余照旧。
@@ -712,7 +724,7 @@ async function handleSolveFromCurrent(
   // (Number.isInteger && >0,同 ui_measure_layout viewport 先例),planRebase 层再做
   // 正数守卫(纯函数自洽,不依赖调用方)。
   let viewport: { w: number; h: number } | undefined;
-  if (args.viewport !== undefined) {
+  if (args.viewport != null) {
     const vp = args.viewport as { w?: unknown; h?: unknown };
     const w = typeof vp.w === 'number' ? vp.w : NaN;
     const h = typeof vp.h === 'number' ? vp.h : NaN;
@@ -852,7 +864,7 @@ async function handleUiImportPrototype(
 
   // viewport:显式优先,默认 geometry.viewport(合成根 rect 的求解基准)
   let viewport = geo.viewport;
-  if (args.viewport !== undefined) {
+  if (args.viewport != null) {
     const vp = args.viewport as { w?: unknown; h?: unknown };
     const w = typeof vp.w === 'number' ? vp.w : NaN;
     const h = typeof vp.h === 'number' ? vp.h : NaN;

@@ -1,13 +1,30 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { genUiMeasureScript, checkViewportEffect } from '../src/tools/ui/ui-measure.js';
 import { genUiImportSingleScript } from '../src/tools/ui/ui-import-single.js';
 import { executeGdscriptTrusted } from '../src/gdscript-executor.js';
-import { handleTool } from '../src/tools/ui/index.js';
+import { handleTool, getToolDefinitions } from '../src/tools/ui/index.js';
 import type { MeasuredNode } from '../src/tools/ui/layout-diff.js';
 import type { ToolContext, ToolResult } from '../src/types.js';
+import { mockSuccessResult } from './helpers/mock-results.js';
+
+// 批2 Task4:viewport:null 四处同修的单测需捕获 handler 生成的脚本(证明 null 完全走
+// 无 viewport 路径)——executor mock 化(ui-quality-check.test.ts 同款 realExecutor 闭包
+// 模式;文件内既有 e2e describe 经 beforeAll 把 mockImplementation 指回真实 executor)。
+const { execMock, realExecutor } = vi.hoisted(() => ({
+  execMock: vi.fn(),
+  realExecutor: { fn: null as null | ((...args: never[]) => Promise<unknown>) },
+}));
+vi.mock('../src/gdscript-executor.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/gdscript-executor.js')>();
+  realExecutor.fn = actual.executeGdscriptTrusted as unknown as (...args: never[]) => Promise<unknown>;
+  return {
+    ...actual,
+    executeGdscriptTrusted: (...args: Parameters<typeof actual.executeGdscriptTrusted>) => execMock(...args),
+  };
+});
 
 // 批1 1a(spec 开放问题 1):measure viewport 参数——g800 复测通道。
 // ── spike 结论(2026-11-16 实测,Godot 4.7 headless --path --script,探针不留仓库)──
@@ -127,6 +144,131 @@ describe('ui_measure_layout handler viewport 校验', () => {
   });
 });
 
+// ─── 批2 Task4:viewport schema description 整数标注(终审 T2①)──────────────
+describe('viewport schema description 整数标注', () => {
+  it('measure 分句标注正整数(SubViewport 尺寸——handler 侧正整数校验的 schema 镜像)', () => {
+    const schema = getToolDefinitions()[0]!.inputSchema as { properties: Record<string, unknown> };
+    const desc = String((schema.properties.viewport as { description?: string }).description);
+    expect(desc).toContain('ui_measure_layout: 覆写测量视口(SubViewport 尺寸,正整数');
+  });
+});
+
+// ─── 批2 Task4 顺手项(ledger deferred B2T1 Minor):viewport:null 四处同修 ──
+// 原判据 `args.viewport !== undefined` 放行 null → vp.w 读 null 抛 TypeError(被外层
+// catch 吃成 SCRIPT_EXEC_FAILED);修为 `!= null`(null 与 undefined 都跳过)。断言口径:
+// null 轮与缺省轮 handler 生成的 GDScript / 计划文本逐字节一致(= null 完全走无
+// viewport 路径,build/measure/import 三处经捕获脚本比对,solve 纯 TS 链比对响应)。
+describe('viewport:null 等价缺省(index.ts 四处同修)', () => {
+  beforeEach(() => { execMock.mockReset(); });
+  afterEach(() => { execMock.mockReset(); });
+
+  function lastCode(): string {
+    expect(execMock, 'executor 应被调用一次').toHaveBeenCalledTimes(1);
+    return (execMock.mock.calls[0]![0] as { code: string }).code;
+  }
+  function mockMeasureOk() {
+    execMock.mockResolvedValueOnce(mockSuccessResult({
+      outputs: [{ key: 'measure', value: JSON.stringify({ stable_after_frames: 1, stalled: false, viewport: { w: 1280, h: 720 }, nodes: [] }) }],
+    }));
+  }
+
+  it('ui_measure_layout:viewport:null → 不抛 TypeError,脚本与缺省轮逐字节一致(无 SubViewport 注入)', async () => {
+    mockMeasureOk();
+    const withNull = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: 'D:/fake/p', scene_path: 'res://a.tscn', viewport: null,
+    }, fakeCtx()) as ToolResult;
+    expect(withNull.isError).toBeFalsy();
+    const codeNull = lastCode();
+    execMock.mockReset();
+    mockMeasureOk();
+    const omitted = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: 'D:/fake/p', scene_path: 'res://a.tscn',
+    }, fakeCtx()) as ToolResult;
+    expect(omitted.isError).toBeFalsy();
+    expect(lastCode()).toBe(codeNull);
+    // 无注入锚定同文件生成器测试的标记(创建行;脚本其余处仍可能引用 _vp_sub 空值守卫)
+    expect(codeNull).not.toContain('_vp_sub = SubViewport.new()');
+  });
+
+  it('ui_build_layout:viewport:null → 脚本与缺省轮逐字节一致(默认 1280x720 求解基准)', async () => {
+    const tree = { type: 'Panel', name: 'R', rect: { x: 0, y: 0, w: 640, h: 480 } };
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [{ key: 'layout_built', value: '"ok"' }] }));
+    const withNull = await handleTool('ui', {
+      action: 'ui_build_layout', project_path: 'D:/fake/p', scene_path: 'res://a.tscn', tree, viewport: null,
+    }, fakeCtx()) as ToolResult;
+    expect(withNull.isError).toBeFalsy();
+    const codeNull = lastCode();
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [{ key: 'layout_built', value: '"ok"' }] }));
+    const omitted = await handleTool('ui', {
+      action: 'ui_build_layout', project_path: 'D:/fake/p', scene_path: 'res://a.tscn', tree,
+    }, fakeCtx()) as ToolResult;
+    expect(omitted.isError).toBeFalsy();
+    expect(lastCode()).toBe(codeNull);
+  });
+
+  it('ui_import_prototype:viewport:null → 回落 geometry.viewport,脚本与缺省轮逐字节一致', async () => {
+    const GEO_MIN = { viewport: { w: 800, h: 600 }, nodes: [{ name: 'A', rect: { x: 0, y: 0, w: 20, h: 24 } }] };
+    function mockImport() {
+      execMock.mockResolvedValueOnce(mockSuccessResult({
+        outputs: [
+          { key: 'persist', value: JSON.stringify({ saved: true }) },
+          { key: 'measure', value: JSON.stringify({ stable_after_frames: 1, stalled: false, viewport: { w: 800, h: 600 }, nodes: [] }) },
+        ],
+      }));
+    }
+    mockImport();
+    const withNull = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: 'D:/fake/p', scene_path: 'res://scene.tscn', geometry: GEO_MIN, viewport: null,
+    }, fakeCtx()) as ToolResult;
+    expect(withNull.isError).toBeFalsy();
+    const codeNull = lastCode();
+    execMock.mockReset();
+    mockImport();
+    const omitted = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: 'D:/fake/p', scene_path: 'res://scene.tscn', geometry: GEO_MIN,
+    }, fakeCtx()) as ToolResult;
+    expect(omitted.isError).toBeFalsy();
+    expect(lastCode()).toBe(codeNull);
+    // 回落语义:null 不覆写,合成脚本按 geometry.viewport(800×600)注入
+    expect(codeNull).toContain('_vp_sub.size = Vector2i(800, 600)');
+  });
+
+  it('solve_from_current:viewport:null → 计划与缺省轮一致(纯 TS 链,viewport 上报 null)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ui-vp-null-'));
+    try {
+      // 根直接子零锚节点(父=根形态,父尺寸无法从 tscn 解析)——缺省轮进
+      // skippedUnresolvedParent,viewport 轮才可解;null 轮必须与缺省轮一致
+      writeFileSync(join(dir, 'main.tscn'), `[gd_scene format=3]
+
+[node name="Main" type="Control"]
+
+[node name="C" type="ColorRect" parent="."]
+offset_right = 100.0
+offset_bottom = 50.0
+`);
+      const ctx = {} as ToolContext;
+      const withNull = await handleTool('ui', {
+        action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn', viewport: null,
+      }, ctx) as ToolResult;
+      expect(withNull.isError).toBeFalsy();
+      const omitted = await handleTool('ui', {
+        action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
+      }, ctx) as ToolResult;
+      expect(omitted.isError).toBeFalsy();
+      const ta = (withNull.content?.[0] as { text?: string }).text;
+      const tb = (omitted.content?.[0] as { text?: string }).text;
+      expect(ta).toBe(tb);
+      const body = JSON.parse(tb ?? '{}') as { success: boolean; data: { viewport: unknown; skippedUnresolvedParent: string[] } };
+      expect(body.success).toBe(true);
+      expect(body.data.viewport).toBeNull();
+      expect(body.data.skippedUnresolvedParent).toContain('C');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('checkViewportEffect 假绿防护判定(纯函数)', () => {
   const vp = { w: 800, h: 480 };
   const full = (w: number): MeasuredNode => ({
@@ -167,6 +309,8 @@ describe.skipIf(!hasGodot)('measure viewport 生效性(最小 fixture)', () => {
   let dir: string;
 
   beforeAll(() => {
+    // e2e:executor 指回真实实现(文件头 mock 样板的 realExecutor 闭包)
+    execMock.mockImplementation((...args: never[]) => realExecutor.fn!(...args));
     dir = mkdtempSync(join(tmpdir(), 'ui-measure-vp-'));
     // stretch=canvas_items 对齐靶子项目配置——无 stretch(disabled)项目 headless 布局按
     // Window.size(实测 64,不可信,C1 既有现象),plain 轮全铺 rect.w 无可信基准;
@@ -188,7 +332,7 @@ offset_right = 120.0
 offset_bottom = 60.0
 `);
   });
-  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+  afterAll(() => { execMock.mockReset(); rmSync(dir, { recursive: true, force: true }); });
 
   async function measure(viewport?: { w: number; h: number }) {
     const res = await executeGdscriptTrusted({
@@ -223,6 +367,12 @@ offset_bottom = 60.0
 // 注:Bj 当前为硬 offset 758.5(tscn 注释"Panel > Bj 全铺"指铺满 Panel),不随视口变——
 // 其数值仅记录(Task 7 solve_from_current 改造后才会跟随视口)。
 describe.skipIf(!hasE2e)('measure viewport 靶子 e2e(DotaLegendGodot)', () => {
+  beforeAll(() => {
+    // e2e:executor 指回真实实现(文件头 mock 样板的 realExecutor 闭包)
+    execMock.mockImplementation((...args: never[]) => realExecutor.fn!(...args));
+  });
+  afterAll(() => { execMock.mockReset(); });
+
   it('viewport 800×480:全铺场景根 rect.w=800(而非 960),Bj(硬 offset)记录数值', async () => {
     const res = await executeGdscriptTrusted({
       godotPath: GODOT_PATH, projectPath: TARGET_PROJECT, timeout: 60, loadAutoloads: false,
@@ -254,6 +404,12 @@ describe.skipIf(!hasE2e)('measure viewport 靶子 e2e(DotaLegendGodot)', () => {
 // 后处理)验证 data.measure.viewport_check 两分支——全铺命中 effective / 子树无证据
 // inconclusive(附指引警告)。
 describe.skipIf(!hasE2e)('ui_measure_layout handler viewport 假绿防护(靶子真跑)', () => {
+  beforeAll(() => {
+    // e2e:executor 指回真实实现(文件头 mock 样板的 realExecutor 闭包)
+    execMock.mockImplementation((...args: never[]) => realExecutor.fn!(...args));
+  });
+  afterAll(() => { execMock.mockReset(); });
+
   function realCtx(): ToolContext {
     return { findGodot: async () => GODOT_PATH } as unknown as ToolContext;
   }

@@ -6722,7 +6722,7 @@
           },
           "viewport": {
             "type": "object",
-            "description": "ui_build_layout: 根 rect 求解基准 {w,h}(默认 1280x720;与项目窗口一致=视口几何);ui_import_prototype: 默认取 geometry.viewport;ui_measure_layout: 覆写测量视口(SubViewport 注入重排;生效性见 data.measure.viewport_check,inconclusive 勿信);solve_from_current: 场景根直接子父尺寸兜底(父尺寸无法从 tscn 解析时以视口为父;须与项目视口一致,正整数)",
+            "description": "ui_build_layout: 根 rect 求解基准 {w,h}(默认 1280x720;与项目窗口一致=视口几何);ui_import_prototype: 默认取 geometry.viewport;ui_measure_layout: 覆写测量视口(SubViewport 尺寸,正整数;注入重排;生效性见 data.measure.viewport_check,inconclusive 勿信);solve_from_current: 场景根直接子父尺寸兜底(父尺寸无法从 tscn 解析时以视口为父;须与项目视口一致,正整数)",
             "properties": {
               "w": {
                 "type": "number",
@@ -6840,8 +6840,8 @@
       },
       "size": {
         "descBytes": 703,
-        "schemaBytes": 11975,
-        "totalBytes": 12678
+        "schemaBytes": 11992,
+        "totalBytes": 12695
       },
       "annotations": {
         "readOnlyHint": false,
