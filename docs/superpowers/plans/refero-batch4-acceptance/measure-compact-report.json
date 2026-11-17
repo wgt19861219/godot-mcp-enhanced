@@ -1,0 +1,710 @@
+{
+ "scene_path": "res://scenes/ui/_batch4_copy.tscn",
+ "theme_path": "res://resources/themes/default_theme.tres",
+ "detail": "compact",
+ "measure": {
+  "viewport": {
+   "h": 540,
+   "w": 960
+  },
+  "stalled": false,
+  "stable_after_frames": 3,
+  "node_count": 40
+ },
+ "quality": {
+  "bare_shells": {
+   "entries": [
+    {
+     "path": "Panel",
+     "childCount": 11,
+     "suggestion": "裸 Control 壳下 11 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout);本壳为场景根直接子,传 viewport 形参即可处理(以视口为父尺寸求解)"
+    },
+    {
+     "path": "Panel/MoneyLay",
+     "childCount": 4,
+     "suggestion": "裸 Control 壳下 4 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)"
+    },
+    {
+     "path": "Panel/TopRigLay",
+     "childCount": 18,
+     "suggestion": "裸 Control 壳下 18 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)"
+    }
+   ],
+   "summary": {
+    "total": 3,
+    "truncated": 0
+   }
+  },
+  "should_follow": {
+   "entries": [
+    {
+     "path": "Panel/Bj",
+     "parent": "Panel",
+     "suggestion": "子 rect 已贴合父 rect(四边差 ≤2px)但 anchor 全 0,resize 不跟随——建议 solve_from_current 反解为跟随锚点"
+    }
+   ],
+   "summary": {
+    "total": 1,
+    "truncated": 0
+   }
+  },
+  "out_of_bounds": {
+   "entries": [],
+   "summary": {
+    "total": 0,
+    "truncated": 0
+   }
+  },
+  "viewport_overflow": {
+   "entries": [],
+   "summary": {
+    "total": 0,
+    "truncated": 0
+   }
+  }
+ },
+ "order": {
+  "equidistant": {
+   "entries": [],
+   "summary": {
+    "total": 0,
+    "truncated": 0
+   }
+  },
+  "alignment_lanes": {
+   "entries": [
+    {
+     "parent": "Panel",
+     "kind": "center",
+     "lane": 479.625,
+     "majority": [
+      "Panel/DayItemPos",
+      "Panel/Bj"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TimeImg",
+       "offset": -348.375
+      },
+      {
+       "path": "Panel/MoneyLay",
+       "offset": -254.875
+      },
+      {
+       "path": "Panel/CountdownPre",
+       "offset": -238.375
+      },
+      {
+       "path": "Panel/CountdownTime",
+       "offset": -160.875
+      },
+      {
+       "path": "Panel/TopRigLay",
+       "offset": 167.125
+      },
+      {
+       "path": "Panel/MonthTotalPre",
+       "offset": 243.125
+      },
+      {
+       "path": "Panel/MonthTotalNum",
+       "offset": 318.125
+      },
+      {
+       "path": "Panel/MonthTotalSuf",
+       "offset": 343.125
+      },
+      {
+       "path": "Panel/CloseBtn",
+       "offset": 344.1250000000002
+      }
+     ],
+     "suggestion": "多数派 2 节点共享 center 对齐线 479.6px,离群 Panel/TimeImg 偏 -348.4px、Panel/MoneyLay 偏 -254.9px、Panel/CountdownPre 偏 -238.4px、Panel/CountdownTime 偏 -160.9px、Panel/TopRigLay 偏 167.1px、Panel/MonthTotalPre 偏 243.1px、Panel/MonthTotalNum 偏 318.1px、Panel/MonthTotalSuf 偏 343.1px、Panel/CloseBtn 偏 344.1px"
+    },
+    {
+     "parent": "Panel",
+     "kind": "top",
+     "lane": 133.75,
+     "majority": [
+      "Panel/CountdownPre",
+      "Panel/CountdownTime",
+      "Panel/MonthTotalNum",
+      "Panel/MonthTotalPre",
+      "Panel/MonthTotalSuf"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/Bj",
+       "offset": -97.5
+      },
+      {
+       "path": "Panel/MoneyLay",
+       "offset": -89
+      },
+      {
+       "path": "Panel/TopRigLay",
+       "offset": -89
+      },
+      {
+       "path": "Panel/CloseBtn",
+       "offset": -78.70000076293951
+      },
+      {
+       "path": "Panel/TimeImg",
+       "offset": 3
+      },
+      {
+       "path": "Panel/DayItemPos",
+       "offset": 20.5
+      }
+     ],
+     "suggestion": "多数派 5 节点共享 top 对齐线 133.8px,离群 Panel/Bj 偏 -97.5px、Panel/MoneyLay 偏 -89px、Panel/TopRigLay 偏 -89px、Panel/CloseBtn 偏 -78.7px、Panel/TimeImg 偏 3px、Panel/DayItemPos 偏 20.5px"
+    },
+    {
+     "parent": "Panel",
+     "kind": "bottom",
+     "lane": 153.75,
+     "majority": [
+      "Panel/CountdownPre",
+      "Panel/CountdownTime",
+      "Panel/MonthTotalNum",
+      "Panel/MonthTotalPre",
+      "Panel/MonthTotalSuf"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/CloseBtn",
+       "offset": -72.2999992370606
+      },
+      {
+       "path": "Panel/MoneyLay",
+       "offset": -45
+      },
+      {
+       "path": "Panel/TopRigLay",
+       "offset": -45
+      },
+      {
+       "path": "Panel/TimeImg",
+       "offset": -5
+      },
+      {
+       "path": "Panel/DayItemPos",
+       "offset": 355.5
+      },
+      {
+       "path": "Panel/Bj",
+       "offset": 376
+      }
+     ],
+     "suggestion": "多数派 5 节点共享 bottom 对齐线 153.8px,离群 Panel/CloseBtn 偏 -72.3px、Panel/MoneyLay 偏 -45px、Panel/TopRigLay 偏 -45px、Panel/TimeImg 偏 -5px、Panel/DayItemPos 偏 355.5px、Panel/Bj 偏 376px"
+    },
+    {
+     "parent": "Panel",
+     "kind": "vc",
+     "lane": 143.58333333333334,
+     "majority": [
+      "Panel/TimeImg",
+      "Panel/CountdownPre",
+      "Panel/CountdownTime",
+      "Panel/MonthTotalNum",
+      "Panel/MonthTotalPre",
+      "Panel/MonthTotalSuf"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/CloseBtn",
+       "offset": -75.3333333333334
+      },
+      {
+       "path": "Panel/MoneyLay",
+       "offset": -66.83333333333334
+      },
+      {
+       "path": "Panel/TopRigLay",
+       "offset": -66.83333333333334
+      },
+      {
+       "path": "Panel/Bj",
+       "offset": 139.41666666666666
+      },
+      {
+       "path": "Panel/DayItemPos",
+       "offset": 188.16666666666666
+      }
+     ],
+     "suggestion": "多数派 6 节点共享 vc 对齐线 143.6px,离群 Panel/CloseBtn 偏 -75.3px、Panel/MoneyLay 偏 -66.8px、Panel/TopRigLay 偏 -66.8px、Panel/Bj 偏 139.4px、Panel/DayItemPos 偏 188.2px"
+    },
+    {
+     "parent": "Panel/MoneyLay",
+     "kind": "top",
+     "lane": 62.61249923706055,
+     "majority": [
+      "Panel/MoneyLay/LoginMonthLabel",
+      "Panel/MoneyLay/RuleButt"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/MoneyLay/DataImg2",
+       "offset": -14.362499237060547
+      },
+      {
+       "path": "Panel/MoneyLay/MonthNum",
+       "offset": -9.612499237060547
+      }
+     ],
+     "suggestion": "多数派 2 节点共享 top 对齐线 62.6px,离群 Panel/MoneyLay/DataImg2 偏 -14.4px、Panel/MoneyLay/MonthNum 偏 -9.6px"
+    },
+    {
+     "parent": "Panel/MoneyLay",
+     "kind": "bottom",
+     "lane": 90.16666666666667,
+     "majority": [
+      "Panel/MoneyLay/MonthNum",
+      "Panel/MoneyLay/LoginMonthLabel",
+      "Panel/MoneyLay/DataImg2"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/MoneyLay/RuleButt",
+       "offset": -8.14166704813637
+      }
+     ],
+     "suggestion": "多数派 3 节点共享 bottom 对齐线 90.2px,离群 Panel/MoneyLay/RuleButt 偏 -8.1px"
+    },
+    {
+     "parent": "Panel/MoneyLay",
+     "kind": "vc",
+     "lane": 71.24999968210857,
+     "majority": [
+      "Panel/MoneyLay/DataImg2",
+      "Panel/MoneyLay/MonthNum",
+      "Panel/MoneyLay/RuleButt"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/MoneyLay/LoginMonthLabel",
+       "offset": 4.500000317891434
+      }
+     ],
+     "suggestion": "多数派 3 节点共享 vc 对齐线 71.2px,离群 Panel/MoneyLay/LoginMonthLabel 偏 4.5px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "left",
+     "lane": 452.4166666666667,
+     "majority": [
+      "Panel/TopRigLay/ProgressBar",
+      "Panel/TopRigLay/ProgressBj",
+      "Panel/TopRigLay/DayNum1"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/Tian1",
+       "offset": 13.333333333333314
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": 50.083333333333314
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": 56.333333333333314
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum2",
+       "offset": 78.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Tian2",
+       "offset": 91.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": 128.08333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": 134.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum3",
+       "offset": 155.33333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Tian3",
+       "offset": 171.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": 208.58333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": 214.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum4",
+       "offset": 235.33333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Tian4",
+       "offset": 251.83333333333331
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 289.0833333333333
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": 294.8333333333333
+      }
+     ],
+     "suggestion": "多数派 3 节点共享 left 对齐线 452.4px,离群 Panel/TopRigLay/Tian1 偏 13.3px、Panel/TopRigLay/Pot1 偏 50.1px、Panel/TopRigLay/MsItem1 偏 56.3px、Panel/TopRigLay/DayNum2 偏 78.8px、Panel/TopRigLay/Tian2 偏 91.8px、Panel/TopRigLay/Pot2 偏 128.1px、Panel/TopRigLay/MsItem2 偏 134.8px、Panel/TopRigLay/DayNum3 偏 155.3px、Panel/TopRigLay/Tian3 偏 171.8px、Panel/TopRigLay/Pot3 偏 208.6px、Panel/TopRigLay/MsItem3 偏 214.8px、Panel/TopRigLay/DayNum4 偏 235.3px、Panel/TopRigLay/Tian4 偏 251.8px、Panel/TopRigLay/Pot4 偏 289.1px、Panel/TopRigLay/MsItem4 偏 294.8px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "right",
+     "lane": 751.25,
+     "majority": [
+      "Panel/TopRigLay/ProgressBar",
+      "Panel/TopRigLay/ProgressBj"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/DayNum1",
+       "offset": -268.5
+      },
+      {
+       "path": "Panel/TopRigLay/Tian1",
+       "offset": -265.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": -236.25
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": -227.5
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum2",
+       "offset": -190
+      },
+      {
+       "path": "Panel/TopRigLay/Tian2",
+       "offset": -187
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": -158.25
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": -149
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum3",
+       "offset": -113.5
+      },
+      {
+       "path": "Panel/TopRigLay/Tian3",
+       "offset": -107
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": -77.75
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": -69
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum4",
+       "offset": -33.5
+      },
+      {
+       "path": "Panel/TopRigLay/Tian4",
+       "offset": -27
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 2.75
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": 11
+      }
+     ],
+     "suggestion": "多数派 2 节点共享 right 对齐线 751.3px,离群 Panel/TopRigLay/DayNum1 偏 -268.5px、Panel/TopRigLay/Tian1 偏 -265.5px、Panel/TopRigLay/Pot1 偏 -236.2px、Panel/TopRigLay/MsItem1 偏 -227.5px、Panel/TopRigLay/DayNum2 偏 -190px、Panel/TopRigLay/Tian2 偏 -187px、Panel/TopRigLay/Pot2 偏 -158.2px、Panel/TopRigLay/MsItem2 偏 -149px、Panel/TopRigLay/DayNum3 偏 -113.5px、Panel/TopRigLay/Tian3 偏 -107px、Panel/TopRigLay/Pot3 偏 -77.7px、Panel/TopRigLay/MsItem3 偏 -69px、Panel/TopRigLay/DayNum4 偏 -33.5px、Panel/TopRigLay/Tian4 偏 -27px、Panel/TopRigLay/Pot4 偏 2.8px、Panel/TopRigLay/MsItem4 偏 11px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "center",
+     "lane": 601.75,
+     "majority": [
+      "Panel/TopRigLay/ProgressBar",
+      "Panel/TopRigLay/ProgressBj"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/DayNum1",
+       "offset": -134
+      },
+      {
+       "path": "Panel/TopRigLay/Tian1",
+       "offset": -126
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": -93
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": -85.5
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum2",
+       "offset": -55.5
+      },
+      {
+       "path": "Panel/TopRigLay/Tian2",
+       "offset": -47.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": -15
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": -7
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum3",
+       "offset": 21
+      },
+      {
+       "path": "Panel/TopRigLay/Tian3",
+       "offset": 32.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": 65.5
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": 73
+      },
+      {
+       "path": "Panel/TopRigLay/DayNum4",
+       "offset": 101
+      },
+      {
+       "path": "Panel/TopRigLay/Tian4",
+       "offset": 112.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 146
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": 153
+      }
+     ],
+     "suggestion": "多数派 2 节点共享 center 对齐线 601.8px,离群 Panel/TopRigLay/DayNum1 偏 -134px、Panel/TopRigLay/Tian1 偏 -126px、Panel/TopRigLay/Pot1 偏 -93px、Panel/TopRigLay/MsItem1 偏 -85.5px、Panel/TopRigLay/DayNum2 偏 -55.5px、Panel/TopRigLay/Tian2 偏 -47.5px、Panel/TopRigLay/Pot2 偏 -15px、Panel/TopRigLay/MsItem2 偏 -7px、Panel/TopRigLay/DayNum3 偏 21px、Panel/TopRigLay/Tian3 偏 32.5px、Panel/TopRigLay/Pot3 偏 65.5px、Panel/TopRigLay/MsItem3 偏 73px、Panel/TopRigLay/DayNum4 偏 101px、Panel/TopRigLay/Tian4 偏 112.5px、Panel/TopRigLay/Pot4 偏 146px、Panel/TopRigLay/MsItem4 偏 153px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "top",
+     "lane": 75.75,
+     "majority": [
+      "Panel/TopRigLay/DayNum1",
+      "Panel/TopRigLay/DayNum2",
+      "Panel/TopRigLay/DayNum3",
+      "Panel/TopRigLay/DayNum4",
+      "Panel/TopRigLay/Tian1",
+      "Panel/TopRigLay/Tian2",
+      "Panel/TopRigLay/Tian3",
+      "Panel/TopRigLay/Tian4"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": -16
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": -16
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": -16
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": -16
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": 17
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": 17
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": 17
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 17
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBar",
+       "offset": 18
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBj",
+       "offset": 18
+      }
+     ],
+     "suggestion": "多数派 8 节点共享 top 对齐线 75.8px,离群 Panel/TopRigLay/MsItem1 偏 -16px、Panel/TopRigLay/MsItem2 偏 -16px、Panel/TopRigLay/MsItem3 偏 -16px、Panel/TopRigLay/MsItem4 偏 -16px、Panel/TopRigLay/Pot1 偏 17px、Panel/TopRigLay/Pot2 偏 17px、Panel/TopRigLay/Pot3 偏 17px、Panel/TopRigLay/Pot4 偏 17px、Panel/TopRigLay/ProgressBar 偏 18px、Panel/TopRigLay/ProgressBj 偏 18px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "bottom",
+     "lane": 95.75,
+     "majority": [
+      "Panel/TopRigLay/DayNum1",
+      "Panel/TopRigLay/DayNum2",
+      "Panel/TopRigLay/DayNum3",
+      "Panel/TopRigLay/DayNum4",
+      "Panel/TopRigLay/Tian1",
+      "Panel/TopRigLay/Tian2",
+      "Panel/TopRigLay/Tian3",
+      "Panel/TopRigLay/Tian4"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": -21
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": -21
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": -21
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": -21
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBar",
+       "offset": 9
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBj",
+       "offset": 9
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": 10
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": 10
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": 10
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 10
+      }
+     ],
+     "suggestion": "多数派 8 节点共享 bottom 对齐线 95.8px,离群 Panel/TopRigLay/MsItem1 偏 -21px、Panel/TopRigLay/MsItem2 偏 -21px、Panel/TopRigLay/MsItem3 偏 -21px、Panel/TopRigLay/MsItem4 偏 -21px、Panel/TopRigLay/ProgressBar 偏 9px、Panel/TopRigLay/ProgressBj 偏 9px、Panel/TopRigLay/Pot1 偏 10px、Panel/TopRigLay/Pot2 偏 10px、Panel/TopRigLay/Pot3 偏 10px、Panel/TopRigLay/Pot4 偏 10px"
+    },
+    {
+     "parent": "Panel/TopRigLay",
+     "kind": "vc",
+     "lane": 85.75,
+     "majority": [
+      "Panel/TopRigLay/DayNum1",
+      "Panel/TopRigLay/DayNum2",
+      "Panel/TopRigLay/DayNum3",
+      "Panel/TopRigLay/DayNum4",
+      "Panel/TopRigLay/Tian1",
+      "Panel/TopRigLay/Tian2",
+      "Panel/TopRigLay/Tian3",
+      "Panel/TopRigLay/Tian4"
+     ],
+     "outliers": [
+      {
+       "path": "Panel/TopRigLay/MsItem1",
+       "offset": -18.5
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem2",
+       "offset": -18.5
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem3",
+       "offset": -18.5
+      },
+      {
+       "path": "Panel/TopRigLay/MsItem4",
+       "offset": -18.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot1",
+       "offset": 13.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot2",
+       "offset": 13.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot3",
+       "offset": 13.5
+      },
+      {
+       "path": "Panel/TopRigLay/Pot4",
+       "offset": 13.5
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBar",
+       "offset": 13.5
+      },
+      {
+       "path": "Panel/TopRigLay/ProgressBj",
+       "offset": 13.5
+      }
+     ],
+     "suggestion": "多数派 8 节点共享 vc 对齐线 85.8px,离群 Panel/TopRigLay/MsItem1 偏 -18.5px、Panel/TopRigLay/MsItem2 偏 -18.5px、Panel/TopRigLay/MsItem3 偏 -18.5px、Panel/TopRigLay/MsItem4 偏 -18.5px、Panel/TopRigLay/Pot1 偏 13.5px、Panel/TopRigLay/Pot2 偏 13.5px、Panel/TopRigLay/Pot3 偏 13.5px、Panel/TopRigLay/Pot4 偏 13.5px、Panel/TopRigLay/ProgressBar 偏 13.5px、Panel/TopRigLay/ProgressBj 偏 13.5px"
+    }
+   ],
+   "summary": {
+    "total": 13,
+    "truncated": 0
+   }
+  }
+ },
+ "compact_totals": {
+  "quality": {
+   "bare_shells": 3,
+   "should_follow": 1,
+   "out_of_bounds": 0,
+   "viewport_overflow": 0
+  },
+  "order": {
+   "equidistant": 0,
+   "alignment_lanes": 13
+  }
+ }
+}

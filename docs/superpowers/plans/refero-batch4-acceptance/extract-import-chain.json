@@ -1,0 +1,341 @@
+{
+ "geometry": {
+  "viewport": {
+   "w": 960,
+   "h": 540
+  },
+  "nodes": [
+   {
+    "name": "ExtractPanelA",
+    "rect": {
+     "x": 40,
+     "y": 40,
+     "w": 240,
+     "h": 80
+    },
+    "type": "Panel",
+    "bg": [
+     0.25,
+     0.5,
+     0.75,
+     1
+    ],
+    "borderRadius": 8
+   },
+   {
+    "name": "ExtractPanelB",
+    "rect": {
+     "x": 40,
+     "y": 140,
+     "w": 240,
+     "h": 40
+    },
+    "type": "Panel",
+    "bg": [
+     0.5,
+     0.25,
+     0.75,
+     1
+    ]
+   },
+   {
+    "name": "ExtractLabel",
+    "rect": {
+     "x": 40,
+     "y": 220,
+     "w": 240,
+     "h": 48
+    },
+    "type": "Label",
+    "text": "Batch4 Extract Chain",
+    "fontSize": 20,
+    "color": [
+     1,
+     0.5,
+     0.25,
+     1
+    ]
+   }
+  ]
+ },
+ "scene_path": "res://scenes/ui/_batch4_copy.tscn",
+ "import": {
+  "persist": {
+   "saved": true
+  },
+  "verify_coverage": {
+   "targets": 4,
+   "total_nodes": 3,
+   "_note": "targets 为受 layout_verify 几何覆盖的节点数(含合成根 _PrototypeRoot,无 flow 时 = 输入节点数+1);flow 直接子节点丢 rect 不在 layout_verify 覆盖内,由 flow_verify 数字覆盖(期望=输入视口 rect);孙层由 layout_verify 近似覆盖(期望相对输入父原点,容器排布后天然带偏移)"
+  },
+  "layout_verify_counts": {
+   "targets": 4,
+   "diff_total": 4,
+   "diff_ok": 4,
+   "overlaps": 50,
+   "out_of_bounds": 0
+  },
+  "style_verify": [
+   {
+    "path": "_PrototypeRoot/ExtractPanelA",
+    "slot": "panel",
+    "field": "bg_color",
+    "target": [
+     0.25,
+     0.5,
+     0.75,
+     1
+    ],
+    "actual": [
+     0.25,
+     0.5,
+     0.75,
+     1
+    ],
+    "delta": [
+     0,
+     0,
+     0,
+     0
+    ],
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/ExtractPanelA",
+    "slot": "panel",
+    "field": "corner_radius_top_left",
+    "target": 8,
+    "actual": 8,
+    "delta": 0,
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/ExtractPanelA",
+    "slot": "panel",
+    "field": "corner_radius_top_right",
+    "target": 8,
+    "actual": 8,
+    "delta": 0,
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/ExtractPanelA",
+    "slot": "panel",
+    "field": "corner_radius_bottom_right",
+    "target": 8,
+    "actual": 8,
+    "delta": 0,
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/ExtractPanelA",
+    "slot": "panel",
+    "field": "corner_radius_bottom_left",
+    "target": 8,
+    "actual": 8,
+    "delta": 0,
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/ExtractPanelB",
+    "slot": "panel",
+    "field": "bg_color",
+    "target": [
+     0.5,
+     0.25,
+     0.75,
+     1
+    ],
+    "actual": [
+     0.5,
+     0.25,
+     0.75,
+     1
+    ],
+    "delta": [
+     0,
+     0,
+     0,
+     0
+    ],
+    "ok": true
+   }
+  ],
+  "build_warnings": [
+   "使用提示: 避免构造 ≤2px 宽的相邻独立节点(容差模糊带)——verify 容差内兄弟关系与偏移不可区分"
+  ]
+ },
+ "extract": {
+  "scan_nodes_union": [
+   "_PrototypeRoot/ExtractPanelA",
+   "_PrototypeRoot/ExtractPanelB",
+   "_PrototypeRoot/ExtractLabel"
+  ],
+  "report": {
+   "stylebox_groups": [
+    {
+     "spec": {
+      "bg_color": [
+       0.25,
+       0.5,
+       0.75,
+       1
+      ],
+      "corner_radius": {
+       "bl": 8,
+       "br": 8,
+       "tl": 8,
+       "tr": 8
+      },
+      "border_width": {
+       "bottom": 0,
+       "left": 0,
+       "right": 0,
+       "top": 0
+      },
+      "border_color": [
+       0.800000011920929,
+       0.800000011920929,
+       0.800000011920929,
+       1
+      ],
+      "draw_center": true
+     },
+     "count": 1,
+     "nodes": [
+      "_PrototypeRoot/ExtractPanelA"
+     ],
+     "slots": [
+      "panel"
+     ],
+     "suggested_token": "style_panel_4080bf"
+    },
+    {
+     "spec": {
+      "bg_color": [
+       0.5,
+       0.25,
+       0.75,
+       1
+      ],
+      "corner_radius": {
+       "bl": 0,
+       "br": 0,
+       "tl": 0,
+       "tr": 0
+      },
+      "border_width": {
+       "bottom": 0,
+       "left": 0,
+       "right": 0,
+       "top": 0
+      },
+      "border_color": [
+       0.800000011920929,
+       0.800000011920929,
+       0.800000011920929,
+       1
+      ],
+      "draw_center": true
+     },
+     "count": 1,
+     "nodes": [
+      "_PrototypeRoot/ExtractPanelB"
+     ],
+     "slots": [
+      "panel"
+     ],
+     "suggested_token": "style_panel_8040bf"
+    }
+   ],
+   "font_size_groups": [
+    {
+     "value": 20,
+     "count": 1,
+     "nodes": [
+      "_PrototypeRoot/ExtractLabel"
+     ],
+     "suggested_token": "font_size_20"
+    }
+   ],
+   "font_color_groups": [
+    {
+     "value": [
+      1,
+      0.5,
+      0.25,
+      1
+     ],
+     "count": 1,
+     "nodes": [
+      "_PrototypeRoot/ExtractLabel"
+     ],
+     "suggested_token": "text_ff8040"
+    }
+   ]
+  },
+  "draft": {
+   "styleboxes": [
+    {
+     "type": "Panel",
+     "slot": "panel",
+     "spec": {
+      "bg_color": [
+       0.25,
+       0.5,
+       0.75,
+       1
+      ],
+      "corner_radius": {
+       "bl": 8,
+       "br": 8,
+       "tl": 8,
+       "tr": 8
+      },
+      "border_width": {
+       "bottom": 0,
+       "left": 0,
+       "right": 0,
+       "top": 0
+      },
+      "border_color": [
+       0.800000011920929,
+       0.800000011920929,
+       0.800000011920929,
+       1
+      ],
+      "draw_center": true
+     },
+     "token": "style_panel_4080bf"
+    }
+   ],
+   "colors": [
+    {
+     "name": "style_panel_4080bf",
+     "value": [
+      0.25,
+      0.5,
+      0.75,
+      1
+     ]
+    },
+    {
+     "name": "text_ff8040",
+     "value": [
+      1,
+      0.5,
+      0.25,
+      1
+     ]
+    }
+   ],
+   "constants": [
+    {
+     "name": "font_size_20",
+     "value": 20
+    }
+   ]
+  },
+  "notes": []
+ }
+}
