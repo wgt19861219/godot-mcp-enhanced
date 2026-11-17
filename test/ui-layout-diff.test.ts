@@ -7,8 +7,8 @@ import { flattenTargets, diffLayout, detectOverlaps, detectOutOfBounds } from '.
 import type { MeasuredNode } from '../src/tools/ui/layout-diff.js';
 import type { UiNodeSpec } from '../src/tools/ui/types.js';
 import type { ExecuteGdscriptResult } from '../src/gdscript-executor.js';
-import { flattenStyleTargets, styleExpectList, diffStyles, diffFlow, STYLE_COLOR_TOL } from '../src/tools/ui/layout-diff.js';
-import type { StyleReading } from '../src/tools/ui/layout-diff.js';
+import { flattenStyleTargets, styleExpectList, diffStyles, diffFlow, STYLE_COLOR_TOL, compactDiffEntries, compactStyleEntries } from '../src/tools/ui/layout-diff.js';
+import type { StyleReading, DiffEntry, StyleDiffEntry } from '../src/tools/ui/layout-diff.js';
 
 const n = (path: string, x: number, y: number, w: number, h: number): MeasuredNode =>
   ({ path, type: 'Control', rect: { x, y, w, h } });
@@ -357,6 +357,155 @@ describe('ui_measure_layout expect_tree(handler 集成)', () => {
     const call = mockedExec.mock.calls[0]![0] as { code: string };
     expect(call.code).not.toContain('JSON.parse_string');
   });
+
+  // ─── 批4 Task2: verify 分档 detail=compact|extended ─────────────────────
+
+  it('detail=compact + expect_tree → diff/style_verify 对象化 {entries,summary} + data.detail;本 fixture 无品质发现 quality/order 不挂', async () => {
+    mockedExec.mockResolvedValue(okResult({
+      stable_after_frames: 3,
+      stalled: false,
+      viewport: { w: 1280, h: 720 },
+      nodes: [
+        { path: '.', type: 'Control', rect: { x: 0, y: 0, w: 1280, h: 720 } },
+        { path: 'P', type: 'Panel', rect: { x: 0, y: 0, w: 200, h: 200 } },
+        { path: 'P/A', type: 'Button', rect: { x: 0, y: 40, w: 100, h: 48 } },
+        { path: 'P/B', type: 'Button', rect: { x: 0, y: 0, w: 120, h: 48 } },
+      ],
+    }));
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: '/fake/p',
+      scene_path: 'res://scenes/main.tscn',
+      detail: 'compact',
+      expect_tree: {
+        type: 'Panel', name: 'P',
+        children: [
+          { type: 'Button', name: 'A', rect: { x: 0, y: 24, w: 100, h: 48 } },
+          { type: 'Button', name: 'B', rect: { x: 0, y: 0, w: 100, h: 48 } },
+        ],
+      },
+    }, ctx);
+    expect(r.isError).toBeFalsy();
+    const parsed = JSON.parse((r.content[0] as { text: string }).text) as {
+      data: {
+        detail?: string;
+        layout_verify?: { diff?: unknown };
+        style_verify?: unknown;
+        quality?: unknown;
+        order?: unknown;
+      };
+    };
+    expect(parsed.data.detail).toBe('compact');
+    // diff 对象化:A(dy=16) B(dw=20) 双红,severity 20 > 16 → B 先
+    expect(Array.isArray(parsed.data.layout_verify!.diff)).toBe(false);
+    const d = parsed.data.layout_verify!.diff as {
+      entries: Array<{ path: string }>;
+      summary: { total: number; ok: number; non_ok: number; truncated: number };
+    };
+    expect(d.entries.map(e => e.path)).toEqual(['P/B', 'P/A']);
+    expect(d.summary).toEqual({ total: 2, ok: 0, non_ok: 2, truncated: 0 });
+    // style_verify 空清单 → 对象化全零 summary
+    expect(parsed.data.style_verify).toEqual({ entries: [], summary: { total: 0, ok: 0, non_ok: 0, truncated: 0 } });
+    // 本 fixture 无品质发现(D8):quality/order 不挂
+    expect(parsed.data.quality).toBeUndefined();
+    expect(parsed.data.order).toBeUndefined();
+  });
+
+  it('detail=compact 不带 expect_tree → compact 只作用段3:列表字段 {entries,summary{total,truncated}},spacing_scale 标量在外层/off_scale 对象化', async () => {
+    mockedExec.mockResolvedValue(okResult({
+      stable_after_frames: 3,
+      stalled: false,
+      viewport: { w: 800, h: 600 },
+      theme_constants: { space_1: 8 },
+      nodes: [
+        { path: '.', type: 'Control', rect: { x: 0, y: 0, w: 800, h: 600 } },
+        { path: 'P', type: 'Panel', rect: { x: 0, y: 0, w: 200, h: 60 } },
+        { path: 'P/A', type: 'TextureRect', rect: { x: 0, y: 0, w: 20, h: 10 } },
+        { path: 'P/B', type: 'TextureRect', rect: { x: 28, y: 0, w: 20, h: 10 } },
+        { path: 'P/C', type: 'TextureRect', rect: { x: 76, y: 0, w: 20, h: 10 } },
+      ],
+    }));
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: '/fake/p',
+      scene_path: 'res://scenes/main.tscn',
+      detail: 'compact',
+    }, ctx);
+    expect(r.isError).toBeFalsy();
+    const parsed = JSON.parse((r.content[0] as { text: string }).text) as {
+      data: {
+        detail?: string;
+        layout_verify?: unknown;
+        order?: {
+          equidistant: { entries: unknown[]; summary: { total: number; truncated: number } };
+          alignment_lanes: { entries: unknown[]; summary: { total: number; truncated: number } };
+          spacing_scale: {
+            on_scale: number; total: number; rate: number;
+            off_scale: { entries: Array<{ a: string; b: string; gap: number; nearest: number }>; summary: { total: number; truncated: number } };
+          };
+          visual_groups: { entries: unknown[]; summary: { total: number; truncated: number } };
+        };
+      };
+    };
+    expect(parsed.data.detail).toBe('compact');
+    expect(parsed.data.layout_verify).toBeUndefined(); // 段1 不产(无 expect_tree),compact 不造
+    const order = parsed.data.order!;
+    expect(order.equidistant).toEqual({ entries: [], summary: { total: 0, truncated: 0 } });
+    expect(order.alignment_lanes).toEqual({ entries: [], summary: { total: 0, truncated: 0 } });
+    // spacing_scale 标量保留外层;off_scale 对象化(x 轴 gap 8/28:28 距最近档 8 超容差)
+    expect(order.spacing_scale.on_scale).toBe(1);
+    expect(order.spacing_scale.total).toBe(2);
+    expect(order.spacing_scale.rate).toBe(0.5);
+    expect(order.spacing_scale.off_scale).toEqual({
+      entries: [{ a: 'P/B', b: 'P/C', gap: 28, nearest: 8 }],
+      summary: { total: 1, truncated: 0 },
+    });
+    expect(order.visual_groups).toEqual({ entries: [], summary: { total: 0, truncated: 0 } });
+  });
+
+  it('不传 detail → diff 仍裸数组 + 无 detail 字段(extended 缺省,逐字节锚)', async () => {
+    mockedExec.mockResolvedValue(okResult({
+      stable_after_frames: 3, stalled: false, viewport: { w: 1280, h: 720 },
+      nodes: [
+        { path: 'P', type: 'Panel', rect: { x: 0, y: 0, w: 200, h: 200 } },
+        { path: 'P/B', type: 'Button', rect: { x: 0, y: 0, w: 120, h: 48 } },
+      ],
+    }));
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: '/fake/p',
+      scene_path: 'res://scenes/main.tscn',
+      expect_tree: { type: 'Panel', name: 'P', rect: { x: 0, y: 0, w: 200, h: 200 },
+        children: [{ type: 'Button', name: 'B', rect: { x: 0, y: 0, w: 100, h: 48 } }] },
+    }, ctx);
+    expect(r.isError).toBeFalsy();
+    const parsed = JSON.parse((r.content[0] as { text: string }).text) as {
+      data: { detail?: string; layout_verify?: { diff: unknown } };
+    };
+    expect(Array.isArray(parsed.data.layout_verify!.diff)).toBe(true);
+    expect(parsed.data.layout_verify!.diff).toHaveLength(2);
+    expect(parsed.data.detail).toBeUndefined();
+  });
+
+  it('detail=extended 显式 → 与不传一致(裸数组 + 无 detail 字段)', async () => {
+    mockedExec.mockResolvedValue(okResult({
+      stable_after_frames: 3, stalled: false, viewport: { w: 1280, h: 720 },
+      nodes: [
+        { path: 'P', type: 'Panel', rect: { x: 0, y: 0, w: 200, h: 200 } },
+        { path: 'P/B', type: 'Button', rect: { x: 0, y: 0, w: 120, h: 48 } },
+      ],
+    }));
+    const r = await handleTool('ui', {
+      action: 'ui_measure_layout', project_path: '/fake/p',
+      scene_path: 'res://scenes/main.tscn',
+      detail: 'extended',
+      expect_tree: { type: 'Panel', name: 'P', rect: { x: 0, y: 0, w: 200, h: 200 },
+        children: [{ type: 'Button', name: 'B', rect: { x: 0, y: 0, w: 100, h: 48 } }] },
+    }, ctx);
+    expect(r.isError).toBeFalsy();
+    const parsed = JSON.parse((r.content[0] as { text: string }).text) as {
+      data: { detail?: string; layout_verify?: { diff: unknown } };
+    };
+    expect(Array.isArray(parsed.data.layout_verify!.diff)).toBe(true);
+    expect(parsed.data.detail).toBeUndefined();
+  });
 });
 
 // ─── PR-2 Task 1: style_verify / flow_verify 纯函数 ────────────────────────
@@ -502,5 +651,74 @@ describe('diffFlow(PR-2)', () => {
     expect(out[0]!.actual).toBeNull();
     expect(out[0]!.delta.dy).toBeNaN();
     expect(out[0]!.ok).toBe(false);
+  });
+});
+
+// ─── 批4 Task2: verify 分档 compact 纯函数 ────────────────────────────────
+
+describe('compactDiffEntries(批4 Task2)', () => {
+  const de = (path: string, dx: number, dy: number, dw = 0, dh = 0, ok?: boolean): DiffEntry => ({
+    path, target: null, actual: null, delta: { dx, dy, dw, dh },
+    ok: ok ?? Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dw), Math.abs(dh)) <= 2,
+  });
+  const deNaN = (path: string): DiffEntry => ({
+    path, target: null, actual: null, delta: { dx: NaN, dy: NaN, dw: NaN, dh: NaN }, ok: false,
+  });
+
+  it('过滤 !ok + 偏差量降序 + summary 计数;NaN 条目排最前计入 non_ok', () => {
+    const out = compactDiffEntries([de('a', 0, 0), de('b', 3, 0), de('c', 10, 0), deNaN('d')]);
+    expect(out.entries.map(e => e.path)).toEqual(['d', 'c', 'b']); // NaN 最前,10 > 3
+    expect(out.summary).toEqual({ total: 4, ok: 1, non_ok: 3, truncated: 0 });
+  });
+
+  it('25 条递增偏差 → 截 top 20(25..6 降序),truncated=5', () => {
+    const list = Array.from({ length: 25 }, (_, i) => de(`p${String(i + 1).padStart(2, '0')}`, i + 1, 0, 0, 0, false));
+    const out = compactDiffEntries(list);
+    expect(out.entries).toHaveLength(20);
+    expect(out.entries.map(e => e.delta.dx)).toEqual(Array.from({ length: 20 }, (_, i) => 25 - i));
+    expect(out.summary).toEqual({ total: 25, ok: 0, non_ok: 25, truncated: 5 });
+  });
+
+  it('恰好 20 条不 ok → 不截断(truncated=0)', () => {
+    const list = Array.from({ length: 20 }, (_, i) => de(`p${i}`, i + 1, 0, 0, 0, false));
+    const out = compactDiffEntries(list);
+    expect(out.entries).toHaveLength(20);
+    expect(out.summary.truncated).toBe(0);
+  });
+
+  it('偏差量并列 → 稳定按 path 升序', () => {
+    const out = compactDiffEntries([de('z', 5, 0), de('a', 5, 0)]);
+    expect(out.entries.map(e => e.path)).toEqual(['a', 'z']);
+  });
+
+  it('偏差量键 = max(|dx|,|dy|,|dw|,|dh|)(dy=12 > dx=3 排前)', () => {
+    const out = compactDiffEntries([de('a', 3, 0), de('b', 0, 12)]);
+    expect(out.entries.map(e => e.path)).toEqual(['b', 'a']);
+  });
+});
+
+describe('compactStyleEntries(批4 Task2)', () => {
+  const se = (path: string, delta: number | number[] | null, ok = false): StyleDiffEntry => ({
+    path, slot: 'panel', field: 'bg_color', target: null, actual: null, delta, ok,
+  });
+
+  it('delta 三形态排序:null 最大最前、数组取 max |分量|、数值取 |·|;过滤 ok + summary 计数', () => {
+    const out = compactStyleEntries([
+      se('ok1', 0.001, true),
+      se('a', 0.5),
+      se('b', [0.1, 3, 0.2]), // 数组 max 分量 3
+      se('c', null),          // null 最大
+      se('d', 2),
+    ]);
+    expect(out.entries.map(e => e.path)).toEqual(['c', 'b', 'd', 'a']);
+    expect(out.summary).toEqual({ total: 5, ok: 1, non_ok: 4, truncated: 0 });
+  });
+
+  it('25 条不 ok → 截 top 20,truncated=5', () => {
+    const list = Array.from({ length: 25 }, (_, i) => se(`p${String(i + 1).padStart(2, '0')}`, (25 - i) * 0.1));
+    const out = compactStyleEntries(list);
+    expect(out.entries).toHaveLength(20);
+    expect(out.entries[0]!.delta).toBe(2.5);
+    expect(out.summary).toEqual({ total: 25, ok: 0, non_ok: 25, truncated: 5 });
   });
 });

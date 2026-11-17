@@ -948,3 +948,105 @@ describe('token_set/token_list(批3 Task 4)', () => {
     expect(body.error).not.toContain('THEME_NOT_FOUND');
   });
 });
+
+// ─── 批4 Task2: verify 分档 detail=compact|extended(接线) ──────────────────
+
+// 单节点 geometry:TopBar(0,0,800,60)。measure 里 TopBar x 偏 5px → diff 2 条
+// (root ok + TopBar 红 dx=5,恰为容差外最小偏差),同时越父级右缘 5px + 视口右缘
+// 5px(> margin 4)→ quality 两字段非空;order 无发现不挂(单节点无兄弟对)。
+const GEO_ONE = {
+  viewport: { w: 800, h: 600 },
+  nodes: [
+    { name: 'TopBar', rect: { x: 0, y: 0, w: 800, h: 60 } },
+  ],
+};
+
+/** compact 用例 measure 输出:TopBar x=5(dx=5 超 2px 容差)。 */
+function compactMeasureOutputs() {
+  return [{
+    key: 'measure',
+    value: JSON.stringify({
+      stable_after_frames: 3,
+      stalled: false,
+      viewport: { w: 800, h: 600 },
+      nodes: [
+        { path: '_PrototypeRoot', type: 'Panel', rect: { x: 0, y: 0, w: 800, h: 600 } },
+        { path: '_PrototypeRoot/TopBar', type: 'Panel', rect: { x: 5, y: 0, w: 800, h: 60 } },
+      ],
+    }),
+  }];
+}
+
+describe('ui_import_prototype verify 分档 detail(批4 Task2)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  function mockCompactPhase() {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      ...buildOutputs(),
+      ...compactMeasureOutputs(),
+    ] }));
+  }
+
+  it('detail=compact → layout_verify.diff 对象化{entries,summary} + data.detail + quality 列表字段对象化', async () => {
+    mockCompactPhase();
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_ONE, detail: 'compact',
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.data.detail).toBe('compact');
+
+    // layout_verify.diff:对象(非数组);1 条红(entries 只剩 TopBar,severity 5)
+    const d = parsed.data.layout_verify.diff;
+    expect(Array.isArray(d)).toBe(false);
+    expect(d.entries.map((e: { path: string }) => e.path)).toEqual(['_PrototypeRoot/TopBar']);
+    expect(d.entries[0].delta.dx).toBe(5);
+    expect(d.summary).toEqual({ total: 2, ok: 1, non_ok: 1, truncated: 0 });
+
+    // style_verify / flow_verify 空清单同样对象化(全零 summary)
+    const zero = { entries: [], summary: { total: 0, ok: 0, non_ok: 0, truncated: 0 } };
+    expect(parsed.data.style_verify).toEqual(zero);
+    expect(parsed.data.flow_verify).toEqual(zero);
+
+    // quality:四列表字段全部 {entries, summary{total,truncated}};oob/viewport_overflow 各 1 条
+    const q = parsed.data.quality;
+    expect(q.bare_shells).toEqual({ entries: [], summary: { total: 0, truncated: 0 } });
+    expect(q.should_follow).toEqual({ entries: [], summary: { total: 0, truncated: 0 } });
+    expect(q.out_of_bounds.summary).toEqual({ total: 1, truncated: 0 });
+    expect(q.out_of_bounds.entries[0].path).toBe('_PrototypeRoot/TopBar');
+    expect(q.viewport_overflow.summary).toEqual({ total: 1, truncated: 0 });
+    expect(q.viewport_overflow.entries[0].path).toBe('_PrototypeRoot/TopBar');
+    // order 无发现不挂(D8)
+    expect(parsed.data.order).toBeUndefined();
+  });
+
+  it('不传 detail → diff 仍裸数组、quality 列表仍裸数组 + 无 detail 字段(extended 逐字节锚)', async () => {
+    mockCompactPhase();
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_ONE,
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.data.detail).toBeUndefined();
+    expect(Array.isArray(parsed.data.layout_verify.diff)).toBe(true);
+    expect(parsed.data.layout_verify.diff).toHaveLength(2);
+    expect(Array.isArray(parsed.data.style_verify)).toBe(true);
+    expect(Array.isArray(parsed.data.quality.out_of_bounds)).toBe(true);
+    expect(parsed.data.quality.out_of_bounds).toHaveLength(1);
+  });
+
+  it('detail=extended 显式 → 与不传一致(裸数组 + 无 detail 字段)', async () => {
+    mockCompactPhase();
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_ONE, detail: 'extended',
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.data.detail).toBeUndefined();
+    expect(Array.isArray(parsed.data.layout_verify.diff)).toBe(true);
+  });
+});

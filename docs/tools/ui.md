@@ -70,6 +70,7 @@
 | `geometry` | object |  | ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;颜色字段(bg/color/fill/border.color)可 "$name" 引用 theme DesignTokens token(须配 theme_path;import/pixel_verify 均支持;有引用时多一次 Godot 预取 spawn);perSides 单边差异等细节见规则文档 |
 | `geometry_path` | string |  | ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一) |
 | `tolerance` | number |  | ui_import_prototype: layout_verify 容差(px,默认 2) |
+| `detail` | enum: compact | extended |  | ui_measure_layout(带 expect_tree)/ui_import_prototype: compact=verify 各节只返回不 ok 条目 top 20(按偏差量排序)+计数 summary,被压缩数组变为 {entries,summary} 对象;默认 extended 全量 |
 | `parent_path` | string |  | ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报 |
 | `tree` | object |  | ui_build_layout: UI 节点树(最大深度 10);节点可带 styleboxes:[{slot: panel|normal|background|fill|hover|pressed|disabled, box: {bg_color:[r,g,b,a]0-1, corner_radius: 数值或{tl,tr,br,bl}, border_width, border_color, draw_center}}]→add_theme_stylebox_override |
 | `load_autoloads` | boolean |  | 加载 Autoload（默认 true） |

@@ -271,3 +271,72 @@ export function diffFlow(
     return { path: t.path, target: t.rect, actual: m.rect, delta: { dx, dy, dw, dh }, ok };
   });
 }
+
+// ─── 批4 Task2: verify 分档 compact 纯函数 ──────────────────────────────────
+
+/** compact 计数摘要(brief Interfaces 形态):total=输入全量,ok/non_ok 按条目 ok,
+ * truncated=被 topN 截掉的不 ok 条数。 */
+export interface CompactSummary {
+  total: number;
+  ok: number;
+  non_ok: number;
+  truncated: number;
+}
+
+/** DiffEntry 偏差量键:max(|dx|,|dy|,|dw|,|dh|);任一 NaN(缺失语义)→ 最大(排最前)。 */
+function diffSeverity(e: DiffEntry): number {
+  const { dx, dy, dw, dh } = e.delta;
+  if (Number.isNaN(dx) || Number.isNaN(dy) || Number.isNaN(dw) || Number.isNaN(dh)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dw), Math.abs(dh));
+}
+
+/** detail=compact:diff 条目只留不 ok,按偏差量降序(并列稳定按 path)截 topN。
+ * Infinity−Infinity=NaN 为 falsy → 双 NaN 并列自然落回 path 次键(V8 sort 稳定)。 */
+export function compactDiffEntries(
+  entries: DiffEntry[],
+  topN = 20,
+): { entries: DiffEntry[]; summary: CompactSummary } {
+  const nonOk = entries.filter(e => !e.ok);
+  nonOk.sort((a, b) => (diffSeverity(b) - diffSeverity(a)) || a.path.localeCompare(b.path));
+  const top = nonOk.slice(0, topN);
+  return {
+    entries: top,
+    summary: {
+      total: entries.length,
+      ok: entries.length - nonOk.length,
+      non_ok: nonOk.length,
+      truncated: nonOk.length - top.length,
+    },
+  };
+}
+
+/** StyleDiffEntry 偏差量键:数值 |·| / 数组 max |分量| / null(非数值形态)最大;
+ * NaN 分量同 diffSeverity 语义按最大处理。 */
+function styleSeverity(e: StyleDiffEntry): number {
+  const d = e.delta;
+  if (d === null) return Number.POSITIVE_INFINITY;
+  if (typeof d === 'number') return Number.isNaN(d) ? Number.POSITIVE_INFINITY : Math.abs(d);
+  return Math.max(...d.map(v => (Number.isNaN(v) ? Number.POSITIVE_INFINITY : Math.abs(v))));
+}
+
+/** detail=compact:style 条目与 compactDiffEntries 同语义(过滤 !ok、偏差量降序、
+ * 并列稳定按 path、截 topN + summary)。 */
+export function compactStyleEntries(
+  entries: StyleDiffEntry[],
+  topN = 20,
+): { entries: StyleDiffEntry[]; summary: CompactSummary } {
+  const nonOk = entries.filter(e => !e.ok);
+  nonOk.sort((a, b) => (styleSeverity(b) - styleSeverity(a)) || a.path.localeCompare(b.path));
+  const top = nonOk.slice(0, topN);
+  return {
+    entries: top,
+    summary: {
+      total: entries.length,
+      ok: entries.length - nonOk.length,
+      non_ok: nonOk.length,
+      truncated: nonOk.length - top.length,
+    },
+  };
+}

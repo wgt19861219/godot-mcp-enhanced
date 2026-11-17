@@ -16,9 +16,9 @@ import { genUiSetThemeScript, genThemeCreateScript, genThemeSetPropertyScript } 
 import { genUiDrawRecipeScript } from './ui-draw.js';
 import { genUiMeasureScript, checkViewportEffect } from './ui-measure.js';
 import { genUiImportSingleScript } from './ui-import-single.js';
-import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds } from './layout-diff.js';
+import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds, compactDiffEntries, compactStyleEntries } from './layout-diff.js';
 import type { MeasuredNode } from './layout-diff.js';
-import { buildQualityReport } from './quality-check.js';
+import { buildQualityReport, compactReportSections } from './quality-check.js';
 import { parseAuthoredGeometry, planRebase, applyRebasePatch } from './anchor-rebase.js';
 import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
@@ -175,6 +175,11 @@ export function getToolDefinitions(): Tool[] {
           },
           geometry_path: { type: 'string', description: 'ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一)' },
           tolerance: { type: 'number', description: 'ui_import_prototype: layout_verify 容差(px,默认 2)' },
+          detail: {
+            type: 'string',
+            enum: ['compact', 'extended'],
+            description: 'ui_measure_layout(带 expect_tree)/ui_import_prototype: compact=verify 各节只返回不 ok 条目 top 20(按偏差量排序)+计数 summary,被压缩数组变为 {entries,summary} 对象;默认 extended 全量',
+          },
           parent_path: { type: 'string', description: 'ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报' },
           tree: {
             type: 'object',
@@ -268,6 +273,8 @@ export async function handleTool(
     }
     const godot = await ctx.findGodot();
     const loadAutoloads = args.load_autoloads !== false;
+    // 批4 Task2:verify 分档——仅 detail==='compact' 走压缩路径;缺省/extended 逐字节不变
+    const detailCompact = args.detail === 'compact';
     let script: string;
     // Task 2(批1 1a):ui_measure_layout 的 viewport 覆写(假绿防护后处理读)
     let measureViewport: { w: number; h: number } | undefined;
@@ -603,17 +610,22 @@ export async function handleTool(
               const measured = measure?.nodes ?? [];
               const targets = flattenTargets(expectTree);
               const styleReadings = measured.flatMap(n => (n.styles ?? []).map(s => ({ ...s, path: n.path })));
+              // 批4 Task2:compact 分支内对象化(diff/style 条目过滤+偏差量排序+截断);
+              // extended(缺省)路径值与原表达式逐字节一致
+              const diffAll = diffLayout(measured, targets, 2);
+              const styleAll = diffStyles(styleReadings, flattenStyleTargets(expectTree));
               parsed.data = {
                 ...parsed.data,
                 layout_verify: {
                   targets,
-                  diff: diffLayout(measured, targets, 2),
+                  diff: detailCompact ? compactDiffEntries(diffAll) : diffAll,
                   overlaps: detectOverlaps(measured),
                   out_of_bounds: detectOutOfBounds(measured),
                   // C1: 根级 rect 的参照系(measure 输出的 root Window 尺寸),供消费方核对
                   viewport: measure?.viewport,
                 },
-                style_verify: diffStyles(styleReadings, flattenStyleTargets(expectTree)),
+                style_verify: detailCompact ? compactStyleEntries(styleAll) : styleAll,
+                ...(detailCompact ? { detail: 'compact' } : {}),
               };
               mutated = true;
             } catch {
@@ -655,10 +667,13 @@ export async function handleTool(
               const spacingScale = spacingScaleFromTheme(m.theme_constants);
               const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
               if (report?.quality || report?.order) {
+                // 批4 Task2:compact 分支内列表字段对象化(报告序截断),extended 逐字节一致
+                const compacted = detailCompact && report ? compactReportSections(report) : null;
                 parsed.data = {
                   ...parsed.data,
-                  ...(report?.quality ? { quality: report.quality } : {}),
-                  ...(report?.order ? { order: report.order } : {}),
+                  ...(report?.quality ? { quality: compacted?.quality ?? report.quality } : {}),
+                  ...(report?.order ? { order: compacted?.order ?? report.order } : {}),
+                  ...(detailCompact ? { detail: 'compact' } : {}),
                 };
                 mutated = true;
               }
@@ -1071,13 +1086,17 @@ async function handleUiImportPrototype(
   }
 
   // ③ 组装返回(单 spawn:measure 与 build 输出同批;输出异常保持原样,diff 缺失由 AI 视为未验证)。
+  // 批4 Task2:verify 分档——compact 分支内 diff/style/flow 对象化 + quality/order 列表
+  // 字段对象化 + data.detail 挂出;extended(缺省)路径值与原表达式逐字节一致(形态纪律)。
+  const detailCompact = args.detail === 'compact';
   try {
     const measure = out.data?.measure;
     const measured = measure?.nodes ?? [];
     const targets = flattenTargets(translated.tree);
+    const diffAll = diffLayout(measured, targets, tolerance);
     const layoutVerify = {
       targets,
-      diff: diffLayout(measured, targets, tolerance),
+      diff: detailCompact ? compactDiffEntries(diffAll) : diffAll,
       overlaps: detectOverlaps(measured),
       out_of_bounds: detectOutOfBounds(measured),
       // 根级 rect 的参照系(measure 输出的 root Window 尺寸),供消费方核对
@@ -1085,8 +1104,10 @@ async function handleUiImportPrototype(
     };
     // PR-2:style_verify(逐槽位样式 diff)+ flow_verify(flow 直接子层数字清单)
     const styleReadings = measured.flatMap(n => (n.styles ?? []).map(s => ({ ...s, path: n.path })));
-    const styleVerify = diffStyles(styleReadings, styleTargets);
-    const flowVerify = diffFlow(measured, translated.flow_expect, tolerance);
+    const styleAll = diffStyles(styleReadings, styleTargets);
+    const styleVerify = detailCompact ? compactStyleEntries(styleAll) : styleAll;
+    const flowAll = diffFlow(measured, translated.flow_expect, tolerance);
+    const flowVerify = detailCompact ? compactDiffEntries(flowAll) : flowAll;
     const verifyCoverage = {
       ...translated.coverage,
       _note: 'targets 为受 layout_verify 几何覆盖的节点数(含合成根 _PrototypeRoot,无 flow 时 = 输入节点数+1);flow 直接子节点丢 rect 不在 layout_verify 覆盖内,由 flow_verify 数字覆盖(期望=输入视口 rect);孙层由 layout_verify 近似覆盖(期望相对输入父原点,容器排布后天然带偏移)',
@@ -1100,6 +1121,7 @@ async function handleUiImportPrototype(
     const qualityReport = measure?.stalled === true
       ? null
       : buildQualityReport(measured, { viewport: measure?.viewport, ...(importScale ? { spacingScale: importScale } : {}) });
+    const compacted = detailCompact && qualityReport ? compactReportSections(qualityReport) : null;
     return textResult(JSON.stringify(opsSuccess({
       tree: translated.tree,
       // 批3 Task 3:预取发生才挂(无 $ 引用省略字段);refs/tokens 与主题总 token 数解耦,可审计
@@ -1114,9 +1136,10 @@ async function handleUiImportPrototype(
       layout_verify: layoutVerify,
       style_verify: styleVerify,
       flow_verify: flowVerify,
-      ...(qualityReport?.quality ? { quality: qualityReport.quality } : {}),
-      ...(qualityReport?.order ? { order: qualityReport.order } : {}),
+      ...(qualityReport?.quality ? { quality: compacted?.quality ?? qualityReport.quality } : {}),
+      ...(qualityReport?.order ? { order: compacted?.order ?? qualityReport.order } : {}),
       persist: out.data?.persist,
+      ...(detailCompact ? { detail: 'compact' } : {}),
     }, out.warnings ?? [])));
   } catch {
     return parsed;

@@ -346,7 +346,9 @@ export function detectVisualGroups(measured: MeasuredNode[], thresholdPx: number
         parent, axis,
         groups: multi.map(c => ({
           members: c.members.map(m => m.path),
-          intraGap: c.gaps.length > 0 ? c.gaps.reduce((x, y) => x + y, 0) / c.gaps.length : 0,
+          // 多成员簇(members ≥2)必有 ≥1 相邻对 → gaps 非空,直除无除零
+          // (批4 Task2 死分支清理:原 `: 0` 兜底不可达)
+          intraGap: c.gaps.reduce((x, y) => x + y, 0) / c.gaps.length,
         })),
       });
     }
@@ -431,6 +433,50 @@ export function buildQualityReport(
 
   if (!quality && !order) return null;
   return { quality, order };
+}
+
+// ─── 批4 Task2: detail=compact 报告节压缩 ───────────────────────────────────
+
+/** 报告序截断(无排序——quality 项无数值偏差;visual_groups 外层截断、组内 members 不动)。 */
+function compactListField<T>(list: T[], topN: number): { entries: T[]; summary: { total: number; truncated: number } } {
+  const entries = list.slice(0, topN);
+  return { entries, summary: { total: list.length, truncated: list.length - entries.length } };
+}
+
+/** detail=compact:quality/order 的列表字段对象化 {entries, summary{total,truncated}}
+ * (spacing_scale 标量 on_scale/total/rate 保留外层,off_scale 对象化)。extended 路径
+ * 逐字节不变——调用方仅在 detail==='compact' 分支调用本函数(形态纪律)。 */
+export function compactReportSections(
+  report: QualityReport,
+  topN = 20,
+): { quality?: Record<string, unknown>; order?: Record<string, unknown> } {
+  const out: { quality?: Record<string, unknown>; order?: Record<string, unknown> } = {};
+  if (report.quality) {
+    out.quality = {
+      bare_shells: compactListField(report.quality.bare_shells, topN),
+      should_follow: compactListField(report.quality.should_follow, topN),
+      out_of_bounds: compactListField(report.quality.out_of_bounds, topN),
+      viewport_overflow: compactListField(report.quality.viewport_overflow, topN),
+    };
+  }
+  if (report.order) {
+    out.order = {
+      equidistant: compactListField(report.order.equidistant, topN),
+      alignment_lanes: compactListField(report.order.alignment_lanes, topN),
+      ...(report.order.spacing_scale ? {
+        spacing_scale: {
+          on_scale: report.order.spacing_scale.on_scale,
+          total: report.order.spacing_scale.total,
+          rate: report.order.spacing_scale.rate,
+          off_scale: compactListField(report.order.spacing_scale.off_scale, topN),
+        },
+      } : {}),
+      ...(report.order.visual_groups ? {
+        visual_groups: compactListField(report.order.visual_groups, topN),
+      } : {}),
+    };
+  }
+  return out;
 }
 
 // ─── 批1 1b: 0 容差基线比对 ─────────────────────────────────────────────────

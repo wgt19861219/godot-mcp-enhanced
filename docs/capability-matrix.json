@@ -6518,6 +6518,14 @@
             "type": "number",
             "description": "ui_import_prototype: layout_verify 容差(px,默认 2)"
           },
+          "detail": {
+            "type": "string",
+            "enum": [
+              "compact",
+              "extended"
+            ],
+            "description": "ui_measure_layout(带 expect_tree)/ui_import_prototype: compact=verify 各节只返回不 ok 条目 top 20(按偏差量排序)+计数 summary,被压缩数组变为 {entries,summary} 对象;默认 extended 全量"
+          },
           "parent_path": {
             "type": "string",
             "description": "ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报"
@@ -6809,6 +6817,7 @@
         "geometry",
         "geometry_path",
         "tolerance",
+        "detail",
         "parent_path",
         "tree",
         "load_autoloads",
@@ -6851,8 +6860,8 @@
       },
       "size": {
         "descBytes": 848,
-        "schemaBytes": 12656,
-        "totalBytes": 13504
+        "schemaBytes": 12941,
+        "totalBytes": 13789
       },
       "annotations": {
         "readOnlyHint": false,
