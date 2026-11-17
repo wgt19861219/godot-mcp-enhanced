@@ -1,0 +1,543 @@
+{
+ "dry_run": true,
+ "scene": "res://scenes/ui/_batch2_replay_copy.tscn",
+ "subtree": null,
+ "viewport": {
+  "w": 960,
+  "h": 540
+ },
+ "toWrite": [
+  {
+   "path": "Panel",
+   "name": "Panel",
+   "tscnParent": ".",
+   "anchors": {
+    "anchor_left": 0.10494791716337204,
+    "anchor_right": 0.8950520753860474,
+    "anchor_top": 0.06712962687015533,
+    "anchor_bottom": 0.9810185432434082,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/Bj",
+   "name": "Bj",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0,
+    "anchor_right": 1,
+    "anchor_top": 0,
+    "anchor_bottom": 1,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/CloseBtn",
+   "name": "CloseBtn",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.9357942938804626,
+    "anchor_right": 0.970599889755249,
+    "anchor_top": 0.03809523582458496,
+    "anchor_bottom": 0.09159068018198013,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay",
+   "name": "MoneyLay",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.015161503106355667,
+    "anchor_right": 0.3117996156215668,
+    "anchor_top": 0.017223911359906197,
+    "anchor_bottom": 0.14690983295440674,
+    "offset_left": 0,
+    "offset_right": -0.0000152587890625,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay/DataImg2",
+   "name": "DataImg2",
+   "tscnParent": "Panel/MoneyLay",
+   "anchors": {
+    "anchor_left": 0.03777777776122093,
+    "anchor_right": 0.2288888841867447,
+    "anchor_top": 0.0546875,
+    "anchor_bottom": 0.7265625,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay/MonthNum",
+   "name": "MonthNum",
+   "tscnParent": "Panel/MoneyLay",
+   "anchors": {
+    "anchor_left": 0.1944444477558136,
+    "anchor_right": 0.4011111259460449,
+    "anchor_top": 0.12890625,
+    "anchor_bottom": 0.69921875,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay/LoginMonthLabel",
+   "name": "LoginMonthLabel",
+   "tscnParent": "Panel/MoneyLay",
+   "anchors": {
+    "anchor_left": 0.3866666555404663,
+    "anchor_right": 0.8311111330986023,
+    "anchor_top": 0.265625,
+    "anchor_bottom": 0.640625,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay/RuleButt",
+   "name": "RuleButt",
+   "tscnParent": "Panel/MoneyLay",
+   "anchors": {
+    "anchor_left": 0.6943333745002747,
+    "anchor_right": 0.7767777442932129,
+    "anchor_top": 0.2925781309604645,
+    "anchor_bottom": 0.5824218988418579,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MoneyLay/RuleButt/RuleMark",
+   "name": "RuleMark",
+   "tscnParent": "Panel/MoneyLay/RuleButt",
+   "anchors": {
+    "anchor_left": 0.33018890023231506,
+    "anchor_right": 0.6698117852210999,
+    "anchor_top": 0.037735845893621445,
+    "anchor_bottom": 0.9622641205787659,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay",
+   "name": "TopRigLay",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.4561634659767151,
+    "anchor_right": 0.9835200905799866,
+    "anchor_top": 0.017223911359906197,
+    "anchor_bottom": 0.14690983295440674,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/ProgressBar",
+   "name": "ProgressBar",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.013749999925494194,
+    "anchor_right": 0.7612500190734863,
+    "anchor_top": 0.765625,
+    "anchor_bottom": 0.9375,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/ProgressBj",
+   "name": "ProgressBj",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.013749999925494194,
+    "anchor_right": 0.7612500190734863,
+    "anchor_top": 0.765625,
+    "anchor_bottom": 0.9375,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Pot1",
+   "name": "Pot1",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.1393750011920929,
+    "anchor_right": 0.1706250011920929,
+    "anchor_top": 0.75,
+    "anchor_bottom": 0.953125,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Pot2",
+   "name": "Pot2",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.3343749940395355,
+    "anchor_right": 0.3656249940395355,
+    "anchor_top": 0.75,
+    "anchor_bottom": 0.953125,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Pot3",
+   "name": "Pot3",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.5356249809265137,
+    "anchor_right": 0.5668749809265137,
+    "anchor_top": 0.75,
+    "anchor_bottom": 0.953125,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Pot4",
+   "name": "Pot4",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.7368749976158142,
+    "anchor_right": 0.7681249976158142,
+    "anchor_top": 0.75,
+    "anchor_bottom": 0.953125,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/DayNum1",
+   "name": "DayNum1",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.014999999664723873,
+    "anchor_right": 0.09000000357627869,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/DayNum2",
+   "name": "DayNum2",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.21125000715255737,
+    "anchor_right": 0.2862499952316284,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/DayNum3",
+   "name": "DayNum3",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.4025000035762787,
+    "anchor_right": 0.47749999165534973,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/DayNum4",
+   "name": "DayNum4",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.6025000214576721,
+    "anchor_right": 0.6775000095367432,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": -0.0000152587890625,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Tian1",
+   "name": "Tian1",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.04749999940395355,
+    "anchor_right": 0.09749999642372131,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Tian2",
+   "name": "Tian2",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.24375000596046448,
+    "anchor_right": 0.29374998807907104,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0.00000762939453125,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Tian3",
+   "name": "Tian3",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.4437499940395355,
+    "anchor_right": 0.4937500059604645,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/Tian4",
+   "name": "Tian4",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.643750011920929,
+    "anchor_right": 0.6937500238418579,
+    "anchor_top": 0.484375,
+    "anchor_bottom": 0.75,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/MsItem1",
+   "name": "MsItem1",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.1550000011920929,
+    "anchor_right": 0.19249999523162842,
+    "anchor_top": 0.234375,
+    "anchor_bottom": 0.46875,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/MsItem2",
+   "name": "MsItem2",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.3512499928474426,
+    "anchor_right": 0.38874998688697815,
+    "anchor_top": 0.234375,
+    "anchor_bottom": 0.46875,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/MsItem3",
+   "name": "MsItem3",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.5512499809265137,
+    "anchor_right": 0.5887500047683716,
+    "anchor_top": 0.234375,
+    "anchor_bottom": 0.46875,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TopRigLay/MsItem4",
+   "name": "MsItem4",
+   "tscnParent": "Panel/TopRigLay",
+   "anchors": {
+    "anchor_left": 0.7512500286102295,
+    "anchor_right": 0.7887499928474426,
+    "anchor_top": 0.234375,
+    "anchor_bottom": 0.46875,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/TimeImg",
+   "name": "TimeImg",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.03263019025325775,
+    "anchor_right": 0.04779169335961342,
+    "anchor_top": 0.2036474198102951,
+    "anchor_bottom": 0.22796352207660675,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/CountdownPre",
+   "name": "CountdownPre",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.0533948577940464,
+    "anchor_right": 0.31707316637039185,
+    "anchor_top": 0.1975683867931366,
+    "anchor_bottom": 0.2320162057876587,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/CountdownTime",
+   "name": "CountdownTime",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.2504943907260895,
+    "anchor_right": 0.3164139688014984,
+    "anchor_top": 0.1975683867931366,
+    "anchor_bottom": 0.2320162057876587,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MonthTotalSuf",
+   "name": "MonthTotalSuf",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.9386947751045227,
+    "anchor_right": 0.9650626182556152,
+    "anchor_top": 0.1975683867931366,
+    "anchor_bottom": 0.2320162057876587,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MonthTotalNum",
+   "name": "MonthTotalNum",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.8991430401802063,
+    "anchor_right": 0.9386947751045227,
+    "anchor_top": 0.1975683867931366,
+    "anchor_bottom": 0.2320162057876587,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/MonthTotalPre",
+   "name": "MonthTotalPre",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.7409360408782959,
+    "anchor_right": 0.8991430401802063,
+    "anchor_top": 0.1975683867931366,
+    "anchor_bottom": 0.2320162057876587,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  },
+  {
+   "path": "Panel/DayItemPos",
+   "name": "DayItemPos",
+   "tscnParent": "Panel",
+   "anchors": {
+    "anchor_left": 0.024390242993831635,
+    "anchor_right": 0.9736321568489075,
+    "anchor_top": 0.23910841345787048,
+    "anchor_bottom": 0.9584599733352661,
+    "offset_left": 0,
+    "offset_right": 0,
+    "offset_top": 0,
+    "offset_bottom": 0
+   }
+  }
+ ],
+ "skippedContainerChildren": [],
+ "skippedByFilter": [],
+ "skippedUnresolvedParent": [
+  "."
+ ],
+ "skippedNoGeometry": [],
+ "note": "dry_run 默认 true:只返回计划不写盘;确认后传 dry_run=false 执行 tscn 文本 patch(注释保留)"
+}

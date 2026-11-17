@@ -1,0 +1,1573 @@
+{
+ "measure": {
+  "viewport": {
+   "h": 480,
+   "w": 800
+  },
+  "nodes": [
+   {
+    "anchors": {
+     "bottom": 1,
+     "left": 0,
+     "right": 1,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": ".",
+    "rect": {
+     "h": 480,
+     "w": 800,
+     "x": 0,
+     "y": 0
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.981018543243408,
+     "left": 0.104947917163372,
+     "right": 0.895052075386047,
+     "top": 0.0671296268701553
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel",
+    "rect": {
+     "h": 438.666687011719,
+     "w": 632.083374023438,
+     "x": 83.9583358764648,
+     "y": 32.2222213745117
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 1,
+     "left": 0,
+     "right": 1,
+     "top": 0
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/Bj",
+    "rect": {
+     "h": 438.666687011719,
+     "w": 632.083374023438,
+     "x": 83.9583358764648,
+     "y": 32.2222213745117
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.0915906801819801,
+     "left": 0.935794293880463,
+     "right": 0.970599889755249,
+     "top": 0.038095235824585
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/CloseBtn",
+    "rect": {
+     "h": 23.4666690826416,
+     "w": 22.0000610351563,
+     "x": 675.458312988281,
+     "y": 48.9333343505859
+    },
+    "type": "TextureButton",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.146909832954407,
+     "left": 0.0151615031063557,
+     "right": 0.311799615621567,
+     "top": 0.0172239113599062
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": -0.0000152587890625,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay",
+    "rect": {
+     "h": 56.8888931274414,
+     "w": 187.500015258789,
+     "x": 93.5416717529297,
+     "y": 39.7777786254883
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.7265625,
+     "left": 0.0377777777612209,
+     "right": 0.228888884186745,
+     "top": 0.0546875
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay/DataImg2",
+    "rect": {
+     "h": 38.222225189209,
+     "w": 35.8333358764648,
+     "x": 100.625007629395,
+     "y": 42.8888893127441
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.69921875,
+     "left": 0.194444447755814,
+     "right": 0.401111125946045,
+     "top": 0.12890625
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay/MonthNum",
+    "rect": {
+     "h": 32.444450378418,
+     "w": 38.7500076293945,
+     "x": 130,
+     "y": 47.1111145019531
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.640625,
+     "left": 0.386666655540466,
+     "right": 0.831111133098602,
+     "top": 0.265625
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay/LoginMonthLabel",
+    "rect": {
+     "h": 28,
+     "w": 83.3333435058594,
+     "x": 166.04167175293,
+     "y": 54.8888931274414
+    },
+    "text": "月签到",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.582421898841858,
+     "left": 0.694333374500275,
+     "right": 0.776777744293213,
+     "top": 0.292578130960464
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay/RuleButt",
+    "rect": {
+     "h": 16.4888935089111,
+     "w": 15.4583282470703,
+     "x": 223.729187011719,
+     "y": 56.4222259521484
+    },
+    "type": "TextureButton",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.962264120578766,
+     "left": 0.330188900232315,
+     "right": 0.6698117852211,
+     "top": 0.0377358458936214
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MoneyLay/RuleButt/RuleMark",
+    "rect": {
+     "h": 15.2444486618042,
+     "w": 5.25000238418579,
+     "x": 228.833358764648,
+     "y": 57.0444488525391
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.146909832954407,
+     "left": 0.456163465976715,
+     "right": 0.983520090579987,
+     "top": 0.0172239113599062
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay",
+    "rect": {
+     "h": 56.8888931274414,
+     "w": 333.333343505859,
+     "x": 372.291687011719,
+     "y": 39.7777786254883
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.9375,
+     "left": 0.0137499999254942,
+     "right": 0.761250019073486,
+     "top": 0.765625
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/ProgressBar",
+    "rect": {
+     "h": 9.77777862548828,
+     "w": 249.166687011719,
+     "x": 376.875030517578,
+     "y": 83.3333358764648
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.9375,
+     "left": 0.0137499999254942,
+     "right": 0.761250019073486,
+     "top": 0.765625
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/ProgressBj",
+    "rect": {
+     "h": 9.77777862548828,
+     "w": 249.166687011719,
+     "x": 376.875030517578,
+     "y": 83.3333358764648
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.953125,
+     "left": 0.139375001192093,
+     "right": 0.170625001192093,
+     "top": 0.75
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Pot1",
+    "rect": {
+     "h": 11.5555534362793,
+     "w": 10.4166679382324,
+     "x": 418.750030517578,
+     "y": 82.444450378418
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.953125,
+     "left": 0.334374994039536,
+     "right": 0.365624994039536,
+     "top": 0.75
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Pot2",
+    "rect": {
+     "h": 11.5555534362793,
+     "w": 10.4166641235352,
+     "x": 483.750030517578,
+     "y": 82.444450378418
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.953125,
+     "left": 0.535624980926514,
+     "right": 0.566874980926514,
+     "top": 0.75
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Pot3",
+    "rect": {
+     "h": 11.5555534362793,
+     "w": 10.4166564941406,
+     "x": 550.833374023438,
+     "y": 82.444450378418
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.953125,
+     "left": 0.736874997615814,
+     "right": 0.768124997615814,
+     "top": 0.75
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Pot4",
+    "rect": {
+     "h": 11.5555534362793,
+     "w": 10.4166870117188,
+     "x": 617.916687011719,
+     "y": 82.444450378418
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.0149999996647239,
+     "right": 0.0900000035762787,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/DayNum1",
+    "rect": {
+     "h": 20,
+     "w": 25.0000019073486,
+     "x": 377.291687011719,
+     "y": 67.3333358764648
+    },
+    "text": "3",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.211250007152557,
+     "right": 0.286249995231628,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/DayNum2",
+    "rect": {
+     "h": 20,
+     "w": 25,
+     "x": 442.708374023438,
+     "y": 67.3333358764648
+    },
+    "text": "7",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.402500003576279,
+     "right": 0.47749999165535,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/DayNum3",
+    "rect": {
+     "h": 20,
+     "w": 25,
+     "x": 506.458374023438,
+     "y": 67.3333358764648
+    },
+    "text": "15",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.602500021457672,
+     "right": 0.677500009536743,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": -0.0000152587890625,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/DayNum4",
+    "rect": {
+     "h": 20,
+     "w": 25.0000152587891,
+     "x": 573.125,
+     "y": 67.3333358764648
+    },
+    "text": "30",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.0474999994039536,
+     "right": 0.0974999964237213,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Tian1",
+    "rect": {
+     "h": 20,
+     "w": 16.6666660308838,
+     "x": 388.125030517578,
+     "y": 67.3333358764648
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.243750005960464,
+     "right": 0.293749988079071,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0.00000762939453125,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Tian2",
+    "rect": {
+     "h": 20,
+     "w": 16.6666641235352,
+     "x": 453.541687011719,
+     "y": 67.3333358764648
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.443749994039536,
+     "right": 0.493750005960464,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Tian3",
+    "rect": {
+     "h": 20,
+     "w": 16.6666717529297,
+     "x": 520.208374023438,
+     "y": 67.3333358764648
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.75,
+     "left": 0.643750011920929,
+     "right": 0.693750023841858,
+     "top": 0.484375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/Tian4",
+    "rect": {
+     "h": 20,
+     "w": 16.6666717529297,
+     "x": 586.875,
+     "y": 67.3333358764648
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.46875,
+     "left": 0.155000001192093,
+     "right": 0.192499995231628,
+     "top": 0.234375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/MsItem1",
+    "rect": {
+     "h": 13.3333339691162,
+     "w": 12.4999961853027,
+     "x": 423.958343505859,
+     "y": 53.1111145019531
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.46875,
+     "left": 0.351249992847443,
+     "right": 0.388749986886978,
+     "top": 0.234375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/MsItem2",
+    "rect": {
+     "h": 13.3333339691162,
+     "w": 12.4999923706055,
+     "x": 489.375030517578,
+     "y": 53.1111145019531
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.46875,
+     "left": 0.551249980926514,
+     "right": 0.588750004768372,
+     "top": 0.234375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/MsItem3",
+    "rect": {
+     "h": 13.3333339691162,
+     "w": 12.5,
+     "x": 556.041687011719,
+     "y": 53.1111145019531
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.46875,
+     "left": 0.751250028610229,
+     "right": 0.788749992847443,
+     "top": 0.234375
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TopRigLay/MsItem4",
+    "rect": {
+     "h": 13.3333339691162,
+     "w": 12.5,
+     "x": 622.708374023438,
+     "y": 53.1111145019531
+    },
+    "type": "Control",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.227963522076607,
+     "left": 0.0326301902532578,
+     "right": 0.0477916933596134,
+     "top": 0.203647419810295
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/TimeImg",
+    "rect": {
+     "h": 10.6666641235352,
+     "w": 9.58333396911621,
+     "x": 104.583335876465,
+     "y": 121.555557250977
+    },
+    "type": "TextureRect",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.232016205787659,
+     "left": 0.0533948577940464,
+     "right": 0.317073166370392,
+     "top": 0.197568386793137
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/CountdownPre",
+    "rect": {
+     "h": 20,
+     "w": 166.66667175293,
+     "x": 117.708335876465,
+     "y": 118.888893127441
+    },
+    "text": "每日签到刷新倒计时：",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.232016205787659,
+     "left": 0.250494390726089,
+     "right": 0.316413968801498,
+     "top": 0.197568386793137
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/CountdownTime",
+    "rect": {
+     "h": 20,
+     "w": 56,
+     "x": 242.291687011719,
+     "y": 118.888893127441
+    },
+    "text": "00:00:00",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.232016205787659,
+     "left": 0.938694775104523,
+     "right": 0.965062618255615,
+     "top": 0.197568386793137
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MonthTotalSuf",
+    "rect": {
+     "h": 20,
+     "w": 16.6666870117188,
+     "x": 677.291687011719,
+     "y": 118.888893127441
+    },
+    "text": "天",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.232016205787659,
+     "left": 0.899143040180206,
+     "right": 0.938694775104523,
+     "top": 0.197568386793137
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MonthTotalNum",
+    "rect": {
+     "h": 20,
+     "w": 25,
+     "x": 652.291687011719,
+     "y": 118.888893127441
+    },
+    "text": "0",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.232016205787659,
+     "left": 0.740936040878296,
+     "right": 0.899143040180206,
+     "top": 0.197568386793137
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/MonthTotalPre",
+    "rect": {
+     "h": 20,
+     "w": 100.000030517578,
+     "x": 552.291687011719,
+     "y": 118.888893127441
+    },
+    "text": "本月已累计签到",
+    "type": "Label",
+    "visible": true
+   },
+   {
+    "anchors": {
+     "bottom": 0.958459973335266,
+     "left": 0.0243902429938316,
+     "right": 0.973632156848907,
+     "top": 0.23910841345787
+    },
+    "offsets": {
+     "bottom": 0,
+     "left": 0,
+     "right": 0,
+     "top": 0
+    },
+    "path": "Panel/DayItemPos",
+    "rect": {
+     "h": 315.555572509766,
+     "w": 600,
+     "x": 99.375,
+     "y": 137.111114501953
+    },
+    "type": "Control",
+    "visible": true
+   }
+  ]
+ },
+ "order": {
+  "equidistant": [],
+  "alignment_lanes": [
+   {
+    "parent": "Panel",
+    "kind": "left",
+    "lane": 676.375,
+    "majority": [
+     "Panel/CloseBtn",
+     "Panel/MonthTotalSuf"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/Bj",
+      "offset": -592.4166641235352
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -582.8333282470703
+     },
+     {
+      "path": "Panel/DayItemPos",
+      "offset": -577
+     },
+     {
+      "path": "Panel/TimeImg",
+      "offset": -571.791664123535
+     },
+     {
+      "path": "Panel/CountdownPre",
+      "offset": -558.666664123535
+     },
+     {
+      "path": "Panel/CountdownTime",
+      "offset": -434.083312988281
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": -304.083312988281
+     },
+     {
+      "path": "Panel/MonthTotalPre",
+      "offset": -124.08331298828102
+     },
+     {
+      "path": "Panel/MonthTotalNum",
+      "offset": -24.083312988281023
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 left 对齐线 676.4px,离群 Panel/Bj 偏 -592.4px、Panel/MoneyLay 偏 -582.8px、Panel/DayItemPos 偏 -577px、Panel/TimeImg 偏 -571.8px、Panel/CountdownPre 偏 -558.7px、Panel/CountdownTime 偏 -434.1px、Panel/TopRigLay 偏 -304.1px、Panel/MonthTotalPre 偏 -124.1px、Panel/MonthTotalNum 偏 -24.1px"
+   },
+   {
+    "parent": "Panel",
+    "kind": "right",
+    "lane": 698.4166870117186,
+    "majority": [
+     "Panel/CloseBtn",
+     "Panel/DayItemPos"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TimeImg",
+      "offset": -584.2500171661375
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -417.37499999999994
+     },
+     {
+      "path": "Panel/CountdownPre",
+      "offset": -414.04167938232365
+     },
+     {
+      "path": "Panel/CountdownTime",
+      "offset": -400.12499999999966
+     },
+     {
+      "path": "Panel/MonthTotalPre",
+      "offset": -46.12496948242165
+     },
+     {
+      "path": "Panel/MonthTotalNum",
+      "offset": -21.12499999999966
+     },
+     {
+      "path": "Panel/MonthTotalSuf",
+      "offset": -4.458312988280909
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": 7.208343505859261
+     },
+     {
+      "path": "Panel/Bj",
+      "offset": 17.625022888184162
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 right 对齐线 698.4px,离群 Panel/TimeImg 偏 -584.3px、Panel/MoneyLay 偏 -417.4px、Panel/CountdownPre 偏 -414px、Panel/CountdownTime 偏 -400.1px、Panel/MonthTotalPre 偏 -46.1px、Panel/MonthTotalNum 偏 -21.1px、Panel/MonthTotalSuf 偏 -4.5px、Panel/TopRigLay 偏 7.2px、Panel/Bj 偏 17.6px"
+   },
+   {
+    "parent": "Panel",
+    "kind": "center",
+    "lane": 399.6875114440919,
+    "majority": [
+     "Panel/DayItemPos",
+     "Panel/Bj"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TimeImg",
+      "offset": -290.3125085830688
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -212.3958320617677
+     },
+     {
+      "path": "Panel/CountdownPre",
+      "offset": -198.6458396911619
+     },
+     {
+      "path": "Panel/CountdownTime",
+      "offset": -129.39582443237293
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": 139.27084732055653
+     },
+     {
+      "path": "Panel/MonthTotalPre",
+      "offset": 202.60419082641602
+     },
+     {
+      "path": "Panel/MonthTotalNum",
+      "offset": 265.10417556762707
+     },
+     {
+      "path": "Panel/MonthTotalSuf",
+      "offset": 285.93751907348644
+     },
+     {
+      "path": "Panel/CloseBtn",
+      "offset": 286.77083206176724
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 center 对齐线 399.7px,离群 Panel/TimeImg 偏 -290.3px、Panel/MoneyLay 偏 -212.4px、Panel/CountdownPre 偏 -198.6px、Panel/CountdownTime 偏 -129.4px、Panel/TopRigLay 偏 139.3px、Panel/MonthTotalPre 偏 202.6px、Panel/MonthTotalNum 偏 265.1px、Panel/MonthTotalSuf 偏 285.9px、Panel/CloseBtn 偏 286.8px"
+   },
+   {
+    "parent": "Panel",
+    "kind": "top",
+    "lane": 118.888893127441,
+    "majority": [
+     "Panel/CountdownPre",
+     "Panel/CountdownTime",
+     "Panel/MonthTotalNum",
+     "Panel/MonthTotalPre",
+     "Panel/MonthTotalSuf"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/Bj",
+      "offset": -86.66667175292929
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -79.1111145019527
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": -79.1111145019527
+     },
+     {
+      "path": "Panel/CloseBtn",
+      "offset": -69.9555587768551
+     },
+     {
+      "path": "Panel/TimeImg",
+      "offset": 2.666664123536009
+     },
+     {
+      "path": "Panel/DayItemPos",
+      "offset": 18.222221374512017
+     }
+    ],
+    "suggestion": "多数派 5 节点共享 top 对齐线 118.9px,离群 Panel/Bj 偏 -86.7px、Panel/MoneyLay 偏 -79.1px、Panel/TopRigLay 偏 -79.1px、Panel/CloseBtn 偏 -70px、Panel/TimeImg 偏 2.7px、Panel/DayItemPos 偏 18.2px"
+   },
+   {
+    "parent": "Panel",
+    "kind": "bottom",
+    "lane": 138.888893127441,
+    "majority": [
+     "Panel/CountdownPre",
+     "Panel/CountdownTime",
+     "Panel/MonthTotalNum",
+     "Panel/MonthTotalPre",
+     "Panel/MonthTotalSuf"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/CloseBtn",
+      "offset": -66.4888896942135
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -42.22222137451131
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": -42.22222137451131
+     },
+     {
+      "path": "Panel/TimeImg",
+      "offset": -6.666671752928806
+     },
+     {
+      "path": "Panel/DayItemPos",
+      "offset": 313.777793884278
+     },
+     {
+      "path": "Panel/Bj",
+      "offset": 332.0000152587897
+     }
+    ],
+    "suggestion": "多数派 5 节点共享 bottom 对齐线 138.9px,离群 Panel/CloseBtn 偏 -66.5px、Panel/MoneyLay 偏 -42.2px、Panel/TopRigLay 偏 -42.2px、Panel/TimeImg 偏 -6.7px、Panel/DayItemPos 偏 313.8px、Panel/Bj 偏 332px"
+   },
+   {
+    "parent": "Panel",
+    "kind": "vc",
+    "lane": 128.888893127441,
+    "majority": [
+     "Panel/CountdownPre",
+     "Panel/CountdownTime",
+     "Panel/MonthTotalNum",
+     "Panel/MonthTotalPre",
+     "Panel/MonthTotalSuf"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/CloseBtn",
+      "offset": -68.2222242355343
+     },
+     {
+      "path": "Panel/MoneyLay",
+      "offset": -60.66666793823201
+     },
+     {
+      "path": "Panel/TopRigLay",
+      "offset": -60.66666793823201
+     },
+     {
+      "path": "Panel/TimeImg",
+      "offset": -2.0000038146963988
+     },
+     {
+      "path": "Panel/Bj",
+      "offset": 122.66667175293017
+     },
+     {
+      "path": "Panel/DayItemPos",
+      "offset": 166.00000762939504
+     }
+    ],
+    "suggestion": "多数派 5 节点共享 vc 对齐线 128.9px,离群 Panel/CloseBtn 偏 -68.2px、Panel/MoneyLay 偏 -60.7px、Panel/TopRigLay 偏 -60.7px、Panel/TimeImg 偏 -2px、Panel/Bj 偏 122.7px、Panel/DayItemPos 偏 166px"
+   },
+   {
+    "parent": "Panel/MoneyLay",
+    "kind": "top",
+    "lane": 55.6555595397949,
+    "majority": [
+     "Panel/MoneyLay/LoginMonthLabel",
+     "Panel/MoneyLay/RuleButt"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/MoneyLay/DataImg2",
+      "offset": -12.766670227050803
+     },
+     {
+      "path": "Panel/MoneyLay/MonthNum",
+      "offset": -8.544445037841804
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 top 对齐线 55.7px,离群 Panel/MoneyLay/DataImg2 偏 -12.8px、Panel/MoneyLay/MonthNum 偏 -8.5px"
+   },
+   {
+    "parent": "Panel/MoneyLay",
+    "kind": "bottom",
+    "lane": 81.18519083658853,
+    "majority": [
+     "Panel/MoneyLay/MonthNum",
+     "Panel/MoneyLay/DataImg2",
+     "Panel/MoneyLay/LoginMonthLabel"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/MoneyLay/RuleButt",
+      "offset": -8.274071375529033
+     }
+    ],
+    "suggestion": "多数派 3 节点共享 bottom 对齐线 81.2px,离群 Panel/MoneyLay/RuleButt 偏 -8.3px"
+   },
+   {
+    "parent": "Panel/MoneyLay",
+    "kind": "vc",
+    "lane": 63.333338101704875,
+    "majority": [
+     "Panel/MoneyLay/DataImg2",
+     "Panel/MoneyLay/MonthNum",
+     "Panel/MoneyLay/RuleButt"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/MoneyLay/LoginMonthLabel",
+      "offset": 5.555555025736531
+     }
+    ],
+    "suggestion": "多数派 3 节点共享 vc 对齐线 63.3px,离群 Panel/MoneyLay/LoginMonthLabel 偏 5.6px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "left",
+    "lane": 377.013916015625,
+    "majority": [
+     "Panel/TopRigLay/ProgressBar",
+     "Panel/TopRigLay/ProgressBj",
+     "Panel/TopRigLay/DayNum1"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/Tian1",
+      "offset": 11.111114501953011
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": 41.73611450195301
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": 46.94442749023398
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum2",
+      "offset": 65.69445800781301
+     },
+     {
+      "path": "Panel/TopRigLay/Tian2",
+      "offset": 76.52777099609398
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": 106.73611450195301
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": 112.36111450195301
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum3",
+      "offset": 129.444458007813
+     },
+     {
+      "path": "Panel/TopRigLay/Tian3",
+      "offset": 143.19445800781295
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": 173.81945800781295
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": 179.02777099609398
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum4",
+      "offset": 196.111083984375
+     },
+     {
+      "path": "Panel/TopRigLay/Tian4",
+      "offset": 209.861083984375
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 240.90277099609398
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": 245.69445800781295
+     }
+    ],
+    "suggestion": "多数派 3 节点共享 left 对齐线 377px,离群 Panel/TopRigLay/Tian1 偏 11.1px、Panel/TopRigLay/Pot1 偏 41.7px、Panel/TopRigLay/MsItem1 偏 46.9px、Panel/TopRigLay/DayNum2 偏 65.7px、Panel/TopRigLay/Tian2 偏 76.5px、Panel/TopRigLay/Pot2 偏 106.7px、Panel/TopRigLay/MsItem2 偏 112.4px、Panel/TopRigLay/DayNum3 偏 129.4px、Panel/TopRigLay/Tian3 偏 143.2px、Panel/TopRigLay/Pot3 偏 173.8px、Panel/TopRigLay/MsItem3 偏 179px、Panel/TopRigLay/DayNum4 偏 196.1px、Panel/TopRigLay/Tian4 偏 209.9px、Panel/TopRigLay/Pot4 偏 240.9px、Panel/TopRigLay/MsItem4 偏 245.7px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "right",
+    "lane": 626.041717529297,
+    "majority": [
+     "Panel/TopRigLay/ProgressBar",
+     "Panel/TopRigLay/ProgressBj"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/DayNum1",
+      "offset": -223.75002861022944
+     },
+     {
+      "path": "Panel/TopRigLay/Tian1",
+      "offset": -221.2500209808352
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": -196.87501907348656
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": -189.58337783813533
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum2",
+      "offset": -158.33334350585898
+     },
+     {
+      "path": "Panel/TopRigLay/Tian2",
+      "offset": -155.8333663940428
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": -131.87502288818376
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": -124.16669464111345
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum3",
+      "offset": -94.58334350585903
+     },
+     {
+      "path": "Panel/TopRigLay/Tian3",
+      "offset": -89.16667175292935
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": -64.79168701171841
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": -57.50003051757801
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum4",
+      "offset": -27.916702270507926
+     },
+     {
+      "path": "Panel/TopRigLay/Tian4",
+      "offset": -22.5000457763673
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 2.2916564941407387
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": 9.166656494140966
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 right 对齐线 626px,离群 Panel/TopRigLay/DayNum1 偏 -223.8px、Panel/TopRigLay/Tian1 偏 -221.3px、Panel/TopRigLay/Pot1 偏 -196.9px、Panel/TopRigLay/MsItem1 偏 -189.6px、Panel/TopRigLay/DayNum2 偏 -158.3px、Panel/TopRigLay/Tian2 偏 -155.8px、Panel/TopRigLay/Pot2 偏 -131.9px、Panel/TopRigLay/MsItem2 偏 -124.2px、Panel/TopRigLay/DayNum3 偏 -94.6px、Panel/TopRigLay/Tian3 偏 -89.2px、Panel/TopRigLay/Pot3 偏 -64.8px、Panel/TopRigLay/MsItem3 偏 -57.5px、Panel/TopRigLay/DayNum4 偏 -27.9px、Panel/TopRigLay/Tian4 偏 -22.5px、Panel/TopRigLay/Pot4 偏 2.3px、Panel/TopRigLay/MsItem4 偏 9.2px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "center",
+    "lane": 501.4583740234375,
+    "majority": [
+     "Panel/TopRigLay/ProgressBar",
+     "Panel/TopRigLay/ProgressBj"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/DayNum1",
+      "offset": -111.6666860580442
+     },
+     {
+      "path": "Panel/TopRigLay/Tian1",
+      "offset": -105.0000104904176
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": -77.50000953674328
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": -71.25003242492716
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum2",
+      "offset": -46.24999999999949
+     },
+     {
+      "path": "Panel/TopRigLay/Tian2",
+      "offset": -39.583354949950945
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": -12.50001144409191
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": -5.833347320556754
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum3",
+      "offset": 17.500000000000455
+     },
+     {
+      "path": "Panel/TopRigLay/Tian3",
+      "offset": 27.0833358764653
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": 54.58332824707077
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": 60.83331298828148
+     },
+     {
+      "path": "Panel/TopRigLay/DayNum4",
+      "offset": 84.16663360595703
+     },
+     {
+      "path": "Panel/TopRigLay/Tian4",
+      "offset": 93.74996185302734
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 121.66665649414085
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": 127.50000000000045
+     }
+    ],
+    "suggestion": "多数派 2 节点共享 center 对齐线 501.5px,离群 Panel/TopRigLay/DayNum1 偏 -111.7px、Panel/TopRigLay/Tian1 偏 -105px、Panel/TopRigLay/Pot1 偏 -77.5px、Panel/TopRigLay/MsItem1 偏 -71.3px、Panel/TopRigLay/DayNum2 偏 -46.2px、Panel/TopRigLay/Tian2 偏 -39.6px、Panel/TopRigLay/Pot2 偏 -12.5px、Panel/TopRigLay/MsItem2 偏 -5.8px、Panel/TopRigLay/DayNum3 偏 17.5px、Panel/TopRigLay/Tian3 偏 27.1px、Panel/TopRigLay/Pot3 偏 54.6px、Panel/TopRigLay/MsItem3 偏 60.8px、Panel/TopRigLay/DayNum4 偏 84.2px、Panel/TopRigLay/Tian4 偏 93.7px、Panel/TopRigLay/Pot4 偏 121.7px、Panel/TopRigLay/MsItem4 偏 127.5px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "top",
+    "lane": 67.3333358764648,
+    "majority": [
+     "Panel/TopRigLay/DayNum1",
+     "Panel/TopRigLay/DayNum2",
+     "Panel/TopRigLay/DayNum3",
+     "Panel/TopRigLay/DayNum4",
+     "Panel/TopRigLay/Tian1",
+     "Panel/TopRigLay/Tian2",
+     "Panel/TopRigLay/Tian3",
+     "Panel/TopRigLay/Tian4"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": -14.222221374511705
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": -14.222221374511705
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": -14.222221374511705
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": -14.222221374511705
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": 15.111114501953196
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": 15.111114501953196
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": 15.111114501953196
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 15.111114501953196
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBar",
+      "offset": 16
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBj",
+      "offset": 16
+     }
+    ],
+    "suggestion": "多数派 8 节点共享 top 对齐线 67.3px,离群 Panel/TopRigLay/MsItem1 偏 -14.2px、Panel/TopRigLay/MsItem2 偏 -14.2px、Panel/TopRigLay/MsItem3 偏 -14.2px、Panel/TopRigLay/MsItem4 偏 -14.2px、Panel/TopRigLay/Pot1 偏 15.1px、Panel/TopRigLay/Pot2 偏 15.1px、Panel/TopRigLay/Pot3 偏 15.1px、Panel/TopRigLay/Pot4 偏 15.1px、Panel/TopRigLay/ProgressBar 偏 16px、Panel/TopRigLay/ProgressBj 偏 16px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "bottom",
+    "lane": 87.33333587646482,
+    "majority": [
+     "Panel/TopRigLay/DayNum1",
+     "Panel/TopRigLay/DayNum2",
+     "Panel/TopRigLay/DayNum3",
+     "Panel/TopRigLay/DayNum4",
+     "Panel/TopRigLay/Tian1",
+     "Panel/TopRigLay/Tian2",
+     "Panel/TopRigLay/Tian3",
+     "Panel/TopRigLay/Tian4"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": -20.888887405395522
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": -20.888887405395522
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": -20.888887405395522
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": -20.888887405395522
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBar",
+      "offset": 5.777778625488267
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBj",
+      "offset": 5.777778625488267
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": 6.666667938232479
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": 6.666667938232479
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": 6.666667938232479
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 6.666667938232479
+     }
+    ],
+    "suggestion": "多数派 8 节点共享 bottom 对齐线 87.3px,离群 Panel/TopRigLay/MsItem1 偏 -20.9px、Panel/TopRigLay/MsItem2 偏 -20.9px、Panel/TopRigLay/MsItem3 偏 -20.9px、Panel/TopRigLay/MsItem4 偏 -20.9px、Panel/TopRigLay/ProgressBar 偏 5.8px、Panel/TopRigLay/ProgressBj 偏 5.8px、Panel/TopRigLay/Pot1 偏 6.7px、Panel/TopRigLay/Pot2 偏 6.7px、Panel/TopRigLay/Pot3 偏 6.7px、Panel/TopRigLay/Pot4 偏 6.7px"
+   },
+   {
+    "parent": "Panel/TopRigLay",
+    "kind": "vc",
+    "lane": 77.3333358764648,
+    "majority": [
+     "Panel/TopRigLay/DayNum1",
+     "Panel/TopRigLay/DayNum2",
+     "Panel/TopRigLay/DayNum3",
+     "Panel/TopRigLay/DayNum4",
+     "Panel/TopRigLay/Tian1",
+     "Panel/TopRigLay/Tian2",
+     "Panel/TopRigLay/Tian3",
+     "Panel/TopRigLay/Tian4"
+    ],
+    "outliers": [
+     {
+      "path": "Panel/TopRigLay/MsItem1",
+      "offset": -17.555554389953606
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem2",
+      "offset": -17.555554389953606
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem3",
+      "offset": -17.555554389953606
+     },
+     {
+      "path": "Panel/TopRigLay/MsItem4",
+      "offset": -17.555554389953606
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBar",
+      "offset": 10.88888931274414
+     },
+     {
+      "path": "Panel/TopRigLay/ProgressBj",
+      "offset": 10.88888931274414
+     },
+     {
+      "path": "Panel/TopRigLay/Pot1",
+      "offset": 10.888891220092844
+     },
+     {
+      "path": "Panel/TopRigLay/Pot2",
+      "offset": 10.888891220092844
+     },
+     {
+      "path": "Panel/TopRigLay/Pot3",
+      "offset": 10.888891220092844
+     },
+     {
+      "path": "Panel/TopRigLay/Pot4",
+      "offset": 10.888891220092844
+     }
+    ],
+    "suggestion": "多数派 8 节点共享 vc 对齐线 77.3px,离群 Panel/TopRigLay/MsItem1 偏 -17.6px、Panel/TopRigLay/MsItem2 偏 -17.6px、Panel/TopRigLay/MsItem3 偏 -17.6px、Panel/TopRigLay/MsItem4 偏 -17.6px、Panel/TopRigLay/ProgressBar 偏 10.9px、Panel/TopRigLay/ProgressBj 偏 10.9px、Panel/TopRigLay/Pot1 偏 10.9px、Panel/TopRigLay/Pot2 偏 10.9px、Panel/TopRigLay/Pot3 偏 10.9px、Panel/TopRigLay/Pot4 偏 10.9px"
+   }
+  ]
+ },
+ "quality": null,
+ "warnings": []
+}
