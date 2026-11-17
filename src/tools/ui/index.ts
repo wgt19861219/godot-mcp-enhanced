@@ -24,7 +24,7 @@ import { parseGeometry, translateGeometry } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
 import { textResult } from '../../types.js';
-import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
 
 // ─── Tool Definitions ──────────────────────────────────────────────────────
 
@@ -724,8 +724,11 @@ async function handleSolveFromCurrent(
       dry_run: false, written: 0, scene: sceneRaw, ...planPayload,
     }, patch.warnings)));
   }
-  // 原子写:tmp → rename(patch 语义下 rename 覆盖目标)
+  // 原子写:tmp → rename(patch 语义下 rename 覆盖目标);写前清残留 tmp——上次 rename 前崩溃可能遗留 .mcp-rebase-tmp(存在才删,失败忽略)
   const tmpPath = absPath + '.mcp-rebase-tmp';
+  if (existsSync(tmpPath)) {
+    try { unlinkSync(tmpPath); } catch { /* 清理失败不阻断写盘 */ }
+  }
   writeFileSync(tmpPath, patch.text, 'utf-8');
   renameSync(tmpPath, absPath);
   return textResult(JSON.stringify(opsSuccess({

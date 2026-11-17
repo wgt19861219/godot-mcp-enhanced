@@ -211,7 +211,9 @@ export function buildQualityReport(
 
   const quality: QualitySection | null = (bare.length + follow.length + oob.length + vp.length) > 0 ? {
     bare_shells: bare.map(b => ({ ...b,
-      suggestion: `裸 Control 壳下 ${b.childCount} 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)` })),
+      // 场景根直接子(父即根 '.')在 solve_from_current 盲区(父尺寸=视口依赖,进 skippedUnresolvedParent)——定向追加边界提示(终审 Important#1 短期方案)
+      suggestion: `裸 Control 壳下 ${b.childCount} 个子节点纯 offset 绝对定位(排布语义只活在注释里)——建议 solve_from_current 反解比例锚点,或按视觉组容器化(ui_build_layout)` +
+        (parentKeyOf(b.path) === '.' ? ';本壳为场景根直接子,solve_from_current 会跳过(skippedUnresolvedParent),需人工补笔(参照验收记录 §3.3 方式)或待批2 viewport 形参' : '') })),
     should_follow: follow.map(f => ({ ...f,
       suggestion: '子 rect 已贴合父 rect(四边差 ≤2px)但 anchor 全 0,resize 不跟随——建议 solve_from_current 反解为跟随锚点' })),
     out_of_bounds: oob.map(o => ({ ...o,

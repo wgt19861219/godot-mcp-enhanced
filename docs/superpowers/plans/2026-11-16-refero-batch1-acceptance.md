@@ -70,7 +70,7 @@
 | # | 报告项 | 类别 | 处置 | 通道 |
 |---|---|---|---|---|
 | 1 | `Panel`(裸壳,11 子纯 offset) | A.1 | **改造** | 子女 11+孙 23 = 34 节点走 `solve_from_current`(dry_run 核对后写盘);**Panel 本体人工补笔**(见 §3 边界说明) |
-| 2 | `Panel/MoneyLay`(裸壳,5 子) | A.1 | **改造** | `solve_from_current` 整树计划内(MoneyLay + DataImg2/MonthNum/LoginMonthLabel/RuleButt/RuleMark 共 6 节点) |
+| 2 | `Panel/MoneyLay`(裸壳,4 子,RuleMark 为孙) | A.1 | **改造** | `solve_from_current` 整树计划内(MoneyLay + DataImg2/MonthNum/LoginMonthLabel/RuleButt/RuleMark 共 6 节点) |
 | 3 | `Panel/TopRigLay`(裸壳,18 子) | A.1 | **改造** | `solve_from_current` 整树计划内(TopRigLay + 18 后代共 19 节点) |
 | 4 | `Panel/Bj`(rect 贴合 Panel 但 anchor 全 0) | A.2 | **改造** | `solve_from_current` 反解为 `anchor=(0,0,1,1) + offset=0` 全跟随(改造后 g800 Bj rect === Panel rect,实测见 §5) |
 
