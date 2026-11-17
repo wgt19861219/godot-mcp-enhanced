@@ -69,6 +69,11 @@ export const ERROR_CODES: Readonly<Record<string, ErrorCodeSpec>> = {
   NOT_FOUND:                { retryable: false, category: 'validation', meaning: '目标节点/资源/记录不存在' },
   NODE_NOT_FOUND:           { retryable: false, category: 'validation', meaning: '场景中找不到目标节点' },
   SCENE_NOT_FOUND:          { retryable: false, category: 'validation', meaning: '场景文件不存在或加载失败' },
+  // 批3 Task 3 收编:uiErrorMapper 的 THEME_NOT_FOUND 分支('load failed'/'no theme'/
+  // 'not a Theme')与 $token 缺键的 TOKEN_NOT_FOUND 均为既有码,首次被单测触发 warn——
+  // 按语义表登记(保守 fallback retryable=false 与本行等价,仅消除 warn 噪音)。
+  THEME_NOT_FOUND:          { retryable: false, category: 'validation', meaning: 'Theme 资源加载失败或节点未挂 Theme' },
+  TOKEN_NOT_FOUND:          { retryable: false, category: 'validation', meaning: '$token 引用在 theme DesignTokens 中缺键' },
   GUARD:                    { retryable: false, category: 'guard',      meaning: '守卫拒绝(确认令牌/只读模式拦截)' },
   SANDBOX_VIOLATION:        { retryable: false, category: 'guard',      meaning: 'GDScript 沙箱扫描阻断危险 API 模式' },
   SANDBOX_BLOCKED:          { retryable: false, category: 'guard',      meaning: '沙箱阻断(工具级内容拦截)' },

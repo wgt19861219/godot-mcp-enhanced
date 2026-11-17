@@ -11,6 +11,7 @@
 // 以默认主题数值 diff 暴露;右侧补手写树/手动 override 场景)。
 
 import { escapeForGdLiteral, SCENE_TREE_HEADER } from '../shared.js';
+import { DESIGN_TOKENS_TYPE } from './types.js';
 import type { MeasuredNode } from './layout-diff.js';
 
 /** PR-4 抽取:styleExpect 期望清单 parse 注入行(genUiMeasureScript._initialize 与
@@ -179,8 +180,8 @@ export function genUiMeasureScript(
 \tvar _tc := {}
 \tvar _mounted_theme: Theme = ${opts.viewport ? '(_mcp_scene_instance as Control).theme' : 'root.theme'}
 \tif _mounted_theme != null:
-\t\tfor _cn in _mounted_theme.get_constant_list("DesignTokens"):
-\t\t\t_tc[str(_cn)] = _mounted_theme.get_constant(_cn, "DesignTokens")
+\t\tfor _cn in _mounted_theme.get_constant_list("${DESIGN_TOKENS_TYPE}"):
+\t\t\t_tc[str(_cn)] = _mounted_theme.get_constant(_cn, "${DESIGN_TOKENS_TYPE}")
 `
     : '';
   return `${SCENE_TREE_HEADER}

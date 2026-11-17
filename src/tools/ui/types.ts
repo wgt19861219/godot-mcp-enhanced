@@ -70,6 +70,15 @@ export const ERROR_CODES = {
 
 export const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyline', 'string'] as const;
 
+/**
+ * 批3 Task 3:DesignTokens 类型名(Godot Theme 自定义 typevariation 命名空间)。
+ * 同步点登记——全部 GD 生成点共用此常量,扩名(改名)须全点同步:
+ * - ui-measure.ts themeConstEmit(constants 导出)
+ * - ui-tokens.ts genTokenPrefetchScript(colors 预取)
+ * - 后续 Task 4 的 token_set/token_list 生成点
+ */
+export const DESIGN_TOKENS_TYPE = 'DesignTokens';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export type DrawOp = { kind: string; [key: string]: unknown };

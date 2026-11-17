@@ -4,9 +4,10 @@
 // 断言:一次调用返回 {tree, build_warnings, measure, verify_coverage, layout_verify};
 // geometry/geometry_path 二选一语义;路径逃逸拒绝;ACTIONS/TOOL_META/UI_PERSIST_ACTIONS 登记契约。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PNG } from 'pngjs';
 import { mockSuccessResult } from './helpers/mock-results.js';
 import { isolatePathEnv } from './helpers/path-isolation.js';
 
@@ -16,6 +17,14 @@ vi.mock('../src/gdscript-executor.js', () => ({
   executeGdscript: vi.fn(),
   executeGdscriptTrusted: execMock,
 }));
+
+// 批3 Task 3:pixel_verify $token 用例的 capture mock——构造与目标色一致的纯色 PNG
+// (80x60 = viewport 800x600 等比,采样坐标线性缩放后仍命中目标色),不走真 Godot 窗口。
+const { shotMock } = vi.hoisted(() => ({ shotMock: vi.fn() }));
+vi.mock('../src/screenshot.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/screenshot.js')>();
+  return { ...actual, captureScreenshot: shotMock };
+});
 
 import { executeGdscriptTrusted } from '../src/gdscript-executor.js';
 import { handleTool, TOOL_META, getToolDefinitions } from '../src/tools/ui/index.js';
@@ -552,5 +561,214 @@ describe('ui_import_prototype 返回 style_verify/flow_verify(PR-2)', () => {
     // Card/panel 与 BtnA/normal 两个期望全部落空
     expect(sv.some(e => e.field === '(reading missing)' && !e.ok)).toBe(true);
     expect(sv.every(e => !e.ok)).toBe(true);
+  });
+});
+
+// ─── 批3 Task 3: $token 预取 + import/pixel_verify 双链接线 ─────────────────
+
+// 单节点 $token geometry:bg '$brand'(resolve 后字面量 [0.5,0.25,0.75,1])。
+const GEO_TOKEN = {
+  viewport: { w: 800, h: 600 },
+  nodes: [
+    { name: 'P', rect: { x: 0, y: 0, w: 100, h: 60 }, bg: '$brand' },
+  ],
+};
+
+const TTHEME = 'res://themes/tokens.tres';
+
+/** 预取段 mock:token_map 输出(genTokenPrefetchScript 产物形状)。 */
+function tokenMapOutputs(colors: Record<string, number[]>) {
+  return [{ key: 'token_map', value: JSON.stringify({ colors }) }];
+}
+
+/** $token 版 measure 输出:P 带 panel 槽 styles(读回值=解析字面量,delta=0 全绿)。 */
+function tokenMeasureOutputs() {
+  return [{
+    key: 'measure',
+    value: JSON.stringify({
+      stable_after_frames: 3,
+      stalled: false,
+      viewport: { w: 800, h: 600 },
+      nodes: [
+        { path: '_PrototypeRoot', type: 'Panel', rect: { x: 0, y: 0, w: 800, h: 600 } },
+        { path: '_PrototypeRoot/P', type: 'Panel', rect: { x: 0, y: 0, w: 100, h: 60 },
+          styles: [{
+            slot: 'panel', flat: true,
+            bg_color: [0.5, 0.25, 0.75, 1],
+            corner_radius: { tl: 0, tr: 0, br: 0, bl: 0 },
+            border_width: { left: 0, top: 0, right: 0, bottom: 0 },
+            border_color: [0, 0, 0, 1],
+          }] },
+      ],
+    }),
+  }];
+}
+
+describe('ui_import_prototype $token 预取(批3 Task 3)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('带 $bg + theme_path:预取→build 两段式(第一次 code 含 get_color_list,loadAutoloads=false),成功且 tokens_resolved 挂出', async () => {
+    execMock.mockReset();
+    // 两段式:第一次预取 spawn(token_map),第二次 build+measure 单 spawn 合成
+    execMock
+      .mockResolvedValueOnce(mockSuccessResult({ outputs: tokenMapOutputs({ brand: [0.5, 0.25, 0.75, 1] }) }))
+      .mockResolvedValueOnce(mockSuccessResult({ outputs: [...buildOutputs(), ...tokenMeasureOutputs()] }));
+
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN, theme_path: TTHEME,
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.success).toBe(true);
+
+    // 预取段:恰两次 executor 调用;第一次 code 是预取脚本(含 get_color_list),且不开 autoload
+    expect(execMock).toHaveBeenCalledTimes(2);
+    const prefetchCall = execMock.mock.calls[0]![0] as { code: string; loadAutoloads?: boolean; timeout?: number };
+    expect(prefetchCall.code).toContain('get_color_list');
+    expect(prefetchCall.loadAutoloads).toBe(false);
+    expect(prefetchCall.timeout).toBe(30);
+    // 第二次是 build+measure 合成脚本
+    const buildCall = execMock.mock.calls[1]![0] as { code: string };
+    expect(buildCall.code).toContain('ResourceSaver.save');
+
+    // bg 已解析为字面量:翻译树 P 的 panel 槽 bg_color
+    const p = parsed.data.tree.children.find((c: { name: string }) => c.name === 'P');
+    expect(p.styleboxes[0].box.bg_color).toEqual([0.5, 0.25, 0.75, 1]);
+
+    // tokens_resolved:refs=geometry 内 $ 引用次数,tokens=去重已解析名(与主题总 token 数解耦)
+    expect(parsed.data.tokens_resolved).toEqual({ theme_path: TTHEME, refs: 1, tokens: ['brand'] });
+  });
+
+  it('无 $ 引用 → 恰一次调用(零预取 spawn),data 无 tokens_resolved', async () => {
+    mockSinglePhase();
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO,
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    expect(execMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(textOf(result)).data.tokens_resolved).toBeUndefined();
+  });
+
+  it('$ 引用而无 theme_path → INVALID_PARAMS(含 theme_path 指引),零 spawn', async () => {
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('theme_path');
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it('预取 map 缺键 → TOKEN_NOT_FOUND(前缀分流锚,非 INVALID_PARAMS)', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: tokenMapOutputs({ other: [0, 0, 0, 1] }) }));
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN, theme_path: TTHEME,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('TOKEN_NOT_FOUND');
+    expect(body.error).toContain('brand');
+    expect(body.error).toContain(TTHEME);
+    // 失败于预取解析段,build 段未触达
+    expect(execMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('预取 error 输出(theme_path load failed)→ THEME_NOT_FOUND', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: [
+      { key: 'error', value: `theme_path load failed: ${TTHEME}` },
+    ] }));
+    const result = await handleTool('ui', {
+      action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN, theme_path: TTHEME,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('THEME_NOT_FOUND');
+    expect(body.error).toContain('theme_path load failed');
+  });
+});
+
+// ─── 批3 Task 3: ui_pixel_verify $token 链(capture mock,采样基准=解析后字面量)───
+
+describe('ui_pixel_verify $token 预取(批3 Task 3)', () => {
+  let tmpProj: string;
+  let restore: () => void;
+
+  beforeEach(() => {
+    tmpProj = mkdtempSync(join(tmpdir(), 'ui-pv-token-'));
+    writeFileSync(join(tmpProj, 'project.godot'), '[application]\nname="Test"\n');
+    // capture mock:写与解析后目标色一致的纯色 PNG(80x60;viewport 800x600 → 线性缩放采样)
+    shotMock.mockReset();
+    shotMock.mockImplementation((params: { outputPath: string }) => {
+      mkdirSync(join(params.outputPath, '..'), { recursive: true });
+      const png = new PNG({ width: 80, height: 60 });
+      for (let i = 0; i < png.data.length; i += 4) {
+        png.data[i] = 128; png.data[i + 1] = 64; png.data[i + 2] = 191; png.data[i + 3] = 255;
+      }
+      writeFileSync(params.outputPath, PNG.sync.write(png));
+      return Promise.resolve({ success: true, godotOutput: '' });
+    });
+    // env 隔离:test/setup.js 全局 UNRESTRICTED=true,路径安全用例须清旁路 + 收白名单
+    restore = isolatePathEnv({ allowed: [tmpProj] });
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    restore();
+    rmSync(tmpProj, { recursive: true, force: true });
+  });
+
+  it('带 $bg + theme_path:capture 采样链收解析后字面量 bg(target 换算 0-255 全过)', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: tokenMapOutputs({ brand: [0.5, 0.25, 0.75, 1] }) }));
+    const result = await handleTool('ui', {
+      action: 'ui_pixel_verify', project_path: tmpProj, scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN, theme_path: TTHEME,
+    }, createCtx());
+    expect(result!.isError).toBeFalsy();
+    const parsed = JSON.parse(textOf(result));
+    expect(parsed.success).toBe(true);
+    const nodes = parsed.data.pixel_verify.nodes as Array<{ target: number[]; ok: boolean }>;
+    expect(nodes).toHaveLength(1);
+    // collectBgTargets 收到解析后字面量 bg:[0.5,0.25,0.75,1] → round(*255) = [128,64,191]
+    expect(nodes[0]!.target).toEqual([128, 64, 191]);
+    expect(nodes[0]!.ok).toBe(true);
+    // 预取段恰一次(capture 走 screenshot mock,不经 executor)
+    expect(execMock).toHaveBeenCalledTimes(1);
+    const prefetchCall = execMock.mock.calls[0]![0] as { code: string };
+    expect(prefetchCall.code).toContain('get_color_list');
+  });
+
+  it('$ 引用而无 theme_path → INVALID_PARAMS(非 SCRIPT_EXEC_FAILED),零 spawn 零 capture', async () => {
+    const result = await handleTool('ui', {
+      action: 'ui_pixel_verify', project_path: tmpProj, scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('INVALID_PARAMS');
+    expect(body.error).toContain('theme_path');
+    expect(execMock).not.toHaveBeenCalled();
+    expect(shotMock).not.toHaveBeenCalled();
+  });
+
+  it('预取 map 缺键 → TOKEN_NOT_FOUND(解析层前缀分流,不冒 SCRIPT_EXEC_FAILED)', async () => {
+    execMock.mockReset();
+    execMock.mockResolvedValueOnce(mockSuccessResult({ outputs: tokenMapOutputs({}) }));
+    const result = await handleTool('ui', {
+      action: 'ui_pixel_verify', project_path: tmpProj, scene_path: 'res://scene.tscn',
+      geometry: GEO_TOKEN, theme_path: TTHEME,
+    }, createCtx());
+    expect(result!.isError).toBe(true);
+    const body = JSON.parse(textOf(result));
+    expect(body.error_code).toBe('TOKEN_NOT_FOUND');
+    expect(body.error).toContain('brand');
+    expect(shotMock).not.toHaveBeenCalled();
   });
 });

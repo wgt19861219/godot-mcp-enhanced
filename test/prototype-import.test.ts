@@ -964,8 +964,10 @@ describe('批3 $token 解析层', () => {
   });
 
   it('border.color 通道:resolve → translate 后 stylebox border_color 同值', () => {
-    const out = rs(parseGeometry(geo([n('E', 0, 0, 100, 60, { border: { width: 2, color: '$edge' } })])));
+    const input = parseGeometry(geo([n('E', 0, 0, 100, 60, { border: { width: 2, color: '$edge' } })]));
+    const out = rs(input);
     expect(out.nodes[0]!.border!.color).toEqual([1, 0.4, 0.4, 1]);
+    expect(input.nodes[0]!.border!.color).toBe('$edge'); // 输入侧不变性:浅拷贝 border 再深一层,输入 border 对象不被改写(Task 2 留档 minor 清偿)
     const { tree } = translateGeometry(out);
     expect(findNode(tree, 'E')!.styleboxes![0]!.box.border_color).toEqual([1, 0.4, 0.4, 1]);
   });

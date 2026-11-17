@@ -47,7 +47,7 @@
 | `grow_direction` | enum (5 项) |  | ui_set_layout: 增长方向 |
 | `preset` | enum (16 项) |  | ui_anchor_preset: 锚点预设名称 |
 | `theme_action` | enum (4 项) |  | ui_set_theme: 操作类型（set_params/create/save/load） |
-| `theme_path` | string |  | ui_set_theme: Theme 资源路径（save/load 时必填）;ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传（theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload） |
+| `theme_path` | string |  | ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);后续 token_set/token_list 同走此路径 |
 | `params` | object |  | ui_set_theme(set_params): 键值对（number/bool/string/array[4]→Color） |
 | `child_type` | enum (31 项) |  | ui_container_add: 子节点 Control 类型 |
 | `child_name` | string |  | ui_container_add: 子节点名称 |
@@ -63,7 +63,7 @@
 | `ops` | array |  | ui_draw_recipe: 绘图操作数组（最多 200 个） |
 | `max_depth` | number |  | ui_measure_layout: 最大遍历深度(默认 16,上限 64) |
 | `expect_tree` | object |  | ui_measure_layout: 可选目标树(同 ui_build_layout tree,含 rect);提供时输出逐节点 diff/重叠/越界 |
-| `geometry` | object |  | ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;perSides 单边差异等细节见规则文档 |
+| `geometry` | object |  | ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;颜色字段(bg/color/fill/border.color)可 "$name" 引用 theme DesignTokens token(须配 theme_path;import/pixel_verify 均支持;有引用时多一次 Godot 预取 spawn);perSides 单边差异等细节见规则文档 |
 | `geometry_path` | string |  | ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一) |
 | `tolerance` | number |  | ui_import_prototype: layout_verify 容差(px,默认 2) |
 | `parent_path` | string |  | ui_build_layout: 父节点路径;ui_import_prototype: 须原点对齐节点(默认 root)——非原点挂载时 layout_verify 根级 diff 恒误报 |

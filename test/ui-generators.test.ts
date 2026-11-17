@@ -8,6 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import { genUiCreateControlScript, genUiContainerAddScript, genUiAnchorPresetScript } from '../src/tools/ui/ui-create.js';
 import { genUiSetLayoutScript } from '../src/tools/ui/ui-layout.js';
+import { genTokenPrefetchScript } from '../src/tools/ui/ui-tokens.js';
+import { DESIGN_TOKENS_TYPE } from '../src/tools/ui/types.js';
 
 describe('P2-E: genUiCreateControlScript', () => {
   it('生成含 _initialize/load_scene/instantiate/add_child 的脚本', () => {
@@ -131,5 +133,46 @@ describe('P2-E: genUiSetLayoutScript', () => {
     expect(script).toContain('_mcp_load_scene');
     expect(script).not.toContain('node.anchor_');
     expect(script).not.toContain('node.offset_');
+  });
+});
+
+// ─── 批3 Task 3: $token 预取脚本生成器 ─────────────────────────────────────
+
+describe('批3 Task 3: genTokenPrefetchScript', () => {
+  it('含 load(themePath) + get_color_list + DesignTokens + token_map 输出键,无场景加载', () => {
+    const script = genTokenPrefetchScript('res://themes/t.tres');
+    expect(script).toContain('load("res://themes/t.tres")');
+    expect(script).toContain('get_color_list');
+    // 消费 DESIGN_TOKENS_TYPE 常量(扩名同步锚:生成产物必须出现 "DesignTokens" 字面量)
+    expect(script).toContain(`get_color_list("${DESIGN_TOKENS_TYPE}")`);
+    expect(script).toContain('_mcp_output("token_map"');
+    expect(script).toContain('"colors"');
+    expect(script).toContain('JSON.stringify');
+    // 无场景加载:预取只 load 资源,不调用 _mcp_load_scene(header 定义仍在,断言调用形态)
+    expect(script).not.toContain('if not _mcp_load_scene(');
+  });
+
+  it('null/非 Theme → theme_path load failed 错误分支(消息不含 "not found",不撞 mapper 首位)', () => {
+    const script = genTokenPrefetchScript('res://themes/t.tres');
+    expect(script).toContain('theme_path load failed: res://themes/t.tres');
+    expect(script).toContain('_mcp_done()');
+    // 错误消息子串与 NODE_NOT_FOUND 分支('not found')不相交——uiErrorMapper 分流前提
+    expect('theme_path load failed').not.toContain('not found');
+  });
+
+  it('Color 先转 [r,g,b,a] 数组再入 dict(JSON roundtrip 通道,非裸 Color 对象)', () => {
+    const script = genTokenPrefetchScript('res://themes/t.tres');
+    // _colors[str(_name)] = [_c.r, _c.g, _c.b, _c.a] 形态:数组字面量四分量
+    expect(script).toMatch(/_colors\[str\(_name\)\] = \[_c\.r, _c\.g, _c\.b, _c\.a\]/);
+  });
+
+  it('路径经 escapeForGdLiteral(反斜杠/引号安全)', () => {
+    const script = genTokenPrefetchScript('res://a\\b"c.tres');
+    // 反斜杠双写 + 引号转义后进入 load 字面量
+    expect(script).toContain('load("res://a\\\\b\\"c.tres")');
+  });
+
+  it('DESIGN_TOKENS_TYPE === "DesignTokens" 同步锚(types.ts 常量与 GD 生成点共用)', () => {
+    expect(DESIGN_TOKENS_TYPE).toBe('DesignTokens');
   });
 });

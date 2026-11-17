@@ -20,9 +20,10 @@ import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffS
 import type { MeasuredNode } from './layout-diff.js';
 import { buildQualityReport } from './quality-check.js';
 import { parseAuthoredGeometry, planRebase, applyRebasePatch } from './anchor-rebase.js';
-import { parseGeometry, translateGeometry } from './prototype-import.js';
-import type { PrototypeGeometry, TranslateResult } from './prototype-import.js';
+import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs } from './prototype-import.js';
+import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
+import { genTokenPrefetchScript } from './ui-tokens.js';
 import { textResult } from '../../types.js';
 import { readFileSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
 
@@ -101,7 +102,7 @@ export function getToolDefinitions(): Tool[] {
             enum: ['set_params', 'create', 'save', 'load'],
             description: 'ui_set_theme: 操作类型（set_params/create/save/load）',
           },
-          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径（save/load 时必填）;ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传（theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload）' },
+          theme_path: { type: 'string', description: 'ui_set_theme: Theme 资源路径(save/load 时必填);ui_measure_layout/ui_import_prototype: measure 前挂载到 root,主题敏感场景必传(theme_type_variation 节点字号需主题语境,显式挂载不依赖项目 autoload);ui_import_prototype/ui_pixel_verify: $token 解析源(theme DesignTokens colors);后续 token_set/token_list 同走此路径' },
           params: {
             type: 'object',
             description: 'ui_set_theme(set_params): 键值对（number/bool/string/array[4]→Color）',
@@ -165,7 +166,7 @@ export function getToolDefinitions(): Tool[] {
           expect_tree: { type: 'object', description: 'ui_measure_layout: 可选目标树(同 ui_build_layout tree,含 rect);提供时输出逐节点 diff/重叠/越界', additionalProperties: true },
           geometry: {
             type: 'object',
-            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;perSides 单边差异等细节见规则文档',
+            description: 'ui_import_prototype/ui_pixel_verify: 原型几何 JSON(inline {viewport,nodes} 扁平视口坐标;与 geometry_path 二选一,本参优先)。样式字段:bg/fill(ProgressBar fill 槽色)/borderRadius(number 或 {tl,tr,br,bl})/border({width,color})→StyleBoxFlat 四控件槽位;颜色字段(bg/color/fill/border.color)可 "$name" 引用 theme DesignTokens token(须配 theme_path;import/pixel_verify 均支持;有引用时多一次 Godot 预取 spawn);perSides 单边差异等细节见规则文档',
             additionalProperties: true,
           },
           geometry_path: { type: 'string', description: 'ui_import_prototype/ui_pixel_verify: 几何 JSON 文件路径(相对项目,支持 res://;与 geometry 二选一)' },
@@ -782,11 +783,90 @@ async function handleSolveFromCurrent(
 /** GDScript error 输出 → 错误码映射(handleTool 公共段与 ui_import_prototype 共用)。 */
 const uiErrorMapper = (msg: string) => {
   if (msg.includes('not found')) return ERROR_CODES.NODE_NOT_FOUND;
+  // 批3 Task 3:theme_path load failed(genTokenPrefetchScript/genThemeMountInit 的 null/
+  // 非 Theme 分支)→ THEME_NOT_FOUND。与首位 'not found' 分支两子串不相交,顺序无歧义
+  // ('theme file not found' 前置修正是 Task 4 范畴,本任务不动首位分支)。
+  if (msg.includes('load failed')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not a Control')) return ERROR_CODES.INVALID_PARAMS;
   if (msg.includes('no theme')) return ERROR_CODES.THEME_NOT_FOUND;
   if (msg.includes('not a Theme')) return ERROR_CODES.THEME_NOT_FOUND;
   return ERROR_CODES.SCRIPT_EXEC_FAILED;
 };
+
+// ─── 批3 Task 3: $token 预取共享辅助(import/pixel_verify 双链)──────────────
+
+/** tokens_resolved 形状:预取发生才挂(无 $ 引用不挂);refs = geometry 内 $ 引用次数
+ * (四字段 color/bg/fill/border.color 逐次计数,不去重);tokens = 去重后已解析 token 名
+ * (与主题总 token 数解耦——只报本次用到的,可审计)。 */
+interface TokensResolvedInfo {
+  theme_path: string;
+  refs: number;
+  tokens: string[];
+}
+
+type TokenResolveOutcome =
+  | { ok: true; geo: PrototypeGeometry; tokensInfo?: TokensResolvedInfo }
+  | { ok: false; result: ToolResult };
+
+/**
+ * 批3 Task 3:$token 预取解析共享辅助(handleUiImportPrototype 与 handleUiPixelVerify
+ * 调用)。链路:sanitize 上移 → `hasTokenRefs` 为 false 直接透传(**零 spawn**,无 $ 的
+ * 既有调用零开销零行为变化);true 而 theme_path 缺 → INVALID_PARAMS(附 DesignTokens
+ * 约定路径指引);有 → `genTokenPrefetchScript` 预取 spawn(**loadAutoloads: false**
+ * ——脚本只 load 资源,不跑 autoload,省启动;timeout 30)→ parseGdscriptResult
+ * (error 输出经 uiErrorMapper 的 'load failed' → THEME_NOT_FOUND 分流)→ 从
+ * `out.data.token_map.colors` 取 map → `resolveGeometryTokens` 换字面量。
+ * resolveGeometryTokens 抛错(TOKEN_NOT_FOUND/INVALID_PARAMS)**不在本辅助内 catch**——
+ * 冒给调用方的既有 catch 按消息前缀分流(两个 handler 的分流锚,单测锁定)。
+ * theme 无 DesignTokens type(裸 Theme)→ 预取返回空 map → 缺键路径 TOKEN_NOT_FOUND。
+ */
+async function resolveTokensForGeometry(
+  geo: PrototypeGeometry,
+  themePathRaw: string | undefined,
+  projectPath: string,
+  godot: string,
+): Promise<TokenResolveOutcome> {
+  if (!hasTokenRefs(geo)) return { ok: true, geo };
+  if (!themePathRaw) {
+    return { ok: false, result: opsErrorResult(ERROR_CODES.INVALID_PARAMS,
+      '$token 引用需要提供 theme_path(DesignTokens 约定路径 res://ui/theme.tres)') };
+  }
+  try { sanitizeResPath(themePathRaw, 'theme_path'); } catch {
+    return { ok: false, result: opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'theme_path contains path traversal') };
+  }
+  const prefetch = await executeGdscriptTrusted({
+    godotPath: godot, projectPath, code: genTokenPrefetchScript(themePathRaw), timeout: 30, loadAutoloads: false,
+  });
+  const parsed = parseGdscriptResult(prefetch, [], uiErrorMapper);
+  if (parsed.isError) return { ok: false, result: parsed };
+
+  // token_map 提取:GD _mcp_output("token_map", JSON.stringify({colors})) 经
+  // parseGdscriptResult 落 data.token_map(measure 链 theme_constants 同款通道)。
+  let colors: TokenColorMap;
+  try {
+    const out = JSON.parse((parsed.content?.[0] as { text?: string } | undefined)?.text ?? '{}') as {
+      data?: { token_map?: { colors?: unknown } };
+    };
+    colors = (out.data?.token_map?.colors ?? {}) as TokenColorMap;
+  } catch {
+    return { ok: false, result: opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, 'token_map 输出解析失败(非合法 JSON)') };
+  }
+
+  // refs/tokens 统计(输入侧 $ 引用;四字段逐次计数)
+  const refNames: string[] = [];
+  for (const nd of geo.nodes) {
+    for (const v of [nd.color, nd.bg, nd.fill, nd.border?.color]) {
+      if (typeof v === 'string' && v.startsWith('$')) refNames.push(v.slice(1));
+    }
+  }
+  // resolve 抛错冒给调用方(前缀分流);值形状校验在 resolveTokenColor 逐值做
+  const resolved = resolveGeometryTokens(geo, { map: colors, themePath: themePathRaw });
+  return {
+    ok: true,
+    geo: resolved,
+    tokensInfo: { theme_path: themePathRaw, refs: refNames.length, tokens: [...new Set(refNames)] },
+  };
+}
 
 /** geometry/geometry_path 二选一解析(ui_import_prototype 与 ui_pixel_verify 共用):
  * 都给 → geometry 优先 + warning;都不给 → INVALID_PARAMS;geometry_path 经
@@ -840,13 +920,11 @@ async function handleUiImportPrototype(
   const rawGeometry = resolved.rawGeometry;
 
   let geo: PrototypeGeometry;
-  let translated: TranslateResult;
   try {
     geo = parseGeometry(rawGeometry);
-    translated = translateGeometry(geo);
   } catch (err) {
-    // parseGeometry/translateGeometry 的非法输入(交叉重叠/等 rect/超限/重名…)均以
-    // INVALID_PARAMS 前缀抛出(v2 N-1 拒绝而非静默),原样透传给 AI 修原型侧。
+    // parseGeometry 的非法输入(schema 违规)以 INVALID_PARAMS 前缀抛出(v2 N-1 拒绝
+    // 而非静默),原样透传给 AI 修原型侧。
     return opsErrorResult(ERROR_CODES.INVALID_PARAMS, getErrorMessage(err));
   }
 
@@ -872,6 +950,23 @@ async function handleUiImportPrototype(
       return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'viewport must be an object {w, h} with positive numbers');
     }
     viewport = { w, h };
+  }
+
+  // 批3 Task 3:$token 预取解析 + 翻译。预取在辅助内完成(有 $ 才 spawn,无 $ 零开销
+  // 透传);resolveGeometryTokens 抛错(TOKEN_NOT_FOUND/INVALID_PARAMS)与 translateGeometry
+  // 的既有非法输入同 catch **按消息前缀分流**——TOKEN_NOT_FOUND 前缀单独成码(缺键点名
+  // token 与 theme 路径),其余保持 INVALID_PARAMS 透传修原型侧。
+  let translated: TranslateResult;
+  let tokensInfo: TokensResolvedInfo | undefined;
+  try {
+    const outcome = await resolveTokensForGeometry(geo, themePath, projectPath, godot);
+    if (!outcome.ok) return outcome.result;
+    translated = translateGeometry(outcome.geo);
+    tokensInfo = outcome.tokensInfo;
+  } catch (err) {
+    const msg = getErrorMessage(err);
+    if (msg.startsWith('TOKEN_NOT_FOUND')) return opsErrorResult(ERROR_CODES.TOKEN_NOT_FOUND, msg);
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, msg);
   }
 
   // ① 单 spawn 合成(PR-4,spec §6):build→persist→reload(CACHE_MODE_IGNORE)→measure
@@ -954,6 +1049,8 @@ async function handleUiImportPrototype(
       : buildQualityReport(measured, { viewport: measure?.viewport, ...(importScale ? { spacingScale: importScale } : {}) });
     return textResult(JSON.stringify(opsSuccess({
       tree: translated.tree,
+      // 批3 Task 3:预取发生才挂(无 $ 引用省略字段);refs/tokens 与主题总 token 数解耦,可审计
+      ...(tokensInfo ? { tokens_resolved: tokensInfo } : {}),
       build_warnings: buildWarnings,
       measure: {
         stable_after_frames: measure?.stable_after_frames,
@@ -975,9 +1072,10 @@ async function handleUiImportPrototype(
 
 /**
  * ui_pixel_verify(spec §5 终验):入参同 import(geometry/geometry_path 二选一 + 必填
- * scene_path 指向 ui_import_prototype persist 产物)→ parseGeometry → runPixelVerify
- * (capture → decode → 采样 → 判定)。不做 translate/translate 产物比对——采样基准是
- * 输入视口 rect(终验前提:layout_verify/style_verify 已全绿,期望≈实测)。
+ * scene_path 指向 ui_import_prototype persist 产物)→ parseGeometry →(批3 Task 3:$token
+ * 预取解析,同 import 链辅助)→ runPixelVerify(capture → decode → 采样 → 判定)。
+ * 不做 translate/translate 产物比对——采样基准是输入视口 rect(终验前提:
+ * layout_verify/style_verify 已全绿,期望≈实测)。
  */
 async function handleUiPixelVerify(
   args: Record<string, unknown>,
@@ -1002,7 +1100,21 @@ async function handleUiPixelVerify(
   } catch (err) {
     return opsErrorResult(ERROR_CODES.INVALID_PARAMS, getErrorMessage(err));
   }
-  const r = await runPixelVerify({ godotPath: godot, projectPath, scenePath, geo });
+  // 批3 Task 3:$token 预取解析(与 import 链同一辅助)——runPixelVerify 收**解析后**
+  // geometry(采样基准 = 解析色字面量,collectBgTargets 的 target 换算才正确);
+  // resolution 抛错按消息前缀分流(现状无 try 兜底会冒成 SCRIPT_EXEC_FAILED——修正:
+  // TOKEN_NOT_FOUND 前缀单独成码,其余 INVALID_PARAMS)。
+  let geoVerified: PrototypeGeometry;
+  try {
+    const outcome = await resolveTokensForGeometry(geo, args.theme_path as string | undefined, projectPath, godot);
+    if (!outcome.ok) return outcome.result;
+    geoVerified = outcome.geo;
+  } catch (err) {
+    const msg = getErrorMessage(err);
+    if (msg.startsWith('TOKEN_NOT_FOUND')) return opsErrorResult(ERROR_CODES.TOKEN_NOT_FOUND, msg);
+    return opsErrorResult(ERROR_CODES.INVALID_PARAMS, msg);
+  }
+  const r = await runPixelVerify({ godotPath: godot, projectPath, scenePath, geo: geoVerified });
   if (!r.ok) {
     return opsErrorResult(ERROR_CODES.SCRIPT_EXEC_FAILED, r.error + (r.hint ? `\nHint: ${r.hint}` : ''));
   }
