@@ -6,8 +6,8 @@
 
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
-import { parseGeometry, translateGeometry } from '../src/tools/ui/prototype-import.js';
-import type { GeometryNode, PrototypeGeometry } from '../src/tools/ui/prototype-import.js';
+import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs } from '../src/tools/ui/prototype-import.js';
+import type { GeometryNode, PrototypeGeometry, TokenColorMap } from '../src/tools/ui/prototype-import.js';
 import { flattenTargets } from '../src/tools/ui/layout-diff.js';
 import type { UiNodeSpec } from '../src/tools/ui/types.js';
 
@@ -917,5 +917,98 @@ describe('无新键回归锚(批1 1e,BC 三锚之一)', () => {
       { path: '_PrototypeRoot/Bar/Bar_Flow/R', rect: { x: 310, y: 20, w: 100, h: 40 } },
     ]);
     expect(r.coverage).toEqual({ targets: 3, total_nodes: 4 });
+  });
+});
+
+// ─── 批3 $token 解析层(Task 2) ─────────────────────────────────────────────
+
+describe('批3 $token 解析层', () => {
+  const TPATH = 'res://ui/theme.tres';
+  // 键序即插入序(Object.keys),缺键错误消息的「现有: 前 10 键」按此序断言
+  const TM: TokenColorMap = {
+    brand: [0.1, 0.2, 0.3, 0.5], fg: [0.9, 0.9, 0.95, 1],
+    accent: [0.3, 0.6, 1, 1], edge: [1, 0.4, 0.4, 1],
+  };
+  const rs = (g: PrototypeGeometry) => resolveGeometryTokens(g, { map: TM, themePath: TPATH });
+
+  it("schema: '$brand' 放行;'$1a'/'$a b'/'$'/'brand' 拒绝(第四分支格式)", () => {
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$brand' })]))).not.toThrow();
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$1a' })]))).toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$a b' })]))).toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$' })]))).toThrow(/INVALID_PARAMS/);
+    expect(() => parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: 'brand' })]))).toThrow(/INVALID_PARAMS/);
+  });
+
+  it('bg 通道:resolve 后字面量 [0.1,0.2,0.3,0.5],再 translate 得 stylebox bg_color 同值;输入不被改写', () => {
+    const input = parseGeometry(geo([n('P', 0, 0, 100, 60, { bg: '$brand' })]));
+    const out = rs(input);
+    expect(out.nodes[0]!.bg).toEqual([0.1, 0.2, 0.3, 0.5]);
+    expect(input.nodes[0]!.bg).toBe('$brand'); // 浅拷贝节点,不动输入
+    const { tree } = translateGeometry(out);
+    expect(findNode(tree, 'P')!.styleboxes![0]!.box.bg_color).toEqual([0.1, 0.2, 0.3, 0.5]);
+  });
+
+  it('color 通道:resolve → translate 后 theme_override_colors/font_color 同值', () => {
+    const out = rs(parseGeometry(geo([n('T', 10, 10, 80, 20, { text: 'x', color: '$fg' })])));
+    expect(out.nodes[0]!.color).toEqual([0.9, 0.9, 0.95, 1]);
+    const { tree } = translateGeometry(out);
+    expect(findNode(tree, 'T')!.properties!['theme_override_colors/font_color']).toEqual([0.9, 0.9, 0.95, 1]);
+  });
+
+  it('fill 通道:resolve → translate 后 ProgressBar fill 槽 bg_color 同值', () => {
+    const out = rs(parseGeometry(geo([n('Bar', 0, 0, 100, 20, { value: 0.5, fill: '$accent' })])));
+    expect(out.nodes[0]!.fill).toEqual([0.3, 0.6, 1, 1]);
+    const { tree } = translateGeometry(out);
+    const fill = findNode(tree, 'Bar')!.styleboxes!.find(o => o.slot === 'fill')!;
+    expect(fill.box.bg_color).toEqual([0.3, 0.6, 1, 1]);
+  });
+
+  it('border.color 通道:resolve → translate 后 stylebox border_color 同值', () => {
+    const out = rs(parseGeometry(geo([n('E', 0, 0, 100, 60, { border: { width: 2, color: '$edge' } })])));
+    expect(out.nodes[0]!.border!.color).toEqual([1, 0.4, 0.4, 1]);
+    const { tree } = translateGeometry(out);
+    expect(findNode(tree, 'E')!.styleboxes![0]!.box.border_color).toEqual([1, 0.4, 0.4, 1]);
+  });
+
+  it('缺键 → TOKEN_NOT_FOUND(含 token 名、theme 路径、现有键列表)', () => {
+    expect(() => rs(parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$missing' })]))))
+      .toThrow(/TOKEN_NOT_FOUND: token "missing" 不存在于 res:\/\/ui\/theme\.tres 的 DesignTokens\(现有: brand, fg, accent, edge\)/);
+  });
+
+  it('有 $ 引用而无 tokens → INVALID_PARAMS(含 theme_path 指引)', () => {
+    expect(() => resolveGeometryTokens(parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$brand' })]))))
+      .toThrow(/INVALID_PARAMS: \$token 引用需要提供 theme_path\(DesignTokens 约定路径 res:\/\/ui\/theme\.tres\)/);
+  });
+
+  it('$constructor/$__proto__ 走 Object.hasOwn 防线 → TOKEN_NOT_FOUND(不命中 Object.prototype)', () => {
+    for (const bad of ['$constructor', '$__proto__']) {
+      expect(() => rs(parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: bad })]))))
+        .toThrow(/TOKEN_NOT_FOUND: token "(constructor|__proto__)" 不存在/);
+    }
+  });
+
+  it('map 值非四元有限数([0.5,NaN,0.5,1] / 长度 3)→ INVALID_PARAMS(点名 token 与值形状)', () => {
+    const mk = (map: TokenColorMap) => resolveGeometryTokens(
+      parseGeometry(geo([n('A', 0, 0, 50, 50, { bg: '$bad' })])), { map, themePath: TPATH });
+    expect(() => mk({ bad: [0.5, NaN, 0.5, 1] })).toThrow(/INVALID_PARAMS: token "bad"/);
+    expect(() => mk({ bad: [0.5, NaN, 0.5, 1] })).toThrow(/四元有限数/);
+    expect(() => mk({ bad: [0.5, 0.5, 0.5] } as unknown as TokenColorMap)).toThrow(/INVALID_PARAMS: token "bad"/);
+  });
+
+  it('hasTokenRefs:任一颜色字段 $ 前缀 → true(color/fill/border.color 各维);全字面量/缺省 → false', () => {
+    expect(hasTokenRefs(parseGeometry(geo([n('A', 0, 0, 5, 5, { bg: '#10141f', color: '$fg' })])))).toBe(true);
+    expect(hasTokenRefs(parseGeometry(geo([n('A', 0, 0, 5, 5, { value: 0.5, fill: '$accent' })])))).toBe(true);
+    expect(hasTokenRefs(parseGeometry(geo([n('A', 0, 0, 5, 5, { border: { width: 1, color: '$edge' } })])))).toBe(true);
+    expect(hasTokenRefs(parseGeometry(geo([n('A', 0, 0, 5, 5, { bg: '#10141f' })])))).toBe(false);
+    expect(hasTokenRefs(parseGeometry(geo([n('A', 0, 0, 5, 5)])))).toBe(false);
+  });
+
+  it('无 $ + 无 tokens → 返回 geometry 与输入语义等价(字段全等,回归锚)', () => {
+    const input = parseGeometry(geo([
+      n('P', 0, 0, 100, 60, { type: 'Panel', bg: '#10141f', borderRadius: 4, border: { width: 2, color: '#ffffff' } }),
+      n('T', 10, 10, 80, 20, { text: 'x', fontSize: 12, color: '#e8ecf5', align: 'left' }),
+      n('B', 0, 100, 400, 50, { flow: 'row', flow_gap: 8, flow_align: 'center', justify: 'center' }),
+    ]));
+    expect(resolveGeometryTokens(input)).toEqual(input);
   });
 });

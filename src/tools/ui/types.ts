@@ -64,6 +64,8 @@ export const ERROR_CODES = {
   THEME_NOT_FOUND: 'THEME_NOT_FOUND',
   INVALID_THEME_PROPERTY: 'INVALID_THEME_PROPERTY',
   INVALID_THEME_ITEM_TYPE: 'INVALID_THEME_ITEM_TYPE',
+  // 批3 Task 2:$token 引用在 DesignTokens 中缺键(prototype-import resolveGeometryTokens 抛出)
+  TOKEN_NOT_FOUND: 'TOKEN_NOT_FOUND',
 } as const;
 
 export const DRAW_OP_KINDS = ['rect', 'circle', 'line', 'arc', 'polygon', 'polyline', 'string'] as const;

@@ -66,6 +66,12 @@ export interface TranslateResult {
   flow_expect: Array<{ path: string; rect: Rect }>;
 }
 
+/**
+ * 批3 Task 2:DesignTokens 颜色映射——token 名(不带 $ 前缀)→ [r,g,b,a] 0-1 字面量。
+ * 由 Task 3 的 theme 资源读取层产出,本层只消费(维持本文件零 Godot 依赖纪律)。
+ */
+export type TokenColorMap = Readonly<Record<string, [number, number, number, number]>>;
+
 // ─── zod schema(v4,参照 src/tools/qa/spec.ts 先例) ────────────────────────
 
 /** [r,g,b] 值 0-255(归一在翻译层做)。 */
@@ -87,8 +93,18 @@ const Rgba01 = z.tuple([
  * PR-1:颜色 string 分支收紧为 #rrggbb(原任意 string 在翻译层 normalizeColor 才拒)——
  * bg/color/fill/border.color 在 schema 层早拒绝,坏颜色不进翻译层;normalizeColor 的
  * 解析保留为深度防御(parse 后输入已保证格式)。
+ * 批3 Task 2:新增第四分支 $token(见 union 内注释)——string 形态此后为
+ * "#rrggbb | $token" 二元,其余 string 照旧 schema 层拒。
  */
-const ProtoColor = z.union([z.string().regex(/^#([0-9a-fA-F]{6})$/), Rgb255, Rgba01]);
+const ProtoColor = z.union([
+  z.string().regex(/^#([0-9a-fA-F]{6})$/),
+  Rgb255,
+  Rgba01,
+  // 批3 Task 2:第四分支 $token 引用(DesignTokens)——schema 层放行,字面量替换由
+  // 前置解析层 resolveGeometryTokens 做。翻译器 normalizeColor 不认 $(跳过解析层
+  // 直翻会被既有深度防御拒绝,不会静默漏解析)。
+  z.string().regex(/^\$[A-Za-z_][A-Za-z0-9_-]*$/),
+]);
 
 /**
  * strict:未知字段拒绝(v2 N-1 "非法输入直接拒绝"精神)——AI 生产者拼错字段名
@@ -248,6 +264,88 @@ export function normalizeColor(c: string | number[], field: string, name: string
   }
   if (c.length === 3) return [c[0]! / 255, c[1]! / 255, c[2]! / 255, 1];
   return [c[0]!, c[1]!, c[2]!, c[3]!];
+}
+
+// ─── $token 解析层(批3 Task 2,纯函数) ────────────────────────────────────
+
+/** DesignTokens 约定路径(错误消息指引用;实际读取在 Task 3 的 theme 资源层)。 */
+const TOKEN_THEME_PATH = 'res://ui/theme.tres';
+
+/** $token 引用格式(与 ProtoColor 第四分支同语法;解析层复检一次,防手写 geometry
+ * 未经 parseGeometry 直入时携带非法 $ 形态)。 */
+const TOKEN_REF_RE = /^\$([A-Za-z_][A-Za-z0-9_-]*)$/;
+
+/** 字段值为 $token 引用(schema 后 string 形态仅 #hex 与 $token 两种,$ 前缀即 token)。
+ * 谓词收窄到 string:真分支调用方按 $ 引用消费。 */
+function isTokenRef(v: string | number[] | undefined): v is string {
+  return typeof v === 'string' && v.startsWith('$');
+}
+
+/** 任一节点 color/bg/fill/border.color 为 $ 前缀字符串 → true(工具层据此要求 theme_path)。 */
+export function hasTokenRefs(geo: PrototypeGeometry): boolean {
+  return geo.nodes.some(nd =>
+    isTokenRef(nd.color) || isTokenRef(nd.bg) || isTokenRef(nd.fill) || isTokenRef(nd.border?.color));
+}
+
+/**
+ * 单字段解析:$name → map 查键(Object.hasOwn 防原型链)→ 值形状校验 → 字面量。
+ * 集中 color/bg/fill/border.color 四字段的防线,错误消息点名节点/字段/token。
+ */
+function resolveTokenColor(
+  c: string,
+  field: string,
+  ndName: string,
+  map: TokenColorMap,
+  themePath: string,
+): [number, number, number, number] {
+  const m = TOKEN_REF_RE.exec(c);
+  if (!m) {
+    throw new Error(`INVALID_PARAMS: 节点 "${ndName}" 的 ${field} "${c}" 不是合法 $token 引用(格式 $name:字母/下划线开头,后接字母/数字/下划线/连字符)`);
+  }
+  const key = m[1]!;
+  // Object.hasOwn 防线:$constructor/$__proto__ 不得命中原型链(in 运算符会命中
+  // Object.prototype,hasOwn 只认自有键 → 此类键走缺键路径统一 TOKEN_NOT_FOUND)
+  if (!Object.hasOwn(map, key)) {
+    const existing = Object.keys(map).slice(0, 10).join(', ');
+    throw new Error(`TOKEN_NOT_FOUND: token "${key}" 不存在于 ${themePath} 的 DesignTokens(现有: ${existing.length > 0 ? existing : '无'})`);
+  }
+  const v = map[key];
+  if (!Array.isArray(v) || v.length !== 4 || !v.every(x => Number.isFinite(x))) {
+    throw new Error(`INVALID_PARAMS: token "${key}" 的值形状非法(期望 [r,g,b,a] 四元有限数,实际 ${JSON.stringify(v)})`);
+  }
+  return [v[0]!, v[1]!, v[2]!, v[3]!]; // 新数组:输出不与 map 共享可变引用
+}
+
+/**
+ * 批3 Task 2:$token 前置解析——返回全部 $ 引用替换为 [r,g,b,a] 字面量的新 geometry
+ * (浅拷贝节点,不动输入),在 translateGeometry 之前调用(翻译器本身不认 $)。
+ * - 无 $ 引用 → 原样返回(与输入语义等价,回归锚;tokens 有无均不查);
+ * - 有 $ 引用而 tokens 缺省 → INVALID_PARAMS(附 theme_path 指引);
+ * - 缺键 → TOKEN_NOT_FOUND(附现有键前 10 个);坏值(非四元有限数)→ INVALID_PARAMS。
+ */
+export function resolveGeometryTokens(
+  geo: PrototypeGeometry,
+  tokens?: { map: TokenColorMap; themePath: string },
+): PrototypeGeometry {
+  if (!hasTokenRefs(geo)) return geo;
+  if (tokens === undefined) {
+    throw new Error(`INVALID_PARAMS: $token 引用需要提供 theme_path(DesignTokens 约定路径 ${TOKEN_THEME_PATH})`);
+  }
+  const { map, themePath } = tokens;
+  return {
+    viewport: geo.viewport,
+    nodes: geo.nodes.map(nd => {
+      const out: GeometryNode = { ...nd }; // 浅拷贝,不动输入
+      if (isTokenRef(nd.color)) out.color = resolveTokenColor(nd.color, 'color', nd.name, map, themePath);
+      if (isTokenRef(nd.bg)) out.bg = resolveTokenColor(nd.bg, 'bg', nd.name, map, themePath);
+      if (isTokenRef(nd.fill)) out.fill = resolveTokenColor(nd.fill, 'fill', nd.name, map, themePath);
+      if (nd.border !== undefined && isTokenRef(nd.border.color)) {
+        // border 再浅拷一层:替换 color 不动输入的 border 对象
+        out.border = { ...nd.border, color: resolveTokenColor(nd.border.color, 'border.color', nd.name, map, themePath) };
+      }
+      return out;
+    }),
+  };
 }
 
 // ─── 规则实现 ──────────────────────────────────────────────────────────────
