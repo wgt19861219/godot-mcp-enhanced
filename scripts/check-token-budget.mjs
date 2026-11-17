@@ -13,7 +13,12 @@ import { fileURLToPath } from 'node:url';
 
 export const THRESHOLDS = {
   perToolDesc:   { warn: 800,        error: 2000 },
-  perToolSchema: { warn: 6000,       error: 12000 },
+  // perToolSchema error 线校准首录(2026-11-17, Refero 批3 首任务):ui schema 实测 11992B
+  // 距旧 error 线 12000B 仅余 8B——构成是批1(solve_from_current 四参数 + viewport 多分句 +
+  // theme_path 挂载语义扩展)与批2(挂节后处理)的正当增量累积。裁定"校准不瘦身":批 A
+  // (2026-10-26)已留「结构形状不可砍,继续压伤描述可用性」结论,再压只能动 description
+  // 断言测试换无结构收益。error 12000→13000;批3 tokens 层预计增量 ~340B,校准后余量 ~670B。
+  perToolSchema: { warn: 6000,       error: 13000 },
   perToolTotal:  { warn: 7000,       error: 14000 },
   // totalSum warn 基线校准(2026-08-16 原型翻译层审查遗留⑤):实测 86412B,超旧线 80KB 5.5%,
   // 按项目"覆盖率阈值持续超 4% 应上调"惯例(vitest.config.ts 先例)上调至 90KB,消除长期
@@ -38,7 +43,10 @@ export const THRESHOLDS = {
   // schema 结构形状(enum/嵌套 properties,SSOT 防线不可砍)。warn 校准至 112*1024(余量 2765B,
   // 沿瘦身即校准惯例;plan 验收线 105KB 未达,偏差原因即上述 SSOT 结构占比——继续压伤描述可用性);
   // error 120KB 硬线不动。回弹语义保留。
-  totalSum:      { warn: 112 * 1024, error: 120 * 1024 },
+  // Refero 批3 首任务 (2026-11-17):批1/批2 增量后全量实测 114376B,批3 tokens 层再 +~340B
+  // 预计 ~114.7KB 越 112 旧线(余量仅 312B)——同前例接受水位,warn 线校准至 113*1024;
+  // error 120KiB 硬线不动。回弹语义保留。
+  totalSum:      { warn: 113 * 1024, error: 120 * 1024 },
 };
 
 /** @typedef {{name:string,size:{descBytes:number,schemaBytes:number,totalBytes:number}}} CapLike */
