@@ -245,6 +245,115 @@ export function detectSpacingScale(
   return { on_scale: on, total, rate: on / total, off_scale: off };
 }
 
+// ─── A.5 对齐线(order 节,批2 Task3)───────────────────────────────────────────
+
+/** 对齐线检测结果(brief Interfaces 形态)。 */
+export interface AlignmentLaneResult {
+  parent: string;
+  kind: 'left' | 'right' | 'center' | 'top' | 'bottom' | 'vc';
+  lane: number;
+  majority: string[];
+  outliers: Array<{ path: string; offset: number }>;
+}
+
+// 六条线:x 系 left/right/center 由 global rect.x / x+w / x+w/2,y 系 top/bottom/vc 同理
+const LANE_KINDS: ReadonlyArray<{ kind: AlignmentLaneResult['kind']; get: (r: Rect) => number }> = [
+  { kind: 'left', get: r => r.x },
+  { kind: 'right', get: r => r.x + r.w },
+  { kind: 'center', get: r => r.x + r.w / 2 },
+  { kind: 'top', get: r => r.y },
+  { kind: 'bottom', get: r => r.y + r.h },
+  { kind: 'vc', get: r => r.y + r.h / 2 },
+];
+
+/** 批2 Task3:同父 ≥3 兄弟对六条线各聚类——每线最大簇为多数派(lane = 簇内均值),
+ * 簇外成员为离群者(offset = 成员值 − lane);仅报告有离群者的线(全对齐无线可报)。
+ * 聚类 = 排序后单链接(相邻值差 ≤ tolerancePx 归同簇,与 detectVisualGroups 同语义);
+ * 容差含等号(恰 2px 算命中,批2 Task2 修正后的全仓统一 2px 认知)。多数派需 ≥2 成员
+ * (单成员簇不构成"共享线"——全散布的父六线皆静默,防检测退化为永远触发的噪音源)。
+ * 值非有限(NaN rect 派生)的成员无法判定线值 → 剔除不参与聚类(NaN 参与比较恒 false
+ * 的既有纪律,不产离群 NaN 的发现)。Container 父组由 siblingsByParent 统一排除。 */
+export function detectAlignmentLanes(measured: MeasuredNode[], tolerancePx = 2): AlignmentLaneResult[] {
+  const out: AlignmentLaneResult[] = [];
+  for (const [parent, sibs] of siblingsByParent(measured)) {
+    if (sibs.length < 3) continue; // ≥3 守卫(Review Focus 4):2 兄弟无多数派语义
+    for (const { kind, get } of LANE_KINDS) {
+      const sorted = sibs
+        .filter(m => Number.isFinite(get(m.rect)))
+        .sort((p, q) => get(p.rect) - get(q.rect) || p.path.localeCompare(q.path)); // 次键 path 定序防并列漂移
+      if (sorted.length < 3) continue; // 有效值成员不足 3,多数派同样无意义
+      // 单链接聚类:相邻值差 ≤ tolerancePx 归同簇
+      const clusters: MeasuredNode[][] = [[sorted[0]!]];
+      for (let i = 1; i < sorted.length; i++) {
+        const v = get(sorted[i]!.rect), prev = get(sorted[i - 1]!.rect);
+        if (Math.abs(v - prev) <= tolerancePx) clusters[clusters.length - 1]!.push(sorted[i]!);
+        else clusters.push([sorted[i]!]);
+      }
+      let majorityIdx = 0;
+      for (let i = 1; i < clusters.length; i++) {
+        if (clusters[i]!.length > clusters[majorityIdx]!.length) majorityIdx = i; // 并列取先到者(排序确定性)
+      }
+      const majority = clusters[majorityIdx]!;
+      if (majority.length < 2) continue; // 单成员簇无共享线语义
+      const rest = clusters.filter((_, i) => i !== majorityIdx).flat();
+      if (rest.length === 0) continue; // 全对齐一簇,无线可报
+      const lane = majority.reduce((a, m) => a + get(m.rect), 0) / majority.length;
+      out.push({
+        parent, kind, lane,
+        majority: majority.map(m => m.path),
+        outliers: rest.map(m => ({ path: m.path, offset: get(m.rect) - lane })),
+      });
+    }
+  }
+  return out;
+}
+
+// ─── A.6 视觉组聚类(order 节,批2 Task3)──────────────────────────────────────
+
+/** 视觉组检测结果(brief Interfaces 形态)。 */
+export interface VisualGroupResult {
+  parent: string;
+  axis: 'x' | 'y';
+  groups: Array<{ members: string[]; intraGap: number }>;
+}
+
+/** 批2 Task3:兄弟按轴排序后单链接聚类(相邻间距 ≤ thresholdPx 归同簇),报告
+ * ≥2 个多成员(≥2 成员)簇的父——仅一个多成员簇无分组对比语义,该紧排形态由
+ * detectEquidistant 覆盖。intraGap = 簇内相邻间距均值(axisGapPairs 同语义)。
+ * 负间距(叠压)/非有限间距切断聚类(同 detectEquidistant 纪律:容器化建议的
+ * separation 须 ≥0);Container 父组由 siblingsByParent 统一排除。 */
+export function detectVisualGroups(measured: MeasuredNode[], thresholdPx: number): VisualGroupResult[] {
+  const out: VisualGroupResult[] = [];
+  for (const [parent, sibs] of siblingsByParent(measured)) {
+    for (const axis of ['x', 'y'] as const) {
+      const pairs = axisGapPairs(sibs, axis);
+      if (pairs.length === 0) continue; // <2 兄弟无相邻对
+      // 单链接聚类:pairs 共享边界成员,gap 合法则 b 进当前簇,否则起新簇
+      const clusters: Array<{ members: MeasuredNode[]; gaps: number[] }> =
+        [{ members: [pairs[0]!.a], gaps: [] }];
+      for (const { b, gap } of pairs) {
+        const c = clusters[clusters.length - 1]!;
+        if (Number.isFinite(gap) && gap >= 0 && gap <= thresholdPx) {
+          c.members.push(b);
+          c.gaps.push(gap);
+        } else {
+          clusters.push({ members: [b], gaps: [] });
+        }
+      }
+      const multi = clusters.filter(c => c.members.length >= 2);
+      if (multi.length < 2) continue; // 报告 ≥2 簇且簇内 ≥2 成员的父
+      out.push({
+        parent, axis,
+        groups: multi.map(c => ({
+          members: c.members.map(m => m.path),
+          intraGap: c.gaps.length > 0 ? c.gaps.reduce((x, y) => x + y, 0) / c.gaps.length : 0,
+        })),
+      });
+    }
+  }
+  return out;
+}
+
 // ─── 聚合(spec §1c 报告节;D8 无发现省略)──────────────────────────────────
 
 /** quality 报告节(A.1/A.2/D 聚合;null = 四类全无发现,调用方省略字段)。 */
@@ -255,12 +364,15 @@ export interface QualitySection {
   viewport_overflow: Array<{ path: string; overflow: { w: number; h: number }; suggestion: string }>;
 }
 
-/** order 报告节(A.3 等距组 + 批2 Task2 间距档位;null = 无发现,调用方省略字段)。
- * equidistant 空/非空照挂(quality 节四字段同款先例——节级省略、字段级全带);
- * spacing_scale 仅在有档位声明且检测有产出时挂(可选字段)。 */
+/** order 报告节(A.3 等距组 + 批2 Task2 间距档位 + 批2 Task3 对齐线/视觉组;
+ * null = 无发现,调用方省略字段)。equidistant/alignment_lanes 空/非空照挂(quality
+ * 节四字段同款先例——节级省略、字段级全带,检测恒跑);spacing_scale/visual_groups
+ * 仅在检测实际运行(有档位声明/阈值可得)时挂为可选字段——缺席 = 未跑不发噪音。 */
 export interface OrderSection {
   equidistant: Array<{ parent: string; axis: 'x' | 'y'; members: string[]; gap: number; suggestion: string }>;
+  alignment_lanes: Array<AlignmentLaneResult & { suggestion: string }>;
   spacing_scale?: SpacingScaleResult;
+  visual_groups?: Array<VisualGroupResult & { suggestion: string }>;
 }
 
 /** 质量报告(Task 3 空壳,本任务填充):quality/order 两节各自独立省略(D8)。
@@ -273,10 +385,11 @@ export interface QualityReport {
 /** 聚合四类检测 + 既有 detectOutOfBounds(父级越界)。opts.viewport 缺省 → 跳过
  * 视口溢出检测(measure.viewport 缺失时无法判定,不造数);opts.spacingScale 缺省 →
  * 跳过间距档位检测(无 theme 档位声明,批2 Task2——空数组 detectSpacingScale 自返
- * null,不造噪音)。全部无发现 → null。 */
+ * null,不造噪音);opts.visualThresholdPx 缺省取 spacingScale 最大档(批2 Task3
+ * Review Focus 5——无档位且未传 → 跳过视觉组检测)。全部无发现 → null。 */
 export function buildQualityReport(
   measured: MeasuredNode[],
-  opts?: { viewport?: { w: number; h: number }; spacingScale?: number[] },
+  opts?: { viewport?: { w: number; h: number }; spacingScale?: number[]; visualThresholdPx?: number },
 ): QualityReport | null {
   const bare = detectBareShell(measured);
   const follow = detectShouldFollow(measured);
@@ -284,6 +397,11 @@ export function buildQualityReport(
   const vp = opts?.viewport ? detectViewportOverflow(measured, opts.viewport) : [];
   const equid = detectEquidistant(measured);
   const spacing = opts?.spacingScale ? detectSpacingScale(measured, opts.spacingScale) : null;
+  const lanes = detectAlignmentLanes(measured);
+  // 阈值缺省链:显式 visualThresholdPx > spacingScale 最大档 > 跳过(无档位未传不发噪音)
+  const vThreshold = opts?.visualThresholdPx
+    ?? (opts?.spacingScale?.length ? Math.max(...opts.spacingScale) : undefined);
+  const visual = vThreshold !== undefined ? detectVisualGroups(measured, vThreshold) : null;
 
   const quality: QualitySection | null = (bare.length + follow.length + oob.length + vp.length) > 0 ? {
     bare_shells: bare.map(b => ({ ...b,
@@ -298,11 +416,17 @@ export function buildQualityReport(
     viewport_overflow: vp.map(v => ({ ...v,
       suggestion: `节点越出视口(水平 ${v.overflow.w}px / 垂直 ${v.overflow.h}px)——建议 solve_from_current 按视口重排锚点` })),
   } : null;
-  // 挂节条件:等距组或档位检测任一有产出(间距档位 null = 无声明/无兄弟对,不算发现)
-  const order: OrderSection | null = (equid.length > 0 || spacing !== null) ? {
+  // 挂节条件:四类 order 检测任一有产出(档位/视觉组 null = 未跑,不算发现)
+  const order: OrderSection | null = (equid.length > 0 || spacing !== null || lanes.length > 0 || (visual?.length ?? 0) > 0) ? {
     equidistant: equid.map(g => ({ ...g,
       suggestion: `同父 ${g.members.length} 个子节点沿 ${g.axis} 轴等距(间距 ≈${Math.round(g.gap * 10) / 10}px)——建议容器化为 ${g.axis === 'x' ? 'HBoxContainer' : 'VBoxContainer'}(ui_build_layout)` })),
+    alignment_lanes: lanes.map(l => ({ ...l,
+      // brief 模板逐字:「多数派 N 节点共享 {kind} 对齐线 {lane}px,离群 {path} 偏 {offset}px」
+      suggestion: `多数派 ${l.majority.length} 节点共享 ${l.kind} 对齐线 ${Math.round(l.lane * 10) / 10}px,离群 ${l.outliers.map(o => `${o.path} 偏 ${Math.round(o.offset * 10) / 10}px`).join('、')}` })),
     ...(spacing ? { spacing_scale: spacing } : {}),
+    ...(visual !== null ? { visual_groups: visual.map(g => ({ ...g,
+      // 组内间距在 groups[].intraGap 数据字段,不塞文案(brief 模板只要求建议容器化)
+      suggestion: `同父兄弟沿 ${g.axis} 轴聚成 ${g.groups.length} 个视觉组——建议按视觉组容器化为 HBox/VBox(${g.axis === 'x' ? 'HBoxContainer' : 'VBoxContainer'},ui_build_layout)` })) } : {}),
   } : null;
 
   if (!quality && !order) return null;

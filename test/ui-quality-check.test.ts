@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, detectSpacingScale, buildQualityReport } from '../src/tools/ui/quality-check.js';
+import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, detectSpacingScale, detectAlignmentLanes, detectVisualGroups, buildQualityReport } from '../src/tools/ui/quality-check.js';
 import { handleTool } from '../src/tools/ui/index.js';
 import type { MeasuredNode } from '../src/tools/ui/layout-diff.js';
 import type { ToolContext, ToolResult } from '../src/types.js';
@@ -339,6 +339,109 @@ describe('buildQualityReport spacing_scale(批2 Task2)', () => {
   });
 });
 
+// ─── 批2 Task3: 对齐线 + 视觉组聚类 ──────────────────────────────────────────
+
+/** 对齐线 fixture:4 兄弟(同父 P,≥3 守卫内),前 3 个 left=24、第 4 个 x=outlierX;
+ * w/y 各异打散 right/center/top/bottom/vc 五线(值互差 >2 → 单例簇不构成多数派),
+ * 隔离出唯一 left 线。 */
+function laneFixture(outlierX: number): MeasuredNode[] {
+  return [
+    { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 500, h: 300 } },
+    { path: 'P/A', type: 'TextureRect', rect: { x: 24, y: 0, w: 20, h: 10 } },
+    { path: 'P/B', type: 'TextureRect', rect: { x: 24, y: 40, w: 30, h: 12 } },
+    { path: 'P/C', type: 'TextureRect', rect: { x: 24, y: 80, w: 40, h: 14 } },
+    { path: 'P/D', type: 'TextureRect', rect: { x: outlierX, y: 120, w: 50, h: 16 } },
+  ];
+}
+
+describe('detectAlignmentLanes(批2 Task3)', () => {
+  it('brief ①:4 兄弟 3 个左对齐 x=24、1 个 x=27 → majority 3 成员、outlier 1 条 offset=3(lane 取簇中心均值)', () => {
+    expect(detectAlignmentLanes(laneFixture(27))).toEqual([
+      { parent: 'P', kind: 'left', lane: 24, majority: ['P/A', 'P/B', 'P/C'], outliers: [{ path: 'P/D', offset: 3 }] },
+    ]);
+  });
+  it('brief ②:全对齐(六线值全同)→ 空(无线可报)', () => {
+    const aligned: MeasuredNode[] = [
+      { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 500, h: 300 } },
+      { path: 'P/A', type: 'TextureRect', rect: { x: 24, y: 0, w: 20, h: 10 } },
+      { path: 'P/B', type: 'TextureRect', rect: { x: 24, y: 0, w: 20, h: 10 } },
+      { path: 'P/C', type: 'TextureRect', rect: { x: 24, y: 0, w: 20, h: 10 } },
+    ];
+    expect(detectAlignmentLanes(aligned)).toEqual([]);
+  });
+  it('brief ③:2 兄弟 → 不参与(≥3 守卫,多数派无意义)', () => {
+    expect(detectAlignmentLanes(laneFixture(27).slice(0, 3))).toEqual([]);
+  });
+  it('容差边界(批2 Task2 修正后统一认知):恰 2px(26−24=2 ≤2)→ 归簇不报;2.5px(>2)→ 离群 offset 2.5;浮点 24.0000001 → 归簇不报', () => {
+    expect(detectAlignmentLanes(laneFixture(26))).toEqual([]);
+    expect(detectAlignmentLanes(laneFixture(26.5))).toEqual([
+      { parent: 'P', kind: 'left', lane: 24, majority: ['P/A', 'P/B', 'P/C'], outliers: [{ path: 'P/D', offset: 2.5 }] },
+    ]);
+    expect(detectAlignmentLanes(laneFixture(24.0000001))).toEqual([]);
+  });
+  it('多数派 <2(3 兄弟六线值全散)→ 无线可报(单成员簇不构成共享线)', () => {
+    const scattered: MeasuredNode[] = [
+      { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 500, h: 300 } },
+      { path: 'P/A', type: 'TextureRect', rect: { x: 24, y: 0, w: 20, h: 10 } },
+      { path: 'P/B', type: 'TextureRect', rect: { x: 100, y: 40, w: 30, h: 12 } },
+      { path: 'P/C', type: 'TextureRect', rect: { x: 200, y: 80, w: 40, h: 14 } },
+    ];
+    expect(detectAlignmentLanes(scattered)).toEqual([]);
+  });
+});
+
+describe('detectVisualGroups(批2 Task3)', () => {
+  it('brief ④:间距 [8,8,80,8] 阈值 32 → 两簇 [3 成员]+[2 成员],intraGap 均 ≈8', () => {
+    expect(detectVisualGroups(rowFixtureSpacing([8, 8, 80, 8]), 32)).toEqual([
+      { parent: 'P', axis: 'x', groups: [
+        { members: ['P/A', 'P/B', 'P/C'], intraGap: 8 },
+        { members: ['P/D', 'P/E'], intraGap: 8 },
+      ] },
+    ]);
+  });
+  it('brief ⑤:间距全大(80 > 阈值 32)→ 全单成员簇不报', () => {
+    expect(detectVisualGroups(rowFixtureSpacing([80, 80, 80]), 32)).toEqual([]);
+  });
+  it('仅一个多成员簇(间距 [8,8,80] → 3 成员簇 + 1 单成员)→ 不报(单组无分组对比语义,该紧排形态由等距组检测覆盖)', () => {
+    expect(detectVisualGroups(rowFixtureSpacing([8, 8, 80]), 32)).toEqual([]);
+  });
+  it('阈值含等号:相邻间距恰 = 阈值(32)→ 归同簇([32,80,8] → {A,B}+{C,D} 两多成员簇)', () => {
+    expect(detectVisualGroups(rowFixtureSpacing([32, 80, 8]), 32)).toEqual([
+      { parent: 'P', axis: 'x', groups: [
+        { members: ['P/A', 'P/B'], intraGap: 32 },
+        { members: ['P/C', 'P/D'], intraGap: 8 },
+      ] },
+    ]);
+  });
+});
+
+describe('buildQualityReport alignment_lanes/visual_groups(批2 Task3)', () => {
+  it('brief ⑥a:无档位未传 → 视觉组检测跳过(order 无 visual_groups 字段;对齐线恒跑,空数组照挂)', () => {
+    const r = buildQualityReport(rowFixtureSpacing([8, 8, 80, 8]));
+    expect(r!.order!.alignment_lanes).toEqual([]);
+    expect(r!.order!.visual_groups).toBeUndefined();
+  });
+  it('brief ⑥b:档位 [4,8,16,24] → 阈值取最大 24:间距 80 > 24 断簇 → 两视觉组挂出(建议含 HBox/VBox)', () => {
+    const r = buildQualityReport(rowFixtureSpacing([8, 8, 80, 8]), { spacingScale: [4, 8, 16, 24] });
+    expect(r!.order!.visual_groups).toHaveLength(1);
+    const vg = r!.order!.visual_groups![0]!;
+    expect(vg.groups.map(g => g.members)).toEqual([['P/A', 'P/B', 'P/C'], ['P/D', 'P/E']]);
+    expect(vg.suggestion).toContain('HBox/VBox');
+  });
+  it('显式 visualThresholdPx 覆盖缺省链(无 spacingScale 亦生效):阈 100 → 全归一簇无分组,字段照挂空数组(跑了无发现)', () => {
+    const r = buildQualityReport(rowFixtureSpacing([8, 8, 80, 8]), { visualThresholdPx: 100 });
+    expect(r!.order!.visual_groups).toEqual([]);
+  });
+  it('对齐线有发现 → order.alignment_lanes 挂出且建议文案逐字(brief 模板)', () => {
+    const r = buildQualityReport(laneFixture(27));
+    expect(r!.order!.alignment_lanes).toEqual([
+      { parent: 'P', kind: 'left', lane: 24, majority: ['P/A', 'P/B', 'P/C'],
+        outliers: [{ path: 'P/D', offset: 3 }],
+        suggestion: '多数派 3 节点共享 left 对齐线 24px,离群 P/D 偏 3px' },
+    ]);
+  });
+});
+
 describe('buildQualityReport', () => {
   it('空输入集 → null(D8:无发现省略输出)', () => {
     expect(buildQualityReport([], { viewport: { w: 960, h: 540 } })).toBeNull();
@@ -348,7 +451,7 @@ describe('buildQualityReport', () => {
     expect(r?.quality?.bare_shells.map(b => b.path)).toEqual(['Panel/MoneyLay']);
     expect(r?.quality?.viewport_overflow).toEqual([]);
   });
-  it('有发现 → 报告对象,条目各带中文建议(指向 solve_from_current/容器化);靶子 960×540 无溢出无等距 → order null', () => {
+  it('有发现 → 报告对象,条目各带中文建议(指向 solve_from_current/容器化);靶子 MoneyLay 三子 bottom/vc 近对齐+离群 → 批2 Task3 对齐线挂出(旧断言"无溢出无等距 → order null"随检测面扩展更新)', () => {
     const r = buildQualityReport(targetFixture(), { viewport: { w: 960, h: 540 } });
     expect(r).not.toBeNull();
     expect(r!.quality).not.toBeNull();
@@ -359,7 +462,21 @@ describe('buildQualityReport', () => {
     expect(follow.parent).toBe('Panel');
     expect(follow.suggestion).toContain('solve_from_current');
     expect(r!.quality!.out_of_bounds).toEqual([]);
-    expect(r!.order).toBeNull();
+    // 靶子标定真发现:MonthNum/DataImg2 的 bottom 差 1.75、vc 差 1.5(≤2 容差内成簇),
+    // LoginMonthLabel 偏出——bottom 线 lane (89.5+91.25)/2、vc 线 lane (69.75+71.25)/2
+    expect(r!.order!.alignment_lanes).toEqual([
+      { parent: 'Panel/MoneyLay', kind: 'bottom', lane: 90.375,
+        majority: ['Panel/MoneyLay/MonthNum', 'Panel/MoneyLay/DataImg2'],
+        outliers: [{ path: 'Panel/MoneyLay/LoginMonthLabel', offset: -4.625 }],
+        suggestion: '多数派 2 节点共享 bottom 对齐线 90.4px,离群 Panel/MoneyLay/LoginMonthLabel 偏 -4.6px' },
+      { parent: 'Panel/MoneyLay', kind: 'vc', lane: 70.5,
+        majority: ['Panel/MoneyLay/DataImg2', 'Panel/MoneyLay/MonthNum'],
+        outliers: [{ path: 'Panel/MoneyLay/LoginMonthLabel', offset: 3.25 }],
+        suggestion: '多数派 2 节点共享 vc 对齐线 70.5px,离群 Panel/MoneyLay/LoginMonthLabel 偏 3.3px' },
+    ]);
+    expect(r!.order!.equidistant).toEqual([]);
+    expect(r!.order!.spacing_scale).toBeUndefined();
+    expect(r!.order!.visual_groups).toBeUndefined();
   });
   it('仅等距发现 → quality null / order 非空(两节独立省略语义)', () => {
     const anchor05 = { left: 0.1, right: 0.1, top: 0.1, bottom: 0.1 };
@@ -415,14 +532,16 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     return body;
   }
 
-  it('有发现 → data.quality 挂节(含建议);无等距 → order 省略', async () => {
+  it('有发现 → data.quality 挂节(含建议);批2 Task3 对齐线在靶子 fixture 有真发现 → order 挂出(旧断言"无等距 order 省略"随检测面扩展更新)', async () => {
     mockMeasureOutput(targetFixture());
     const body = await runMeasure();
     const q = body.data.quality as { bare_shells: Array<{ path: string }>; should_follow: Array<{ path: string }>; viewport_overflow: unknown[] };
     expect(q.bare_shells.map(b => b.path)).toEqual(['Panel/MoneyLay']);
     expect(q.should_follow).toContainEqual(expect.objectContaining({ path: 'Panel/Bj' }));
     expect(q.viewport_overflow).toEqual([]);
-    expect(body.data.order).toBeUndefined();
+    const order = body.data.order as { alignment_lanes: Array<{ parent: string; kind: string }> };
+    expect(order.alignment_lanes.map(l => `${l.parent}:${l.kind}`))
+      .toEqual(['Panel/MoneyLay:bottom', 'Panel/MoneyLay:vc']);
   });
   it('stalled=true → quality/order 均不挂(D8:布局未收敛不出判定)', async () => {
     mockMeasureOutput(targetFixture(), true);
@@ -453,6 +572,18 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     mockMeasureOutput(rowFixtureSpacing([8, 16, 13]));
     const body = await runMeasure();
     expect(body.data.order).toBeUndefined();
+  });
+  it('批2 Task3:theme space_* 档位 → 视觉组阈值取最大档,order.visual_groups 挂出(index.ts 零改动,缺省链经既有接线生效)', async () => {
+    mockMeasureOutput(rowFixtureSpacing([8, 8, 80, 8]), false, { space_1: 24 });
+    const body = await runMeasure();
+    const order = body.data.order as {
+      visual_groups: Array<{ parent: string; axis: string; groups: Array<{ members: string[]; intraGap: number }> }>;
+    };
+    expect(order.visual_groups).toHaveLength(1);
+    expect(order.visual_groups[0]!.groups).toEqual([
+      { members: ['P/A', 'P/B', 'P/C'], intraGap: 8 },
+      { members: ['P/D', 'P/E'], intraGap: 8 },
+    ]);
   });
   it('批2 Task2:stalled=true → spacing_scale 同样不挂(D8 布局未收敛不出判定)', async () => {
     mockMeasureOutput(rowFixtureSpacing([8, 16, 13]), true, { space_1: 8, space_2: 16 });
@@ -554,7 +685,15 @@ describe.skipIf(!hasE2e)('quality 靶子 e2e(DotaLegendGodot daily_login,挂主�
       const panelSec = sceneText.split('[node name="Panel"')[1]!.split('[node')[0];
       expect(panelSec, 'quality 全零须以场景已锚点化为证(防检测器哑火假绿)').toMatch(/layout_mode = 1/);
       expect(panelSec).toMatch(/anchor_left = 0\.1/);
-      expect(body.data.order).toBeUndefined();
+      // 批2 Task3:锚点化保持 rect 不变 → 对齐线真发现(TopRigLay 等 sibling 组)照挂,
+      // order 不再硬绑 undefined——若挂出须仅因 alignment_lanes(等距/档位仍全零)
+      const order2 = body.data.order as
+        | { alignment_lanes?: Array<{ parent: string; kind: string }>; equidistant?: unknown[] }
+        | undefined;
+      if (order2 !== undefined) {
+        expect(order2.alignment_lanes, '改造后 order 仅应因批2对齐线挂出').toBeDefined();
+        expect(order2.equidistant ?? []).toEqual([]);
+      }
       console.log('[task4-e2e] 靶子已处批1改造后状态:裸壳/应跟随/溢出/等距全零(名单化处置完毕,见 docs/superpowers/plans/2026-11-16-refero-batch1-acceptance.md)');
       return;
     }
