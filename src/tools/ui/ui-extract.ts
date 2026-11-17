@@ -317,8 +317,10 @@ function topSlot(slots: Map<string, number>): string {
  * set_color/set_constant + 原子落盘(make_dir_recursive → tmp → ResourceSaver.save →
  * rename,复制 ui-tokens.ts genTokenSetScript 模式,错误分支同款)。草稿 JSON 内嵌
  * (escapeForGdLiteral + GD 侧 JSON.parse_string,同 genStyleExpectInit 先例——
- * 节点/类型名是任意字符串,禁裸拼 GD 字面量)。corner_radius/border_width 支持
- * dict 四角/统一 number 两种形态(StyleBoxFlatSpec 类型全量,读回恒 dict,防御双形态)。
+ * 节点/类型名是任意字符串,禁裸拼 GD 字面量);parse 失败 fail-loud(审查 MINOR-5:
+ * error 输出+return,不静默降级空 dict 落空 Theme 假报 draft_saved 0/0/0——实际
+ * 不可达(调用方传的是 TS JSON.stringify 产物),防御取向)。corner_radius/border_width
+ * 支持 dict 四角/统一 number 两种形态(StyleBoxFlatSpec 类型全量,读回恒 dict,防御双形态)。
  */
 export function genDraftSaveScript(draftPath: string, draft: ThemeDraft): string {
   const dp = escapeForGdLiteral(draftPath);
@@ -327,7 +329,11 @@ export function genDraftSaveScript(draftPath: string, draft: ThemeDraft): string
 
 func _initialize():
 	var _parsed = JSON.parse_string("${json}")
-	var _draft: Dictionary = _parsed if typeof(_parsed) == TYPE_DICTIONARY else {}
+	if typeof(_parsed) != TYPE_DICTIONARY:
+		_mcp_output("error", "draft JSON parse failed for: ${dp}")
+		_mcp_done()
+		return
+	var _draft: Dictionary = _parsed
 	var _theme := Theme.new()
 	for _sbx in _draft.get("styleboxes", []):
 		var _d: Dictionary = _sbx

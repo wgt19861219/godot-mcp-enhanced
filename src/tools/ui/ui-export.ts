@@ -86,7 +86,10 @@ func _channel(list: Array) -> Dictionary:
 	var _names: Array = []
 	for _i in range(mini(${CHANNEL_TOP}, list.size())):
 		_names.append(str(list[_i]))
-	return {"names": _names, "more": list.size() - ${CHANNEL_TOP}}
+	# HIGH-1(审查修复): more 下限钳制 0——通道 1-9 条(<top10 常态)时裸减产负数,
+	# TS 侧 total = names.length + more 会全错(真机实锤 "-4: a, b, c")。源头修在此,
+	# TS 侧 chanCell 信任输入形态不重复钳制。
+	return {"names": _names, "more": maxi(0, list.size() - ${CHANNEL_TOP})}
 `;
 }
 

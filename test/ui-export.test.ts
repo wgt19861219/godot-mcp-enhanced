@@ -34,6 +34,13 @@ describe('genThemeInspectScript(批4 Task 3)', () => {
     expect(script).toContain('"DesignTokens"');
   });
 
+  it('HIGH-1(审查修复): more 计数下限钳制——源码锚 maxi(0, size-top)(通道 <10 条不产负数)', () => {
+    const script = genThemeInspectScript('res://ui/theme.tres');
+    // GD 侧源头修复:修复前 `list.size() - 10` 在 1-9 条通道产负 more,
+    // TS 侧 total = names+more 全错(真机实锤 `-4: a, b, c`)
+    expect(script).toContain('maxi(0,');
+  });
+
   it('无场景加载(不触 _mcp_load_scene 调用;header 函数定义恒在)', () => {
     const script = genThemeInspectScript('res://ui/theme.tres');
     expect(script).not.toContain('_mcp_load_scene("');
@@ -95,6 +102,18 @@ describe('buildDesignDoc(批4 Task 3)', () => {
     expect(doc).toContain('TOP');
     expect(doc).toContain('CENTER');
     expect(doc).toContain('self_modulate');
+  });
+
+  it('HIGH-1(审查修复): 通道 <10 条时 cell 计数正常(3 条 → "3: a, b, c",不为负)', () => {
+    // 修复前三重盲区:chan() helper 手工 more=0 / e2e big.tres 只测 >10 / many.tres 不查 cell
+    const inspect: ThemeInspect = {
+      tokens: { colors: {}, constants: {} },
+      types: [{ type: 'Small', colors: chan(['a', 'b', 'c']) }],
+      has_default_font: false,
+    };
+    const doc = buildDesignDoc(inspect);
+    expect(doc).toContain('| Small | 3: a, b, c |');
+    expect(doc).not.toMatch(/-\d+: /);
   });
 
   it('类型摘要表: 每类型各通道 counts + names 截断(>5 → (+N more))', () => {
@@ -248,6 +267,9 @@ ${manyLines.join('\n')}
     expect(doc).toContain('export_doc');
     expect(doc).toContain('$brand');
     expect(doc).toContain('space_1');
+    // HIGH-1 真机锁:DesignTokens type 的 colors 通道仅 1 条(<10 常态路径)——
+    // 修复前 GD more = 1-10 = -9 → cell "-8: brand";修复后 maxi(0,...) → "1: brand"
+    expect(doc).toContain('| DesignTokens | 1: brand');
   }, 120_000);
 
   it('裸 Theme: 空档说明不报错(审计语义,缺失≠错误)', async () => {

@@ -66,7 +66,7 @@
 | `value` | any |  | theme_set_property: 属性值（default_font/stylebox 为资源路径，color 为 [r,g,b,a]，constant 为数字） |
 | `token_name` | string |  | token_set: token 名(白名单 ^[A-Za-z_][A-Za-z0-9_-]*$,与 $name 引用语法一致) |
 | `token_value` | any |  | token_set: token 值——color 形态 [r,g,b] 或 [r,g,b,a]（0-1，元素须有限数）或数字常量（有限数） |
-| `draft_path` | string |  | extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告 |
+| `draft_path` | string |  | extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告) |
 | `ops` | array |  | ui_draw_recipe: 绘图操作数组（最多 200 个） |
 | `max_depth` | number |  | ui_measure_layout: 最大遍历深度(默认 16,上限 64) |
 | `expect_tree` | object |  | ui_measure_layout: 可选目标树(同 ui_build_layout tree,含 rect);提供时输出逐节点 diff/重叠/越界 |

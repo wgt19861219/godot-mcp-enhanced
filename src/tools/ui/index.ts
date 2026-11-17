@@ -145,7 +145,7 @@ export function getToolDefinitions(): Tool[] {
           token_value: {
             description: 'token_set: token 值——color 形态 [r,g,b] 或 [r,g,b,a]（0-1，元素须有限数）或数字常量（有限数）',
           },
-          draft_path: { type: 'string', description: 'extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告' },
+          draft_path: { type: 'string', description: 'extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告)' },
           ops: {
             type: 'array',
             description: 'ui_draw_recipe: 绘图操作数组（最多 200 个）',

@@ -6395,7 +6395,7 @@
           },
           "draft_path": {
             "type": "string",
-            "description": "extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告"
+            "description": "extract_tree: 可选 Theme 草稿落盘路径(.tres,相对项目;缺省只回报告)"
           },
           "ops": {
             "type": "array",
@@ -6867,8 +6867,8 @@
       },
       "size": {
         "descBytes": 1035,
-        "schemaBytes": 13241,
-        "totalBytes": 14276
+        "schemaBytes": 13242,
+        "totalBytes": 14277
       },
       "annotations": {
         "readOnlyHint": false,

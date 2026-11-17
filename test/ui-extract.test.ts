@@ -93,6 +93,13 @@ describe('genDraftSaveScript(批4 Task 3)', () => {
     expect(script).toContain('JSON.parse_string');
     expect(script).toContain('text_ff8040');
   });
+
+  it('MINOR-5(审查修复): parse 失败 fail-loud——error 输出+return,不静默落空 Theme', () => {
+    const draft = { styleboxes: [], colors: [], constants: [] };
+    const script = genDraftSaveScript('res://themes/draft.tres', draft);
+    // 修复前:非 dict 静默降级 {} → 落空 Theme 报 draft_saved 0/0/0(假绿)
+    expect(script).toContain('draft JSON parse failed');
+  });
 });
 
 // ─── extractTreeReport(聚类纯函数)───────────────────────────────────────────
@@ -229,6 +236,18 @@ describe('extractTreeReport(批4 Task 3 聚类)', () => {
     const { report, notes } = extractTreeReport(scan);
     expect(report.stylebox_groups).toEqual([]);
     expect(notes.join('\n')).toContain('StyleBoxFlat');
+  });
+
+  it('MINOR-6(审查修复): 平票次键锁定——组排序稳定 sort 首见在前;draft 选举 reduce 严格 > 取首见', () => {
+    // 两 spec 各 count 1(平票):PanelA 的 spec 首见 → 组序在前 + draft 选举胜出
+    const scan: ExtractScanNode[] = [
+      { path: 'PanelA', type: 'Panel', styles: [reading('panel', BG_AB)] },
+      { path: 'PanelB', type: 'Panel', styles: [reading('panel', BG_C)] },
+    ];
+    const { report, draft } = extractTreeReport(scan);
+    expect(report.stylebox_groups[0].spec.bg_color).toEqual(BG_AB);
+    expect(report.stylebox_groups[1].spec.bg_color).toEqual(BG_C);
+    expect(draft!.styleboxes.find(s => s.type === 'Panel')!.spec.bg_color).toEqual(BG_AB);
   });
 });
 
