@@ -168,7 +168,7 @@ export function genUiMeasureScript(
   // 否则 root(Window.theme 属性)。_mcp_scene_instance 是 SCENE_TREE_HEADER 的 class 级
   // 声明,_emit 可直接引用;themeMount 的 scene-root 分支已保证非 Control 早退,此处
   // as Control 安全。type 不存在 → get_constant_list 空 → 空 dict(无声明不发噪音,
-  // 不报错);键 str() 转 String(StringName 键进 JSON.stringify 前的显式归一)。
+  // 不报错);键 str() 归一(防御性,恒等转换)。
   const themeConstEmit = opts?.themePath
     ? `\t# 批2 Task2:DesignTokens constants 导出——从实际挂载点读回 Theme(与 genThemeMountInit
 \t# 挂载目标一致);type 不存在 → 空 dict(无声明不发噪音,不报错)

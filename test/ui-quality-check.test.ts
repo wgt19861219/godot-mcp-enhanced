@@ -256,22 +256,46 @@ function rowFixtureSpacing(gaps: number[]): MeasuredNode[] {
   return nodes;
 }
 
+// 落档判定容差语义(Task2 审查 Important,plan-mandated):|gap − nearest| ≤ 2px 算
+// 落档(spec 批2 节「对照档位表,容差 2px」)——brief 原用例的 13/距档 1px 是计划转写
+// 缺陷,off 例须距最近档 >2px(真出容差窗)才成立;浮点 rect 下严格相等会系统性误报。
 describe('detectSpacingScale(批2 Task2)', () => {
-  it('brief Step2 ①:兄弟间距 [8,8,16,13] 档位 [4,8,12,16,24] → rate=0.75,off_scale 含 13→nearest 12 一条', () => {
+  it('brief ①重设·容差内贴档:间距 [8,8,16,13] 档位 [4,8,12,16,24] → 13 距 12 仅 1px(≤2)全落档 rate=1.0', () => {
     const r = detectSpacingScale(rowFixtureSpacing([8, 8, 16, 13]), [4, 8, 12, 16, 24]);
+    expect(r).not.toBeNull();
+    expect(r!.on_scale).toBe(4);
+    expect(r!.total).toBe(4);
+    expect(r!.rate).toBe(1);
+    expect(r!.off_scale).toEqual([]);
+  });
+  it('brief ①重设·真偏离:间距 [8,8,16,19] 档位 [4,8,12,16,24] → 19 距 16 为 3px(>2)→ rate=0.75,off 一条 nearest 16', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([8, 8, 16, 19]), [4, 8, 12, 16, 24]);
     expect(r).not.toBeNull();
     expect(r!.on_scale).toBe(3);
     expect(r!.total).toBe(4);
     expect(r!.rate).toBe(0.75);
-    expect(r!.off_scale).toEqual([{ a: 'P/D', b: 'P/E', gap: 13, nearest: 12 }]);
+    expect(r!.off_scale).toEqual([{ a: 'P/D', b: 'P/E', gap: 19, nearest: 16 }]);
   });
-  it('brief Step2 ②:单档表 [8] 间距 [8,9] → rate=0.5(9 距最近档 8 仅 1px 仍算 off)', () => {
+  it('brief ②重设·容差内:单档表 [8] 间距 [8,9] → 9 距 8 仅 1px(≤2)→ rate=1.0', () => {
     const r = detectSpacingScale(rowFixtureSpacing([8, 9]), [8]);
-    expect(r).not.toBeNull();
+    expect(r!.on_scale).toBe(2);
+    expect(r!.total).toBe(2);
+    expect(r!.rate).toBe(1);
+    expect(r!.off_scale).toEqual([]);
+  });
+  it('brief ②重设·真偏离:单档表 [8] 间距 [8,11] → 11 距 8 为 3px(>2)→ rate=0.5,off 含 gap 11', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([8, 11]), [8]);
     expect(r!.on_scale).toBe(1);
     expect(r!.total).toBe(2);
     expect(r!.rate).toBe(0.5);
-    expect(r!.off_scale).toEqual([{ a: 'P/B', b: 'P/C', gap: 9, nearest: 8 }]);
+    expect(r!.off_scale).toEqual([{ a: 'P/B', b: 'P/C', gap: 11, nearest: 8 }]);
+  });
+  it('容差边界:距最近档恰 2px → on(≤);2.5px → off(修复动机:浮点 rect 不因 0.5px 噪声误报)', () => {
+    expect(detectSpacingScale(rowFixtureSpacing([10]), [8])!.off_scale).toEqual([]); // 10−8=2 ≤ 2
+    expect(detectSpacingScale(rowFixtureSpacing([10.5]), [8])!.off_scale)
+      .toEqual([{ a: 'P/A', b: 'P/B', gap: 10.5, nearest: 8 }]); // 2.5 > 2
+    // 浮点噪声:12.0000001 距 12 档 1e-7,容差内落档(严格相等会系统性误报)
+    expect(detectSpacingScale(rowFixtureSpacing([12.0000001]), [12])!.on_scale).toBe(1);
   });
   it('brief Step2 ③:零兄弟对 → null(不发噪音)', () => {
     const single: MeasuredNode[] = [{ path: '.', type: 'Control', rect: { x: 0, y: 0, w: 100, h: 50 } }];
@@ -280,11 +304,11 @@ describe('detectSpacingScale(批2 Task2)', () => {
   it('brief Step2 ④:scale 空 → null(无档位声明,Review Focus 3)', () => {
     expect(detectSpacingScale(rowFixtureSpacing([8]), [])).toBeNull();
   });
-  it('nearest 并列取较小档(间距 10 档 [8,12] 距均 2 → nearest 8)', () => {
-    const r = detectSpacingScale(rowFixtureSpacing([10]), [12, 8]);
-    expect(r!.off_scale).toEqual([{ a: 'P/A', b: 'P/B', gap: 10, nearest: 8 }]);
+  it('nearest 并列取较小档(间距 10 档 [7,13] 距均 3px 出容差窗 → off 且 nearest 7)', () => {
+    const r = detectSpacingScale(rowFixtureSpacing([10]), [13, 7]);
+    expect(r!.off_scale).toEqual([{ a: 'P/A', b: 'P/B', gap: 10, nearest: 7 }]);
   });
-  it('贴邻 gap=0 不在档位 → off(合法紧排但非档位间距,如实报数)', () => {
+  it('贴邻 gap=0 不在档位 → off(距 8 档 8px 出容差窗,合法紧排但非档位间距,如实报数)', () => {
     const r = detectSpacingScale(rowFixtureSpacing([0]), [8]);
     expect(r!.on_scale).toBe(0);
     expect(r!.off_scale).toEqual([{ a: 'P/A', b: 'P/B', gap: 0, nearest: 8 }]);

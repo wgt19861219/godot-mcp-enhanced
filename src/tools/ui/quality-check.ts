@@ -211,13 +211,13 @@ export interface SpacingScaleResult {
  * null = scale 空或无可比对兄弟对(无声明不发噪音,Review Focus 3)。
  * 间距 = 后缘−前缘(axisGapPairs 与 detectEquidistant 同语义);无效间距(负值叠压/
  * NaN)跳过不计 total;Container 父组由 siblingsByParent 统一排除。
- * 落档判定 = 间距与档位值**精确相等**(brief 用例标定:13 距最近档 12 仅 1px 仍算
- * off、9 距 8 同理)——2px 容差在同族 detectEquidistant 是「同 run 间距互差」语义,
- * 迁移到档位对照会吸收 1px 级偏离,故 tolerancePx 不放宽落档判定,仅保留签名。 */
+ * 落档判定 = |gap − nearest| ≤ tolerancePx(spec 批2 节「对照档位表,容差 2px」,
+ * 与全仓检测器 2px 一脉相承——真实 measure 的 rect 是浮点,严格相等会让 12.0000001
+ * 系统性漏 12 档;Task2 审查 Important 裁定 spec 语义对,brief 用例系计划转写缺陷)。 */
 export function detectSpacingScale(
   measured: MeasuredNode[],
   scale: number[],
-  _tolerancePx = 2,
+  tolerancePx = 2,
 ): SpacingScaleResult | null {
   if (scale.length === 0) return null;
   // 升序副本供 nearest 遍历(严格小于更新 → 并列保留先遍历的较小档,与调用方传序无关)
@@ -235,7 +235,8 @@ export function detectSpacingScale(
           const d = Math.abs(gap - asc[i]!);
           if (d < best) { best = d; nearest = asc[i]!; }
         }
-        if (scale.includes(gap)) on++;
+        // best 即距最近档的最小距离(= |gap − nearest|),容差窗内落档
+        if (best <= tolerancePx) on++;
         else off.push({ a: a.path, b: b.path, gap, nearest });
       }
     }
