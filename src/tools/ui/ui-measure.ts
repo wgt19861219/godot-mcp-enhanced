@@ -169,6 +169,10 @@ export function genUiMeasureScript(
   // 声明,_emit 可直接引用;themeMount 的 scene-root 分支已保证非 Control 早退,此处
   // as Control 安全。type 不存在 → get_constant_list 空 → 空 dict(无声明不发噪音,
   // 不报错);键 str() 归一(防御性,恒等转换)。
+  // 终审 Minor#2 已知竞态:自带 root 主题管理器 autoload 的项目(如 DotaLegendGodot 的
+  // ThemeManager),root 通道挂载会在首帧前被 autoload _ready 的 root.set_theme 覆盖,
+  // theme_constants 读回恒空档。规避:viewport 通道挂场景根不受影响(autoload 只写 root)。
+  // 证据:批2 验收记录 §4。
   const themeConstEmit = opts?.themePath
     ? `\t# 批2 Task2:DesignTokens constants 导出——从实际挂载点读回 Theme(与 genThemeMountInit
 \t# 挂载目标一致);type 不存在 → 空 dict(无声明不发噪音,不报错)

@@ -19,6 +19,8 @@
 //
 // 【已知边界(诚实声明)】边距模拟不含 min-size 钳制与脚本运行时位移——静态 chrome 场景
 // (本工具靶子)不命中;命中时 dry_run 计划与 measure 基线的 0 容差比对会暴露差异,不会静默。
+// 根非零锚且不全铺视口时(如 anchor 0.1..0.9 内缩),零锚一级子仍会被以视口求解——写盘后
+// 按根真实尺寸重算即偏移,靠 compareBaseline 0 容差门暴露(与 min-size 钳制同款暴露面,不静默)。
 // instance= 场景(子场景实例)的内部子节点不在宿主 tscn 文本节点段,不参与解析(终审 T5③)。
 
 import { parseTscn } from '../../tscn/tscn-parser.js';
