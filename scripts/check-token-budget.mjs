@@ -18,8 +18,16 @@ export const THRESHOLDS = {
   // theme_path 挂载语义扩展)与批2(挂节后处理)的正当增量累积。裁定"校准不瘦身":批 A
   // (2026-10-26)已留「结构形状不可砍,继续压伤描述可用性」结论,再压只能动 description
   // 断言测试换无结构收益。error 12000→13000;批3 tokens 层预计增量 ~340B,校准后余量 ~670B。
-  perToolSchema: { warn: 6000,       error: 13000 },
-  perToolTotal:  { warn: 7000,       error: 14000 },
+  // perToolSchema/perToolTotal error 线二次校准(2026-11-17, Refero 批4 首任务):ui schema 实测
+  // 12656B / total 13504B,距批3 首录校准线 13000/14000 仅余 344B/496B——构成是批3 Task4 的
+  // 正当增量(token_set/token_list 的 token_name/token_value 参数 + enum +2 + description 扩写;
+  // 批4 计划 v1 沿用 T3 时点旧数 12285 是口径债,已由计划外部审查 B1 抓出)。批4 periphery 预计
+  // 增量 ~300B(detail 参数 + draft_path + enum +2 + 描述扩写),error 13000→13600、14000→14400,
+  // 校准后余量 ~640B/~700B。本条是批3 首录(同日)后的二次校准——批3 首录后隔日二录,理由同批3:
+  // 批 A(2026-10-26)已证 schema 结构形状不可砍,继续压只能伤描述可用性。warn 线全部不动;
+  // ui desc 848B ≥ warn 800 是既有有意义瘦身提醒,只记录不调。error 硬线回弹语义保留。
+  perToolSchema: { warn: 6000,       error: 13600 },
+  perToolTotal:  { warn: 7000,       error: 14400 },
   // totalSum warn 基线校准(2026-08-16 原型翻译层审查遗留⑤):实测 86412B,超旧线 80KB 5.5%,
   // 按项目"覆盖率阈值持续超 4% 应上调"惯例(vitest.config.ts 先例)上调至 90KB,消除长期
   // 恒 warn 噪声;error 120KB 硬线不动。单工具 desc warn(engine/game/ui 3 条)是有意义的
