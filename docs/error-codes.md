@@ -51,6 +51,8 @@
 | NOT_FOUND | validation | false | 目标节点/资源/记录不存在 | 先查询确认目标存在 |
 | NODE_NOT_FOUND | validation | false | 场景中找不到目标节点 | 先 `query_scene_tree` 确认节点路径 |
 | SCENE_NOT_FOUND | validation | false | 场景文件不存在或加载失败 | 确认 scene_path 正确 |
+| THEME_NOT_FOUND | validation | false | Theme 资源加载失败或节点未挂 Theme | 确认 theme_path 存在且为 Theme 资源（先 theme_create/ui_set_theme 建主题） |
+| TOKEN_NOT_FOUND | validation | false | $token 引用在 theme DesignTokens 中缺键 | `token_list` 审计现有 token 后改引用名，或先 `token_set` 写入 |
 | GUARD | guard | false | 守卫拒绝（确认令牌/只读模式拦截） | 按消息取确认令牌或退出只读模式 |
 | SANDBOX_VIOLATION | guard | false | GDScript 沙箱扫描阻断危险 API 模式 | 改用白名单 API 或走 opt-in 旁路 |
 | SANDBOX_BLOCKED | guard | false | 沙箱阻断（工具级内容拦截） | 按消息调整内容后重写 |

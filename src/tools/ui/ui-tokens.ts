@@ -56,8 +56,9 @@ function themeFileNotFoundBlock(tp: string): string {
  * 批3 Task 4:token_set——向 theme 的 DesignTokens 命名空间写一个 token 并**原子落盘**
  * (make_dir_recursive → tmp → ResourceSaver.save → rename,复制 ui-theme.ts save case 模式,
  * 错误分支同款)。value 为 array → set_color(name, DESIGN_TOKENS_TYPE, Color(...));
- * number → set_constant。无场景加载(只 load 资源,同 genTokenPrefetchScript 的 headless
- * 单次 spawn 约定,调用方 loadAutoloads=false)。theme 缺失/非 Theme → 上述错误分支
+ * number → set_constant。无场景加载(只 load 资源,不碰 _mcp_load_scene);执行走 handler
+ * 公共执行段(loadAutoloads 随公共参数 load_autoloads,默认 true,可显式关)——仅批3 Task 3
+ * 预取通道(genTokenPrefetchScript 消费侧)显式 loadAutoloads=false。theme 缺失/非 Theme → 上述错误分支
  * (THEME_NOT_FOUND 分流)。输出 JSON.stringify(通道与 token_map 一致,str(Variant)
  * roundtrip 后 TS 侧可 JSON.parse)。同名覆盖 = set_color/set_constant 原位重写 + 落盘。
  */

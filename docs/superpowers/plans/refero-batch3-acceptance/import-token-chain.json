@@ -1,0 +1,650 @@
+{
+ "geometry": {
+  "viewport": {
+   "w": 960,
+   "h": 540
+  },
+  "nodes": [
+   {
+    "name": "TokenPanel",
+    "rect": {
+     "x": 40,
+     "y": 40,
+     "w": 240,
+     "h": 80
+    },
+    "type": "Panel",
+    "bg": "$brand"
+   },
+   {
+    "name": "AccentPanel",
+    "rect": {
+     "x": 40,
+     "y": 140,
+     "w": 240,
+     "h": 40
+    },
+    "type": "Panel",
+    "bg": "$accent"
+   }
+  ]
+ },
+ "theme_path": "res://resources/themes/_batch3_tokens.tres",
+ "tokens_resolved": {
+  "theme_path": "res://resources/themes/_batch3_tokens.tres",
+  "refs": 2,
+  "tokens": [
+   "brand",
+   "accent"
+  ]
+ },
+ "style_verify": [
+  {
+   "path": "_PrototypeRoot/TokenPanel",
+   "slot": "panel",
+   "field": "bg_color",
+   "target": [
+    0.5,
+    0.25,
+    0.75,
+    1
+   ],
+   "actual": [
+    0.5,
+    0.25,
+    0.75,
+    1
+   ],
+   "delta": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "ok": true
+  },
+  {
+   "path": "_PrototypeRoot/AccentPanel",
+   "slot": "panel",
+   "field": "bg_color",
+   "target": [
+    0.25,
+    0.5,
+    0.75,
+    1
+   ],
+   "actual": [
+    0.25,
+    0.5,
+    0.75,
+    1
+   ],
+   "delta": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "ok": true
+  }
+ ],
+ "layout_verify": {
+  "targets": [
+   {
+    "path": "_PrototypeRoot",
+    "rect": {
+     "x": 0,
+     "y": 0,
+     "w": 960,
+     "h": 540
+    }
+   },
+   {
+    "path": "_PrototypeRoot/TokenPanel",
+    "rect": {
+     "x": 40,
+     "y": 40,
+     "w": 240,
+     "h": 80
+    }
+   },
+   {
+    "path": "_PrototypeRoot/AccentPanel",
+    "rect": {
+     "x": 40,
+     "y": 140,
+     "w": 240,
+     "h": 40
+    }
+   }
+  ],
+  "diff": [
+   {
+    "path": "_PrototypeRoot",
+    "target": {
+     "x": 0,
+     "y": 0,
+     "w": 960,
+     "h": 540
+    },
+    "actual": {
+     "x": 0,
+     "y": 0,
+     "w": 960,
+     "h": 540
+    },
+    "delta": {
+     "dx": 0,
+     "dy": 0,
+     "dw": 0,
+     "dh": 0
+    },
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/TokenPanel",
+    "target": {
+     "x": 40,
+     "y": 40,
+     "w": 240,
+     "h": 80
+    },
+    "actual": {
+     "x": 40,
+     "y": 40,
+     "w": 240,
+     "h": 80
+    },
+    "delta": {
+     "dx": 0,
+     "dy": 0,
+     "dw": 0,
+     "dh": 0
+    },
+    "ok": true
+   },
+   {
+    "path": "_PrototypeRoot/AccentPanel",
+    "target": {
+     "x": 40,
+     "y": 140,
+     "w": 240,
+     "h": 40
+    },
+    "actual": {
+     "x": 40,
+     "y": 140,
+     "w": 240,
+     "h": 40
+    },
+    "delta": {
+     "dx": 0,
+     "dy": 0,
+     "dw": 0,
+     "dh": 0
+    },
+    "ok": true
+   }
+  ],
+  "overlaps": [
+   {
+    "a": "Panel",
+    "b": "_PrototypeRoot",
+    "overlap": {
+     "x": 100.75,
+     "y": 36.25,
+     "w": 758.5,
+     "h": 493.5
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/CloseBtn",
+    "overlap": {
+     "x": 810.549987792969,
+     "y": 55.0499992370605,
+     "w": 26.4000244140625,
+     "h": 26.4000015258789
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/MoneyLay",
+    "overlap": {
+     "x": 112.25,
+     "y": 44.75,
+     "w": 225,
+     "h": 64
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/TopRigLay",
+    "overlap": {
+     "x": 446.75,
+     "y": 44.75,
+     "w": 400,
+     "h": 64
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/TimeImg",
+    "overlap": {
+     "x": 125.5,
+     "y": 136.75,
+     "w": 11.5,
+     "h": 12
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/CountdownPre",
+    "overlap": {
+     "x": 141.25,
+     "y": 133.75,
+     "w": 200,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/CountdownTime",
+    "overlap": {
+     "x": 290.75,
+     "y": 133.75,
+     "w": 56,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/MonthTotalSuf",
+    "overlap": {
+     "x": 812.75,
+     "y": 133.75,
+     "w": 20,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/MonthTotalNum",
+    "overlap": {
+     "x": 782.75,
+     "y": 133.75,
+     "w": 30,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/MonthTotalPre",
+    "overlap": {
+     "x": 662.75,
+     "y": 133.75,
+     "w": 120,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/Bj",
+    "b": "Panel/DayItemPos",
+    "overlap": {
+     "x": 119.25,
+     "y": 154.25,
+     "w": 720,
+     "h": 355
+    }
+   },
+   {
+    "a": "Panel/CloseBtn",
+    "b": "Panel/TopRigLay",
+    "overlap": {
+     "x": 810.549987792969,
+     "y": 55.0499992370605,
+     "w": 26.4000244140625,
+     "h": 26.4000015258789
+    }
+   },
+   {
+    "a": "Panel/CountdownPre",
+    "b": "Panel/CountdownTime",
+    "overlap": {
+     "x": 290.75,
+     "y": 133.75,
+     "w": 50.5,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/MoneyLay/DataImg2",
+    "b": "Panel/MoneyLay/MonthNum",
+    "overlap": {
+     "x": 156,
+     "y": 53,
+     "w": 7.75,
+     "h": 36.5
+    }
+   },
+   {
+    "a": "Panel/MoneyLay/MonthNum",
+    "b": "Panel/MoneyLay/LoginMonthLabel",
+    "overlap": {
+     "x": 199.25,
+     "y": 61.75,
+     "w": 3.25,
+     "h": 27.75
+    }
+   },
+   {
+    "a": "Panel/MoneyLay/LoginMonthLabel",
+    "b": "Panel/MoneyLay/RuleButt",
+    "overlap": {
+     "x": 268.475006103516,
+     "y": 63.4749984741211,
+     "w": 18.549987792968807,
+     "h": 18.5500011444092
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/ProgressBj",
+    "overlap": {
+     "x": 452.25,
+     "y": 93.75,
+     "w": 299,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Pot1",
+    "overlap": {
+     "x": 502.5,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Pot2",
+    "overlap": {
+     "x": 580.5,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Pot3",
+    "overlap": {
+     "x": 661,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Pot4",
+    "overlap": {
+     "x": 741.5,
+     "y": 93.75,
+     "w": 9.75,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/DayNum1",
+    "overlap": {
+     "x": 452.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/DayNum2",
+    "overlap": {
+     "x": 531.25,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/DayNum3",
+    "overlap": {
+     "x": 607.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/DayNum4",
+    "overlap": {
+     "x": 687.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Tian1",
+    "overlap": {
+     "x": 465.75,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Tian2",
+    "overlap": {
+     "x": 544.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Tian3",
+    "overlap": {
+     "x": 624.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBar",
+    "b": "Panel/TopRigLay/Tian4",
+    "overlap": {
+     "x": 704.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Pot1",
+    "overlap": {
+     "x": 502.5,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Pot2",
+    "overlap": {
+     "x": 580.5,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Pot3",
+    "overlap": {
+     "x": 661,
+     "y": 93.75,
+     "w": 12.5,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Pot4",
+    "overlap": {
+     "x": 741.5,
+     "y": 93.75,
+     "w": 9.75,
+     "h": 11
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/DayNum1",
+    "overlap": {
+     "x": 452.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/DayNum2",
+    "overlap": {
+     "x": 531.25,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/DayNum3",
+    "overlap": {
+     "x": 607.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/DayNum4",
+    "overlap": {
+     "x": 687.75,
+     "y": 93.75,
+     "w": 30,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Tian1",
+    "overlap": {
+     "x": 465.75,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Tian2",
+    "overlap": {
+     "x": 544.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Tian3",
+    "overlap": {
+     "x": 624.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/ProgressBj",
+    "b": "Panel/TopRigLay/Tian4",
+    "overlap": {
+     "x": 704.25,
+     "y": 93.75,
+     "w": 20,
+     "h": 2
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/DayNum1",
+    "b": "Panel/TopRigLay/Tian1",
+    "overlap": {
+     "x": 465.75,
+     "y": 75.75,
+     "w": 17,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/DayNum2",
+    "b": "Panel/TopRigLay/Tian2",
+    "overlap": {
+     "x": 544.25,
+     "y": 75.75,
+     "w": 17,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/DayNum3",
+    "b": "Panel/TopRigLay/Tian3",
+    "overlap": {
+     "x": 624.25,
+     "y": 75.75,
+     "w": 13.5,
+     "h": 20
+    }
+   },
+   {
+    "a": "Panel/TopRigLay/DayNum4",
+    "b": "Panel/TopRigLay/Tian4",
+    "overlap": {
+     "x": 704.25,
+     "y": 75.75,
+     "w": 13.5,
+     "h": 20
+    }
+   }
+  ],
+  "out_of_bounds": [],
+  "viewport": {
+   "h": 540,
+   "w": 960
+  }
+ },
+ "build_warnings": [
+  "使用提示: 避免构造 ≤2px 宽的相邻独立节点(容差模糊带)——verify 容差内兄弟关系与偏移不可区分"
+ ]
+}

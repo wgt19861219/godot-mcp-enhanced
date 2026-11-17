@@ -1,7 +1,7 @@
 # Refero 设计系统借鉴落地 — 设计文档
 
 日期:2026-11-16
-状态:v2(2026-11-16 吸收外部审查 BLOCKING 项修订:4 P0 + 7 P1 + 9 Nits 全部对账核实后落实)
+状态:v3(2026-11-17 批3 Task 5 维护:D8 补字段级输出纪律、新增 D10 theme_path 显式传递、批3 节 token_set 表述修正为文件级 action;v2=2026-11-16 吸收外部审查 BLOCKING 项修订:4 P0 + 7 P1 + 9 Nits 全部对账核实后落实)
 来源:[styles.refero.design](https://styles.refero.design/) 方法论分析(2026-11-16 会话)+ 用户痛点澄清 + 外部审查(file:line 级对账)
 
 ## 意图与为什么
@@ -140,8 +140,8 @@ Theme `DesignTokens` type 下声明 spacing 档位(`set_constant("space_1".."spa
 
 - proto-geometry schema:颜色字段(`bg/color/fill/border.color`)接受 `"$name"` 引用(strict 白名单放行 `$` 前缀字符串,与现有三格式并列)。
 - **token 解析通道(P1-3 定案:GD 预取注入,保持翻译器纯函数)**:翻译前由 GD 侧一次性执行 `load(theme_path)` → 遍历 `DesignTokens` type 导出全量 `{name: value}` JSON map → 作为 `token_map` 入参注入翻译器。翻译器本体仍零 Godot 依赖,单测用 fixture map;TS 侧**不**解析 .tres 文本(复刻 Godot 序列化格式脆)。查不到 → `TOKEN_NOT_FOUND`(点名 token 名 + theme 路径)。
-- `theme_path` 默认 `res://ui/theme.tres`,靶子项目配 `res://resources/themes/default_theme.tres`。
-- `token_set`(**N6 组合关系明示**):= `theme_set_property(theme_type="DesignTokens")` 的语法糖 + **ResourceSaver 落盘**(theme_set_property 现状不落盘,token_set 的增量价值就是"一次调用写入并保存",不是新机制);`token_list` 读全量。token 名进 GDScript 前白名单校验(字符集 `^[A-Za-z_][A-Za-z0-9_-]*$`,对齐 gdEscape 纪律)(P1-6)。
+- `theme_path` **无默认值**(D10):`$token` 引用必须显式传 theme_path,缺省报 INVALID_PARAMS;`res://ui/theme.tres` 仅为错误提示语中的**约定路径建议**(提示语提示,非隐式回退——显式优于隐式,静默回落默认值会把 token 解析/写入指向错误主题),靶子项目实际配 `res://resources/themes/default_theme.tres`。
+- `token_set`(**N6 组合关系明示**):**文件级新 action**——项语义对齐 `theme_type="DesignTokens"`,自带 ResourceSaver 原子落盘,**不经场景节点**(theme_set_property 操作场景节点的 theme 且现状不落盘;token_set 面向 theme 文件本身,不是 node.theme 的语法糖);`token_list` 读全量。token 名进 GDScript 前白名单校验(字符集 `^[A-Za-z_][A-Za-z0-9_-]*$`,对齐 gdEscape 纪律)(P1-6)。
 - StyleBoxFlatSpec 颜色引用 token 时仍逐节点 override;StyleBox 共享去重留批4 评估。
 
 ## 批4 设计:周边工具
@@ -170,8 +170,9 @@ Theme `DesignTokens` type 下声明 spacing 档位(`set_constant("space_1".."spa
 | D5 | 写回 = tscn 文本 patch(保注释),`layout_mode=1`,浮点 offset | 外部审查 P0-3 + 自核(Math.round 舍入) |
 | D6 | flow schema BC:平级新键 `flow_gap`/`flow_align`,不动枚举 | 外部审查 P1-2 |
 | D7 | token 通道 = GD 预取 map 注入,翻译器保持纯函数 | 外部审查 P1-3(方案自定) |
-| D8 | quality/order 仅有发现时输出;stalled 不判定 | 外部审查 P1-4 |
+| D8 | quality/order 报告输出纪律:**节级省略**(整节无发现不挂字段,null 语义——quality 四类全无发现省略 quality 节;order 四类检测任一无产出省略 order 节);**已挂节的必检字段空数组照挂**(`equidistant: []`/`alignment_lanes: []`——必检检测恒跑,空数组区分"检测了无发现"与"未检测");**条件性检测字段未触发时省略**(`spacing_scale` 依赖档位声明、`visual_groups` 依赖阈值缺省链,缺席 = 未跑不发噪音,接口层 optional);stalled 不判定 | 外部审查 P1-4;批3 Task 5 按实现实况(quality-check.ts OrderSection/QualitySection)补字段级纪律 |
 | D9 | 验收 0 容差(2px 绿不承载"坐标是圣经");基线为 raw 快照非 expect_tree | 外部审查 P0-4 |
+| D10 | theme_path 无默认值——`$token` 引用必须显式传 theme_path;`res://ui/theme.tres` 仅为错误提示语中的约定路径建议(显式优于隐式,静默回落默认值会把 token 解析指向错误主题) | 批3 Task 3 实现(缺 theme_path 报 INVALID_PARAMS 附约定路径指引);批3 Task 5 spec 定档 |
 
 ## 开放问题(N9,v2 新增)
 
