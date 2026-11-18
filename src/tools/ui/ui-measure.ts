@@ -191,7 +191,7 @@ var _stable_count := 0
 var _last_snapshot := ""
 var _target: Node = null
 var _count := 0
-const _all_slots := ["panel", "normal", "background", "fill", "hover", "pressed", "disabled"]  # 与 types.ts STYLEBOX_SLOTS 双份硬编码,扩槽须两处同步
+const _all_slots := ["panel", "normal", "background", "fill", "hover", "pressed", "disabled"]  # 与 types.ts STYLEBOX_SLOTS 三份硬编码,扩槽须三处同步
 var _style_expect: Dictionary = {}
 ${vp.declare}
 func _initialize():

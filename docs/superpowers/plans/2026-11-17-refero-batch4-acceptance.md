@@ -81,7 +81,7 @@ geometry.nodes = [
 | `out_of_bounds` | 0 | — |
 | `viewport_overflow` | 0 | — |
 
-- **order**:`equidistant` 0 / `alignment_lanes` **13**(Panel 下 4 条 + MoneyLay 3 条 + TopRigLay 6 条;最大多数派 8 节点共享 top 85.8px 对齐线——DayNum/Tian 系列日条目);`spacing_scale` 未挂(真主题无 DesignTokens space_* 声明,档位检测数据源缺省跳过——契约内行为)/ `visual_groups` 无发现未挂;
+- **order**:`equidistant` 0 / `alignment_lanes` **13**(Panel 下 4 条 + MoneyLay 3 条 + TopRigLay 6 条;最大多数派 8 节点共享 top 75.8px 对齐线——DayNum/Tian 系列日条目);`spacing_scale` 未挂(真主题无 DesignTokens space_* 声明,档位检测数据源缺省跳过——契约内行为)/ `visual_groups` 无发现未挂;
 - measure 元数据:viewport 960×540 / `stalled=false` / `stable_after_frames=3` / node_count **40**(36 既有 + _PrototypeRoot + 3 注入——与 import 注入数自洽)。
 
 真场景 quality 有裸壳发现(bare_shells 3)——**如实记录,不修饰**:这是 daily_login 既有布局形态(批2 质量报告同源发现),恰证明 compact 分档在真靶子上输出可用的人读摘要而非空转。

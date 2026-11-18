@@ -23,7 +23,7 @@ export const THRESHOLDS = {
   // 正当增量(token_set/token_list 的 token_name/token_value 参数 + enum +2 + description 扩写;
   // 批4 计划 v1 沿用 T3 时点旧数 12285 是口径债,已由计划外部审查 B1 抓出)。批4 periphery 预计
   // 增量 ~300B(detail 参数 + draft_path + enum +2 + 描述扩写),error 13000→13600、14000→14400,
-  // 校准后余量 ~640B/~700B。本条是批3 首录(同日)后的二次校准——批3 首录后隔日二录,理由同批3:
+  // 校准后余量 ~640B/~600B。本条是批3 首录(同日)后的二次校准——批3 首录后同日二录,理由同批3:
   // 批 A(2026-10-26)已证 schema 结构形状不可砍,继续压只能伤描述可用性。warn 线全部不动;
   // ui desc 848B ≥ warn 800 是既有有意义瘦身提醒,只记录不调。error 硬线回弹语义保留。
   perToolSchema: { warn: 6000,       error: 13600 },
