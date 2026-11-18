@@ -606,6 +606,7 @@ UI 布局工具将 **CSS Flexbox/Grid 语义**翻译为 Godot Container 树，�
 - **迁移/搭建 UI 的默认闭环（任何构建路径都适用，含 add_node/手写 tscn）**：读源 → 声明结构（视觉组判定，见下节） → 构建（按「布局收敛闭环」persist=true） → **必验**：数值优先 \`ui_measure_layout\`（**必须传 expect_tree 含 rect**——不传只得到原始 rect 清单，没有 diff/overlaps/out_of_bounds 判定）→ 视觉兜底 \`screenshot(action=capture)\`（窗口模式；headless 无渲染截图空白）或 \`ui_pixel_verify\`（**窗口模式专属、非 headless**；输入为已 persist 落盘的场景 + geometry，独立 spawn 不经 bridge、无需游戏运行；定位是几何/样式全绿后的终验，非迭代反馈）→ 修 → 复验。**搭完不验=未完成**。
   - 数值审计的已知边界：父不在测量集时该条 diff 为 NaN、\`stalled\` 未收敛、2px 容差、overlaps 只看兄弟、out_of_bounds 只看直接父——数值全过≠视觉必对；圆角畸变/光学对齐**只能**靠截图或像素对比暴露。不要用截图替代几何数值校验，也不要用数值全过否认视觉检查。
   - 深度审计（需 bridge）：\`dump_layout_tree\` 导出坐标表 → \`analysis layout_compare\` 与基准 JSON 比对；\`get_font_report\` 查字体居中。基准 JSON 来源：原型几何（expect_tree/geometry）或迁移前先导出的基准快照。
+- **UI 复刻任务默认链路（Refero 总验收,v0.38+）**:凡复刻/还原/对照既有 UI,默认走——读源→proto-geometry（颜色 \`$token\` 引用、视觉组容器化）→ \`ui_import_prototype(theme_path)\` → quality/order 报告**名单化处置**（\`solve_from_current\` 改造或标注豁免,间距落档率目标 100%）→ 双档验证（设计档 \`compareBaseline\` 0 容差;窄档 \`viewport={w,h}\` 位置对齐不越视口）→ \`token_list\` 审计 + \`export_doc\` 视图 → 验收记录落档。宿主游戏项目纪律:真实文件只读、副本前缀工作、产物收编与提交由用户裁决。
 
 ## 跨引擎迁移 UI 构建策略（从 Unity/Cocos/Egret/Web 等迁移时必读）
 
