@@ -480,8 +480,10 @@ function _startKeepalive(): void {
     if (!_socketAuthenticated) return;
     if (_socket.destroyed) return;
     if (!_socket.writable) return;
-    // 失败由 error/close 路径自愈(_invalidateSocket → 下次业务调用重连 + 重发订阅)
-    sendToBridge('ping', {}, 5000).catch(() => { /* best-effort: 断线自愈 */ });
+    // 失败由 error/close 路径自愈(_invalidateSocket → 下次业务调用重连 + 重发订阅)。
+    // 内存治理二期 Task 1 审查 C-1:keepalive ping 传 poke:false——零 agent 参与的自动
+    // 流量不得续命会话空闲钟(否则 IdleTimer 对已连接 bridge 的会话永久失效)。
+    sendToBridge('ping', {}, 5000, { poke: false }).catch(() => { /* best-effort: 断线自愈 */ });
   }, KEEPALIVE_INTERVAL_MS);
   _keepaliveTimer.unref?.();  // 不阻塞进程退出
 }
@@ -926,6 +928,10 @@ export function setBridgeProjectDir(projectDir: string | null): void {
  *  "按身份重试而非按命令重试")。旧版 GD 忽略未知字段,透传无害。 */
 export interface SendOptions {
   requestId?: string;
+  /** 内存治理二期 Task 1 审查 C-1:false = 本次往返不刷新会话空闲钟——keepalive 等
+   *  零 agent 参与的内部自动流量不算交互(30s 周期自动续命会让 IdleTimer 对已连接
+   *  bridge 的会话永久失效);缺省 true:agent 主动请求全走默认。 */
+  poke?: boolean;
 }
 
 export function sendToBridge(method: string, params: Record<string, unknown> = {}, timeout = DEFAULT_TIMEOUT, opts?: SendOptions): Promise<BridgeResponse> {
@@ -1023,8 +1029,9 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
     .then((resp) => {
       // 内存治理二期 Task 1:bridge 交互续命——成功往返(收到 id 匹配响应,含业务 error
       // 响应)即刷新该项目的会话空闲钟;query/input/screenshot 全走 sendToBridge 漏斗,
-      // 一处覆盖三类交互。失败往返(连接错/超时)不算——游戏都没应答谈不上活跃使用。
-      if (_projectDir) pokeRunSession(_projectDir);
+      // 一处覆盖三类交互。失败往返(连接错/超时)不算——游戏都没应答谈不上活跃使用;
+      // keepalive 等零 agent 参与的内部自动流量不算(审查 C-1:opts.poke=false 排除)。
+      if (_projectDir && opts?.poke !== false) pokeRunSession(_projectDir);
       return resp;
     })
     .finally(() => { _sendInflight--; resolveLock(); });

@@ -90,7 +90,11 @@ let _timer: ReturnType<typeof setInterval> | null = null;
 export function startIdleTimer(): void {
   if (_timer !== null) return;    // 幂等:重复调用不叠加 timer
   if (idleMinutes() <= 0) return; // env=0 关:timer 不启动
-  _timer = setInterval(() => { scanIdleSessions(); }, SCAN_INTERVAL_MS);
+  _timer = setInterval(() => {
+    // 兜底:回收链任一环节同步抛出不得崩 MCP server——内存治理守护自身故障把 server
+    // 弄崩与其使命矛盾(对齐 mem-watchdog startWatchdog 的 pollOnce().catch 兜底先例)。
+    try { scanIdleSessions(); } catch { /* best-effort:本轮跳过,下轮再扫 */ }
+  }, SCAN_INTERVAL_MS);
   _timer.unref?.();
 }
 

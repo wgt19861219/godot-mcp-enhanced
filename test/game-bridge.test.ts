@@ -54,6 +54,11 @@ vi.mock('../src/dashboard/launcher.js', () => ({ launchDashboardOnce: vi.fn() })
 
 import { handleTool, setBridgeProjectDir, isBridgeReady, _testBridgeCacheState, registerBridgePushHandler, sendToBridge, _isPortFailed, resetBridgeState } from '../src/tools/game-bridge.js';
 import * as loggerMod from '../src/core/logger.js';
+// 内存治理二期 Task 1 审查 C-1:keepalive ping 不续命会话空闲钟(IdleTimer 续命只认
+// agent 主动请求)——行为测试直读会话桶 lastPokeAt。
+import { getSession, resetState, setRunSessionProc } from '../src/core/process-state.js';
+import type { ToolContext } from '../src/types.js';
+import type { ChildProcess } from 'node:child_process';
 
 // ===== helpers =====
 
@@ -1056,6 +1061,45 @@ describe('G-1: 订阅断线恢复(登记表 + 重连重发 + keepalive)', () => 
       // 未断连:keepalive ping 成功 → 不应产生第二次连接
       expect(mockCreate.mock.calls.length).toBe(1);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('内存治理二期 Task 1 审查 C-1: keepalive 自动 ping 不刷新会话空闲钟(agent 主动请求才续命)', async () => {
+    // 场景回放:agent run_project + 调过一次 bridge 工具 → keepalive 启动 → 30s 周期自动
+    // ping。若 keepalive ping 也续命,IdleTimer 对所有已连接 bridge 的会话永久失效——
+    // "忘 stop_project 的游戏窗口挂内存"恰是这类会话。修复:keepalive 走 { poke: false }。
+    vi.useFakeTimers();
+    try {
+      const { sock, writes } = recordingBridgeSocket();
+      mockCreate.mockImplementation((_o: unknown, cb?: () => void) => {
+        queueMicrotask(() => { if (typeof cb === 'function') cb(); });
+        return sock;
+      });
+      const ctx = { projectDir: '/p' } as unknown as ToolContext;
+
+      // 会话桶:lastPokeAt 起点 = 建桶时刻(spawn 不算交互)
+      const proc = { pid: 4242, killed: false, exitCode: null, on: vi.fn(), kill: vi.fn() } as unknown as ChildProcess;
+      setRunSessionProc('/p', proc, true);
+      const before = getSession('/p')!.lastPokeAt;
+
+      // 10s 后 agent 主动 ping → lastPokeAt 被刷新(前移到当前 fake 时刻)
+      await vi.advanceTimersByTimeAsync(10_000);
+      await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
+      const afterBusiness = getSession('/p')!.lastPokeAt;
+      expect(afterBusiness, 'agent 主动请求应刷新空闲钟').toBeGreaterThan(before);
+
+      // 再推进 65s:keepalive ping 至少两轮(writes 里 ping 数增加)→ lastPokeAt 纹丝不动
+      await vi.advanceTimersByTimeAsync(65_000);
+      const keepalivePings = writes.filter(w => w.method === 'ping').length;
+      expect(keepalivePings, 'keepalive ping 确实发生了(否则本断言失去意义)').toBeGreaterThanOrEqual(3);
+      expect(getSession('/p')!.lastPokeAt, 'keepalive 自动 ping 不得续命').toBe(afterBusiness);
+
+      // 对照:同一 fake 时刻 agent 再主动 ping → 又刷新(链路本身健在,排除"poke 全坏了"假绿)
+      await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
+      expect(getSession('/p')!.lastPokeAt, 'agent 主动请求仍应刷新').toBeGreaterThan(afterBusiness);
+    } finally {
+      resetState();   // 清会话桶(本文件其余用例不消费 process-state 状态)
       vi.useRealTimers();
     }
   });
