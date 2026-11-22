@@ -178,9 +178,14 @@ function sampleMachineMemory(): MachineMemorySnapshot {
 
 const _rssCache = new Map<string, { at: number; data: Record<number, number> }>();
 
-/** 批量采样进程 RSS(字节)。Windows 走 Get-CimInstance Win32_Process 批量查询;
- *  结果按 pid 集合(排序归一)缓存 10s;非 Windows/失败/空集合 → 空 Record(不抛)。 */
+/** 批量采样进程 RSS(字节),async 门面(看门狗等异步消费方用)——实现在同步核心上,共享同一缓存。 */
 export async function sampleRssBytes(pids: number[]): Promise<Record<number, number>> {
+  return sampleRssBytesCached(pids);
+}
+
+/** 同步批量采样 RSS(10s 缓存,按 pid 集合键)——acquireLease 准入预算查是同步路径,直接用核心。
+ *  Windows 走 Get-CimInstance Win32_Process 批量查询;非 Windows/失败/空集合 → 空 Record(不抛)。 */
+function sampleRssBytesCached(pids: number[]): Record<number, number> {
   if (pids.length === 0) return {};
   const cacheKey = [...pids].sort((a, b) => a - b).join(',');
   const now = Date.now();
@@ -286,7 +291,103 @@ let _leaseSeq = 0;
 /** 总开关关闭态的 dummy lease id(固定值,标识"守卫已关、恒 ok"的占位租约,不落盘)。 */
 const DUMMY_LEASE_ID = 'guard-disabled';
 
-/** 获取租约。Task 2 将在此实现准入三查(水位/预算/实例上限);本任务恒成功建租约。
+// ---------------------------------------------------------------------------
+// 准入三查(Task 2):env 阈值 + 占用统计 + 拒绝报文
+// ---------------------------------------------------------------------------
+
+/** 拒绝码:水位 / 声明预算 / 机器实例计数。 */
+type DenialCode = 'MEMGUARD_LOW_WATER' | 'MEMGUARD_BUDGET' | 'MEMGUARD_INSTANCE_CAP';
+
+/** 正整数 env 读取(拒析回默认,对齐 declaredMBFor 惯例;max 收紧上限)。低频调用不缓存。 */
+function readPositiveIntEnv(name: string, def: number, max?: number): number {
+  const raw = process.env[name];
+  if (raw !== undefined) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0 && (max === undefined || n <= max)) return n;
+  }
+  return def;
+}
+
+/** 水位线下限(MB):GODOT_MCP_MIN_FREE_MB,默认 3072——物理空闲与 commit 余量两口径共用。 */
+function minFreeMB(): number {
+  return readPositiveIntEnv('GODOT_MCP_MIN_FREE_MB', 3072);
+}
+
+/** 内存预算百分比:GODOT_MCP_MEM_BUDGET_PCT,默认 67(合法区间 1-100)。 */
+function budgetPct(): number {
+  return readPositiveIntEnv('GODOT_MCP_MEM_BUDGET_PCT', 67, 100);
+}
+
+/** 机器级 Godot 实例上限:GODOT_MCP_MAX_MACHINE_INSTANCES,默认 8。 */
+function maxMachineInstances(): number {
+  return readPositiveIntEnv('GODOT_MCP_MAX_MACHINE_INSTANCES', 8);
+}
+
+/** 字节数 → 「X.Y GB」展示。 */
+function fmtGB(bytes: number): string {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
+/** MB(可浮点)→ 「X.Y GB」展示。 */
+function fmtMBasGB(mb: number): string {
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+/** 租约 pid 提取(未绑/异常缺字段的不进 RSS 采样集合)。 */
+function leasePids(leases: MemLease[]): number[] {
+  return leases.filter((l) => l.pid !== null && l.pid !== undefined).map((l) => l.pid as number);
+}
+
+/** 拒绝/预算共用的占用统计:实测 RSS 批量采样(10s 缓存)+ Σ max(声明MB, 实测RSS_MB)。
+ *  实测取 max 是防声明低估——声明 1GB 实跑 5GB 的租约按 5GB 占预算(设计层审查修正)。 */
+function leaseUsageCtx(leases: MemLease[], kind: SpawnKind): {
+  rssMap: Record<number, number>;
+  usedMB: number;
+  needMB: number;
+} {
+  const rssMap = sampleRssBytesCached(leasePids(leases));
+  const usedMB = leases.reduce((sum, l) => {
+    const rss = l.pid !== null && l.pid !== undefined ? rssMap[l.pid] : undefined;
+    return sum + Math.max(l.declaredMB, rss !== undefined ? rss / 1024 / 1024 : 0);
+  }, 0);
+  return { rssMap, usedMB, needMB: declaredMBFor(kind) };
+}
+
+/** 拒绝报文(Bazel 语义:一句话原因 + 机器读数 + 占用清单 + 可操作建议,让调用方/用户能自行动作)。 */
+function buildDenial(
+  code: DenialCode,
+  reason: string,
+  kind: SpawnKind,
+  projectPath: string,
+  snap: MachineMemorySnapshot,
+  leases: MemLease[],
+  ctx: { rssMap: Record<number, number>; usedMB: number; needMB: number },
+): { code: DenialCode; message: string; inventory: MemLease[] } {
+  const commitStr = snap.commitAvailBytes !== null ? fmtGB(snap.commitAvailBytes) : 'n/a';
+  const inventory = leases.length === 0
+    ? '(无)'
+    : leases
+        .map((l) => {
+          const rss = l.pid !== null && l.pid !== undefined ? ctx.rssMap[l.pid] : undefined;
+          const rssStr = rss !== undefined ? `${Math.round(rss / 1024 / 1024)}MB` : '-';
+          return `pid=${l.pid ?? '-'} kind=${l.kind} project=${l.projectPath} 声明=${l.declaredMB}MB 实测=${rssStr}`;
+        })
+        .join('; ');
+  const message =
+    `[${code}] 拒绝 spawn(${kind},${projectPath}):${reason}。` +
+    `当前机器: 可用 ${fmtGB(snap.freePhysBytes)}/${fmtGB(snap.totalPhysBytes)} (commit ${commitStr}), ` +
+    `预算 ${budgetPct()}% 已占用 ${fmtMBasGB(ctx.usedMB)}(本 kind 需 ${fmtMBasGB(ctx.needMB)}), ` +
+    `Godot 进程 ${snap.godotProcCount}。占用清单: ${inventory}。` +
+    `建议: stop_project 释放 / 稍后重试 / GODOT_MCP_MEMORY_GUARD=0 豁免(风险自担)`;
+  return { code, message, inventory: leases };
+}
+
+/** 获取租约(准入三查,Task 2):启用路径建租约前依次过——
+ *  ① 水位双口径:物理空闲与 commit 余量(非 null 时)均须 ≥ GODOT_MCP_MIN_FREE_MB(默认 3072MB);
+ *  ② 声明预算:Σ max(租约声明MB, 实测RSS_MB) + 本 kind 声明 ≤ GODOT_MCP_MEM_BUDGET_PCT%(默认 67)×物理总量;
+ *  ③ 机器实例计数:godotProcCount ≤ GODOT_MCP_MAX_MACHINE_INSTANCES(默认 8;非 Windows 无计数通道
+ *     (计数恒 0 且 degraded)时跳过,不误拦)。任一不过 → 快拒绝,附占用清单与可操作建议。
+ *  opts.exemptChecks=true 跳三查直接建租约(editor 用——用户显式起编辑器不受机器水位约束)。
  *  lease id 形如 p<serverPid>-<Date.now()>-<seq>(同 server 进程内单调递增)。
  *  I-1 审查修复:总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false) → 恒 ok 返回 dummy 租约,
  *  不读不写租约文件(零落盘副作用)——治理关闭时上层 spawn 漏斗照常工作,租约机制整体旁路。 */
@@ -294,8 +395,7 @@ export function acquireLease(
   kind: SpawnKind,
   projectPath: string,
   opts?: { exemptChecks?: boolean },
-): { lease: MemLease } | { denial: { code: 'MEMGUARD_LOW_WATER' | 'MEMGUARD_BUDGET' | 'MEMGUARD_INSTANCE_CAP'; message: string; inventory: MemLease[] } } {
-  void opts; // exemptChecks(豁免位)由 Task 2 三查消费;本任务无检查可豁免
+): { lease: MemLease } | { denial: { code: DenialCode; message: string; inventory: MemLease[] } } {
   if (!memoryGuardEnabled()) {
     const now = Date.now();
     return {
@@ -312,6 +412,53 @@ export function acquireLease(
     };
   }
   const leases = listActiveLeases();
+  if (opts?.exemptChecks !== true) {
+    const snap = getMachineMemorySnapshot();
+
+    // 查① 水位(双口径,最便宜先查——纯数值比较,快照已有 10s 缓存;commit 降级 null 时只查物理口径)
+    const minFree = minFreeMB();
+    const minFreeBytes = minFree * 1024 * 1024;
+    const physLow = snap.freePhysBytes < minFreeBytes;
+    const commitLow = snap.commitAvailBytes !== null && snap.commitAvailBytes < minFreeBytes;
+    if (physLow || commitLow) {
+      const low: string[] = [];
+      if (physLow) low.push(`物理空闲 ${fmtGB(snap.freePhysBytes)}`);
+      if (commitLow) low.push(`commit 余量 ${fmtGB(snap.commitAvailBytes!)}`);
+      const ctx = leaseUsageCtx(leases, kind); // 拒绝报文要占用清单与实测,10s 缓存与后续查共享
+      return {
+        denial: buildDenial(
+          'MEMGUARD_LOW_WATER', `${low.join(' 与 ')}低于水位线 ${minFree} MB`,
+          kind, projectPath, snap, leases, ctx,
+        ),
+      };
+    }
+
+    // 查② 声明预算(防声明低估:实测 RSS 与声明取大者计占用)
+    const ctx = leaseUsageCtx(leases, kind);
+    const pct = budgetPct();
+    const budgetMB = (snap.totalPhysBytes / 1024 / 1024) * (pct / 100);
+    if (ctx.usedMB + ctx.needMB > budgetMB) {
+      return {
+        denial: buildDenial(
+          'MEMGUARD_BUDGET',
+          `声明预算超限:已占用 ${fmtMBasGB(ctx.usedMB)} + 本 kind 需 ${fmtMBasGB(ctx.needMB)},超过 ${pct}% 预算上限 ${fmtMBasGB(budgetMB)}`,
+          kind, projectPath, snap, leases, ctx,
+        ),
+      };
+    }
+
+    // 查③ 机器实例计数(非 Windows 无计数通道:计数恒 0 且 degraded → 跳过,不误拦)
+    const cap = maxMachineInstances();
+    const skipCount = snap.godotProcCount === 0 && snap.degraded === 'non-windows';
+    if (!skipCount && snap.godotProcCount > cap) {
+      return {
+        denial: buildDenial(
+          'MEMGUARD_INSTANCE_CAP', `Godot 进程数 ${snap.godotProcCount} 超过机器实例上限 ${cap}`,
+          kind, projectPath, snap, leases, ctx,
+        ),
+      };
+    }
+  }
   const now = Date.now();
   const lease: MemLease = {
     id: `p${process.pid}-${now}-${_leaseSeq++}`,

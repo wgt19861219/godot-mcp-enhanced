@@ -88,6 +88,30 @@ function mockKillProbe(aliveSet: Set<number>): void {
   }) as typeof process.kill);
 }
 
+/** Task 2:机器快照 psRunner mock——Win32_OperatingSystem 字段按需缺席(构造 commit 降级 null)、
+ *  Win32_Process 返回固定 RSS 行(pid→实测字节)、其余脚本视为 Godot 计数。内存入参单位 MB。 */
+function mockMachinePs(fields: {
+  freePhysMB?: number;
+  commitAvailMB?: number | null;
+  godotCount?: number;
+  rss?: Record<number, number>;
+}): void {
+  _setPsRunnerForTest((script) => {
+    if (script.includes('Win32_OperatingSystem')) {
+      const j: Record<string, number> = { TotalVirtualMemorySize: 64 * 1024 * 1024 };
+      if (fields.freePhysMB !== undefined) j.FreePhysicalMemory = Math.round(fields.freePhysMB * 1024); // MB→KB 字段
+      if (fields.commitAvailMB != null) j.FreeVirtualMemory = Math.round(fields.commitAvailMB * 1024);
+      return JSON.stringify(j);
+    }
+    if (script.includes('Win32_Process')) {
+      return JSON.stringify(
+        Object.entries(fields.rss ?? {}).map(([pid, bytes]) => ({ ProcessId: Number(pid), WorkingSetSize: bytes })),
+      );
+    }
+    return String(fields.godotCount ?? 0);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   _resetForTest();
@@ -95,6 +119,12 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memguard-test-'));
   leasePath = path.join(tmpDir, '.godot-mcp', 'memory-leases.json');
   _setLeasesFilePathForTest(leasePath);
+  // Task 2 起 acquireLease 启用路径走准入三查——默认夹具恒「健康机器」,对既有用例透明(三查等价恒过):
+  // 水位阈值压到 1MB(两平台物理空闲恒过)+ 预算 100%(恒不超)+ 充足快照 mock(Windows 通道;
+  // 非 Windows 快照不经 psRunner,os 真实读数同样满足 1MB 阈值)。
+  vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '1');
+  vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '100');
+  mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
 });
 
 afterEach(() => {
@@ -367,5 +397,98 @@ describe('补充:RSS 批量采样 sampleRssBytes(Windows)', () => {
     expect(psCalls).toBe(2);
     expect(await sampleRssBytes([])).toEqual({}); // 空集合直接返回,不起 PowerShell
     expect(psCalls).toBe(2);
+  });
+});
+
+describe('⑩ Task 2:准入三查 acquireLease(水位双口径/声明预算/实例计数)', () => {
+  it('① 低水位拒:code=MEMGUARD_LOW_WATER,message 含占用清单与 pid,拒绝不落盘', () => {
+    if (IS_WIN) {
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '3072'); // 默认阈值下 mock 物理空闲 2GB 必触发
+      mockMachinePs({ freePhysMB: 2 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    } else {
+      // 非 Windows 快照无 psRunner 通道(os 真实读数不可控)——阈值抬到必超,物理口径行为等价
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '999999');
+    }
+    writeLeaseFixture([makeLease({ id: 'L1', pid: 111, kind: 'game_window', declaredMB: 3072, projectPath: 'D:/gameA' })]);
+    mockKillProbe(new Set([111]));
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    expect(res.denial.message).toContain('占用清单');
+    expect(res.denial.message).toContain('pid=111');
+    expect(res.denial.inventory.map((l) => l.id)).toEqual(['L1']);
+    expect(readDisk().leases).toHaveLength(1); // 拒绝路径不新增租约
+  });
+
+  it('② 预算拒:Σmax(声明,实测RSS)+本kind声明 > pct%×物理总量,code=MEMGUARD_BUDGET', () => {
+    vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '5');
+    writeLeaseFixture([
+      makeLease({ id: 'big', pid: 111, kind: 'gut_shard', declaredMB: 20480, projectPath: 'D:/big' }),
+      makeLease({ id: 'rss', pid: 222, kind: 'headless', declaredMB: 1024, projectPath: 'D:/small' }),
+    ]);
+    mockKillProbe(new Set([111, 222]));
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0, rss: { 222: 5120 * 1024 * 1024 } });
+    const res = acquireLease('game_window', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_BUDGET');
+    // Windows:222 实测 5GB>声明 1GB 取实测;111 无读数退声明 → 已占用 20480+5120=25.0GB(防声明低估)
+    // 非 Windows:RSS 采样平台短路恒空,两笔均退声明 → 20480+1024=21.0GB(纯声明路径)
+    expect(res.denial.message).toContain(IS_WIN ? '已占用 25.0 GB' : '已占用 21.0 GB');
+    expect(res.denial.message).toContain('本 kind 需 3.0 GB');
+  });
+
+  it.skipIf(!IS_WIN)('③ 计数拒:godotProcCount=9 > 上限 8,code=MEMGUARD_INSTANCE_CAP', () => {
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 9 });
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_INSTANCE_CAP');
+    expect(res.denial.message).toContain('Godot 进程数 9');
+    expect(res.denial.message).toContain('上限 8');
+  });
+
+  it('④ exemptChecks=true 跳三查直接建租约(必拒环境下仍成功落盘)', () => {
+    vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '999999'); // 构造水位必拒环境
+    const res = acquireLease('editor', 'D:/proj', { exemptChecks: true });
+    expect('lease' in res).toBe(true);
+    if (!('lease' in res)) return;
+    expect(res.lease.kind).toBe('editor');
+    expect(readDisk().leases).toHaveLength(1);
+  });
+
+  it('⑤ guard=0 时低水位也 ok:短路先于三查,零采样零落盘', () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '999999'); // 若三查执行必拒
+    let psCalls = 0;
+    _setPsRunnerForTest(() => {
+      psCalls++;
+      return '0';
+    });
+    const res = acquireLease('headless', 'D:/proj');
+    expect('lease' in res).toBe(true);
+    if ('lease' in res) expect(res.lease.id).toBe('guard-disabled');
+    expect(psCalls).toBe(0); // 三查未执行(Windows 上连快照采样都没起)
+    expect(fs.existsSync(leasePath)).toBe(false);
+  });
+
+  it('⑥ commit=null(降级)时只查物理口径仍拒,message 诚实呈现 commit n/a', () => {
+    if (IS_WIN) {
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '3072');
+      // 返回缺 FreeVirtualMemory 字段 → commit 双口径降级 null;物理空闲 1024KB=1MB < 3072MB
+      _setPsRunnerForTest((script) => {
+        if (script.includes('Win32_OperatingSystem')) return JSON.stringify({ FreePhysicalMemory: 1024 });
+        return '0';
+      });
+    } else {
+      // 非 Windows commit 恒 null(天然降级);物理真实空闲 < 999999MB 恒低
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '999999');
+    }
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    expect(res.denial.message).toContain('commit n/a');
   });
 });
