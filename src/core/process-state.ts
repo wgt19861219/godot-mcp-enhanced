@@ -150,12 +150,15 @@ export interface RunSession {
   busyOwner: string;
   busySince: number;
   displayPath: string;   // 显示用原始路径(key 仅供索引)
+  preview: boolean;      // 内存治理二期 Task 1:preview 会话标记(用户在看的窗口,IdleTimer 空闲回收豁免;run_project 建桶处落值)
+  lastPokeAt: number;    // 内存治理二期 Task 1:最近一次 bridge 交互时间戳(空闲回收计时锚;spawn 本身不算交互,建桶时初始化为起点)
 }
 
 function newSession(displayPath: string): RunSession {
   // 惰性空桶钉死语义(设计 §4.1):status='exited'——不占 MAX_SESSIONS isAlive 名额、进 FIFO 可逐出
   return { proc: null, status: 'exited', outputBuffer: [], lastFinishedRunOutput: [],
-            processStartTime: 0, busy: false, busyOwner: '', busySince: 0, displayPath };
+            processStartTime: 0, busy: false, busyOwner: '', busySince: 0, displayPath,
+            preview: false, lastPokeAt: 0 };
 }
 
 let _sessions = new Map<string, RunSession>();
@@ -359,6 +362,9 @@ export function setRunSessionProc(projectPath: string, proc: ChildProcess | null
   if (proc) {
     s.status = 'running';
     s.processStartTime = Date.now();
+    // 内存治理二期 Task 1:新一轮 run 开始,空闲钟以建桶时刻为起点(spawn 不算交互——
+    // 0 交互 15min 照收;此后 bridge 交互经 pokeRunSession 刷新)。
+    s.lastPokeAt = Date.now();
     removeFromExitedOrder(key);   // 审查 I-1:桶回 alive,摘除 FIFO 残留(重跑 ended 项目场景)
   } else {
     // status 仍为旧值(running/stopping 等)→ stashToSnapshot 内完整 early/exited 判定
@@ -370,6 +376,14 @@ export function setRunSessionProc(projectPath: string, proc: ChildProcess | null
 export function releaseRunSessionBusy(projectPath: string): void {
   const s = _sessions.get(normalizeProjectKey(projectPath));
   if (s) { s.busy = false; s.busyOwner = ''; s.busySince = 0; }
+}
+
+/** 刷新会话空闲钟(内存治理二期 Task 1):bridge 交互(query/input/screenshot,统一漏斗
+ *  sendToBridge)成功后由 bridge-client 调用;桶不存在时 no-op(非 run_project 会话的
+ *  bridge 调用,读路径不建桶)。 */
+export function pokeRunSession(projectPath: string): void {
+  const s = _sessions.get(normalizeProjectKey(projectPath));
+  if (s) s.lastPokeAt = Date.now();
 }
 
 /** 清 X 桶的 proc/busy/快照挪移(守卫体内动作用;不杀进程——killProcess 由调用方负责,

@@ -58,6 +58,9 @@ import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
 // 内存治理一期 Task 3:看门狗轮询(超声明×系数树杀) + 租约心跳(<90s 陈旧线)。
 import { startWatchdog, stopWatchdog } from './core/mem-watchdog.js';
+// 内存治理二期 Task 1:非 preview 会话空闲回收(60s 扫描;15min 无 bridge 交互回收,
+// env GODOT_MCP_SESSION_IDLE_MINUTES=0 关)。timer 模块内自持(同 startWatchdog 模式)。
+import { startIdleTimer, stopIdleTimer } from './core/session-idle-timer.js';
 // 内存治理一期 Task 4:launch_editor 复刻链(editProject)的 editor 档准入记账。
 import { acquireLease, bindLeasePid, releaseLease } from './core/memory-guard.js';
 import { heartbeatLeases } from './core/memory-guard.js';
@@ -811,6 +814,10 @@ export class GodotServer {
     this.leaseHeartbeatTimer = setInterval(() => { heartbeatLeases(); }, 60_000);
     this.leaseHeartbeatTimer.unref?.();
 
+    // 内存治理二期 Task 1:会话空闲回收(env=0 → startIdleTimer no-op)——非 preview
+    // 会话 15min 无 bridge 交互即回收(agent 忘 stop_project 的游戏窗口不再挂内存)。
+    startIdleTimer();
+
     // 状态持久化 — 加载已保存的 agent 状态
     const projectPath = resolveProjectPath();
 
@@ -974,6 +981,8 @@ export class GodotServer {
       }
       // 内存治理一期 Task 3:停看门狗与租约心跳(close 对称清理,均幂等)。
       stopWatchdog();
+      // 内存治理二期 Task 1:停会话空闲回收(同上对称清理,幂等)。
+      stopIdleTimer();
       if (this.leaseHeartbeatTimer) {
         clearInterval(this.leaseHeartbeatTimer);
         this.leaseHeartbeatTimer = null;

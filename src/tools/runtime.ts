@@ -393,6 +393,11 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   // 传原始 p(内部 normalize 到同 key):setRunSessionProc 顺带把桶 displayPath
   // 刷新为原始写法,供上限/会话清单显示(设计 §4.1 displayPath)。
   setRunSessionProc(p, proc, true); // skip busy check — slot acquired via acquireProcessSlot above
+  // 内存治理二期 Task 1:preview 落桶(IdleTimer 空闲回收豁免判据;重跑同桶直接覆盖刷新)。
+  {
+    const sess = getSession(sessionKey);
+    if (sess) sess.preview = preview;
+  }
   if (proc.pid) {
     registerSpawnedGodotPid(proc.pid, sessionKey);   // 归属化(设计 §4.4)
     bindLeasePid(gameLeaseId, proc.pid);   // Task 4: 租约回填 pid(此后清理判定切 pid 探测)

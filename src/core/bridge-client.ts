@@ -21,6 +21,8 @@ import { execFileSync, type ChildProcess } from 'child_process';
 import { getErrorMessage } from '../types.js';
 import { parseAutoloadNames } from './sandbox-scanner.js';  // 批5审查 Nit-1:直连新家
 import { getLogger } from './logger.js';
+// 内存治理二期 Task 1:bridge 交互续命——sendToBridge 成功往返刷新会话空闲钟(IdleTimer)。
+import { pokeRunSession } from './process-state.js';
 import { getDefaultRegistryDir, DEFAULT_PORT_START, DEFAULT_PORT_END } from './instance-manager.js';
 // 批4-T2: 与 EditorConnection 共用降级记忆 TTL(单一常量防两处 drift)
 import { LEGACY_AUTH_RETRY_TTL_MS } from './EditorConnection.js';
@@ -1016,7 +1018,16 @@ export function sendToBridge(method: string, params: Record<string, unknown> = {
   let resolveLock: () => void = () => {};
   _sendLock = new Promise<void>(r => { resolveLock = r; });
   _sendInflight++;
-  return prev.then(() => run()).finally(() => { _sendInflight--; resolveLock(); });
+  return prev
+    .then(() => run())
+    .then((resp) => {
+      // 内存治理二期 Task 1:bridge 交互续命——成功往返(收到 id 匹配响应,含业务 error
+      // 响应)即刷新该项目的会话空闲钟;query/input/screenshot 全走 sendToBridge 漏斗,
+      // 一处覆盖三类交互。失败往返(连接错/超时)不算——游戏都没应答谈不上活跃使用。
+      if (_projectDir) pokeRunSession(_projectDir);
+      return resp;
+    })
+    .finally(() => { _sendInflight--; resolveLock(); });
 }
 
 /** Reset all module state — for test isolation and service restart. */
