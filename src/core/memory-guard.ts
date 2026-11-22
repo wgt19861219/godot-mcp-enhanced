@@ -296,6 +296,101 @@ let _leaseSeq = 0;
 const DUMMY_LEASE_ID = 'guard-disabled';
 
 // ---------------------------------------------------------------------------
+// 整机软阈值 pressure 状态机(二期 Task 2)——唯一写者在本模块,watchdog 只喂快照消费
+// ---------------------------------------------------------------------------
+
+/** pressure 三态:normal(正常受理)/pressure(拒新保旧)/hard(硬阈值,Task 3 进入逻辑)。 */
+export type PressureState = 'normal' | 'pressure' | 'hard';
+
+/** 进压力去抖窗(30s):双口径任一低于软阈值须持续满 30s 才进 pressure——瞬时跌破不抖动。 */
+const PRESSURE_ENTER_MS = 30_000;
+/** 恢复去抖窗(5min):需连续 5min 双口径均高于软阈值才回 normal(中途再跌破重计)
+ *  ——kubelet eviction-pressure-transition-period 同款语义,防状态在边界来回翻转。 */
+const PRESSURE_RECOVER_MS = 5 * 60_000;
+
+let _pressureState: PressureState = 'normal';
+let _pressureEnteredAt: number | null = null;
+let _softBreachSince: number | null = null;
+let _recoverSince: number | null = null;
+
+/** 整机软阈值(MB):GODOT_MCP_MEM_PRESSURE_SOFT_MB,默认 3072——双口径(物理空闲/commit 余量)共用,
+ *  与水位线 GODOT_MCP_MIN_FREE_MB 独立(水位是即时拒绝,软阈值是持续 30s 才拒新保旧)。 */
+function pressureSoftMB(): number {
+  return readPositiveIntEnv('GODOT_MCP_MEM_PRESSURE_SOFT_MB', 3072);
+}
+
+/** 双口径任一低于软阈值即视为跌破(commit 降级 null 时只看物理口径,与水位查①同款)。 */
+function isBelowSoftThreshold(snap: MachineMemorySnapshot, softBytes: number): boolean {
+  if (snap.freePhysBytes < softBytes) return true;
+  return snap.commitAvailBytes !== null && snap.commitAvailBytes < softBytes;
+}
+
+/** 喂快照推进 pressure 状态机(唯一写入口:watchdog pollOnce 每轮喂 + 测试直调推进多轮)。
+ *  状态机语义(拒新保旧,不杀任何进程——杀是硬阈值 Task 3 的事):
+ *  - normal 下跌破软阈值持续 30s → pressure;跌破后回升 → 去抖计时清零重来(瞬时跌破不触发);
+ *  - 非常态下连续 5min 双口径高于软阈值 → normal;中途再跌破 → 恢复计时重计;
+ *  - 'hard' 本任务仅类型占位,进入/退出逻辑属 Task 3(硬阈值杀)。
+ *  总开关关闭:整体旁路不更新(pressure 恒 normal 不拒绝,与一期 I-1 口径一致)。
+ *  状态切换时 stderr 上报一行(对齐 MEMGUARD kill 惯例:stdout 是 stdio 模式 JSON-RPC 独占通道)。 */
+export function updatePressureState(snap: MachineMemorySnapshot): void {
+  if (!memoryGuardEnabled()) return;
+  const now = Date.now();
+  const softBytes = pressureSoftMB() * 1024 * 1024;
+  const below = isBelowSoftThreshold(snap, softBytes);
+
+  if (_pressureState === 'normal') {
+    if (!below) {
+      _softBreachSince = null; // 回升 → 去抖计时清零(防瞬时跌破抖动)
+      return;
+    }
+    if (_softBreachSince === null) {
+      _softBreachSince = now; // 首次跌破起算
+      return;
+    }
+    if (now - _softBreachSince >= PRESSURE_ENTER_MS) {
+      _pressureState = 'pressure';
+      _pressureEnteredAt = now;
+      _softBreachSince = null;
+      _recoverSince = null;
+      const commitStr = snap.commitAvailBytes !== null ? fmtGB(snap.commitAvailBytes) : 'n/a';
+      console.error(
+        `MEMGUARD pressure enter 物理空闲 ${fmtGB(snap.freePhysBytes)}(commit ${commitStr})` +
+        ` < 软阈值 ${pressureSoftMB()}MB 持续 ${PRESSURE_ENTER_MS / 1000}s——拒新保旧(在跑租约不动)`,
+      );
+    }
+    return;
+  }
+
+  // pressure(及 Task 3 的 hard)态:恢复需连续 5min 高于软阈值,中途跌破恢复计时重计
+  if (!below) {
+    if (_recoverSince === null) {
+      _recoverSince = now; // 回升起算 5min 恢复去抖
+    } else if (now - _recoverSince >= PRESSURE_RECOVER_MS) {
+      const prevState = _pressureState;
+      _pressureState = 'normal';
+      _pressureEnteredAt = null;
+      _recoverSince = null;
+      console.error(
+        `MEMGUARD pressure exit(prev=${prevState}) 连续 ${PRESSURE_RECOVER_MS / 1000}s` +
+        ` 高于软阈值 ${pressureSoftMB()}MB,恢复受理新 spawn`,
+      );
+    }
+  } else {
+    _recoverSince = null; // 再跌破 → 5min 恢复计时重计
+  }
+}
+
+/** 当前 pressure 状态('hard' 为 Task 3 硬阈值占位,本任务不可达)。 */
+export function getPressureState(): PressureState {
+  return _pressureState;
+}
+
+/** 进入 pressure/hard 的时间戳(normal 态为 null)——上报/诊断消费。 */
+export function getPressureEnteredAt(): number | null {
+  return _pressureEnteredAt;
+}
+
+// ---------------------------------------------------------------------------
 // 准入三查(Task 2):env 阈值 + 占用统计 + 拒绝报文
 // ---------------------------------------------------------------------------
 
@@ -388,12 +483,15 @@ function buildDenial(
   return { code, message, inventory: leases };
 }
 
-/** 获取租约(准入三查,Task 2):启用路径建租约前依次过——
+/** 获取租约(准入三查,Task 2;二期 Task 2 增查⓪):启用路径建租约前依次过——
+ *  ⓪ 整机软阈值 pressure(二期 Task 2):状态机持续 30s 跌破 GODOT_MCP_MEM_PRESSURE_SOFT_MB
+ *     (默认 3072MB) → 拒新保旧——在跑任务与既有租约不动(杀是硬阈值 Task 3 的事),
+ *     code 复用 MEMGUARD_LOW_WATER(retryable);
  *  ① 水位双口径:物理空闲与 commit 余量(非 null 时)均须 ≥ GODOT_MCP_MIN_FREE_MB(默认 3072MB);
  *  ② 声明预算:Σ max(租约声明MB, 实测RSS_MB) + 本 kind 声明 ≤ GODOT_MCP_MEM_BUDGET_PCT%(默认 67)×物理总量;
  *  ③ 机器实例计数:godotProcCount ≤ GODOT_MCP_MAX_MACHINE_INSTANCES(默认 8;非 Windows 无计数通道
  *     (计数恒 0 且 degraded)时跳过,不误拦)。任一不过 → 快拒绝,附占用清单与可操作建议。
- *  opts.exemptChecks=true 跳三查直接建租约(editor 用——用户显式起编辑器不受机器水位约束)。
+ *  opts.exemptChecks=true 跳全部查直接建租约(editor 用——用户显式起编辑器不受机器水位约束)。
  *  lease id 形如 p<serverPid>-<Date.now()>-<seq>(同 server 进程内单调递增)。
  *  I-1 审查修复:总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false) → 恒 ok 返回 dummy 租约,
  *  不读不写租约文件(零落盘副作用)——治理关闭时上层 spawn 漏斗照常工作,租约机制整体旁路。 */
@@ -420,6 +518,20 @@ export function acquireLease(
   const leases = listActiveLeases();
   if (opts?.exemptChecks !== true) {
     const snap = getMachineMemorySnapshot();
+
+    // 查⓪ 整机软阈值 pressure(二期 Task 2):状态机非 normal(pressure;hard 为 Task 3
+    // 占位,进入后同样拒新)→ 拒新保旧。与查① 的区别:水位是即时读数拒,这里是
+    // 「持续 30s 跌破」的历史状态拒(状态机记忆,由 watchdog 喂快照维护)——瞬时
+    // 毛刺由查① 兜住,持续吃紧由本查兜住,在跑任务与既有租约一律不动。
+    if (getPressureState() !== 'normal') {
+      const ctx = leaseUsageCtx(leases, kind); // 拒绝报文要占用清单与实测(与后续查共享 10s 缓存)
+      return {
+        denial: buildDenial(
+          'MEMGUARD_LOW_WATER', '整机内存压力(软阈值)持续 30s——拒新保旧',
+          kind, projectPath, snap, leases, ctx,
+        ),
+      };
+    }
 
     // 查① 水位(双口径,最便宜先查——纯数值比较,快照已有 10s 缓存;commit 降级 null 时只查物理口径)
     const minFree = minFreeMB();
@@ -541,10 +653,14 @@ export function _setLeasesFilePathForTest(p: string | null): void {
   _leasesFilePathOverride = p;
 }
 
-/** 重置模块可变状态(env 开关缓存/快照缓存/RSS 缓存/租约序号),测试隔离用。 */
+/** 重置模块可变状态(env 开关缓存/快照缓存/RSS 缓存/租约序号/pressure 状态机),测试隔离用。 */
 export function _resetForTest(): void {
   _enabledCache = null;
   _snapshotCache = null;
   _rssCache.clear();
   _leaseSeq = 0;
+  _pressureState = 'normal';
+  _pressureEnteredAt = null;
+  _softBreachSince = null;
+  _recoverSince = null;
 }

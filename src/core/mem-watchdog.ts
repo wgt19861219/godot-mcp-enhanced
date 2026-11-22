@@ -11,16 +11,20 @@
 //  - 树杀复用 process-state 既有 kill 链 killPidTree(Windows taskkill /F /T /PID,
 //    POSIX pkill -P + SIGTERM,双平台树杀语义,brief 授权的复用路径);
 //  - 降级(采样抛错/读数全空):本轮跳过不判杀,连续 3 轮失败退避 30s 并记一次日志;
-//  - 总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false):startWatchdog no-op、pollOnce 不杀。
+//  - 总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false):startWatchdog no-op、pollOnce 不杀;
+//  - 二期 Task 2:pollOnce 每轮把整机快照喂给 memory-guard 的 pressure 状态机
+//    (拒新保旧的软阈值判定;状态机唯一写者在 memory-guard,本模块只消费不拥有状态)。
 
 import { killPidTree } from './process-state.js';
 import { getLogger } from './logger.js';
 import {
+  getMachineMemorySnapshot,
   killPidProbe,
   listActiveLeases,
   memoryGuardEnabled,
   releaseLease,
   sampleRssBytes,
+  updatePressureState,
   type MemLease,
   type SpawnKind,
 } from './memory-guard.js';
@@ -77,12 +81,16 @@ function noteDegrade(): void {
   }
 }
 
-/** 单轮看门狗(测试直调;startWatchdog 周期驱动):取本 serverPid 的活跃租约(pid 已绑)
+/** 单轮看门狗(测试直调;startWatchdog 周期驱动):先把整机快照喂给 pressure 状态机
+ *  (二期 Task 2;快照与准入共享 10s 缓存)→ 取本 serverPid 的活跃租约(pid 已绑)
  *  → 批量采样 RSS → 任一超「声明×系数」→ 树杀+释放租约+归因+一行 stderr。返回
  *  {checked=本轮照看的租约数, killed=实际树杀数}。总开关关闭 → 不读不杀恒零。
  *  降级(抛错/读数全空)→ 本轮跳过判杀(计数见 noteDegrade);部分 pid 无读数不判杀。 */
 export async function pollOnce(): Promise<{ checked: number; killed: number }> {
   if (!memoryGuardEnabled()) return { checked: 0, killed: 0 };
+  // 二期 Task 2:每轮喂整机快照推进 pressure 状态机(状态机唯一写者在 memory-guard,
+  // watchdog 只消费不拥有状态——反向引用会成环,审查二期裁定)
+  updatePressureState(getMachineMemorySnapshot());
   const leases = listActiveLeases().filter(
     (l) => l.serverPid === process.pid && typeof l.pid === 'number',
   );

@@ -2,7 +2,8 @@
 //
 // memory-guard 核心(Task 1)单测——①档位表默认值+env 覆盖 ②总开关三态 ③租约清理三规则
 // ④writeFileAtomic 原子写 ⑤快照缓存 ⑥PowerShell 失败降级 ⑦ensureDir 目录自建
-// ⑧fail-open(读失败返 []/写失败降级日志) + 补充(租约生命周期/RSS 采样)。
+// ⑧fail-open(读失败返 []/写失败降级日志) + 补充(租约生命周期/RSS 采样)
+// + ⑫二期 Task 2 整机软阈值 pressure 状态机(拒新保旧+上报,fake timers 推进多轮)。
 //
 // 测试注入约定:PowerShell 执行器经 _setPsRunnerForTest 注入 fake(不真起 PowerShell);
 // 租约文件路径经 _setLeasesFilePathForTest 重定向到 tmp 夹具目录(不触真实 ~/.godot-mcp);
@@ -41,11 +42,16 @@ import {
   releaseLease,
   heartbeatLeases,
   killPidProbe,
+  updatePressureState,
+  getPressureState,
+  getPressureEnteredAt,
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
   type MemLease,
+  type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
+import { pollOnce } from '../../src/core/mem-watchdog.js';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -539,5 +545,158 @@ describe('⑪ 终审 I-1:pid=null 租约超宽限窗停续命(账本自愈)', ()
     const disk = readDisk().leases;
     expect(disk.find((l) => l.id === 'fresh-1')!.lastHeartbeat).toBe(t); // 宽限窗内照常续
     expect(disk.find((l) => l.id === 'bound-1')!.lastHeartbeat).toBe(t); // 已绑 pid 超窗也续(心跳仅服务未绑阶段)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 二期 Task 2:整机软阈值 pressure 状态机(拒新保旧+上报)
+// ---------------------------------------------------------------------------
+
+/** 直调 updatePressureState 的快照构造(不走采样通道,时序全由 fake timers 控制):
+ *  入参单位 MB;commitAvailMB=null 构造降级口径(commit 缺席)。 */
+function pressureSnap(freePhysMB: number, commitAvailMB: number | null): MachineMemorySnapshot {
+  return {
+    freePhysBytes: freePhysMB * 1024 * 1024,
+    totalPhysBytes: 64 * 1024 * 1024 * 1024,
+    commitAvailBytes: commitAvailMB === null ? null : commitAvailMB * 1024 * 1024,
+    commitTotalBytes: commitAvailMB === null ? null : 64 * 1024 * 1024 * 1024,
+    godotProcCount: 0,
+    sampledAt: Date.now(),
+  };
+}
+
+describe('⑫ 二期 Task 2:整机软阈值 pressure 状态机(拒新保旧+上报)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0); // 时间原点归零,30s/5min 去抖算术直观
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('① 瞬时跌破回升 → 计时清零,两段合计跌破再长也不进 pressure(防抖)', () => {
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=0 跌破(2GB<3072MB)起算
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=10s 回升 → 去抖计时清零
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=20s 再跌破 → 重新起算
+    vi.advanceTimersByTime(20_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=40s 回升(第二段仅 20s<30s)→ 又清零
+    // 两段跌破合计 30s 但不连续 → 后续持续健康永不进 pressure
+    for (let s = 50; s <= 80; s += 10) {
+      vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(8 * 1024, 64 * 1024));
+    }
+    expect(getPressureState()).toBe('normal');
+    expect(getPressureEnteredAt()).toBeNull();
+    // 状态 normal 时健康机器 acquireLease 不因软阈值拒(水位 1MB/预算 100% 恒过)
+    expect('lease' in acquireLease('headless', 'D:/proj')).toBe(true);
+  });
+
+  it('② 持续跌破满 30s → pressure,acquireLease 第四查拒(code=MEMGUARD_LOW_WATER,message 含拒新保旧前缀)+stderr 上报', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const s of [0, 10, 20]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // 物理口径持续跌破
+      expect(getPressureState()).toBe('normal'); // 未满 30s 不进
+    }
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=30s 恰满 30s → 进 pressure
+    expect(getPressureState()).toBe('pressure');
+    expect(getPressureEnteredAt()).toBe(30_000);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('MEMGUARD pressure enter'));
+    // 拒新:快照 mock 是健康机器(水位 1MB/预算 100% 恒过)——唯一拒因是状态机在 pressure
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    expect(res.denial.message).toContain('整机内存压力(软阈值)持续 30s——拒新保旧');
+    expect(fs.existsSync(leasePath)).toBe(false); // 拒绝路径不落盘
+  });
+
+  it('③ pressure 期间在跑租约不被杀:pollOnce 照常看护,健康租约 killed=0 且保留(保旧)', async () => {
+    for (const s of [0, 10, 20, 30]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // 持续跌破满 30s
+    }
+    expect(getPressureState()).toBe('pressure');
+    // 一笔已绑 pid 的在跑租约(headless 声明 1024MB,杀线 ×2=2048MB;RSS 512MB 远低)
+    writeLeaseFixture([
+      makeLease({ id: 'keep-1', serverPid: process.pid, kind: 'headless', declaredMB: 1024, pid: 555 }),
+    ]);
+    mockKillProbe(new Set([555]));
+    if (IS_WIN) {
+      // Windows:RSS 通道可控——512MB 读数直接证明「主动判定不超杀线不杀」
+      mockMachinePs({ freePhysMB: 2 * 1024, commitAvailMB: 64 * 1024, godotCount: 1, rss: { 555: 512 * 1024 * 1024 } });
+    }
+    // 非 Windows:RSS 通道恒空走降级路径,降级语义本就是「不判杀」——观测契约一致(killed=0+租约保留)
+    const r = await pollOnce();
+    expect(r.checked).toBe(1);
+    expect(r.killed).toBe(0);
+    expect(readDisk().leases.some((l) => l.id === 'keep-1')).toBe(true); // 保旧:租约不动
+  });
+
+  it('④ pressure→normal 需连续 5min 高于软阈值,中途再跌破恢复计时重计', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const s of [0, 10, 20, 30]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024));
+    }
+    expect(getPressureState()).toBe('pressure'); // t=30s 进 pressure
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=40s 回升 → 5min 恢复计时起算
+    vi.advanceTimersByTime(160_000);
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=200s 中途再跌破 → 恢复计时清零
+    expect(getPressureState()).toBe('pressure'); // 仍 pressure(未恢复)
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=210s 回升 → 恢复计时重新起算
+    vi.advanceTimersByTime(299_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=509s 连续 299s 差 1s → 仍 pressure
+    expect(getPressureState()).toBe('pressure');
+    vi.advanceTimersByTime(1_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=510s 恰连续 300s → 恢复 normal
+    expect(getPressureState()).toBe('normal');
+    expect(getPressureEnteredAt()).toBeNull();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('MEMGUARD pressure exit'));
+    expect('lease' in acquireLease('headless', 'D:/proj')).toBe(true); // 恢复后重新受理
+  });
+
+  it('⑤ 接线:watchdog pollOnce 每轮喂快照推进状态机(持续跌破 4 轮恰满 30s 进 pressure)', async () => {
+    vi.stubEnv('GODOT_MCP_MEM_PRESSURE_SOFT_MB', '999999'); // 阈值抬到必跌破(两平台物理读数恒低)
+    for (let i = 0; i < 4; i++) {
+      if (i > 0) vi.advanceTimersByTime(10_000); // 对齐看门狗默认 10s 轮询节奏
+      await pollOnce();
+    }
+    expect(getPressureState()).toBe('pressure'); // 第 4 轮(t=30s)恰满 30s
+  });
+
+  it('⑥ guard=0:状态机旁路——updatePressureState 不更新,pressure 恒 normal 不拒新', () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    _resetForTest(); // 清总开关读缓存(与一期关闭态用例同惯例)
+    vi.stubEnv('GODOT_MCP_MEM_PRESSURE_SOFT_MB', '999999');
+    for (const s of [0, 10, 20, 30, 40]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(0, 0)); // 恒跌破喂 5 轮
+    }
+    expect(getPressureState()).toBe('normal'); // 旁路:状态不变
+    const res = acquireLease('headless', 'D:/proj');
+    expect('lease' in res).toBe(true); // dummy 短路(一期 I-1),pressure 不参与
+    if ('lease' in res) expect(res.lease.id).toBe('guard-disabled');
+  });
+
+  it('⑦ 双口径语义:commit 余量跌破同样计入;commit=null 降级只看物理口径', () => {
+    for (const s of [0, 10, 20, 30]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(64 * 1024, 2 * 1024)); // 物理健康,commit 2GB<3072MB 跌破
+    }
+    expect(getPressureState()).toBe('pressure');
+    // commit 降级 null:只看物理口径——物理 64GB 健康 → 恒不跌破
+    _resetForTest(); // 清状态机重证
+    for (const s of [0, 10, 20, 30, 40]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(64 * 1024, null));
+    }
+    expect(getPressureState()).toBe('normal');
   });
 });
