@@ -24,6 +24,8 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { forceKillTree } from './core/process-state.js';
 import { buildSafeEnv } from './core/godot-finder.js';
+// 内存治理一期 Task 4:capture spawn 漏斗准入(headless 档;projectPath 从 args --path 解析)
+import { acquireLease, bindLeasePid, releaseLease, projectPathFromArgs } from './core/memory-guard.js';
 
 export interface ScreenshotResult {
   success: boolean;
@@ -67,19 +69,33 @@ function shouldUseHeadless(forceHeadless?: boolean): boolean {
 
 /**
  * Run Godot with the screenshot script and capture output.
+ * 内存治理 Task 4:spawn 前 acquireLease(headless, --path 解析)——拒则不 spawn,
+ * denial 随返回值上抛(captureScreenshot 直接终止不进重试);过则 bindLeasePid,
+ * timeout/close/error 三路 releaseLease。
  */
 function runScreenshot(
   godotPath: string,
   args: string[],
   timeout: number,
-): Promise<{ code: number | null; output: string }> {
+): Promise<{ code: number | null; output: string; denial?: { code: string; message: string } }> {
   return new Promise((resolve) => {
     // H-05: Use Buffer[] to avoid O(n²) string concatenation
     const chunks: Buffer[] = [];
+    const admit = acquireLease('headless', projectPathFromArgs(args));
+    if ('denial' in admit) {
+      resolve({
+        code: -1,
+        output: `[${admit.denial.code}] ${admit.denial.message}`,
+        denial: { code: admit.denial.code, message: admit.denial.message },
+      });
+      return;
+    }
+    const leaseId = admit.lease.id;
     const proc = spawn(godotPath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: buildSafeEnv(),
     });
+    if (proc.pid) bindLeasePid(leaseId, proc.pid);
 
     proc.stdout?.on('data', (d: Buffer) => { chunks.push(d); });
     proc.stderr?.on('data', (d: Buffer) => { chunks.push(d); });
@@ -89,6 +105,7 @@ function runScreenshot(
       if (!settled && !proc.killed) {
         settled = true;
         forceKillTree(proc);
+        releaseLease(leaseId);   // Task 4: 强杀后 close 可能不来,显式归还
         const out = Buffer.concat(chunks).toString('utf-8');
         resolve({ code: -1, output: out + `\n[TIMEOUT] Killed after ${timeout}s` });
       }
@@ -98,6 +115,7 @@ function runScreenshot(
       clearTimeout(timer);
       if (settled) return;
       settled = true;
+      releaseLease(leaseId);   // Task 4: 正常退出归还
       resolve({ code, output: Buffer.concat(chunks).toString('utf-8') });
     });
 
@@ -105,6 +123,7 @@ function runScreenshot(
       clearTimeout(timer);
       if (settled) return;
       settled = true;
+      releaseLease(leaseId);   // Task 4: error 路径归还(与 close 双路幂等)
       resolve({ code: -1, output: `Spawn error: ${err.message}` });
     });
   });
@@ -184,6 +203,11 @@ export async function captureScreenshot(
 
   // --- Attempt 1: primary mode (windowed or headless based on platform) ---
   const result1 = await runScreenshot(godotPath, args, timeout);
+
+  // Task 4:准入被拒——denial 透传终止(重试只会再被拒一次,浪费一次准入采样)
+  if (result1.denial) {
+    return { success: false, error: result1.denial.message };
+  }
 
   // Check if screenshot was created
   if (existsSync(outputPath)) {

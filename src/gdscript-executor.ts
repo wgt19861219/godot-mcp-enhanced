@@ -28,6 +28,8 @@ import { MARKER_RESULT as MARKER_RESULT_SHARED, MARKER_ERROR as MARKER_ERROR_SHA
 import { normalizeIndentToTabs as _sharedNormalizeIndent } from './tools/shared/value-serializer.js';
 import { getLogger, resolveLogDir } from './core/logger.js';
 import { needsImport, runImport } from './tools/import-check.js';
+// 内存治理一期 Task 4:headless 漏斗准入(spawnKind 可选参,调用方按场景注入档位)
+import { acquireLease, bindLeasePid, releaseLease, type SpawnKind } from './core/memory-guard.js';
 
 
 // W5 遗留批5(2026-09-20):Sandbox scanner + autoload 防线段拆至 core/sandbox-scanner.ts(纯搬家)。
@@ -85,6 +87,8 @@ export interface ExecuteGdscriptOptions {
   timeout: number; // seconds
   /** When true, runs with full autoload context (slower but can access autoloads like DataRegistry) */
   loadAutoloads?: boolean;
+  /** 内存治理 Task 4:spawn 漏斗档位(默认 headless/1GB;特殊场景按声明档注入) */
+  spawnKind?: SpawnKind;
 }
 
 // ─── Execute 取证审计（C-AUDIT，对照 UE 9b128514）─────────────────────────────
@@ -888,6 +892,28 @@ export async function executeGdscript(
   getLogger().info('security', JSON.stringify(auditEvent));
   const { executionId, scriptSha256 } = auditEvent;
 
+  // 内存治理 Task 4:spawn 前准入(spawnKind 可选参,默认 headless 档)。拒则不 spawn,
+  // 失败形态走 compile_error 通道(denial.message 自带 [MEMGUARD_*] 码前缀,Task 5 再接
+  // 错误归因注册);slot/sessionDir 已建,须一并归还。
+  const admit = acquireLease(options.spawnKind ?? 'headless', projectPath);
+  if ('denial' in admit) {
+    releaseShortRunningSlot();
+    retryRm(sessionDir).catch(() => {});
+    return {
+      success: false,
+      compile_success: false,
+      compile_error: `[${admit.denial.code}] ${admit.denial.message}`,
+      errors: [],
+      run_success: false,
+      run_error: '',
+      outputs: [],
+      raw_output: '',
+      duration_ms: Date.now() - startTime,
+      autoload_detected: autoloadDetected,
+    };
+  }
+  const leaseId = admit.lease.id;
+
   // Spawn Godot process
   return new Promise<ExecuteGdscriptResult>((resolve, reject) => {
     // C-PERF-01: Use Buffer[] to avoid O(n²) string concatenation.
@@ -902,13 +928,19 @@ export async function executeGdscript(
     const MAX_OUTPUT_BYTES = 10 * 1024 * 1024; // 10MB output limit
     let outputExceeded = false;
 
-    const proc = spawn(godotPath, godotArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: buildSafeEnv(),
-    });
     // B-T4: 注册到 _spawnedGodotPids, close/崩溃可清理 in-flight short-running spawn。
     // 原 only-run_project 注册致挂起脚本 + close → 孤儿无兜底; 三路径 forceKillTree 后也需 unregister。
+    // Task 4: spawn 同步抛用 try/catch 归还租约/slot/sessionDir(Promise executor 内
+    // throw 自动转 reject,无 close/error 事件兜底)。
+    let proc;
+    try {
+      proc = spawn(godotPath, godotArgs, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
+    } catch (spawnThrow) {
+      releaseLease(leaseId); releaseShortRunningSlot(); retryRm(sessionDir).catch(() => {});
+      throw spawnThrow;
+    }
     if (proc.pid) registerSpawnedGodotPid(proc.pid);
+    if (proc.pid) bindLeasePid(leaseId, proc.pid);   // Task 4: 租约回填 pid
     const unregisterSpawn = () => { if (proc.pid) unregisterSpawnedGodotPid(proc.pid); };
     proc.on('exit', unregisterSpawn);   // 正常 exit
     proc.on('error', unregisterSpawn);  // spawn 错误（ENOENT 等）
@@ -974,6 +1006,7 @@ export async function executeGdscript(
         unregisterSpawn();  // B-T4: timeout 强杀后注销（exit 事件可能不触发）
       }
       settled = true;
+      releaseLease(leaseId);   // Task 4: 强杀后 close 可能不来,显式归还租约
       releaseShortRunningSlot();
       retryRm(sessionDir).catch(() => {});
       reject(new Error(`Godot process timed out after ${timeout}s`));
@@ -984,6 +1017,7 @@ export async function executeGdscript(
       settled = true;
       clearTimeout(timer);
       unregisterSpawn();  // B-T4 对称补全：exit/error/timeout/pipe 均已调，close 也补（Set 幂等，防 close 先于 exit 的 driver 边界）
+      releaseLease(leaseId);   // Task 4: 正常退出归还租约
       const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
       const stderr = Buffer.concat(stderrChunks).toString('utf-8');
       releaseShortRunningSlot();
@@ -1072,6 +1106,7 @@ export async function executeGdscript(
       if (settled) return;  // ipc P1-7: timer 已 reject
       settled = true;
       clearTimeout(timer);
+      releaseLease(leaseId);   // Task 4: 异步 error 事件路径归还租约(与 close 双路幂等)
       releaseShortRunningSlot();
       // C8: retryRm 对齐 timer(:1255)/close(:1269) 分支(Windows EPERM 容错,原裸 rm 静默吞错致残留)。
       retryRm(sessionDir).catch(() => {});

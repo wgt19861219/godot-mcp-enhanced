@@ -485,6 +485,16 @@ export function bindLeasePid(leaseId: string, pid: number): void {
   writeLeases(leases);
 }
 
+/** 从 spawn args 解析 --path 后随值作租约记账的 projectPath(Task 4 漏斗共用——
+ *  runGutProcess/spawnGodot/runHeadlessCollector/runScreenshot 的调用方全部以
+ *  ['--headless', '--path', <dir>, ...] 形态传参,解析注入让消费方零改动)。
+ *  无 --path 或其后无值时返回占位 '(no-path)'(仅记账展示用,不参与判定的键)。 */
+export function projectPathFromArgs(args: readonly string[]): string {
+  const idx = args.indexOf('--path');
+  const v = idx >= 0 ? args[idx + 1] : undefined;
+  return typeof v === 'string' && v.length > 0 ? v : '(no-path)';
+}
+
 /** 释放租约(幂等:租约不存在/已被清理时静默)。dummy lease 无盘面实体 → no-op,可重复调(I-1)。 */
 export function releaseLease(leaseId: string): void {
   if (leaseId === DUMMY_LEASE_ID) return;

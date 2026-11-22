@@ -18,6 +18,8 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { getLogger } from '../core/logger.js';
 import type { RiskLevel } from '../core/tool-registry.js';
+// 内存治理一期 Task 4:spawn 漏斗准入(game_window/editor 档)——run_project 与 launch_editor
+import { acquireLease, bindLeasePid, releaseLease, projectPathFromArgs } from '../core/memory-guard.js';
 
 const ACTIONS = [
   'launch_editor',
@@ -102,6 +104,11 @@ function activeProjectKeyOf(ctx: ToolContext): string {
 // profiling 会话且不被无关 run 销毁;属主 key 与销毁点(新 run 的预清理段 +
 // close handler 清理段)比对后才允许 close。
 let profilerOwnerKey: string | undefined;
+
+// 内存治理一期 Task 4:game_window 租约登记(sessionKey → leaseId)。停旧段凭它
+// 主动归还被停会话的租约(不等 close 事件兜底——新一轮 acquire 前旧租约就该出预算);
+// close/error 释放走闭包 leaseId(条件删除防旧回调误删新一轮条目)。
+const gameWindowLeases = new Map<string, string>();
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
 
@@ -204,11 +211,37 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     clearRunSession(p);
   }
 
+  // 内存治理 Task 4:被停会话的 game_window 租约立即归还(不等旧进程 close 事件——
+  // kill 后 close 可能延迟,旧租约挂账会让下方 acquireLease 被自家历史占预算)。
+  {
+    const oldLeaseId = gameWindowLeases.get(sessionKey);
+    if (oldLeaseId !== undefined) {
+      releaseLease(oldLeaseId);
+      gameWindowLeases.delete(sessionKey);
+    }
+  }
+
   // Atomically acquire the process slot after clearing any existing process
   // (显式传 p 锁目标桶——acquire 先于 setProjectDir,按活跃桶锁会锁错桶,设计 §4.2)
   if (!await acquireProcessSlot('run_project', p)) {
     return textResult(buildBusyErrorMessage(sessionKey));
   }
+
+  // 内存治理 Task 4:spawn 前准入(game_window 档,3GB)。拒则不 spawn,释放 busy 槽
+  // 后透传 denial(Bazel 报文自含占用清单与建议)。preview 本期不特判(Review Focus 6)。
+  const admit = acquireLease('game_window', p);
+  if ('denial' in admit) {
+    releaseRunSessionBusy(sessionKey);
+    setSessionStatus(sessionKey, 'errored');
+    return opsErrorResult(admit.denial.code, admit.denial.message);
+  }
+  const gameLeaseId = admit.lease.id;
+  gameWindowLeases.set(sessionKey, gameLeaseId);
+  /** 释放本次租约 + 条件删登记(旧回调不得误删新一轮条目;releaseLease 幂等)。 */
+  const releaseGameLease = () => {
+    releaseLease(gameLeaseId);
+    if (gameWindowLeases.get(sessionKey) === gameLeaseId) gameWindowLeases.delete(sessionKey);
+  };
 
   ctx.setProjectDir(p);   // 活跃指针切换(唯一切换点)
   clearOutputBuffer(sessionKey);
@@ -242,6 +275,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
         ctx.functionProfiler = undefined;
       }
       setSessionStatus(sessionKey, 'errored');
+      releaseGameLease();   // Task 4: spawn 未成,租约无 close 兜底,主动归还
       const msg = err instanceof Error ? err.message : String(err);
       return textResult(`Error: failed to bind profiler debugger port: ${msg}`);
     }
@@ -258,6 +292,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   } catch (err) {
     releaseRunSessionBusy(sessionKey);
     setSessionStatus(sessionKey, 'errored');
+    releaseGameLease();   // Task 4: spawn 未成,租约无 close 兜底,主动归还
     const msg = err instanceof Error ? err.message : String(err);
     appendOutput([`Spawn error: ${msg}`], sessionKey);
     return textResult(`Error: failed to spawn Godot: ${msg}`);
@@ -287,6 +322,9 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   }
 
   proc.on('close', (code) => {
+    // Task 4:进程退出归还租约(守卫外——无论 proc 是否仍是桶内活跃,它退出即释放
+    // 自己的租约;条件删防旧回调误删新一轮条目,releaseLease 幂等可重复)。
+    releaseGameLease();
     // P2 + I-1: profiling 进程退出 → 关 debugger listener(捕获结果已可读,
     // close 只释放 socket)——属主守卫:仅清本桶属主的 profiler。
     if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
@@ -315,6 +353,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   });
 
   proc.on('error', (err) => {
+    releaseGameLease();   // Task 4: 异步 error 事件路径归还租约(与 close 双路幂等)
     // Imp-4: 同上守卫(坑 4)
     if (getRunSessionProc(sessionKey) === proc) {
       setSessionStatus(sessionKey, 'errored');
@@ -330,7 +369,10 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   // 传原始 p(内部 normalize 到同 key):setRunSessionProc 顺带把桶 displayPath
   // 刷新为原始写法,供上限/会话清单显示(设计 §4.1 displayPath)。
   setRunSessionProc(p, proc, true); // skip busy check — slot acquired via acquireProcessSlot above
-  if (proc.pid) registerSpawnedGodotPid(proc.pid, sessionKey);   // 归属化(设计 §4.4)
+  if (proc.pid) {
+    registerSpawnedGodotPid(proc.pid, sessionKey);   // 归属化(设计 §4.4)
+    bindLeasePid(gameLeaseId, proc.pid);   // Task 4: 租约回填 pid(此后清理判定切 pid 探测)
+  }
 
   // 多项目提示(设计 §4.3):成功消息附当前在跑会话数(N>1 时)
   const running = listRunSessions().filter(x => isAliveStatus(x.status)).length;
@@ -435,25 +477,38 @@ function gutCountMatches(out: string, patterns: RegExp[]): string[] {
 
 /** 单次 GUT 进程执行(P1-1 PID 注册 / 输出收集 / 超时强杀 / close-error 双路 resolve)。
  *  shards=1 与分片模式共用;超时返回 timedOut=true(exitCode null),spawn 同步抛/异步
- *  error 事件返回 spawnError。 */
+ *  error 事件返回 spawnError。
+ *  内存治理一期 Task 4:spawn 前准入(gut_shard 档,8GB——单进程全量 GUT 22.5GB 死机的
+ *  主炸弹链)。拒则不 spawn,denial 随返回值上抛由调用方(整轮 run_tests)透传;
+ *  过则 spawn 后 bindLeasePid,四条退出路径(spawn 同步抛/timeout/close/error)各释放。 */
 function runGutProcess(
   godot: string,
   args: string[],
   timeoutSecs: number,
-): Promise<{ exitCode: number | null; out: string; timedOut: boolean; spawnError?: string }> {
+): Promise<{ exitCode: number | null; out: string; timedOut: boolean; spawnError?: string; denial?: { code: string; message: string } }> {
   return new Promise((resolve) => {
     let settled = false;
     let out = '';
     const MAX_OUTPUT = 500_000;
+    const admit = acquireLease('gut_shard', projectPathFromArgs(args));
+    if ('denial' in admit) {
+      resolve({ exitCode: null, out: '', timedOut: false, denial: { code: admit.denial.code, message: admit.denial.message } });
+      return;
+    }
+    const leaseId = admit.lease.id;
     let proc: ChildProcess;
     try {
       proc = spawn(godot, args, { stdio: ['pipe', 'pipe', 'pipe'], env: buildSafeEnv() });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      releaseLease(leaseId);
       resolve({ exitCode: null, out: '', timedOut: false, spawnError: msg });
       return;
     }
-    if (proc.pid) registerSpawnedGodotPid(proc.pid);
+    if (proc.pid) {
+      registerSpawnedGodotPid(proc.pid);
+      bindLeasePid(leaseId, proc.pid);
+    }
     const unregisterSpawn = () => { if (proc.pid) unregisterSpawnedGodotPid(proc.pid); };
 
     proc.stdout?.on('data', (d: Buffer) => { if (out.length < MAX_OUTPUT) out += d.toString(); });
@@ -464,6 +519,7 @@ function runGutProcess(
         settled = true;
         forceKillTree(proc);
         unregisterSpawn();  // P1-1: timeout 强杀后注销(exit 事件可能不触发)
+        releaseLease(leaseId);   // Task 4: 强杀后 close 可能不来,显式归还租约
         resolve({ exitCode: null, out, timedOut: true });
       }
     }, timeoutSecs * 1000);
@@ -473,6 +529,7 @@ function runGutProcess(
       if (settled) return;
       settled = true;
       unregisterSpawn();
+      releaseLease(leaseId);
       resolve({ exitCode: code, out, timedOut: false });
     });
 
@@ -481,6 +538,7 @@ function runGutProcess(
       if (settled) return;
       settled = true;
       unregisterSpawn();
+      releaseLease(leaseId);
       resolve({ exitCode: null, out, timedOut: false, spawnError: err.message });
     });
   });
@@ -533,6 +591,12 @@ async function runShardedTests(opts: {
       try { unlinkSync(configFile); } catch { /* best-effort 清理 */ }
     }
 
+    // 内存治理 Task 4:准入被拒 → 整轮 run_tests 中止返回 denial(后续片不再起,
+    // 已跑片的租约已在各自 runGutProcess 退出时归还,无泄漏;Bazel 快拒绝语义)
+    if (r.denial) {
+      return opsErrorResult(r.denial.code, r.denial.message);
+    }
+
     const tests = gutCountMatches(r.out, GUT_TESTS_PATTERNS).reduce((s, v) => s + (Number(v) || 0), 0);
     const failed = gutCountMatches(r.out, GUT_FAILED_PATTERNS).reduce((s, v) => s + (Number(v) || 0), 0);
     shardResults.push({
@@ -581,11 +645,22 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (!existsSync(join(p, 'project.godot'))) {
         return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
       }
+      // 内存治理 Task 4:editor 档准入——exemptChecks:true 跳三查(用户显式起编辑器
+      // 不受机器水位约束)但仍记账(占用清单/计数可见);租约绑 pid 后由 close/error
+      // 归还,若事件不达由读时清理(pid 死→删)兜底。
+      const admit = acquireLease('editor', p, { exemptChecks: true });
+      if ('denial' in admit) {
+        return opsErrorResult(admit.denial.code, admit.denial.message);
+      }
+      const leaseId = admit.lease.id;
       const godot = await ctx.findGodot();
       const child = spawn(godot, ['--editor', '--path', p], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+      if (child.pid) bindLeasePid(leaseId, child.pid);
       child.on('error', (err) => {
+        releaseLease(leaseId);
         getLogger().error('runtime', `Failed to launch editor: ${err.message}`);
       });
+      child.on('close', () => releaseLease(leaseId));
       child.unref();
       return textResult(`Launched Godot editor for project: ${p}`);
     }
@@ -730,6 +805,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           '-gdir', testScript,
           `-${quitFlag}`,
         ], timeoutSecs);
+        if (r.denial) {
+          return opsErrorResult(r.denial.code, r.denial.message);
+        }
         if (r.timedOut) {
           return textResult(`run_tests timed out after ${timeoutSecs}s`);
         }

@@ -58,6 +58,8 @@ import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
 // 内存治理一期 Task 3:看门狗轮询(超声明×系数树杀) + 租约心跳(<90s 陈旧线)。
 import { startWatchdog, stopWatchdog } from './core/mem-watchdog.js';
+// 内存治理一期 Task 4:launch_editor 复刻链(editProject)的 editor 档准入记账。
+import { acquireLease, bindLeasePid, releaseLease } from './core/memory-guard.js';
 import { heartbeatLeases } from './core/memory-guard.js';
 import { WebGuiServer } from './web-gui/server.js';
 import type { WebGuiServerOptions } from './web-gui/server.js';
@@ -690,11 +692,21 @@ export class GodotServer {
       editProject: async (projectPath: string) => {
         // launch_editor 链复刻(runtime.ts case 'launch_editor',spec §6:仅 6 行不抽函数;
         // project.godot 存在性 404 已由端点层前置校验)。
+        // 内存治理 Task 4:同工具层语义——editor 档 exemptChecks:true(跳三查仍记账);
+        // denial 抛错由端点层 /api/sessions/start 的 catch 转 500 透传报文。
+        const admit = acquireLease('editor', projectPath, { exemptChecks: true });
+        if ('denial' in admit) {
+          throw new Error(admit.denial.message);
+        }
+        const leaseId = admit.lease.id;
         const godot = await findGodot();
         const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+        if (child.pid) bindLeasePid(leaseId, child.pid);
         child.on('error', (err) => {
+          releaseLease(leaseId);
           getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
         });
+        child.on('close', () => releaseLease(leaseId));
         child.unref();
       },
       // 资源重导入批(2026-10-08):面板「⟳」按钮 → POST /api/projects/reimport →

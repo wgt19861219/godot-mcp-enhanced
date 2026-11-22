@@ -29,3 +29,10 @@ process.env.GODOT_MCP_AUDIT_EXTERNAL_DIR = join(
 process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = join(
   mkdtempSync(join(tmpdir(), 'mcp-reg-')), 'instances',
 );
+
+// 内存治理一期 Task 4(2026-11-22):测试环境默认关 memory-guard——七处 spawn 漏斗接入
+// acquireLease 后,未 mock memory-guard 的既有测试会真起 PowerShell 采样(每文件 ~3 进程)
+// + 写真实 ~/.godot-mcp/memory-leases.json。设 0 走 dummy lease 短路(零采样/零写盘),
+// 漏斗行为对既有测试零影响。memory-guard 专属测试(test/core/memory-guard*.test.ts)自管
+// env(delete/stubEnv 覆盖本值);漏斗测试 vi.mock 接管 acquireLease,与本值无关。
+process.env.GODOT_MCP_MEMORY_GUARD = '0';

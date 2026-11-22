@@ -109,6 +109,10 @@ beforeEach(() => {
   vi.useFakeTimers();
   _resetWatchdogForTest();
   _resetForTest();
+  // Task 4 起 test/setup.js 全局设 GODOT_MCP_MEMORY_GUARD='0'(其余测试零副作用);
+  // 本文件测真实看门狗逻辑(pollOnce/startWatchdog 均查总开关),逐用例显式回归「开」——
+  // 关闭态用例(⑤ describe)自行 stubEnv('0') 覆盖。stubEnv 须在 _resetForTest 之后(清缓存后重读)。
+  vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
   // 意外真采样立即炸测试(watchdog 的采样面已被 mock 顶替;此 runner 兜底防漏网路径)
   _setPsRunnerForTest(() => {
     throw new Error('unexpected real PowerShell spawn');

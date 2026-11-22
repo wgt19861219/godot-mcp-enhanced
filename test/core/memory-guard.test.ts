@@ -119,6 +119,11 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memguard-test-'));
   leasePath = path.join(tmpDir, '.godot-mcp', 'memory-leases.json');
   _setLeasesFilePathForTest(leasePath);
+  // Task 4 起 test/setup.js 全局设 GODOT_MCP_MEMORY_GUARD='0'(未 mock 守卫的其余测试
+  // 零 PowerShell/零租约写盘);本文件测真实守卫逻辑,逐用例显式回归「开」——
+  // 关闭态用例(②/⑩ 内 stubEnv('0'/'false'))自行覆盖本值。stubEnv 须在 _resetForTest
+  // 之后(缓存已清,首次调用重读 env)。
+  vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
   // Task 2 起 acquireLease 启用路径走准入三查——默认夹具恒「健康机器」,对既有用例透明(三查等价恒过):
   // 水位阈值压到 1MB(两平台物理空闲恒过)+ 预算 100%(恒不超)+ 充足快照 mock(Windows 通道;
   // 非 Windows 快照不经 psRunner,os 真实读数同样满足 1MB 阈值)。
