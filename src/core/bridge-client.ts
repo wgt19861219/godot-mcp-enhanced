@@ -444,7 +444,15 @@ export function _removeSubscription(method: 'watch.start' | 'monitor.start'): vo
 }
 
 /** 重发登记表中的订阅。fire-and-forget: 经 _sendLock 排队(不与当前 in-flight 请求死锁),
- *  单条失败仅 warn;游戏侧返回 error(节点已销毁等永久失败)时移除登记,防重连重试风暴。 */
+ *  单条失败仅 warn;游戏侧返回 error(节点已销毁等永久失败)时移除登记,防重连重试风暴。
+ *
+ *  ⚠️ 勿续命警示(memory-guard 三期 Task 4,终审 2026-11-22 triage):此处 sendToBridge
+ *  未传 poke 选项(SendOptions.poke 缺省 true)——每次重发都会刷新 IdleTimer 的会话空闲钟。
+ *  现状可容忍:本函数仅在断线重连后一次性触发,不构成周期性流量,不会让已连接会话
+ *  永久免于 15min 空闲回收。**未来若把重发改成周期重试/定时重发,必须传
+ *  `{ poke: false }`**——否则重发流量会不断给会话续命,IdleTimer 对已连接 bridge
+ *  的会话永久失效(与二期 Task 1 审查 Critical-1 同款根因,keepalive 已按此排除,
+ *  此处勿再踩)。 */
 function _resendSubscriptions(): void {
   if (_subscriptions.length === 0) return;
   if (_resendInFlight) return;  // 重发自身触发的重连不再叠加
