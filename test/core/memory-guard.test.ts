@@ -318,6 +318,35 @@ describe('补充:租约生命周期 bind/heartbeat/release', () => {
   });
 });
 
+describe('⑨ I-1 修复:总开关关闭态 dummy lease 短路', () => {
+  it("关闭态(GODOT_MCP_MEMORY_GUARD=0) acquireLease 恒 ok 返回 dummy,租约文件不被创建、writeFileAtomic 零调用", () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    const res = acquireLease('headless', 'D:/proj');
+    expect('lease' in res).toBe(true);
+    if (!('lease' in res)) return;
+    expect(res.lease.id).toBe('guard-disabled');
+    expect(res.lease.kind).toBe('headless');
+    expect(res.lease.declaredMB).toBe(1024);
+    expect(res.lease.pid).toBeNull();
+    expect(fs.existsSync(leasePath)).toBe(false); // 不创建租约文件
+    expect(fs.existsSync(path.dirname(leasePath))).toBe(false); // 连目录都不建
+    expect(vi.mocked(writeFileAtomic)).not.toHaveBeenCalled(); // 零写调用
+  });
+
+  it("关闭态('false') releaseLease(dummy)/bindLeasePid(dummy)/heartbeatLeases 无害 no-op,release 可重复调不抛", () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', 'false');
+    const res = acquireLease('editor', 'D:/proj');
+    expect('lease' in res).toBe(true);
+    expect(() => bindLeasePid('guard-disabled', 1234)).not.toThrow();
+    expect(() => heartbeatLeases()).not.toThrow();
+    expect(() => releaseLease('guard-disabled')).not.toThrow();
+    expect(() => releaseLease('guard-disabled')).not.toThrow(); // 重复调幂等
+    expect(fs.existsSync(leasePath)).toBe(false); // 全程零落盘
+    expect(vi.mocked(writeFileAtomic)).not.toHaveBeenCalled();
+    expect(vi.mocked(ensureDir)).not.toHaveBeenCalled();
+  });
+});
+
 describe('补充:RSS 批量采样 sampleRssBytes(Windows)', () => {
   it.skipIf(!IS_WIN)('单对象/数组两形态解析 + pid 集合缓存(乱序同键)+ 空集合不起 PowerShell', async () => {
     let psCalls = 0;

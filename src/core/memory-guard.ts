@@ -283,14 +283,34 @@ export function listActiveLeases(): MemLease[] {
 
 let _leaseSeq = 0;
 
+/** 总开关关闭态的 dummy lease id(固定值,标识"守卫已关、恒 ok"的占位租约,不落盘)。 */
+const DUMMY_LEASE_ID = 'guard-disabled';
+
 /** 获取租约。Task 2 将在此实现准入三查(水位/预算/实例上限);本任务恒成功建租约。
- *  lease id 形如 p<serverPid>-<Date.now()>-<seq>(同 server 进程内单调递增)。 */
+ *  lease id 形如 p<serverPid>-<Date.now()>-<seq>(同 server 进程内单调递增)。
+ *  I-1 审查修复:总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false) → 恒 ok 返回 dummy 租约,
+ *  不读不写租约文件(零落盘副作用)——治理关闭时上层 spawn 漏斗照常工作,租约机制整体旁路。 */
 export function acquireLease(
   kind: SpawnKind,
   projectPath: string,
   opts?: { exemptChecks?: boolean },
 ): { lease: MemLease } | { denial: { code: 'MEMGUARD_LOW_WATER' | 'MEMGUARD_BUDGET' | 'MEMGUARD_INSTANCE_CAP'; message: string; inventory: MemLease[] } } {
   void opts; // exemptChecks(豁免位)由 Task 2 三查消费;本任务无检查可豁免
+  if (!memoryGuardEnabled()) {
+    const now = Date.now();
+    return {
+      lease: {
+        id: DUMMY_LEASE_ID,
+        serverPid: process.pid,
+        kind,
+        declaredMB: declaredMBFor(kind),
+        projectPath,
+        pid: null,
+        startedAt: now,
+        lastHeartbeat: now,
+      } satisfies MemLease,
+    };
+  }
   const leases = listActiveLeases();
   const now = Date.now();
   const lease: MemLease = {
@@ -307,8 +327,10 @@ export function acquireLease(
   return { lease };
 }
 
-/** 给租约绑定子进程 pid(建约时未绑,spawn 成功后回填;此后清理判定切换到 pid 探测)。 */
+/** 给租约绑定子进程 pid(建约时未绑,spawn 成功后回填;此后清理判定切换到 pid 探测)。
+ *  dummy lease(总开关关闭态)无盘面实体,不可绑 pid → no-op(I-1)。 */
 export function bindLeasePid(leaseId: string, pid: number): void {
+  if (leaseId === DUMMY_LEASE_ID) return;
   const leases = listActiveLeases();
   const target = leases.find((l) => l.id === leaseId);
   if (target === undefined) return; // 租约已被清理/不存在 → 静默(幂等)
@@ -316,15 +338,18 @@ export function bindLeasePid(leaseId: string, pid: number): void {
   writeLeases(leases);
 }
 
-/** 释放租约(幂等:租约不存在/已被清理时静默)。 */
+/** 释放租约(幂等:租约不存在/已被清理时静默)。dummy lease 无盘面实体 → no-op,可重复调(I-1)。 */
 export function releaseLease(leaseId: string): void {
+  if (leaseId === DUMMY_LEASE_ID) return;
   const leases = listActiveLeases();
   const kept = leases.filter((l) => l.id !== leaseId);
   if (kept.length !== leases.length) writeLeases(kept);
 }
 
-/** 刷新本 serverPid 全部租约的 lastHeartbeat 并落盘(无本 server 租约时不写盘,避免空转 IO)。 */
+/** 刷新本 serverPid 全部租约的 lastHeartbeat 并落盘(无本 server 租约时不写盘,避免空转 IO)。
+ *  总开关关闭态本 server 不会有真实租约(dummy 不落盘)→ 心跳无对象,免读盘 no-op(I-1)。 */
 export function heartbeatLeases(): void {
+  if (!memoryGuardEnabled()) return;
   const leases = listActiveLeases();
   if (!leases.some((l) => l.serverPid === process.pid)) return;
   const now = Date.now();
