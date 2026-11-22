@@ -141,8 +141,9 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
  *  pressure 即停;候选耗尽仍 hard → 诚实上报「已无本 server 可驱逐进程,外部占用需
  *  人工处理」break,不抛崩(外部进程永不杀——候选只在本 server 租约集合内)。
  *  死循环防护:attempted 集合保证每租约单轮仅尝试一次——killPidTree 异步强杀,
- *  force 采样可能早于 OS 回收读到旧值(最坏多杀一笔,有界);候选集随每杀单调缩小
- *  (杀即 releaseLease 清账本),必终止。 */
+ *  force 采样可能早于 OS 回收读到旧值(最坏杀光全部候选(attempted 集合保证有界
+ *  终止,非最小杀伤);taskkill /F 后 Windows 工作集随进程终止即释放,实际风险低);
+ *  候选集随每杀单调缩小(杀即 releaseLease 清账本),必终止。 */
 function evictForHardThreshold(): number {
   let killed = 0;
   const attempted = new Set<string>();

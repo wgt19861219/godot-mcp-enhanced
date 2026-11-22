@@ -395,7 +395,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
     const commitStr = snap.commitAvailBytes !== null ? fmtGB(snap.commitAvailBytes) : 'n/a';
     console.error(
       `MEMGUARD hard enter(prev=${prev}) 物理空闲 ${fmtGB(snap.freePhysBytes)}(commit ${commitStr})` +
-      ` < 硬阈值 ${pressureHardMB()}MB——0s 宽限立即驱逐超声明租约(实测÷声明降序,watchdog 执行)`,
+      ` < 硬阈值 ${pressureHardMB()}MB——0s 宽限立即驱逐 ratio 最高租约(实测÷声明降序,watchdog 执行)`,
     );
     return;
   }

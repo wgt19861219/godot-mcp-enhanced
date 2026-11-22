@@ -374,11 +374,13 @@ export async function runDoctor(_args: string[]): Promise<void> {
     const memLine = `machine memory: physical ${fmtGBnum(memSnap.freePhysBytes)}/${fmtGBnum(memSnap.totalPhysBytes)} GB free (${physUsedPct}% used), ${commitStr}, godot procs ${memSnap.godotProcCount}`
       + (memSnap.degraded ? ` (degraded: ${memSnap.degraded})` : '');
     console.log(memSnap.degraded ? warn(memLine) : status(true, memLine));
-    // pressure 行:非 normal 附进入时长(相对时间,人工读盘友好)
+    // pressure 行:非 normal 附进入时长(相对时间,人工读盘友好)。
+    // pressure 是运行状态非环境错误——对齐快照降级判例用 ! 前缀 warn,
+    // 不影响 exit code(✗ 前缀语义留给真环境错误)。
     const pressureLine = panel.pressure.state === 'normal' || panel.pressure.enteredAt === null
       ? `memory pressure: ${panel.pressure.state}`
       : `memory pressure: ${panel.pressure.state} (entered ${fmtAgo(panel.pressure.enteredAt)})`;
-    console.log(status(panel.pressure.state === 'normal', pressureLine));
+    console.log(panel.pressure.state === 'normal' ? status(true, pressureLine) : warn(pressureLine));
     // budget 行:预算上限与已占用(Σ max(声明,实测),与准入判定同源口径)
     const fmtMBasGB = (mb: number): string => `${(mb / 1024).toFixed(1)} GB`;
     console.log(status(true, `memory budget: ${panel.budget.pct}% = ${fmtMBasGB(panel.budget.budgetMB)}, used ${fmtMBasGB(panel.budget.usedMB)} (${panel.budget.leaseCount} leases)`));
