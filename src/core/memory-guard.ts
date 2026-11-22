@@ -49,6 +49,10 @@ const SNAPSHOT_CACHE_TTL_MS = 10_000;
 const RSS_CACHE_TTL_MS = 10_000;
 /** 未绑 pid 租约的心跳陈旧阈值(90s)——超时即视为弃约清理。 */
 const LEASE_HEARTBEAT_STALE_MS = 90_000;
+/** pid 绑定宽限窗(5min,终审 I-1):acquire→spawn→bindLeasePid 正常流程毫秒级完成,
+ *  超窗仍 pid=null 必为泄漏(spawn 同步抛未归还/bindLeasePid 竞态覆盖回 null)——
+ *  heartbeatLeases 对其停续命,任其落入上方 90s 陈旧清理线,账本自愈。 */
+const LEASE_PID_BIND_GRACE_MS = 5 * 60_000;
 /** PowerShell 采样超时(5s),超时按降级处理。 */
 const POWERSHELL_TIMEOUT_MS = 5_000;
 
@@ -506,14 +510,19 @@ export function releaseLease(leaseId: string): void {
 }
 
 /** 刷新本 serverPid 全部租约的 lastHeartbeat 并落盘(无本 server 租约时不写盘,避免空转 IO)。
- *  总开关关闭态本 server 不会有真实租约(dummy 不落盘)→ 心跳无对象,免读盘 no-op(I-1)。 */
+ *  总开关关闭态本 server 不会有真实租约(dummy 不落盘)→ 心跳无对象,免读盘 no-op(I-1)。
+ *  终审 I-1 修复:pid=null 且 startedAt 超宽限窗(LEASE_PID_BIND_GRACE_MS)的租约**停续命**
+ *  (不刷新 lastHeartbeat)——防泄漏/竞态产的无 pid 租约被 60s 心跳无限续命、90s 陈旧清理线
+ *  永不到期(账本污染直至 server 重启);停续命后其心跳自然陈旧,被 listActiveLeases 读时清理。 */
 export function heartbeatLeases(): void {
   if (!memoryGuardEnabled()) return;
   const leases = listActiveLeases();
   if (!leases.some((l) => l.serverPid === process.pid)) return;
   const now = Date.now();
   for (const l of leases) {
-    if (l.serverPid === process.pid) l.lastHeartbeat = now;
+    if (l.serverPid !== process.pid) continue;
+    if ((l.pid === null || l.pid === undefined) && now - l.startedAt > LEASE_PID_BIND_GRACE_MS) continue;
+    l.lastHeartbeat = now;
   }
   writeLeases(leases);
 }

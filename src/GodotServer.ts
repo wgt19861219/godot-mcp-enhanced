@@ -692,6 +692,9 @@ export class GodotServer {
       editProject: async (projectPath: string) => {
         // launch_editor 链复刻(runtime.ts case 'launch_editor',spec §6:仅 6 行不抽函数;
         // project.godot 存在性 404 已由端点层前置校验)。
+        // 终审 I-1(b):findGodot 前置于 acquireLease——消除「acquire 成功→findGodot 抛→
+        // 租约悬空」的环境级触发面(与工具层入口同步)。
+        const godot = await findGodot();
         // 内存治理 Task 4:同工具层语义——editor 档 exemptChecks:true(跳三查仍记账);
         // denial 抛错由端点层 /api/sessions/start 的 catch 转 500 透传报文。
         const admit = acquireLease('editor', projectPath, { exemptChecks: true });
@@ -699,15 +702,20 @@ export class GodotServer {
           throw new Error(admit.denial.message);
         }
         const leaseId = admit.lease.id;
-        const godot = await findGodot();
-        const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
-        if (child.pid) bindLeasePid(leaseId, child.pid);
-        child.on('error', (err) => {
+        // 终审 I-1(c):spawn 同步抛时 error/close handler 均未注册——归还租约再抛,防泄漏。
+        try {
+          const child = spawn(godot, ['--editor', '--path', projectPath], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+          if (child.pid) bindLeasePid(leaseId, child.pid);
+          child.on('error', (err) => {
+            releaseLease(leaseId);
+            getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
+          });
+          child.on('close', () => releaseLease(leaseId));
+          child.unref();
+        } catch (err) {
           releaseLease(leaseId);
-          getLogger().error('web-gui', `Failed to launch editor: ${err.message}`);
-        });
-        child.on('close', () => releaseLease(leaseId));
-        child.unref();
+          throw err;
+        }
       },
       // 资源重导入批(2026-10-08):面板「⟳」按钮 → POST /api/projects/reimport →
       // godot --headless --import 引擎级扫描+重导入变更资源。120s 超时对齐 check:gdscript

@@ -18,7 +18,7 @@
  * and call_deferred() to reliably load scenes and capture frames.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { existsSync, statSync, mkdirSync, unlinkSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -91,10 +91,19 @@ function runScreenshot(
       return;
     }
     const leaseId = admit.lease.id;
-    const proc = spawn(godotPath, args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: buildSafeEnv(),
-    });
+    let proc: ChildProcess;
+    try {
+      proc = spawn(godotPath, args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: buildSafeEnv(),
+      });
+    } catch (err) {
+      // 终审 I-1: spawn 同步抛——error/close handler 均未注册,主动归还租约;
+      // resolve(非 reject)对齐下方异步 error 路径的 resolve-only 契约
+      releaseLease(leaseId);
+      resolve({ code: -1, output: `Spawn error: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
     if (proc.pid) bindLeasePid(leaseId, proc.pid);
 
     proc.stdout?.on('data', (d: Buffer) => { chunks.push(d); });

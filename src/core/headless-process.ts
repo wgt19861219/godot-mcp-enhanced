@@ -3,7 +3,7 @@
 // label 参与错误文本前缀——blender/godot 各自的历史测试断言依赖该前缀,不可统一。
 // 内存治理一期 Task 4:spawn 前准入——kind 由调用方注入(默认 headless 档);
 // projectPath 从 args --path 解析(调用方零改动)。
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { forceKillTree } from './process-state.js';
 import { buildSafeEnv } from './godot-finder.js';
 import { acquireLease, bindLeasePid, releaseLease, projectPathFromArgs, type SpawnKind } from './memory-guard.js';
@@ -25,7 +25,16 @@ export function runHeadlessCollector(
   }
   const leaseId = admit.lease.id;
   return new Promise((resolve, reject) => {
-    const proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildSafeEnv() });
+    let proc: ChildProcess;
+    try {
+      proc = spawn(binPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildSafeEnv() });
+    } catch (err) {
+      // 终审 I-1: spawn 同步抛——error/close handler 均未注册,主动归还租约再 reject
+      // (错误文本与异步 error 路径同款 "failed to spawn" 前缀,消费方断言兼容)
+      releaseLease(leaseId);
+      reject(new Error(`${label}: failed to spawn ${binPath}: ${err instanceof Error ? err.message : String(err)}`));
+      return;
+    }
     if (proc.pid) bindLeasePid(leaseId, proc.pid);
 
     // C-PERF-01: 用 Buffer[] 避免 O(n²) 字符串拼接

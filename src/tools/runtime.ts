@@ -679,6 +679,9 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       if (!existsSync(join(p, 'project.godot'))) {
         return textResult(`Error: Not a Godot project (no project.godot found): ${p}`);
       }
+      // 终审 I-1(b):findGodot 前置于 acquireLease——消除「acquire 成功→findGodot 抛→
+      // 租约悬空」的环境级触发面(GODOT_PATH 配错/PATH 无 godot 即中,非编程错误)。
+      const godot = await ctx.findGodot();
       // 内存治理 Task 4:editor 档准入——exemptChecks:true 跳三查(用户显式起编辑器
       // 不受机器水位约束)但仍记账(占用清单/计数可见);租约绑 pid 后由 close/error
       // 归还,若事件不达由读时清理(pid 死→删)兜底。
@@ -687,15 +690,20 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         return opsErrorResult(admit.denial.code, admit.denial.message);
       }
       const leaseId = admit.lease.id;
-      const godot = await ctx.findGodot();
-      const child = spawn(godot, ['--editor', '--path', p], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
-      if (child.pid) bindLeasePid(leaseId, child.pid);
-      child.on('error', (err) => {
+      // 终审 I-1(c):spawn 同步抛时 error/close handler 均未注册——归还租约再抛,防泄漏。
+      try {
+        const child = spawn(godot, ['--editor', '--path', p], { detached: true, stdio: 'ignore', env: buildSafeEnv() });
+        if (child.pid) bindLeasePid(leaseId, child.pid);
+        child.on('error', (err) => {
+          releaseLease(leaseId);
+          getLogger().error('runtime', `Failed to launch editor: ${err.message}`);
+        });
+        child.on('close', () => releaseLease(leaseId));
+        child.unref();
+      } catch (err) {
         releaseLease(leaseId);
-        getLogger().error('runtime', `Failed to launch editor: ${err.message}`);
-      });
-      child.on('close', () => releaseLease(leaseId));
-      child.unref();
+        throw err;
+      }
       return textResult(`Launched Godot editor for project: ${p}`);
     }
 

@@ -315,6 +315,30 @@ describe('③ launch_editor 漏斗(editor)', () => {
     expect(seg).toMatch(/acquireLease\(\s*'editor'/);
     expect(seg).toMatch(/exemptChecks:\s*true/);
   });
+
+  // ── 终审 I-1(2026-11-22):launch_editor 双入口的租约泄漏缺口 ──────────────────
+  // (b) findGodot 前置于 acquireLease:环境级失败(GODOT_PATH 配错/PATH 无 godot)
+  //     不得留下已建租约;(c) spawn 同步抛时 error/close handler 均未注册,须归还租约再抛。
+
+  it('终审 I-1(b):findGodot 失败(环境级)抛错时 acquireLease 未被调——findGodot 前置于准入,零租约副作用', async () => {
+    const ctx = makeCtx();
+    (ctx.findGodot as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      throw new Error('godot not found (GODOT_PATH misconfigured)');
+    });
+    await expect(runtimeHandleTool('runtime', {
+      action: 'launch_editor', project_path: TMP_PROJECT,
+    }, ctx)).rejects.toThrow(/godot not found/);
+    expect(memguard.acquireLease).not.toHaveBeenCalled();   // 无租约可泄漏
+    expect(memguard.releaseLease).not.toHaveBeenCalled();
+  });
+
+  it('终审 I-1(c):spawn 同步抛 → releaseLease 归还租约再 rethrow(error/close handler 均未注册)', async () => {
+    spawnMock.mockImplementation(() => { throw new Error('sync spawn boom'); });
+    await expect(runtimeHandleTool('runtime', {
+      action: 'launch_editor', project_path: TMP_PROJECT,
+    }, makeCtx())).rejects.toThrow(/sync spawn boom/);
+    expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+  });
 });
 
 // ─── ④ spawnGodot 漏斗(spawn-helper,validation/workflow/scene/batch/android 共用)───
@@ -411,6 +435,17 @@ describe('⑤ screenshot 漏斗(headless)', () => {
     await p;
     expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
   });
+
+  it('终审 I-1(c):spawn 同步抛 → 结构化失败返回(对齐异步 error 契约)且 releaseLease 归还租约', async () => {
+    spawnMock.mockImplementation(() => { throw new Error('sync spawn boom'); });
+    const r = await captureScreenshot({
+      godotPath: GODOT_BIN, projectPath: TMP_PROJECT,
+      outputPath: join(TMP_ROOT, 'out3.png'), timeout: 2,
+    });
+    expect(r.success).toBe(false);
+    expect(r.godotOutput).toContain('Spawn error');
+    expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+  });
 });
 
 describe('⑤ headless-process 漏斗(runGodotHeadless)', () => {
@@ -430,6 +465,14 @@ describe('⑤ headless-process 漏斗(runGodotHeadless)', () => {
     proc.emit('close', 0);
     await p;
     expect(memguard.bindLeasePid).toHaveBeenCalledWith(OK_LEASE_ID, 4801);
+    expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+  });
+
+  it('终审 I-1(c):spawn 同步抛 → releaseLease 归还租约后 reject(error/close handler 均未注册)', async () => {
+    spawnMock.mockImplementation(() => { throw new Error('sync spawn boom'); });
+    await expect(runGodotHeadless(
+      ['--headless', '--path', TMP_PROJECT, '--import'], GODOT_BIN, 5_000,
+    )).rejects.toThrow(/failed to spawn/);
     expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
   });
 });

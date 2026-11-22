@@ -6,7 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- (计划中) memory-guard 二期:多 server 租约读-改-写互斥(Task 1 终审 deferred M-3)、spawn 同步抛路径四处租约归还(Task 4 终审 deferred M-1)、杀事件入 JSONL 审计通道(Task 3 终审 deferred M-3)、blender 档位扩展(Task 4 终审裁定留档);反馈批 Task 4(挂起)落地后发 0.38.3。
+- **fix(core): 一期全分支终审 I-1/I-2 修复(2026-11-22,docs/reviews/2026-11-22-memory-guard-p1-review.md)**:①pid=null 租约停续命自愈——`heartbeatLeases` 对 startedAt 超 5min 宽限窗(`LEASE_PID_BIND_GRACE_MS`)仍未绑 pid 的租约不再刷新 lastHeartbeat,使其落入既有 90s 心跳陈旧清理线(泄漏/bindLeasePid 竞态产的无 pid 租约不再被 60s 心跳无限续命,账本自愈);②launch_editor 双入口(src/tools/runtime.ts 与 src/GodotServer.ts editProject)`await findGodot()` 前置于 `acquireLease`——消除「acquire 成功→findGodot 抛→租约悬空」的环境级触发面(GODOT_PATH 配错/PATH 无 godot 即中);③四处 spawn 同步抛补租约归还(headless-process/screenshot/runtime launch_editor/GodotServer editProject——acquire 后→spawn 前的同步抛路径 releaseLease 再抛/reject,screenshot 对齐异步 error 的 resolve-only 契约);④main-entry-symlink doctor 用例显式 `timeout: 30_000`(vitest 全局 10s testTimeout 掐在内层 spawnSync 60s 之前,配置矛盾致全量并发 flaky,CI Linux 持续受害)。原二期计划中「spawn 同步抛路径四处租约归还(Task 4 终审 deferred M-1)」由本条提前落地,移出二期清单。
+- (计划中) memory-guard 二期:多 server 租约读-改-写互斥(Task 1 终审 deferred M-3)、杀事件入 JSONL 审计通道(Task 3 终审 deferred M-3)、树杀异步吞错→失败路径归因虚报+进程失管收口(终审 T3-M-2,triage #9——killPidTree promise 化+杀后验证;杀前探活收窗+60s orphan 扫描双兜底已在一期)、blender 档位扩展(Task 4 终审裁定留档);反馈批 Task 4(挂起)落地后发 0.38.3。
 
 ## [0.38.2] - 2026-11-22
 

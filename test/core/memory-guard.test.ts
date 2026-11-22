@@ -497,3 +497,47 @@ describe('⑩ Task 2:准入三查 acquireLease(水位双口径/声明预算/实�
     expect(res.denial.message).toContain('commit n/a');
   });
 });
+
+// 终审 I-1a(2026-11-22,docs/reviews/2026-11-22-memory-guard-p1-review.md):pid=null 租约
+// 泄漏被 60s 心跳无限续命 → 90s 陈旧清理线永不到期,账本非自愈。修复:heartbeatLeases
+// 对「startedAt 超 5min 宽限窗仍 pid=null」的租约停续命(不刷 lastHeartbeat)——正常流程
+// acquire→spawn→bindLeasePid 毫秒级完成,超窗必为泄漏/竞态覆盖产物,任其陈旧即被清理。
+describe('⑪ 终审 I-1:pid=null 租约超宽限窗停续命(账本自愈)', () => {
+  it('startedAt 超 5min 仍 pid=null → heartbeatLeases 不刷新其 lastHeartbeat;心跳累计陈旧超 90s 后被读时清理', () => {
+    let t = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    // 构造泄漏租约:lastHeartbeat 新鲜(距 30s<90s,读时清理不动它),startedAt 距 6min 超 5min 宽限窗
+    const leak = makeLease({
+      id: 'leak-1', serverPid: process.pid, pid: null,
+      startedAt: t - 6 * 60_000, lastHeartbeat: t - 30_000,
+    });
+    writeLeaseFixture([leak]);
+    heartbeatLeases();
+    const after = readDisk().leases.find((l) => l.id === 'leak-1');
+    expect(after).toBeDefined();                     // 未到 90s 陈旧线,租约暂留
+    expect(after!.lastHeartbeat).toBe(t - 30_000);   // 核心:未被续命(心跳保持原值)
+    // 推进 91s:lastHeartbeat 距今 121s 超 90s → 读时清理删除,账本自愈
+    t += 91_000;
+    expect(listActiveLeases().some((l) => l.id === 'leak-1')).toBe(false);
+    expect(readDisk().leases.some((l) => l.id === 'leak-1')).toBe(false);
+  });
+
+  it('startedAt < 5min 的 pid=null 租约照常续命;已绑 pid 的租约不受宽限窗影响', () => {
+    const t = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    mockKillProbe(new Set([4242])); // 已绑 pid 探测须活
+    const fresh = makeLease({
+      id: 'fresh-1', serverPid: process.pid, pid: null,
+      startedAt: t - 60_000, lastHeartbeat: t - 60_000,
+    });
+    const bound = makeLease({
+      id: 'bound-1', serverPid: process.pid, pid: 4242,
+      startedAt: t - 10 * 60_000, lastHeartbeat: t - 30_000,
+    });
+    writeLeaseFixture([fresh, bound]);
+    heartbeatLeases();
+    const disk = readDisk().leases;
+    expect(disk.find((l) => l.id === 'fresh-1')!.lastHeartbeat).toBe(t); // 宽限窗内照常续
+    expect(disk.find((l) => l.id === 'bound-1')!.lastHeartbeat).toBe(t); // 已绑 pid 超窗也续(心跳仅服务未绑阶段)
+  });
+});
