@@ -41,8 +41,10 @@ function idleMinutes(): number {
 
 /** 按项目 key 反查释放 game_window 租约:runtime close 回调持闭包 leaseId 异步释放,
  *  本路径从账本反查同步释放(不等 close——树杀后 close 可能延迟,验收锚是租约不挂账)。
- *  只匹配 game_window 档(run_project 专用),其他项目/其他档的租约不牵连。 */
-function releaseGameWindowLeases(projectKey: string): void {
+ *  只匹配 game_window 档(run_project 专用),其他项目/其他档的租约不牵连。
+ *  内存治理二期 Task 4 起导出:exit-watchdog(退出链回收)与 IdleTimer(空闲回收)
+ *  两消费方同语义单源(勿在消费方复制副本)。 */
+export function releaseGameWindowLeases(projectKey: string): void {
   for (const l of listActiveLeases()) {
     if (l.kind === 'game_window' && normalizeProjectKey(l.projectPath) === projectKey) {
       releaseLease(l.id);

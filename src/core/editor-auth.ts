@@ -29,9 +29,11 @@ function restrictFileWindows(filePath: string): boolean {
     // WriteAllText 覆盖写新 secret。若用 :R,plugin 后续覆盖写被只读 ACL 拒绝 → secret 文件停在旧值、
     // plugin 内存换新值 → MCP server 用旧文件 secret auth 失败 → 降级 headless(死循环 bug)。
     // 与 plugin 端 src/scripts/mcp_bridge.gd / addons websocket_server.gd:_restrict_secret_permissions 的 USERNAME:M 对齐。
-    execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore' });
+    // Task 4(2026-11-22 spawn 点自查):补 timeout 15s——execFileSync 同步阻塞事件循环,icacls
+    // 挂死(磁盘/AV 锁)会卡死整个 server;短命令 15s 参照。读回处输出仅数行,补 maxBuffer 显式值。
+    execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore', timeout: 15_000 });
     // Verify the ACL was applied by reading it back
-    const output = execFileSync('icacls', [filePath], { encoding: 'utf-8' });
+    const output = execFileSync('icacls', [filePath], { encoding: 'utf-8', timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
     // Case-insensitive match — Windows usernames are case-insensitive
     if (!output.toLowerCase().includes(username.toLowerCase())) {
       if (!_permWarned) {

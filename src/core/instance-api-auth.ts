@@ -120,7 +120,9 @@ export function getOrCreateApiSecret(): string {
         if (username && /^[A-Za-z0-9_-]+$/.test(username)) {
           // 批 K 2026-08-16: :R → :M(与 5968a03/editor-auth、gdscript-executor 同款统一)
           // :R 只读会让后续 secret 轮换重写/删除失败;:M 允许写删但不给改 ACL 的完全控制
-          execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore' });
+          // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——execFileSync
+          // 同步阻塞,icacls 挂死会卡死 server。
+          execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore', timeout: 15_000 });
         } else {
           getLogger().warn('instance-api-auth', `Username "${username}" contains unexpected characters, skipping ACL restriction`);
         }

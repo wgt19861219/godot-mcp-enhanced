@@ -32,7 +32,9 @@ export function defaultOpener(url: string, appWindow = false): void {
     if (exe) {
       // execFile 不经 shell:exe 来自固定候选清单 + existsSync,url 的 token 已过 registry
       // 格式校验([A-Za-z0-9_-]+),无字符串拼接注入面。
-      execFile(exe, [`--app=${url}`], { windowsHide: true }, () => {
+      // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——启动器 child
+      // 未 unref 会保活 CLI 进程,卡死的启动器挂住整进程。
+      execFile(exe, [`--app=${url}`], { windowsHide: true, timeout: 15_000 }, () => {
         /* 失败降级:调用方已打印 URL,手动点 */
       });
       return;
@@ -43,16 +45,17 @@ export function defaultOpener(url: string, appWindow = false): void {
   // shell 字符串,url 虽经 registry token 格式校验([A-Za-z0-9_-]+)无注入面,但拼接
   // 形态本身是审计关注点;Windows `start` 是 cmd 内建,须经 cmd /c 调用。失败降级
   // 不变:调用方已打印 URL,手动点。
+  // Task 4(2026-11-22 spawn 点自查):补 timeout 15s 同上(三个平台启动器)。
   if (process.platform === 'win32') {
-    execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, () => {
+    execFile('cmd', ['/c', 'start', '', url], { windowsHide: true, timeout: 15_000 }, () => {
       /* 失败降级:调用方已打印 URL,手动点 */
     });
   } else if (process.platform === 'darwin') {
-    execFile('open', [url], () => {
+    execFile('open', [url], { timeout: 15_000 }, () => {
       /* 失败降级:调用方已打印 URL,手动点 */
     });
   } else {
-    execFile('xdg-open', [url], () => {
+    execFile('xdg-open', [url], { timeout: 15_000 }, () => {
       /* 失败降级:调用方已打印 URL,手动点 */
     });
   }

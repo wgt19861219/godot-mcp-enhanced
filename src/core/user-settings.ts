@@ -94,7 +94,9 @@ function hardenFilePermissionsWindows(filePath: string): void {
   try {
     const username = userInfo().username;
     if (username && /^[A-Za-z0-9_-]+$/.test(username)) {
-      execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore' });
+      // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——execFileSync
+      // 同步阻塞,icacls 挂死会卡死 server。
+      execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore', timeout: 15_000 });
     } else {
       getLogger().warn('user-settings', `Username "${username}" has unexpected chars, skipping ACL restriction for ${filePath}`);
     }

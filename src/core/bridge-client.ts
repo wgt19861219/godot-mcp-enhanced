@@ -524,7 +524,9 @@ function readBridgeSecret(port?: number): string | null {
         // editor-auth.ts:32 / instance-api-auth 对齐(M=Read+Write+Delete,owner 可删,其他用户无 ACE)。
         const username = userInfo().username;
         if (username && /^[A-Za-z0-9_-]+$/.test(username)) {
-          execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore' });
+          // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——execFileSync
+          // 同步阻塞,icacls 挂死会卡死 server(读路径 readBridgeSecret 每次经过)。
+          execFileSync('icacls', [secretPath, '/inheritance:r', '/grant:r', `${username}:M`], { stdio: 'ignore', timeout: 15_000 });
         }
       } catch (err) { getLogger().debug('bridge', `restrict Windows file permissions: ${err}`); }
     } else {

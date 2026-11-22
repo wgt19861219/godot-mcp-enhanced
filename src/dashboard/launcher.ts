@@ -103,7 +103,9 @@ export function launchDashboardOnce(): void {
         // IMPORTANT-2: 同步探测终端是否可用。原代码 spawn 后立即 break,而 ENOENT 是异步
         // error 事件,导致无 gnome-terminal 的系统(如 KDE 默认)永远起不来且无感知。
         // spawnSync 的 probe.error 非 null 表示 bin 不存在(ENOENT),跳过尝试下一个。
-        const probe = spawnSync(bin, ['--version'], { stdio: 'ignore' });
+        // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——spawnSync
+        // 同步阻塞,卡死的终端 --version 会挂死 server(bridge 首连路径)。
+        const probe = spawnSync(bin, ['--version'], { stdio: 'ignore', timeout: 15_000 });
         if (probe.error) continue;
         try {
           spawnDetached(bin, args, { detached: true, stdio: 'ignore', env: buildSafeEnv() });

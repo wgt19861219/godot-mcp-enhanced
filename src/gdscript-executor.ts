@@ -306,7 +306,9 @@ async function writeTempScript(code: string, sessionDir: string): Promise<string
         // 临时 .gd 失败,仅累积 tmpdir 垃圾;:M 允许写删但不给改 ACL 的完全控制)
         const winUser = userInfo().username;
         if (winUser && /^[A-Za-z0-9_-]+$/.test(winUser)) {
-          execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${winUser}:M`], { windowsHide: true });
+          // Task 4(2026-11-22 spawn 点自查):补 timeout 15s(短命令参照)——execFileSync
+          // 同步阻塞,icacls 挂死会卡死 server(每次 execute_gdscript 写临时脚本都经过)。
+          execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${winUser}:M`], { windowsHide: true, timeout: 15_000 });
       }
     } catch { /* non-critical: best-effort permission restriction */ }
   }

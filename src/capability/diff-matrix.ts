@@ -93,9 +93,13 @@ export function diffMatrices(prev: ToolCapability[], curr: ToolCapability[]): Dr
 /** 从 git HEAD 读取已提交的基线矩阵；无基线（首次/未提交）返回 null，不阻断。 */
 function readBaseline(projectRoot: string): ToolCapability[] | null {
   try {
+    // Task 4(2026-11-22 spawn 点自查):补 timeout 15s + maxBuffer 16MB——execSync 同步
+    // 阻塞,git 挂死挂住 CI 门;矩阵 JSON 可达数百 KB,默认 1MB 偏紧。
     const json = execSync('git show HEAD:docs/capability-matrix.json', {
       cwd: projectRoot,
       encoding: 'utf8',
+      timeout: 15_000,
+      maxBuffer: 16 * 1024 * 1024,
     });
     const parsed = JSON.parse(json) as { tools?: ToolCapability[] };
     return parsed.tools ?? null;
