@@ -56,6 +56,9 @@ import { buildAuthHeaders } from './core/instance-api-auth.js';
 import { InstanceHttpServer, resolveForwardTimeoutMs } from './core/instance-http-server.js';
 import { isFeatureEnabled } from './core/feature-flags.js';
 import * as ps from './core/process-state.js';
+// 内存治理一期 Task 3:看门狗轮询(超声明×系数树杀) + 租约心跳(<90s 陈旧线)。
+import { startWatchdog, stopWatchdog } from './core/mem-watchdog.js';
+import { heartbeatLeases } from './core/memory-guard.js';
 import { WebGuiServer } from './web-gui/server.js';
 import type { WebGuiServerOptions } from './web-gui/server.js';
 import { INDEX_HTML } from './web-gui/html.js';
@@ -120,6 +123,10 @@ export class GodotServer {
   // 报告②P0：周期性 orphan 扫描定时器。60s 间隔（规避 killOrphanGodotProcesses 内部 30s 节流）。
   // unref 不阻塞进程退出；close() 时 clearInterval。参考 agent-context.ts:46 / health-monitor.ts:320。
   private orphanScanTimer: ReturnType<typeof setInterval> | null = null;
+  // 内存治理一期 Task 3:租约心跳定时器(60s,<90s 陈旧线防未绑 pid 租约被误清理;
+  // watchdog timer 在 mem-watchdog 模块内自持,startWatchdog/stopWatchdog 对称启停)。
+  // unref 不阻塞退出;close() 时 clearInterval。
+  private leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
   // 行225 MULTI_INSTANCE 接收端：HTTP server + 心跳 + 本实例 id（initMultiInstance 启动，close 清理）。
   private httpReceiver: InstanceHttpServer | null = null;
   private instanceHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -777,6 +784,13 @@ export class GodotServer {
     }, 60_000);
     this.orphanScanTimer.unref?.();
 
+    // 内存治理一期 Task 3:看门狗(guard 关→startWatchdog no-op)——10s 采样本 server
+    // 租约 PID 的 WorkingSet,超「声明×系数」树杀+MEM_BUDGET_EXCEEDED 归因(kubelet
+    // 检查点语义);租约心跳 60s(<90s 陈旧线)。均 unref 不阻塞退出,close 对称清理。
+    startWatchdog();
+    this.leaseHeartbeatTimer = setInterval(() => { heartbeatLeases(); }, 60_000);
+    this.leaseHeartbeatTimer.unref?.();
+
     // 状态持久化 — 加载已保存的 agent 状态
     const projectPath = resolveProjectPath();
 
@@ -937,6 +951,12 @@ export class GodotServer {
       if (this.orphanScanTimer) {
         clearInterval(this.orphanScanTimer);
         this.orphanScanTimer = null;
+      }
+      // 内存治理一期 Task 3:停看门狗与租约心跳(close 对称清理,均幂等)。
+      stopWatchdog();
+      if (this.leaseHeartbeatTimer) {
+        clearInterval(this.leaseHeartbeatTimer);
+        this.leaseHeartbeatTimer = null;
       }
       // 行225：停 MULTI_INSTANCE 接收端（HTTP server + 心跳 + 清 registry）。
       if (this.instanceHeartbeatTimer) {
