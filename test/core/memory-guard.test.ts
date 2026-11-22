@@ -3,7 +3,8 @@
 // memory-guard 核心(Task 1)单测——①档位表默认值+env 覆盖 ②总开关三态 ③租约清理三规则
 // ④writeFileAtomic 原子写 ⑤快照缓存 ⑥PowerShell 失败降级 ⑦ensureDir 目录自建
 // ⑧fail-open(读失败返 []/写失败降级日志) + 补充(租约生命周期/RSS 采样)
-// + ⑫二期 Task 2 整机软阈值 pressure 状态机(拒新保旧+上报,fake timers 推进多轮)。
+// + ⑫二期 Task 2 整机软阈值 pressure 状态机(拒新保旧+上报,fake timers 推进多轮)
+// + ⑭三期 WATCHDOG_EXEMPT 驱逐候选过滤(env 豁免整组剔出候选,与殿后排序正交)。
 //
 // 测试注入约定:PowerShell 执行器经 _setPsRunnerForTest 注入 fake(不真起 PowerShell);
 // 租约文件路径经 _setLeasesFilePathForTest 重定向到 tmp 夹具目录(不触真实 ~/.godot-mcp);
@@ -47,6 +48,8 @@ import {
   getPressureState,
   getPressureEnteredAt,
   buildMemoryPanel,
+  getEvictionCandidates,
+  watchdogExemptGroups,
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
@@ -54,8 +57,15 @@ import {
   type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
 import { pollOnce } from '../../src/core/mem-watchdog.js';
-// 二期 Task 5 面板用:会话桶真实 API 建桶注入 lastPokeAt(「最后交互」数据源)
-import { getSession, resetState, setRunSessionProc } from '../../src/core/process-state.js';
+// 二期 Task 5 面板用:会话桶真实 API 建桶注入 lastPokeAt(「最后交互」数据源);
+// ⑭ 驱逐候选 preview 桥接用 getOrCreateSession+normalizeProjectKey(与 run_project 建桶同键)
+import {
+  getSession,
+  resetState,
+  setRunSessionProc,
+  getOrCreateSession,
+  normalizeProjectKey,
+} from '../../src/core/process-state.js';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -139,6 +149,9 @@ beforeEach(() => {
   // 非 Windows 快照不经 psRunner,os 真实读数同样满足 1MB 阈值)。
   vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '1');
   vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '100');
+  // 三期起驱逐候选受 GODOT_MCP_WATCHDOG_EXEMPT 影响——显式归零防宿主 env 泄漏污染
+  // 既有用例(⑭ describe 内用例自行 stubEnv 覆盖)。空串 = 无豁免,与未设等价。
+  vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
   mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
 });
 
@@ -827,5 +840,127 @@ describe('⑬ buildMemoryPanel(二期 Task 5)', () => {
     expect(p.machine.freePhysBytes).toBeGreaterThan(0); // 快照照常返回(os 内置读数)
     expect(p.machine.commitAvailBytes).toBeNull();     // WMI 通道随治理旁路(test/setup.js 全局
     expect(p.machine.godotProcCount).toBe(0);          //  guard=0「未 mock 测试零 PowerShell」约定)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 三期 Task 1:WATCHDOG_EXEMPT 驱逐候选过滤——env 命中组(preview/editor)整组剔出
+// 候选(区别于殿后:殿后=排序最后仍可杀,env 豁免=不进候选),与殿后语义正交:未命中
+// 组维持既有殿后排序。单进程硬帽(KILL_FACTOR)不受 env 豁免影响——watchdog 侧
+// mem-watchdog.test.ts 三期 describe 钉住。ratio 断言依赖 RSS 读数通道(psRunner
+// mock)→ Windows-only,同二期驱逐用例惯例;纯成员断言用例全平台跑。
+// ---------------------------------------------------------------------------
+
+/** preview 会话桶夹具(候选桥接键 = normalizeProjectKey,与 run_project 建桶同键)。 */
+function makePreviewSession(projectPath: string): void {
+  getOrCreateSession(normalizeProjectKey(projectPath)).preview = true;
+}
+
+describe('⑭ 三期:WATCHDOG_EXEMPT 候选过滤', () => {
+  const MBQ = 1024 * 1024; // MB 级 RSS 构造(ratio = 实测÷声明)
+
+  afterEach(() => {
+    resetState(); // 清 preview 会话桶(describe 局部,避免跨用例泄漏)
+  });
+
+  it('watchdogExemptGroups 直测:未设/空串=空 Set;trim+大小写不敏感;每次调用实时读 env', () => {
+    expect(watchdogExemptGroups().size).toBe(0); // 未设 → 无豁免
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
+    expect(watchdogExemptGroups().size).toBe(0); // 空串等同未设
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', ' Editor , PREVIEW ');
+    const groups = watchdogExemptGroups();
+    expect(groups.size).toBe(2);
+    expect(groups.has('preview')).toBe(true);
+    expect(groups.has('editor')).toBe(true); // 改 env 后下一次调用即生效(不缓存)
+  });
+
+  it.skipIf(!IS_WIN)('① env 未设:结构=既有排序清单 + envExempted 全零(新签名基线,殿后语义不变)', () => {
+    writeLeaseFixture([
+      makeLease({ id: 'N', serverPid: process.pid, kind: 'headless', declaredMB: 2048, pid: 3001 }),
+      makeLease({ id: 'E', serverPid: process.pid, kind: 'editor', declaredMB: 4096, pid: 3002 }),
+      makeLease({ id: 'P', serverPid: process.pid, kind: 'game_window', declaredMB: 1024, pid: 3003, projectPath: 'D:/prev-only' }),
+    ]);
+    makePreviewSession('D:/prev-only');
+    mockKillProbe(new Set([3001, 3002, 3003]));
+    mockMachinePs({ rss: { 3001: 1536 * MBQ, 3002: 6 * 1024 * MBQ, 3003: 2048 * MBQ } });
+
+    const r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']); // 普通区 N(0.75)在前;豁免区殿后 P(2.0)>E(1.5)
+    expect(r.candidates[0].ratio).toBeCloseTo(0.75, 5);
+    expect(r.envExempted).toEqual({ preview: 0, editor: 0 });
+  });
+
+  it.skipIf(!IS_WIN)('② env=editor:editor 不进候选且计数=1;preview 仍殿后(留在候选内),headless ratio 降序不变', () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    writeLeaseFixture([
+      makeLease({ id: 'N1', serverPid: process.pid, kind: 'headless', declaredMB: 2048, pid: 3001 }),
+      makeLease({ id: 'N2', serverPid: process.pid, kind: 'headless', declaredMB: 1024, pid: 3004 }),
+      makeLease({ id: 'E', serverPid: process.pid, kind: 'editor', declaredMB: 4096, pid: 3002 }),
+      makeLease({ id: 'P', serverPid: process.pid, kind: 'game_window', declaredMB: 1024, pid: 3003, projectPath: 'D:/prev-only' }),
+    ]);
+    makePreviewSession('D:/prev-only');
+    mockKillProbe(new Set([3001, 3002, 3003, 3004]));
+    mockMachinePs({ rss: { 3001: 1536 * MBQ, 3002: 6 * 1024 * MBQ, 3003: 2048 * MBQ, 3004: 1536 * MBQ } });
+
+    const r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['N2', 'N1', 'P']); // headless 区 ratio 1.5>0.75 降序;P 殿后(env 未豁免 preview)
+    expect(r.envExempted).toEqual({ preview: 0, editor: 1 });
+  });
+
+  it.skipIf(!IS_WIN)('③ env=preview,editor:preview 会话与 editor 均不进候选;非 preview 的 game_window 视为普通候选', () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'preview,editor');
+    writeLeaseFixture([
+      makeLease({ id: 'G', serverPid: process.pid, kind: 'game_window', declaredMB: 2048, pid: 3005, projectPath: 'D:/normal-game' }),
+      makeLease({ id: 'E', serverPid: process.pid, kind: 'editor', declaredMB: 4096, pid: 3002 }),
+      makeLease({ id: 'P', serverPid: process.pid, kind: 'game_window', declaredMB: 1024, pid: 3003, projectPath: 'D:/prev-only' }),
+      makeLease({ id: 'N', serverPid: process.pid, kind: 'headless', declaredMB: 2048, pid: 3001 }),
+    ]);
+    makePreviewSession('D:/prev-only'); // 仅 P 的会话桶 preview=true;G 无桶(非 preview)
+    mockKillProbe(new Set([3001, 3002, 3003, 3005]));
+    mockMachinePs({ rss: { 3001: 1024 * MBQ, 3002: 6 * 1024 * MBQ, 3003: 2048 * MBQ, 3005: 1536 * MBQ } });
+
+    const r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['G', 'N']); // G(0.75)>N(0.5) 同普通区降序
+    expect(r.envExempted).toEqual({ preview: 1, editor: 1 });
+  });
+
+  it('④ env=prevew,editor(拼错):仅 editor 生效 + stderr warn 含原始 token(合法 token 照常生效)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'prevew,editor');
+    writeLeaseFixture([
+      makeLease({ id: 'N', serverPid: process.pid, kind: 'headless', declaredMB: 2048, pid: 3001 }),
+      makeLease({ id: 'E', serverPid: process.pid, kind: 'editor', declaredMB: 4096, pid: 3002 }),
+    ]);
+    mockKillProbe(new Set([3001, 3002]));
+
+    const r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['N']); // editor 被剔;拼错的 preview 无效(无 preview 剔除)
+    expect(r.envExempted).toEqual({ preview: 0, editor: 1 });
+    expect(errSpy).toHaveBeenCalledTimes(1); // 一行/每未知 token
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('MEMGUARD WATCHDOG_EXEMPT'));
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('prevew'));
+  });
+
+  it('⑤ env=空串/`,,`:等同未设(envExempted 全零、候选含全部组、无 warn)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // 夹具无 RSS 读数(ratio 全 0)→ 豁免区内走 sort 稳定序 = 夹具写入序(P 先于 E 写入)
+    writeLeaseFixture([
+      makeLease({ id: 'N', serverPid: process.pid, kind: 'headless', declaredMB: 2048, pid: 3001 }),
+      makeLease({ id: 'P', serverPid: process.pid, kind: 'game_window', declaredMB: 1024, pid: 3003, projectPath: 'D:/prev-only' }),
+      makeLease({ id: 'E', serverPid: process.pid, kind: 'editor', declaredMB: 4096, pid: 3002 }),
+    ]);
+    makePreviewSession('D:/prev-only');
+    mockKillProbe(new Set([3001, 3002, 3003]));
+
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
+    let r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']); // 分区排序不依赖 ratio(殿后恒在尾部)
+    expect(r.envExempted).toEqual({ preview: 0, editor: 0 });
+
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', ',,'); // 全空 token
+    r = getEvictionCandidates();
+    expect(r.candidates.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']);
+    expect(r.envExempted).toEqual({ preview: 0, editor: 0 });
+    expect(errSpy).not.toHaveBeenCalled(); // 空 token 静默跳过,不产 warn
   });
 });

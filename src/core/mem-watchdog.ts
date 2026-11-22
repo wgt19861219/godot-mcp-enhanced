@@ -17,10 +17,12 @@
 //  - 二期 Task 3:hard 态(整机硬阈值,默认 1536MB,0s 宽限)进驱逐循环——逐个树杀
 //    候选(实测÷声明降序,preview/editor 殿后,排序唯一写者在 memory-guard),杀一个
 //    force 重采样再判,杀到脱离硬阈值+minimum-reclaim 2GB 即停;租约耗尽仍低压诚实上报。
+//  - 三期 Task 1:GODOT_MCP_WATCHDOG_EXEMPT 命中组(preview/editor)剔出驱逐候选
+//    (过滤在 memory-guard 的 getEvictionCandidates 单点);候选耗尽报文附豁免计数。
 //
 // 驱逐边界声明(Docker 反模式禁令,设计 §L2):preview/editor 殿后≠永不杀;单进程硬帽
-// (声明×KILL_FACTOR,一期)独立于驱逐豁免——即使未来 env 显式全豁免驱逐
-// (GODOT_MCP_WATCHDOG_EXEMPT),单进程硬帽仍须生效(无上限豁免被禁令禁止)。
+// (声明×KILL_FACTOR,一期)独立于驱逐豁免——env 显式豁免驱逐(GODOT_MCP_WATCHDOG_EXEMPT,
+// 三期已落地)只作用于驱逐候选,单进程硬帽仍恒生效(无上限豁免被禁令禁止)。
 
 import { killPidTree } from './process-state.js';
 import { getLogger } from './logger.js';
@@ -134,12 +136,14 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
   return { checked: leases.length, killed };
 }
 
-/** 整机硬阈值驱逐循环(二期 Task 3;watchdog 只消费 memory-guard 导出,不拥有状态):
- *  每轮 force 刷新快照喂状态机(绕过 10s 缓存——杀一个后重采样读缓存旧值会反复多杀,
- *  审查二期)→ 仍 hard(未达「硬阈值+2GB」脱离线)→ 取驱逐候选(实测÷声明降序,
- *  preview/editor 殿后,唯一写者在 memory-guard)树杀队首 → 循环;状态机降级
- *  pressure 即停;候选耗尽仍 hard → 诚实上报「已无本 server 可驱逐进程,外部占用需
- *  人工处理」break,不抛崩(外部进程永不杀——候选只在本 server 租约集合内)。
+/** 整机硬阈值驱逐循环(二期 Task 3;三期 Task 1 候选增 env 豁免过滤;watchdog 只消费
+ *  memory-guard 导出,不拥有状态):每轮 force 刷新快照喂状态机(绕过 10s 缓存——杀一个
+ *  后重采样读缓存旧值会反复多杀,审查二期)→ 仍 hard(未达「硬阈值+2GB」脱离线)→ 取驱逐
+ *  候选(实测÷声明降序,preview/editor 殿后,GODOT_MCP_WATCHDOG_EXEMPT 命中组剔出——
+ *  过滤与排序唯一写者在 memory-guard)树杀队首 → 循环;状态机降级 pressure 即停;候选
+ *  耗尽仍 hard → 诚实上报「已无本 server 可驱逐进程,外部占用需人工处理」break,不抛崩
+ *  (外部进程永不杀——候选只在本 server 租约集合内);三期:env 豁免剔出过租约时在既有句
+ *  后附豁免计数归因(被剔组/笔数——需人工处理或调 env)。
  *  死循环防护:attempted 集合保证每租约单轮仅尝试一次——killPidTree 异步强杀,
  *  force 采样可能早于 OS 回收读到旧值(最坏杀光全部候选(attempted 集合保证有界
  *  终止,非最小杀伤);taskkill /F 后 Windows 工作集随进程终止即释放,实际风险低);
@@ -150,9 +154,19 @@ function evictForHardThreshold(): number {
   for (;;) {
     updatePressureState(getMachineMemorySnapshot({ force: true }));
     if (getPressureState() !== 'hard') break; // 杀到脱离硬阈值+2GB → 状态机已降 pressure
-    const victim = getEvictionCandidates().find((c) => !attempted.has(c.lease.id));
+    const { candidates, envExempted } = getEvictionCandidates();
+    const victim = candidates.find((c) => !attempted.has(c.lease.id));
     if (victim === undefined) {
-      console.error('MEMGUARD hard 已无本 server 可驱逐进程,外部占用需人工处理(租约耗尽仍处硬阈值)');
+      // 三期:env 豁免剔出过租约 → 既有句后附豁免计数(组×笔数),全零保持原句
+      const msg = 'MEMGUARD hard 已无本 server 可驱逐进程,外部占用需人工处理(租约耗尽仍处硬阈值)';
+      if (envExempted.preview > 0 || envExempted.editor > 0) {
+        console.error(
+          `${msg}(另有 ${envExempted.preview + envExempted.editor} 笔租约被 GODOT_MCP_WATCHDOG_EXEMPT 豁免: `
+          + `preview ${envExempted.preview}, editor ${envExempted.editor}——需人工处理或调 env)`,
+        );
+      } else {
+        console.error(msg);
+      }
       break;
     }
     attempted.add(victim.lease.id);

@@ -8,6 +8,9 @@
 // startWatchdog 幂等/间隔 clamp。
 // 二期 Task 3:整机硬阈值驱逐——①ratio 降序杀最大者 ②杀一个够即停(force 通道断言)
 // ③preview/editor 殿后 ④租约耗尽诚实上报不抛崩 ⑤外部进程不在候选集 + 候选直测。
+// 三期:env 豁免×驱逐×单进程硬帽正交——①豁免组剔出候选不杀+耗尽报文附豁免计数
+// ②单进程硬帽(KILL_FACTOR)不受驱逐豁免影响照杀(Docker 禁令) ③豁免/editor 并存只杀
+// 普通、杀后脱离 hard 即停不越界。
 //
 // 夹具约定(复制 test/core/memory-guard.test.ts 形态):mkdtemp tmp +
 // _setLeasesFilePathForTest 重定向租约文件 + _resetForTest();memory-guard 部分
@@ -132,6 +135,9 @@ beforeEach(() => {
   // 本文件测真实看门狗逻辑(pollOnce/startWatchdog 均查总开关),逐用例显式回归「开」——
   // 关闭态用例(⑤ describe)自行 stubEnv('0') 覆盖。stubEnv 须在 _resetForTest 之后(清缓存后重读)。
   vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
+  // 三期起驱逐候选受 GODOT_MCP_WATCHDOG_EXEMPT 影响——显式归零防宿主 env 泄漏污染
+  // 既有用例(三期 describe 用例自行 stubEnv 覆盖)。空串 = 无豁免,与未设等价。
+  vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
   // 二期 Task 3 起 pollOnce 每轮喂 pressure 状态机(真采样经 psRunner)——runner 给恒健康
   // 快照(空闲 64GB):防真实机器空闲 <1536MB 时既有用例意外进 hard 触发驱逐污染断言;
   // 驱逐用例自行覆盖为低压快照。runner 起的是「不起真 PowerShell 进程」的保险,假值可断言。
@@ -589,10 +595,74 @@ describe('二期 Task 3:整机硬阈值驱逐', () => {
     mockKillProbe(new Set([3004, 3005, 3006]));
     mockMachinePsForEvict({ freePhysMB: 65536, rss: { 3004: 1536 * MB, 3005: 6 * GB, 3006: 2048 * MB } });
 
-    const cands = getEvictionCandidates();
-    expect(cands.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']); // 非豁免 N(0.75)在前;豁免组内 P(2.0)>E(1.5)
-    expect(cands[0].ratio).toBeCloseTo(0.75, 5);
-    expect(cands[1].ratio).toBeCloseTo(2.0, 5);
-    expect(cands[2].ratio).toBeCloseTo(1.5, 5);
+    // 三期签名迁移:返回 { candidates, envExempted }(beforeEach 已把 env 归零——豁免计数恒零)
+    const { candidates, envExempted } = getEvictionCandidates();
+    expect(candidates.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']); // 非豁免 N(0.75)在前;豁免组内 P(2.0)>E(1.5)
+    expect(envExempted).toEqual({ preview: 0, editor: 0 });
+    expect(candidates[0].ratio).toBeCloseTo(0.75, 5);
+    expect(candidates[1].ratio).toBeCloseTo(2.0, 5);
+    expect(candidates[2].ratio).toBeCloseTo(1.5, 5);
+  });
+});
+
+// ===========================================================================
+// 三期:env 豁免×驱逐×单进程硬帽正交——GODOT_MCP_WATCHDOG_EXEMPT 命中组剔出驱逐
+// 候选(memory-guard 单点过滤);单进程硬帽(pollOnce 杀循环,123-130 行)零改动照杀
+// (Docker 反模式禁令:无上限豁免被禁止);耗尽报文附豁免计数归因。
+// ===========================================================================
+
+describe('三期:env 豁免×驱逐×单进程硬帽正交', () => {
+  it.skipIf(!IS_WIN)('① env=editor + hard 态 + 仅 editor 存活:驱逐候选被剔光不杀,耗尽报文附豁免计数', async () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    writeLeaseFixture([makeLease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 6001 })]);
+    mockKillProbe(new Set([6001]));
+    const rss = { 6001: 8 * GB }; // ratio 1.95 高(若非豁免必被驱逐),但 < editor 杀线 12GB → 单进程杀零杀
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    mockMachinePsForEvict({ freePhysMB: 1000, rss }); // 机器空闲 1000MB < 1536 → pollOnce 首行进 hard
+    mockForceSnapshots([1000]); // force 恒低压(模拟外部占用)→ 驱逐循环每轮仍 hard → 候选耗尽
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 1, killed: 0 }); // editor 被 env 豁免:驱逐循环零杀
+    expect(spawnSpy).not.toHaveBeenCalled(); // 未树杀
+    expect(wasMemKilled(6001)).toBeNull();
+    expect(readDisk().leases.map((l) => l.id)).toEqual(['E']); // 租约保留(不是看门狗杀的)
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('已无本 server 可驱逐进程'));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('被 GODOT_MCP_WATCHDOG_EXEMPT 豁免'));
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('editor 1')); // 豁免笔数归因
+    expect(getPressureState()).toBe('hard'); // 诚实保持 hard(不假装修复)
+  });
+
+  it('② env=editor + editor RSS 超声明×3 → pollOnce 单进程杀路径照杀(硬帽不受驱逐豁免影响)', async () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    writeLeaseFixture([makeLease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 6001 })]);
+    mockKillProbe(new Set([6001]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 6001: 12.5 * GB }); // > editor 杀线 12GB(4096MB×3)
+    // 机器快照走 beforeEach 默认恒健康(64GB 空闲)→ normal 不进驱逐——纯测单进程杀路径
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 1, killed: 1 }); // 单进程杀循环(pollOnce 内)零改动,豁免不救硬帽
+    expect(spawnSpy).toHaveBeenCalledTimes(1); // killPidTree 树杀被调
+    expect(wasMemKilled(6001)).toMatchObject({ readingBytes: 12.5 * GB, declaredMB: 4096, kind: 'editor' }); // 归因在案
+    expect(readDisk().leases).toHaveLength(0); // 租约释放
+  });
+
+  it.skipIf(!IS_WIN)('③ env=editor + hard 态 + headless/editor 并存:驱逐只杀 headless,杀后脱离 hard 即停(未越界杀 editor)', async () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    writeLeaseFixture([
+      makeLease({ id: 'N', kind: 'headless', declaredMB: 2048, pid: 1001 }),
+      makeLease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 1002 }),
+    ]);
+    mockKillProbe(new Set([1001, 1002]));
+    const rss = { 1001: 3072 * MB, 1002: 8 * GB }; // N ratio 1.5(< 杀线 4096MB 不触单进程杀);E ratio 1.95 被豁免剔出候选
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    mockMachinePsForEvict({ freePhysMB: 1000, rss });
+    mockForceSnapshots([1000, 6000]); // 杀 N 后 force 采到恢复(≥3584MB)→ 即停
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 2, killed: 1 }); // 只驱逐杀 N
+    expect(wasMemKilled(1001)).not.toBeNull();
+    expect(wasMemKilled(1002)).toBeNull(); // editor 未被越界杀(env 豁免生效)
+    expect(readDisk().leases.map((l) => l.id)).toEqual(['E']);
+    expect(getPressureState()).toBe('pressure'); // 脱离 hard 即停
   });
 });

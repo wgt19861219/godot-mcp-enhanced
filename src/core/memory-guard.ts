@@ -453,13 +453,39 @@ export function getPressureEnteredAt(): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// 硬阈值驱逐候选计算(二期 Task 3)——排序语义单点在本模块,watchdog 只消费最终序
+// 硬阈值驱逐候选计算(二期 Task 3;三期 Task 1 增 env 豁免)——排序与豁免语义单点在
+// 本模块,watchdog 只消费最终序
 // ---------------------------------------------------------------------------
 
-/** 驱逐候选清单(二期 Task 3):本 server 活跃租约(pid 已绑)按「实测 RSS ÷ 声明 MB」
- *  降序——超声明预算最多者先杀;preview 会话(game_window 且 process-state 会话桶
- *  preview===true)与 editor kind 整组殿后(豁免优先级最低先杀序,设计 §L2「驱逐排序
- *  最后」;殿后≠永不杀——硬阈值杀光普通候选仍不够时按组内 ratio 序继续)。
+/** 驱逐豁免组(三期 Task 1):GODOT_MCP_WATCHDOG_EXEMPT 逗号分隔 token 列表,合法值
+ *  preview/editor(大小写不敏感、trim);未设/空串 = 无豁免。命中组的租约整组不进驱逐
+ *  候选(区别于殿后:殿后=排序最后仍可杀,env 豁免=不进候选);单进程硬帽(声明×
+ *  KILL_FACTOR)独立于此豁免不受影响(Docker 反模式禁令:无上限豁免被禁止——对齐
+ *  mem-watchdog.ts 头注释声明)。未知 token 记一行 stderr warn 并忽略(合法 token
+ *  照常生效)。每次调用实时读 env 不缓存(对齐 readPositiveIntEnv 低频惯例——
+ *  Task 2 面板/doctor 消费同一读法)。 */
+export function watchdogExemptGroups(): ReadonlySet<'preview' | 'editor'> {
+  const groups = new Set<'preview' | 'editor'>();
+  const raw = process.env.GODOT_MCP_WATCHDOG_EXEMPT;
+  if (raw === undefined || raw === '') return groups;
+  for (const token of raw.split(',')) {
+    const t = token.trim().toLowerCase();
+    if (t === 'preview' || t === 'editor') groups.add(t);
+    else if (t !== '') {
+      console.error(
+        `MEMGUARD WATCHDOG_EXEMPT 未知 token「${token.trim()}」(合法: preview,editor),已忽略——其余合法 token 照常生效`,
+      );
+    }
+  }
+  return groups;
+}
+
+/** 驱逐候选清单(二期 Task 3;三期 Task 1 增 env 豁免):本 server 活跃租约(pid 已绑)
+ *  按「实测 RSS ÷ 声明 MB」降序——超声明预算最多者先杀;preview 会话(game_window 且
+ *  process-state 会话桶 preview===true)与 editor kind 整组殿后(豁免优先级最低先杀序,
+ *  设计 §L2「驱逐排序最后」;殿后≠永不杀——硬阈值杀光普通候选仍不够时按组内 ratio 序
+ *  继续)。三期 env 豁免(GODOT_MCP_WATCHDOG_EXEMPT 命中组)整组剔出候选、与殿后正交:
+ *  env 命中组不进 candidates(计数进 envExempted 供耗尽报文归因),未命中组维持殿后。
  *  preview 桥接归属本模块而非 watchdog 组合:排序语义单点完整,消费方拿到即最终序,
  *  无需二次重排;依赖方向 memory-guard → process-state 安全(反向无 import,不成环),
  *  会话匹配键 = normalizeProjectKey(与 run_project 建桶同键;getSession 内部归一,
@@ -469,20 +495,35 @@ export function getPressureEnteredAt(): number | null {
  *  RSS 走 sampleRssBytesCached(与准入共享 10s 缓存);无读数租约 ratio 记 0 仍进候选
  *  (排最后:读不到≠不占内存,杀光有读数者仍不够时可杀它;候选耗尽则诚实上报,不误报
  *  「无可驱逐」)。declaredMB 恒 >0(档位/env 守卫),Math.max(1,·) 仅防御脏账本。 */
-export function getEvictionCandidates(): Array<{ lease: MemLease; ratio: number }> {
+export function getEvictionCandidates(): {
+  candidates: Array<{ lease: MemLease; ratio: number }>;
+  envExempted: { preview: number; editor: number };
+} {
   const leases = listActiveLeases().filter(
     (l) => l.serverPid === process.pid && typeof l.pid === 'number',
   );
   const rssMap = sampleRssBytesCached(leasePids(leases));
-  const rows = leases.map((l) => {
+  const exemptGroups = watchdogExemptGroups(); // 实时读 env(轮询低频,不缓存)
+  const envExempted = { preview: 0, editor: 0 };
+  const rows: Array<{ lease: MemLease; ratio: number; exempt: boolean }> = [];
+  for (const l of leases) {
     const rss = rssMap[l.pid as number];
     const ratio = rss !== undefined ? rss / 1024 / 1024 / Math.max(1, l.declaredMB) : 0;
-    const exempt = l.kind === 'editor'
-      || (l.kind === 'game_window' && getSession(l.projectPath)?.preview === true);
-    return { lease: l, ratio, exempt };
-  });
+    const isPreviewSession = l.kind === 'game_window'
+      && getSession(l.projectPath)?.preview === true;
+    // 三期 env 豁免:命中组整组不进候选(envExempted 计数供耗尽报文归因)
+    if (exemptGroups.has('editor') && l.kind === 'editor') {
+      envExempted.editor++;
+      continue;
+    }
+    if (exemptGroups.has('preview') && isPreviewSession) {
+      envExempted.preview++;
+      continue;
+    }
+    rows.push({ lease: l, ratio, exempt: l.kind === 'editor' || isPreviewSession });
+  }
   rows.sort((a, b) => (a.exempt === b.exempt ? b.ratio - a.ratio : a.exempt ? 1 : -1));
-  return rows.map(({ lease, ratio }) => ({ lease, ratio }));
+  return { candidates: rows.map(({ lease, ratio }) => ({ lease, ratio })), envExempted };
 }
 
 // ---------------------------------------------------------------------------
