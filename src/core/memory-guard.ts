@@ -15,7 +15,7 @@
 //    状态机与排序的唯一写者在本模块。
 
 import { spawnSync } from 'child_process';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { freemem, homedir, totalmem } from 'os';
 import { join } from 'path';
 import { getLogger } from './logger.js';
@@ -741,6 +741,149 @@ export function heartbeatLeases(): void {
 /** 注入/恢复 PowerShell 执行器(传 null 恢复默认 spawnSync 实现)。 */
 export function _setPsRunnerForTest(runner: PsScriptRunner | null): void {
   _psRunner = runner;
+}
+
+// ---------------------------------------------------------------------------
+// L3 内存面板数据(二期 Task 5)——doctor / godot_get_context 共享聚合单源(防两处漂移)
+// ---------------------------------------------------------------------------
+
+/** 面板活跃实例行:租约条目(本 server spawn,有 kind/声明)与 registry 心跳条目(游戏侧
+ *  autoload 写入,含外部手开实例)按 pid 对齐合并;「最后交互」取 Task 1 会话桶 lastPokeAt;
+ *  实测 RSS 由 TS 侧按 pid 走一期 sampleRssBytesCached(10s 缓存与准入/驱逐共享——
+ *  不动 GD 心跳结构,审查降本裁定)。 */
+export interface MemoryPanelInstance {
+  pid: number | null;
+  project: string;
+  kind: SpawnKind | null;      // 仅租约条目有(registry-only = 外部实例无租约记账)
+  declaredMB: number | null;   // 仅租约条目有
+  rssMB: number | null;        // WMI 采样命中才有(失败/非 Windows/进程刚退 → null 诚实呈现)
+  lastPokeAt: number | null;   // 本 server 会话桶命中才有(非 run_project 会话 → null)
+  source: 'lease' | 'registry' | 'both';
+}
+
+/** L3 面板数据(spec §L3 四组字段):双口径水位 / 预算与已占用 / pressure 状态 / 活跃实例表。
+ *  guard=0 时面板照常返回——只读观测不吃总开关(pressure 恒 normal 与空账本是关闭态真实呈现)。 */
+export interface MemoryPanelData {
+  guard: boolean;
+  watermarkMB: number;         // 准入水位线(与判定同源,doctor/get_context 展示不重复读 env)
+  pressure: { state: PressureState; enteredAt: number | null };
+  machine: MachineMemorySnapshot;
+  budget: { pct: number; budgetMB: number; usedMB: number; leaseCount: number };
+  instances: MemoryPanelInstance[];
+}
+
+/** 读 machine registry 心跳条目(~/.godot-mcp/instances/*.json,游戏侧 mcp_bridge autoload
+ *  30s 周期写入)——面板活跃实例表的第二数据源(外部手开游戏不在本 server 租约内,只在此可见)。
+ *  capabilities 过滤 registry-heartbeat(排除 TS server 自注册条目,与 bridge-client
+ *  liveHeartbeatPortsFor 同语义);目录语义与 machineRegistryInstancesDir 一致(env
+ *  GODOT_MCP_BRIDGE_REGISTRY_DIR 可重定向)——本地复刻三行判定而非 import bridge-client
+ *  (巨型模块,CLI doctor 不背其依赖面)。registry 不可读/条目损坏 → [](观测降级,不抛)。 */
+function readRegistryHeartbeatEntries(): Array<{ pid: number; projectPath: string }> {
+  const override = process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR;
+  const dir = override && override.trim() !== ''
+    ? override
+    : join(homedir(), '.godot-mcp', 'instances');
+  const out: Array<{ pid: number; projectPath: string }> = [];
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const entry = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Record<string, unknown>;
+        const pid = Number(entry['pid']);
+        const projectPath = entry['projectPath'];
+        const caps = entry['capabilities'];
+        if (!Number.isFinite(pid) || pid <= 0) continue;
+        if (typeof projectPath !== 'string' || projectPath.length === 0) continue;
+        if (!Array.isArray(caps) || !caps.includes('registry-heartbeat')) continue;
+        out.push({ pid, projectPath });
+      } catch { /* 单条损坏跳过(观测降级) */ }
+    }
+  } catch { /* 目录不可读 → 空集(观测降级) */ }
+  return out;
+}
+
+/** 总开关关闭态的轻量快照(os 内置读数,WMI 通道旁路)——guard=0 时面板照常返回但不
+ *  起 PowerShell:commit 双口径与 Godot 计数降级 null/0(与 non-windows 降级同语义,
+ *  零开销零副作用)。test/setup.js 全局 GODOT_MCP_MEMORY_GUARD='0' 的「未 mock 守卫的
+ *  其余测试零 PowerShell/零租约写盘」约定(Task 4 起)因此对 get_context 调用链保持成立。 */
+function lightSnapshotWithoutWmi(): MachineMemorySnapshot {
+  return {
+    freePhysBytes: freemem(), totalPhysBytes: totalmem(),
+    commitAvailBytes: null, commitTotalBytes: null,
+    godotProcCount: 0, sampledAt: Date.now(),
+  };
+}
+
+/** L3 面板聚合(spec §L3):一次调用返回 doctor / godot_get_context 共用的面板数据。
+ *  采样开销:快照与 RSS 均走既有 10s 缓存(与准入/驱逐共享,无重复 PowerShell)。
+ *  实例表合并语义:租约按 pid(未绑 pid 用 lease id 占位键)→ registry 心跳按 pid 对齐,
+ *  同 pid 合并单行 source=both(kind/声明来自租约);registry 条目 pid 已死不显示(GD 侧
+ *  自清前的窗口,与租约读时清理同语义);usedMB = Σ max(声明MB, 实测RSS_MB)(一期
+ *  leaseUsageCtx 同源口径,防声明低估)。排序按 pid 升序(展示稳定)。
+ *  guard=0:面板照常返回(只读观测不吃总开关,pressure 恒 normal 与空账本是关闭态真实
+ *  呈现),但 WMI 观测通道随治理旁路——快照走 os 内置(commit/计数降级)、RSS 不采样。 */
+export function buildMemoryPanel(): MemoryPanelData {
+  const guardOn = memoryGuardEnabled();
+  const snap = guardOn ? getMachineMemorySnapshot() : lightSnapshotWithoutWmi();
+  const leases = listActiveLeases();
+  const registry = readRegistryHeartbeatEntries();
+
+  // 行收集:租约先行(registry 对齐时升级 source=both)
+  const rows = new Map<number | string, MemoryPanelInstance>();
+  for (const l of leases) {
+    const key = typeof l.pid === 'number' ? l.pid : `lease:${l.id}`;
+    rows.set(key, {
+      pid: typeof l.pid === 'number' ? l.pid : null,
+      project: l.projectPath,
+      kind: l.kind,
+      declaredMB: l.declaredMB,
+      rssMB: null,
+      lastPokeAt: getSession(l.projectPath)?.lastPokeAt ?? null,
+      source: 'lease',
+    });
+  }
+  for (const r of registry) {
+    const existing = rows.get(r.pid);
+    if (existing !== undefined) { existing.source = 'both'; continue; }
+    if (killPidProbe(r.pid) === 'dead') continue; // 死心跳条目不显示(GD 自清前窗口)
+    rows.set(r.pid, {
+      pid: r.pid,
+      project: r.projectPath,
+      kind: null,
+      declaredMB: null,
+      rssMB: null,
+      lastPokeAt: getSession(r.projectPath)?.lastPokeAt ?? null,
+      source: 'registry',
+    });
+  }
+
+  // RSS 批量采样:全部非 null pid 一次采样(10s 缓存,与准入/驱逐共享);guard=0 旁路
+  // (零 PowerShell,rssMB 恒 null——观测通道随治理关闭的诚实呈现)
+  const pids = [...rows.values()].filter((r): r is MemoryPanelInstance & { pid: number } => typeof r.pid === 'number').map((r) => r.pid);
+  const rssMap = guardOn ? sampleRssBytesCached(pids) : {};
+  for (const row of rows.values()) {
+    if (row.pid === null) continue;
+    const rss = rssMap[row.pid];
+    if (rss !== undefined) row.rssMB = Math.round(rss / 1024 / 1024);
+  }
+
+  // 预算占用:Σ max(声明MB, 实测RSS_MB)——与一期 leaseUsageCtx 同源口径
+  const usedMB = leases.reduce((sum, l) => {
+    const rss = typeof l.pid === 'number' ? rssMap[l.pid] : undefined;
+    return sum + Math.max(l.declaredMB, rss !== undefined ? rss / 1024 / 1024 : 0);
+  }, 0);
+  const pct = budgetPct();
+  const budgetMB = Math.round((snap.totalPhysBytes / 1024 / 1024) * (pct / 100));
+
+  const instances = [...rows.values()].sort((a, b) => (a.pid ?? 0) - (b.pid ?? 0));
+  return {
+    guard: guardOn,
+    watermarkMB: minFreeMB(),
+    pressure: { state: getPressureState(), enteredAt: getPressureEnteredAt() },
+    machine: snap,
+    budget: { pct, budgetMB, usedMB, leaseCount: leases.length },
+    instances,
+  };
 }
 
 /** 注入/恢复租约文件路径(传 null 恢复默认 ~/.godot-mcp 路径)。 */

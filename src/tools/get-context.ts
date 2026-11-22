@@ -12,6 +12,7 @@ import { structuredResult } from '../types.js';
 import { opsSuccess } from './shared.js';
 import { getCallRecorder } from '../core/call-recorder.js';
 import { PKG_VERSION } from '../core/update-checker.js';
+import { buildMemoryPanel } from '../core/memory-guard.js';
 import { listPromptDefs } from '../prompts.js';
 import { TOOL_GROUPS, getActiveGroups } from '../core/tool-registry.js';
 import { sendToBridge, setBridgeProjectDir } from './game-bridge.js';
@@ -48,7 +49,7 @@ export function setEditorSceneProvider(provider: (() => Promise<SceneSnapshot | 
 export function getToolDefinitions(): Tool[] {
   return [{
     name: 'godot_get_context',
-    description: '一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能/server 进程身份 version/startedAt/pid），减少反复探路。headless 模式 scene=null。',
+    description: '一次返回会话全景（模式/项目/连接/场景快照/最近调用统计/工具组/推荐 workflow/规则/性能/内存治理面板 memory/server 进程身份 version/startedAt/pid），减少反复探路。headless 模式 scene=null。',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -90,6 +91,59 @@ export function getToolDefinitions(): Tool[] {
             workflows: { type: 'array' },
             rules: { type: 'array', items: { type: 'string' } },
             performance: { type: ['object', 'null'] },
+            // 内存治理二期 Task 5:L3 面板(memory-guard buildMemoryPanel 共享单源)。
+            // 字段级降级:面板构建抛错 → memory=null + failedFields 含 memory。
+            memory: {
+              type: ['object', 'null'],
+              properties: {
+                guard: { type: 'boolean' },
+                watermarkMB: { type: 'number' },
+                pressure: {
+                  type: 'object',
+                  properties: {
+                    state: { type: 'string', enum: ['normal', 'pressure', 'hard'] },
+                    enteredAt: { type: ['number', 'null'] },
+                  },
+                  required: ['state'],
+                },
+                machine: {
+                  type: 'object',
+                  properties: {
+                    freePhysBytes: { type: 'number' },
+                    totalPhysBytes: { type: 'number' },
+                    commitAvailBytes: { type: ['number', 'null'] },
+                    commitTotalBytes: { type: ['number', 'null'] },
+                    godotProcCount: { type: 'number' },
+                    sampledAt: { type: 'number' },
+                    degraded: { type: 'string' },
+                  },
+                },
+                budget: {
+                  type: 'object',
+                  properties: {
+                    pct: { type: 'number' },
+                    budgetMB: { type: 'number' },
+                    usedMB: { type: 'number' },
+                    leaseCount: { type: 'number' },
+                  },
+                },
+                instances: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      pid: { type: ['number', 'null'] },
+                      project: { type: 'string' },
+                      kind: { type: ['string', 'null'] },
+                      declaredMB: { type: ['number', 'null'] },
+                      rssMB: { type: ['number', 'null'] },
+                      lastPokeAt: { type: ['number', 'null'] },
+                      source: { type: 'string', enum: ['lease', 'registry', 'both'] },
+                    },
+                  },
+                },
+              },
+            },
             hint: { type: 'string' },
           },
           required: ['status', 'mode'],
@@ -147,6 +201,10 @@ async function handleGetContext(args: Record<string, unknown>, ctx: ToolContext)
   const performance = (includePerf && mode === 'bridge')
     ? await safeAsync(() => readPerformance(ctx), 'performance', failedFields)
     : null;
+  // 内存治理二期 Task 5:L3 面板——server 字段族旁挂 memory(双口径水位/预算与已占用/
+  // pressure 状态/活跃实例表)。guard=0 照常返回(只读观测不吃总开关);采样走 10s 缓存
+  // 与准入共享,无重复 PowerShell。
+  const memory = safe(() => buildMemoryPanel(), 'memory', failedFields);
 
   return structuredResult(opsSuccess({
     status: failedFields.length === 0 ? 'ok' : 'partial',
@@ -168,7 +226,8 @@ async function handleGetContext(args: Record<string, unknown>, ctx: ToolContext)
     workflows,
     rules,
     performance,
-    hint: 'scene.nodeCount=节点总数；recentCalls=最近操作；callStats.topTools=最常用工具；workflows=推荐入口(prompt)；performance 仅 bridge；status=partial 时看 failedFields',
+    memory,
+    hint: 'scene.nodeCount=节点总数；recentCalls=最近操作；callStats.topTools=最常用工具；workflows=推荐入口(prompt)；performance 仅 bridge；memory=内存治理面板(水位/预算/pressure/实例表,pressure≠normal 时新 spawn 会被拒)；status=partial 时看 failedFields',
   }) as Record<string, unknown>);
 }
 

@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import type { ChildProcess } from 'child_process';
 
 // logger 全模块 mock:⑧ fail-open 用例断言 MEMGUARD degraded 降级日志;
 // fs-atomic(Windows rename 降级路径)的 debug 输出同走此 mock,不触真文件日志。
@@ -45,6 +46,7 @@ import {
   updatePressureState,
   getPressureState,
   getPressureEnteredAt,
+  buildMemoryPanel,
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
@@ -52,6 +54,8 @@ import {
   type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
 import { pollOnce } from '../../src/core/mem-watchdog.js';
+// 二期 Task 5 面板用:会话桶真实 API 建桶注入 lastPokeAt(「最后交互」数据源)
+import { getSession, resetState, setRunSessionProc } from '../../src/core/process-state.js';
 
 const IS_WIN = process.platform === 'win32';
 
@@ -698,5 +702,130 @@ describe('⑫ 二期 Task 2:整机软阈值 pressure 状态机(拒新保旧+上�
       updatePressureState(pressureSnap(64 * 1024, null));
     }
     expect(getPressureState()).toBe('normal');
+  });
+});
+
+// ─── 二期 Task 5:L3 面板聚合 buildMemoryPanel(doctor / godot_get_context 共享单源) ───
+// 夹具三注入:租约 tmp(既有 _setLeasesFilePathForTest)+ registry tmp(env
+// GODOT_MCP_BRIDGE_REGISTRY_DIR 指向 tmp 子目录,不触真实 ~/.godot-mcp/instances)+
+// 会话桶(process-state 真实 API setRunSessionProc 建桶,lastPokeAt 直接落值)。
+// RSS 采样走 mockMachinePs 的 rss 表(mock pid 集合,不真起 PowerShell)。
+
+describe('⑬ buildMemoryPanel(二期 Task 5)', () => {
+  let registryDir: string;
+
+  /** 写 registry 心跳条目夹具(形态对齐 mcp_bridge.gd _write_registry_entry)。 */
+  function writeRegistryFixture(entries: Array<{ pid: number; projectPath: string }>): void {
+    fs.mkdirSync(registryDir, { recursive: true });
+    for (const e of entries) {
+      fs.writeFileSync(
+        path.join(registryDir, `inst-${e.pid}.json`),
+        JSON.stringify({
+          id: `inst-${e.pid}`, projectPath: e.projectPath, projectName: 'P', port: 9081,
+          pid: e.pid, lastSeen: new Date().toISOString(), lastSeenMs: Date.now(),
+          godotVersion: '4.7.2', capabilities: ['registry-heartbeat'],
+        }),
+      );
+    }
+  }
+
+  /** 假 ChildProcess(建会话桶所需最小形状,复制 session-idle-timer.test.ts makeProc)。 */
+  function makeProc(pid: number): ChildProcess {
+    return { pid, killed: false, exitCode: null, on: vi.fn(), kill: vi.fn() } as unknown as ChildProcess;
+  }
+
+  beforeEach(() => {
+    registryDir = path.join(tmpDir, 'instances');
+    vi.stubEnv('GODOT_MCP_BRIDGE_REGISTRY_DIR', registryDir);
+  });
+
+  afterEach(() => {
+    resetState(); // 清面板消费的会话桶(避免跨 describe 泄漏给同文件后续用例)
+  });
+
+  it('① 健康默认态:四组字段齐(guard/watermarkMB/pressure/machine/budget,空实例表)', () => {
+    const p = buildMemoryPanel();
+    expect(p.guard).toBe(true);                        // beforeEach 显式回归「开」
+    expect(p.watermarkMB).toBe(1);                     // beforeEach stubEnv MIN_FREE_MB=1(与准入同源)
+    expect(p.pressure).toEqual({ state: 'normal', enteredAt: null });
+    if (IS_WIN) {                                      // 快照读数走 ps mock 精确值
+      expect(p.machine.freePhysBytes).toBe(64 * 1024 ** 3);   // mockMachinePs 64GB 夹具
+      expect(p.machine.commitAvailBytes).toBe(64 * 1024 ** 3);
+      expect(p.machine.godotProcCount).toBe(0);
+    } else {                                           // 非 Windows 快照不经 psRunner(os 真实读数)
+      expect(p.machine.freePhysBytes).toBeGreaterThan(0);
+      expect(p.machine.commitAvailBytes).toBeNull();   // 无 PowerShell 通道降级
+    }
+    expect(p.budget.pct).toBe(100);                    // beforeEach stubEnv BUDGET_PCT=100
+    // totalPhysBytes 恒走 os.totalmem()(两平台,ps mock 不控)→ pct=100 时 budgetMB=机器总 MB
+    expect(p.budget.budgetMB).toBe(Math.round(os.totalmem() / 1024 / 1024));
+    expect(p.budget.usedMB).toBe(0);
+    expect(p.budget.leaseCount).toBe(0);
+    expect(p.instances).toEqual([]);
+  });
+
+  it('② 租约条目行:pid/项目/kind/声明/实测 RSS/最后交互(会话桶 lastPokeAt),usedMB=Σ max(声明,实测)', () => {
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 1, rss: { 4242: 512 * 1024 * 1024 } });
+    writeLeaseFixture([makeLease({ id: 'L1', kind: 'game_window', declaredMB: 3072, projectPath: 'D:/proj-a', pid: 4242 })]);
+    mockKillProbe(new Set([4242]));                    // 租约 pid 判活(listActiveLeases 读时清理)
+    const pokeAt = Date.now() - 30_000;
+    setRunSessionProc('D:/proj-a', makeProc(4242));    // 建桶(spawn 即 lastPokeAt 起点)
+    getSession('D:/proj-a')!.lastPokeAt = pokeAt;      // 直接落值(模拟 Task 1 poke 链)
+    const p = buildMemoryPanel();
+    expect(p.instances).toHaveLength(1);
+    expect(p.instances[0]).toMatchObject({
+      pid: 4242, project: 'D:/proj-a', kind: 'game_window', declaredMB: 3072,
+      lastPokeAt: pokeAt, source: 'lease',
+    });
+    if (IS_WIN) {                                      // RSS 走 ps mock 精确值(非 Windows 无 WMI 通道)
+      expect(p.instances[0]!.rssMB).toBe(512);
+    } else {
+      expect(p.instances[0]!.rssMB).toBeNull();        // 采样 miss 诚实 null
+    }
+    expect(p.budget.usedMB).toBe(3072);                // max(声明 3072, 实测≤512) 取声明(两平台同)
+    expect(p.budget.leaseCount).toBe(1);
+  });
+
+  it.skipIf(!IS_WIN)('③ usedMB 防声明低估:实测 RSS 超声明取实测(一期 leaseUsageCtx 同源口径)', () => {
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, rss: { 5150: 2048 * 1024 * 1024 } });
+    writeLeaseFixture([makeLease({ id: 'L2', kind: 'headless', declaredMB: 1024, projectPath: 'D:/proj-b', pid: 5150 })]);
+    mockKillProbe(new Set([5150]));
+    const p = buildMemoryPanel();
+    expect(p.instances[0]!.rssMB).toBe(2048);
+    expect(p.budget.usedMB).toBe(2048);                // max(声明 1024, 实测 2048) 取实测
+  });
+
+  it('④ registry-only 行(外部实例):kind/声明 null + source=registry + 无会话桶 lastPokeAt null;死 pid 心跳不显示', () => {
+    writeRegistryFixture([{ pid: 9999, projectPath: 'D:/external' }, { pid: 8888, projectPath: 'D:/dead' }]);
+    mockKillProbe(new Set([9999]));                    // 8888 死(ESRCH) → 剔除
+    const p = buildMemoryPanel();
+    expect(p.instances).toHaveLength(1);
+    expect(p.instances[0]).toMatchObject({
+      pid: 9999, project: 'D:/external', kind: null, declaredMB: null,
+      rssMB: null, lastPokeAt: null, source: 'registry', // RSS 未在 mock rss 表 → null(采样 miss 诚实呈现)
+    });
+  });
+
+  it('⑤ 同 pid 租约+registry 心跳 → 合并单行 source=both(kind/声明来自租约)', () => {
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, rss: { 4242: 256 * 1024 * 1024 } });
+    writeLeaseFixture([makeLease({ id: 'L3', kind: 'game_window', declaredMB: 3072, projectPath: 'D:/proj-a', pid: 4242 })]);
+    writeRegistryFixture([{ pid: 4242, projectPath: 'D:/proj-a' }]);
+    mockKillProbe(new Set([4242]));
+    const p = buildMemoryPanel();
+    expect(p.instances).toHaveLength(1);
+    expect(p.instances[0]).toMatchObject({ pid: 4242, kind: 'game_window', declaredMB: 3072, source: 'both' });
+    if (IS_WIN) expect(p.instances[0]!.rssMB).toBe(256);  // RSS 走 ps mock(非 Windows 采样 miss null)
+  });
+
+  it('⑥ guard=0:面板照常返回(只读观测不吃总开关)但 WMI 通道旁路——os 内置读数+零 PowerShell', () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    _resetForTest();                                   // 清总开关读缓存
+    const p = buildMemoryPanel();
+    expect(p.guard).toBe(false);
+    expect(p.pressure.state).toBe('normal');           // 状态机旁路恒 normal(真实呈现非假数据)
+    expect(p.instances).toEqual([]);                   // dummy 租约不落盘,账本空是真实状态
+    expect(p.machine.freePhysBytes).toBeGreaterThan(0); // 快照照常返回(os 内置读数)
+    expect(p.machine.commitAvailBytes).toBeNull();     // WMI 通道随治理旁路(test/setup.js 全局
+    expect(p.machine.godotProcCount).toBe(0);          //  guard=0「未 mock 测试零 PowerShell」约定)
   });
 });

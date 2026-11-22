@@ -268,7 +268,7 @@ This auto-generates:
 
 ## Memory Guard Environment Variables (v0.38.2+)
 
-Admission control (three checks before every Godot spawn) + per-process budget watchdog. Kills runaway processes before they take the machine down (see `CHANGELOG.md` [0.38.2] for details). Lease ledger is shared across servers at `~/.godot-mcp/memory-leases.json`.
+Admission control (three checks before every Godot spawn) + per-process budget watchdog + machine-level soft/hard pressure thresholds + idle-session reaping + observability panel (see `CHANGELOG.md` [0.39.0] for details). Lease ledger is shared across servers at `~/.godot-mcp/memory-leases.json`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -278,6 +278,9 @@ Admission control (three checks before every Godot spawn) + per-process budget w
 | `GODOT_MCP_MAX_MACHINE_INSTANCES` | Machine-wide Godot process cap (third admission check). Note: **0 does NOT mean disabled** — non-positive values fall back to the default | `8` |
 | `GODOT_MCP_MEM_POLL_SECONDS` | Watchdog RSS sampling interval (seconds); lower bound 5 (each sample spawns a PowerShell process), upper bound 3600 | `10` |
 | `GODOT_MCP_DECLARED_MB_HEADLESS` etc. | Per-kind declared budget (MB): `_HEADLESS` / `_GUT_SHARD` / `_GAME_WINDOW` / `_EDITOR`, each overridable. If measured RSS exceeds declared × kill factor (headless/gut_shard ×2, game_window/editor ×3), the watchdog kills the process tree and reports MEM_BUDGET_EXCEEDED with a bump-this-env hint | `1024`/`8192`/`3072`/`4096` |
+| `GODOT_MCP_SESSION_IDLE_MINUTES` | (Phase 2) Idle-reap threshold (minutes) for non-preview game sessions: windows with no bridge interaction for this long are reaped (tree-kill + lease release). Preview windows are exempt; `0` = off | `15` |
+| `GODOT_MCP_MEM_PRESSURE_SOFT_MB` | (Phase 2) Machine-level soft threshold (MB): either metric (physical free / commit headroom) below this for **30s sustained** enters pressure state — new spawns rejected, running tasks kept (kubelet soft-eviction semantics); 5min sustained recovery returns to normal | `3072` |
+| `GODOT_MCP_MEM_PRESSURE_HARD_MB` | (Phase 2) Machine-level hard threshold (MB): either metric below this triggers **immediate eviction** (0s grace) — this server's leases tree-killed in descending measured-RSS÷declared order, preview/editor last, stopping once past threshold + 2GB reclaim margin; external processes (user-launched) are never killed | `1536` |
 
 ## License
 

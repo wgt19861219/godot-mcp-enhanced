@@ -6,6 +6,27 @@ vi.mock('../../src/tools/game-bridge.js', () => ({
   isBridgeReady: vi.fn(),
 }));
 
+// 二期 Task 5:memory-guard mock——memory 面板字段走 buildMemoryPanel,不 mock 会真起
+// PowerShell 采样 + 读真实 ~/.godot-mcp(测试隔离纪律,对齐 doctor.test.ts 先例)。
+const memPanel = vi.hoisted(() => vi.fn(() => ({
+  guard: true,
+  watermarkMB: 3072,
+  pressure: { state: 'normal' as const, enteredAt: null },
+  machine: {
+    freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+    commitAvailBytes: 10 * 1024 ** 3, commitTotalBytes: 20 * 1024 ** 3,
+    godotProcCount: 1, sampledAt: 0,
+  },
+  budget: { pct: 67, budgetMB: 10922, usedMB: 3072, leaseCount: 1 },
+  instances: [{
+    pid: 4242, project: 'D:/proj-a', kind: 'game_window' as const, declaredMB: 3072,
+    rssMB: 512, lastPokeAt: 12345, source: 'lease' as const,
+  }],
+})));
+vi.mock('../../src/core/memory-guard.js', () => ({
+  buildMemoryPanel: memPanel,
+}));
+
 // Task 2: mock fs so readProject/readRules 可被 spyOn 精确控制（不真读盘）
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
@@ -324,5 +345,55 @@ describe('readScene real (Task 3)', () => {
     expect(scene.nodeCount).toBe(3000);
     expect(scene.typeTopN).toBeUndefined();
     expect(scene.truncated).toBe(true);
+  });
+});
+
+// ─── 二期 Task 5:memory 面板字段(buildMemoryPanel 旁挂 data.memory) ──
+
+describe('memory 面板字段(二期 Task 5)', () => {
+  beforeEach(() => {
+    getCallRecorder().reset();
+    vi.clearAllMocks();
+    setGetContextConnectionProvider(null);
+    setEditorSceneProvider(null);
+  });
+
+  it('data.memory 旁挂 server 字段族:面板四组字段透传(guard/pressure/machine/budget/instances)', async () => {
+    (sendToBridge as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('no bridge'));
+    const r = await handleTool('godot_get_context', {}, mockCtx());
+    const memory = JSON.parse((r!.content[0] as { text: string }).text).data.memory;
+    expect(memory).toBeDefined();
+    expect(memory.guard).toBe(true);
+    expect(memory.watermarkMB).toBe(3072);
+    expect(memory.pressure).toEqual({ state: 'normal', enteredAt: null });
+    expect(memory.machine.freePhysBytes).toBe(8 * 1024 ** 3);
+    expect(memory.machine.godotProcCount).toBe(1);
+    expect(memory.budget).toEqual({ pct: 67, budgetMB: 10922, usedMB: 3072, leaseCount: 1 });
+    expect(memory.instances).toHaveLength(1);
+    expect(memory.instances[0]).toMatchObject({ pid: 4242, kind: 'game_window', declaredMB: 3072, rssMB: 512, source: 'lease' });
+  });
+
+  it('outputSchema 声明 memory 对象(B4 typed outputs 契约)', () => {
+    const schema = getToolDefinitions()[0].outputSchema as unknown as {
+      properties: { data: { properties: Record<string, { properties?: Record<string, unknown> }> } };
+    };
+    const memory = schema.properties.data.properties.memory;
+    expect(memory).toBeDefined();
+    expect(memory.properties).toHaveProperty('guard');
+    expect(memory.properties).toHaveProperty('pressure');
+    expect(memory.properties).toHaveProperty('machine');
+    expect(memory.properties).toHaveProperty('budget');
+    expect(memory.properties).toHaveProperty('instances');
+    expect(memory.properties).toHaveProperty('watermarkMB');
+  });
+
+  it('buildMemoryPanel 抛错 → memory null + failedFields 含 memory + status partial(字段级降级)', async () => {
+    (sendToBridge as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('no bridge'));
+    memPanel.mockImplementationOnce(() => { throw new Error('ps boom'); });
+    const r = await handleTool('godot_get_context', {}, mockCtx());
+    const payload = JSON.parse((r!.content[0] as { text: string }).text).data;
+    expect(payload.memory).toBeNull();
+    expect(payload.failedFields).toContain('memory');
+    expect(payload.status).toBe('partial');
   });
 });

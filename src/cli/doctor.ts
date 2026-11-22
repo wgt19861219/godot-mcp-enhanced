@@ -15,8 +15,9 @@ import { PKG_VERSION } from '../core/update-checker.js';
 import { inspectRulesDistribution, type RulesDistInfo } from '../tools/project.js';
 import { ALL_ADAPTERS } from './clients/index.js';
 import { readJsonForCheck } from './clients/json-config.js';
-// 内存治理一期 Task 5:guard 可见性两行——开关/阈值/租约计数 + 机器快照
-import { memoryGuardEnabled, getMachineMemorySnapshot, listActiveLeases, minFreeMB, budgetPct } from '../core/memory-guard.js';
+// 内存治理(一期 Task 5 两行 → 二期 Task 5 面板行):doctor / godot_get_context 共享
+// buildMemoryPanel 单源(快照/租约/pressure/RSS 采样聚合,防两处漂移)
+import { buildMemoryPanel } from '../core/memory-guard.js';
 
 function status(ok: boolean, msg: string): string {
   return ok ? `  ✓ ${msg}` : `  ✗ ${msg}`;
@@ -151,6 +152,15 @@ export function compareBridgeScript(projectScript: string, bundledScript: string
   } catch {
     return { status: 'modified', projectSha256, bundledSha256 };  // 归一比对读失败按 modified 保守报
   }
+}
+
+/** 时间戳 → 相对时长展示(「2m ago」);面板 pressure 进入时长与实例「最后交互」共用。 */
+function fmtAgo(ts: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
 }
 
 // ─── 反馈批次 C1 (2026-11-12): godot-paths.json 命中判定纯函数(可单测) ──────────
@@ -343,23 +353,56 @@ export async function runDoctor(_args: string[]): Promise<void> {
     console.log(na(`rules distribution check skipped (${e instanceof Error ? e.message : String(e)})`));
   }
 
-  // 5.8 Memory guard(内存治理一期 Task 5)——治理机制最小可见性:第一行开关+阈值+租约
-  // 计数(预算%与水位线与准入判定同源导出,不重复读 env),第二行机器快照(物理/commit/
-  // Godot 进程计数)。快照降级(非 Windows/PowerShell 失败)用 ! 标记并注明原因,恒不
-  // fail——诊断信息缺失非环境错误(对齐 Rules distribution 语义)。
+  // 5.8 Memory guard(一期 Task 5 两行 → 二期 Task 5 面板行)——doctor / godot_get_context
+  // 共享 buildMemoryPanel 单源(防两处漂移)。第一行开关+阈值+租约计数,第二行机器快照
+  // (物理/commit/Godot 进程计数),随后二期面板行:pressure 状态/预算与已占用/活跃实例表。
+  // 快照降级(非 Windows/PowerShell 失败)用 ! 标记并注明原因,恒不 fail——诊断信息缺失
+  // 非环境错误(对齐 Rules distribution 语义);guard=0 面板照常显示(只读观测不吃总开关)。
+  // 面板聚合抛错(理论不抛,防御未来改动)→ ⊘ 跳过本段,doctor 后续段照常(对齐 Rules
+  // distribution 的 try-catch 先例——诊断命令自身不得中断)。
   console.log('\nMemory guard:');
-  const guardOn = memoryGuardEnabled();
-  console.log(status(true, `memory-guard: ${guardOn ? 'enabled' : 'disabled'} (budget ${budgetPct()}%, leases ${listActiveLeases().length}, watermark ${minFreeMB()}MB)`));
-  const memSnap = getMachineMemorySnapshot();
-  const fmtGBv = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  const fmtGBnum = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
-  const physUsedPct = memSnap.totalPhysBytes > 0
-    ? Math.round((1 - memSnap.freePhysBytes / memSnap.totalPhysBytes) * 100)
-    : 0;
-  const commitStr = memSnap.commitAvailBytes !== null ? `commit avail ${fmtGBv(memSnap.commitAvailBytes)}` : 'commit n/a';
-  const memLine = `machine memory: physical ${fmtGBnum(memSnap.freePhysBytes)}/${fmtGBnum(memSnap.totalPhysBytes)} GB free (${physUsedPct}% used), ${commitStr}, godot procs ${memSnap.godotProcCount}`
-    + (memSnap.degraded ? ` (degraded: ${memSnap.degraded})` : '');
-  console.log(memSnap.degraded ? warn(memLine) : status(true, memLine));
+  try {
+    const panel = buildMemoryPanel();
+    console.log(status(true, `memory-guard: ${panel.guard ? 'enabled' : 'disabled'} (budget ${panel.budget.pct}%, leases ${panel.budget.leaseCount}, watermark ${panel.watermarkMB}MB)`));
+    const memSnap = panel.machine;
+    const fmtGBv = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+    const fmtGBnum = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
+    const physUsedPct = memSnap.totalPhysBytes > 0
+      ? Math.round((1 - memSnap.freePhysBytes / memSnap.totalPhysBytes) * 100)
+      : 0;
+    const commitStr = memSnap.commitAvailBytes !== null ? `commit avail ${fmtGBv(memSnap.commitAvailBytes)}` : 'commit n/a';
+    const memLine = `machine memory: physical ${fmtGBnum(memSnap.freePhysBytes)}/${fmtGBnum(memSnap.totalPhysBytes)} GB free (${physUsedPct}% used), ${commitStr}, godot procs ${memSnap.godotProcCount}`
+      + (memSnap.degraded ? ` (degraded: ${memSnap.degraded})` : '');
+    console.log(memSnap.degraded ? warn(memLine) : status(true, memLine));
+    // pressure 行:非 normal 附进入时长(相对时间,人工读盘友好)
+    const pressureLine = panel.pressure.state === 'normal' || panel.pressure.enteredAt === null
+      ? `memory pressure: ${panel.pressure.state}`
+      : `memory pressure: ${panel.pressure.state} (entered ${fmtAgo(panel.pressure.enteredAt)})`;
+    console.log(status(panel.pressure.state === 'normal', pressureLine));
+    // budget 行:预算上限与已占用(Σ max(声明,实测),与准入判定同源口径)
+    const fmtMBasGB = (mb: number): string => `${(mb / 1024).toFixed(1)} GB`;
+    console.log(status(true, `memory budget: ${panel.budget.pct}% = ${fmtMBasGB(panel.budget.budgetMB)}, used ${fmtMBasGB(panel.budget.usedMB)} (${panel.budget.leaseCount} leases)`));
+    // 实例表:每行 pid/kind/声明/实测 RSS/最后交互/项目/来源(registry-only 行无租约字段显示 '-')
+    if (panel.instances.length === 0) {
+      console.log(na('memory instances: none'));
+    } else {
+      console.log(status(true, `memory instances (${panel.instances.length}):`));
+      for (const inst of panel.instances) {
+        const slots = [
+          `pid ${inst.pid ?? '-'}`,
+          `kind ${inst.kind ?? '-'}`,
+          `declared ${inst.declaredMB !== null ? `${inst.declaredMB}MB` : '-'}`,
+          `rss ${inst.rssMB !== null ? `${inst.rssMB}MB` : '-'}`,
+          `poked ${inst.lastPokeAt !== null ? fmtAgo(inst.lastPokeAt) : '-'}`,
+          `project ${inst.project}`,
+          `(${inst.source})`,
+        ].join('  ');
+        console.log(`      ${slots}`);
+      }
+    }
+  } catch (e) {
+    console.log(na(`memory panel skipped (${e instanceof Error ? e.message : String(e)})`));
+  }
 
   // 易用性批4:结尾一行下一步(两出口共享,弥补此前"满屏 ✗ 却不知道怎么办")
   console.log('\nNext steps: 配置客户端 `npx godot-mcp-enhanced setup` / 定向 `configure <客户端>`;验证链路:AI 客户端内调用 get_godot_version。');
