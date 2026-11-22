@@ -997,6 +997,35 @@ describe('per-project sessions — 分桶核心(设计 §4.2/§7)', () => {
     }
   });
 
+  // 内存治理二期 Task 4(2026-11-22 审查 Important-3 裁定):spec §L0 回收范围=「全部
+  // 本 server spawn 的**非 preview 会话**」——存活 preview 跳过(用户在看的窗口,用户
+  // 关窗即结束,由用户接管不算孤儿);非 preview 语义不变;已退出的 preview 桶照常收尾。
+  it('killAllRunSessions 跳过存活 preview 会话(用户接管);非 preview 照杀;已退出 preview 桶照常收尾', async () => {
+    vi.useFakeTimers();
+    try {
+      const pNormal = makeMockProc({ pid: 111 });
+      const pPreview = makeMockProc({ pid: 222 });
+      const pPreviewDead = makeMockProc({ pid: 333, killed: true });
+      setProjectDir('/A'); setRunSessionProc('/A', pNormal, true);
+      setProjectDir('/B'); setRunSessionProc('/B', pPreview, true);
+      getSession('/B').preview = true;             // run_project 建桶处落的值
+      setProjectDir('/C'); setRunSessionProc('/C', pPreviewDead, true);
+      getSession('/C').preview = true;
+      appendOutput(['C-out'], normalizeProjectKey('/C'));
+      const p = killAllRunSessions();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await p;
+      expect(getRunSessionProc('/A')).toBeNull();            // 非 preview:照杀照清
+      expect(getSession('/A').status).toBe('exited');
+      expect(getRunSessionProc('/B')).toBe(pPreview);        // 存活 preview:整桶原样(用户接管)
+      expect(getSession('/B').status).toBe('running');
+      expect(getRunSessionProc('/C')).toBeNull();            // 已退出 preview 桶:照常快照收尾
+      expect(getSession('/C').lastFinishedRunOutput).toEqual(['C-out']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('releaseRunSessionBusy(X) 只释放 X 桶 busy(设计 C-1)', async () => {
     await acquireProcessSlot('runA', '/A');
     await acquireProcessSlot('runB', '/B');

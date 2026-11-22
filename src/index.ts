@@ -7,6 +7,8 @@ import { getLogger } from './core/logger.js';
 import { isAuditEnabled } from './core/audit-log.js';
 import { applyUserSettingsAtStartup } from './core/user-settings.js';
 import { handleUncaughtException, setUncaughtCleanup } from './core/uncaught-cleanup.js';
+// 内存治理二期 Task 4:退出 watchdog(2026-11-22 审查 Important-1 修)。
+import { setupExitWatchdog } from './core/exit-watchdog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -176,6 +178,15 @@ export async function startMcpServer(args: string[]): Promise<void> {
     }
     process.exit(0);
   }
+
+  // 内存治理二期 Task 4(2026-11-22 审查 Important-1 修):退出 watchdog 必须**先于**本入口
+  // 的 gracefulShutdown handler 注册——EventEmitter 按注册顺序同步执行:二次信号时若
+  // gracefulShutdown 先跑,其 shuttingDown 分支同步 process.exit(1)(上方 :163-166),
+  // watchdog 的二次强杀 handler 永无执行机会(孤儿缺口实际未补)。先注册后:一次信号
+  // watchdog 先启动优雅回收+30s 兜底,二次信号 watchdog 先强杀+exit(0)(抢在 exit(1)
+  // 之前,游戏进程不孤儿化)。run() 内的 setupExitWatchdog 幂等 no-op(二次防线,
+  // 保住非 index.ts 入口直接调 run() 的覆盖)。
+  setupExitWatchdog();
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

@@ -444,9 +444,16 @@ export function getActiveRunPids(): number[] {
   return out;
 }
 
-/** 杀全部桶活进程并清桶(GodotServer.close 用,设计 §5:不留孤儿)。 */
+/** 杀全部桶活进程并清桶(GodotServer.close 用)。
+ *  内存治理二期 Task 4(spec §L0,2026-11-22 审查 Important-3 裁定):**存活的 preview
+ *  会话跳过**——回收范围收窄为「全部本 server spawn 的非 preview 会话」。preview
+ *  (run_project preview=true / 面板拉起即看)是用户正在看的窗口,用户关窗即结束,
+ *  由用户接管不算孤儿。这改变一期 Task 3 §5「不留孤儿」口径的边界:仅 preview 会话
+ *  不再无条件回收;非 preview 会话语义不变(杀+清桶)。已退出的 preview 桶(proc 已
+ *  killed/空)照常走快照收尾——豁免只针对「存活窗口」。 */
 export async function killAllRunSessions(): Promise<void> {
   for (const [key, s] of _sessions) {
+    if (s.preview && s.proc && !s.proc.killed) continue;   // 存活 preview:用户接管,整桶跳过
     if (s.proc && !s.proc.killed) {
       s.status = 'stopping';
       await killProcess(s.proc);

@@ -153,9 +153,12 @@ export function handleExitTrigger(signal: string): void {
   _exitTimer.unref?.();
 }
 
-/** 一次性注册(GodotServer.run() 启动挂载,幂等):stdin 'close' + SIGINT/SIGTERM
- *  → handleExitTrigger。仅在 stdio 路径(run)挂载——daemon 走 connectTransport 不经
- *  此处,退出链由 daemon/main.ts shutdownDaemon 自持,勿双杀(见文件头共存性结论)。 */
+/** 一次性注册(幂等):stdin 'close' + SIGINT/SIGTERM → handleExitTrigger。
+ *  **注册主点在 src/index.ts,先于 gracefulShutdown 的信号 handler 注册**(审查
+ *  Important-1:EventEmitter 注册序=执行序——若 index.ts 的 handler 先注册,二次信号
+ *  时其 shuttingDown 分支同步 exit(1),本 watchdog 的二次强杀永无执行机会);run() 内
+ *  的调用是幂等二次防线。daemon 走 connectTransport 不经任一注册点,退出链由
+ *  daemon/main.ts shutdownDaemon 自持,勿双杀(见文件头共存性结论)。 */
 export function setupExitWatchdog(): void {
   if (_installed) return;   // 幂等:重复调用不叠加 handler
   _installed = true;
@@ -168,9 +171,11 @@ export function setupExitWatchdog(): void {
   _handlers = h;
 }
 
-/** 停止 watchdog(GodotServer.close 对称清理/测试用,幂等):精确摘除 handler +
- *  清 timer + 状态复位。真实 stdio 场景 close 后进程即退,摘除无谓但无害;
- *  测试/热重启场景防 handler 残留。 */
+/** 停止 watchdog(测试隔离显式收口用,幂等):精确摘除 handler + 清 timer + 状态复位。
+ *  **不进 GodotServer.close() 清理链**(审查 Important-2):close() 正是第一次信号后
+ *  gracefulShutdown 启动的链,中途摘除会在「close 挂死」场景(30s 兜底的目标场景)
+ *  先行拆除兜底——watchdog 生命周期 = 进程生命周期(stdio 退出链防线,进程 exit 自然
+ *  消亡);测试 afterEach 用本函数收口。 */
 export function stopExitWatchdog(): void {
   if (_handlers) {
     for (const [ee, ev, fn] of _handlers) ee.removeListener(ev, fn);

@@ -338,10 +338,25 @@ describe('补充:一次性注册与优雅窗升级', () => {
   });
 });
 
-describe('挂点锚:GodotServer.run() 启动注册(源码锚定)', () => {
-  it('run() 内调用 setupExitWatchdog(与 startIdleTimer 同区)', () => {
+describe('挂点锚:注册顺序与 close 不拆除(源码锚定,审查 Important-1/2)', () => {
+  it('index.ts:setupExitWatchdog() 先于 process.on("SIGINT") 注册(注册序=执行序,\n' +
+     '二次信号 watchdog 强杀必须抢在 gracefulShutdown 的 exit(1) 之前)', () => {
+    const src = readFileSync(join(__dirname, '../../src/index.ts'), 'utf8');
+    const setupIdx = src.indexOf('setupExitWatchdog()');
+    const sigintIdx = src.indexOf("process.on('SIGINT'");
+    expect(setupIdx).toBeGreaterThan(-1);
+    expect(sigintIdx).toBeGreaterThan(-1);
+    expect(setupIdx).toBeLessThan(sigintIdx);   // watchdog 先注册 → 先执行
+  });
+
+  it('run() 内调用 setupExitWatchdog(幂等二次防线,与 startIdleTimer 同区)', () => {
     const src = readFileSync(join(__dirname, '../../src/GodotServer.ts'), 'utf8');
     expect(src).toContain('setupExitWatchdog()');
+  });
+
+  it('GodotServer.close() 不摘除 watchdog(Important-2:close 挂死场景兜底必须保持武装)', () => {
+    const src = readFileSync(join(__dirname, '../../src/GodotServer.ts'), 'utf8');
+    expect(src).not.toContain('stopExitWatchdog');   // close 链不拆除;测试显式收口
   });
 
   it('connectTransport 不注册 stdin 钩子(daemon 纪律守护,daemon 不经 run() 不挂 watchdog)', () => {

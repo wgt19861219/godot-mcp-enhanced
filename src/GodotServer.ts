@@ -63,10 +63,12 @@ import { startWatchdog, stopWatchdog } from './core/mem-watchdog.js';
 import { startIdleTimer, stopIdleTimer } from './core/session-idle-timer.js';
 // 内存治理二期 Task 4:退出 watchdog(Playwright setupExitWatchdog 模式)——
 // stdin close/SIGINT/SIGTERM → 优雅回收非 preview 会话(10s 有限等待)→ 二次触发
-// 立即强杀 → 30s 兜底 exit(0)。仅在 run()(stdio 专属路径)挂载:daemon 走
-// connectTransport 不经此处,其退出链由 daemon/main.ts shutdownDaemon 自持
-// (gui.stop → server.close 完整清理链 → exit 0),勿双杀。
-import { setupExitWatchdog, stopExitWatchdog } from './core/exit-watchdog.js';
+// 立即强杀 → 30s 兜底 exit(0)。注册主点在 src/index.ts(先于 gracefulShutdown 的
+// handler 注册——审查 Important-1:注册序=执行序,watchdog 必须先收信号);run() 内
+// 的 setupExitWatchdog 是幂等二次防线。daemon 走 connectTransport 不经此处,其退出
+// 链由 daemon/main.ts shutdownDaemon 自持(gui.stop → server.close 完整清理链 →
+// exit 0),勿双杀。
+import { setupExitWatchdog } from './core/exit-watchdog.js';
 // 内存治理一期 Task 4:launch_editor 复刻链(editProject)的 editor 档准入记账。
 import { acquireLease, bindLeasePid, releaseLease } from './core/memory-guard.js';
 import { heartbeatLeases } from './core/memory-guard.js';
@@ -824,9 +826,11 @@ export class GodotServer {
     // 会话 15min 无 bridge 交互即回收(agent 忘 stop_project 的游戏窗口不再挂内存)。
     startIdleTimer();
 
-    // 内存治理二期 Task 4:退出 watchdog(仅 stdio 路径挂载——run() 不被 daemon 调用,
-    // daemon 纪律:stdin 钩子不进 daemon 进程,见 connectTransport 注释/exit-watchdog
-    // 文件头共存性结论)。一次性注册,幂等;guard=0 不影响(生命周期卫生非 guard 功能)。
+    // 内存治理二期 Task 4:退出 watchdog——注册主点在 index.ts(先于 gracefulShutdown
+    // 的信号 handler 注册,审查 Important-1:注册序=执行序);此处幂等二次防线(非
+    // index.ts 入口直接调 run() 的覆盖)。daemon 不调 run(),stdin 钩子不进 daemon
+    // 进程(daemon 纪律,见 connectTransport 注释/exit-watchdog 文件头共存性结论)。
+    // guard=0 不影响(生命周期卫生非 guard 功能)。
     setupExitWatchdog();
 
     // 状态持久化 — 加载已保存的 agent 状态
@@ -994,9 +998,11 @@ export class GodotServer {
       stopWatchdog();
       // 内存治理二期 Task 1:停会话空闲回收(同上对称清理,幂等)。
       stopIdleTimer();
-      // 内存治理二期 Task 4:停退出 watchdog(对称清理:摘信号 handler + 清兜底 timer,
-      // 幂等;真实 stdio 场景 close 后进程即退,摘除为测试/热重启隔离)。
-      stopExitWatchdog();
+      // 内存治理二期 Task 4(2026-11-22 审查 Important-2 修):退出 watchdog **不**在
+      // close() 摘除——close() 正是第一次信号后 gracefulShutdown 启动的链,中途摘除
+      // 会在「close 挂死」场景(30s 兜底的目标场景)先行拆除兜底。watchdog 生命周期
+      // = 进程生命周期(stdio 退出链防线,进程 exit 自然消亡);测试隔离用 exit-watchdog
+      // 模块的显式收口函数(见其 stop 文档)。
       if (this.leaseHeartbeatTimer) {
         clearInterval(this.leaseHeartbeatTimer);
         this.leaseHeartbeatTimer = null;
