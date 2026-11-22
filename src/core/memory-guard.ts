@@ -661,9 +661,18 @@ export function acquireLease(
     // 毛刺由查① 兜住,持续吃紧由本查兜住,在跑任务与既有租约一律不动。
     if (getPressureState() !== 'normal') {
       const ctx = leaseUsageCtx(leases, kind); // 拒绝报文要占用清单与实测(与后续查共享 10s 缓存)
+      // 三期 Task 6:报文附当前已持续时长——主旨句「持续 30s」是进入条件语义(软阈值
+      // 去抖窗),后缀是此刻距 enteredAt 的实际经过(状态可含 hard 态:hard 进入/降级
+      // 同样重置 enteredAt,由其覆盖)。enteredAt 理论非 null(状态机保证非 normal 必有
+      // 进入时刻——三处进入点均同时设值,仅恢复 normal 才清 null),防御性 null 跳过
+      // 后缀不炸(不可达分支,测试钉住可达分支恒有 enteredAt)。
+      const enteredAt = getPressureEnteredAt();
+      const reason = enteredAt === null
+        ? '整机内存压力(软阈值)持续 30s——拒新保旧'
+        : `整机内存压力(软阈值)持续 30s——拒新保旧——已持续 ${Math.round((Date.now() - enteredAt) / 1000)}s`;
       return {
         denial: buildDenial(
-          'MEMGUARD_LOW_WATER', '整机内存压力(软阈值)持续 30s——拒新保旧',
+          'MEMGUARD_LOW_WATER', reason,
           kind, projectPath, snap, leases, ctx,
         ),
       };

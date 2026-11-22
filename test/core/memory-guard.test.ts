@@ -717,6 +717,43 @@ describe('⑫ 二期 Task 2:整机软阈值 pressure 状态机(拒新保旧+上�
     }
     expect(getPressureState()).toBe('normal');
   });
+
+  it('⑧ 三期 Task 6:拒绝报文附当前已持续时长(进入后再过 45s,报文含「已持续 45s」;主旨句保持)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const s of [0, 10, 20, 30]) {
+      if (s > 0) vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // 持续跌破,t=30s 恰满 30s → 进 pressure
+    }
+    expect(getPressureState()).toBe('pressure');
+    expect(getPressureEnteredAt()).toBe(30_000);
+    // Review Focus 5:「非 normal 且 enteredAt=null」经公开 API 不可构造(状态机三处
+    // 进入点——soft enter/hard enter/hard exit 降级——均同时设 enteredAt,仅恢复
+    // normal 才清 null)——实现侧防御性 null 分支为不可达代码,此处断言可达分支恒有
+    // enteredAt 兜底(报文时长后缀不会静默丢失)。
+    expect(getPressureEnteredAt()).not.toBeNull();
+    vi.advanceTimersByTime(45_000); // 进入后再过 45s(此刻 t=75s)
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    expect(res.denial.message).toContain('整机内存压力(软阈值)持续 30s——拒新保旧'); // 主旨句保持(进入条件语义)
+    expect(res.denial.message).toContain('已持续 45s'); // 后缀=当前已持续时长(75s−30s,非进入条件 30s)
+    errSpy.mockRestore();
+  });
+
+  it('⑨ hard 态拒绝报文同样附已持续时长(hard 进入重置 enteredAt,由其覆盖)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    updatePressureState(pressureSnap(1, 64 * 1024)); // t=0 物理口径 1MB<硬阈值 1536MB → 0s 宽限立即 hard
+    expect(getPressureState()).toBe('hard');
+    expect(getPressureEnteredAt()).toBe(0); // hard 进入同样设 enteredAt(由其覆盖)
+    vi.advanceTimersByTime(12_000);
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    if (!('denial' in res)) return;
+    expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    expect(res.denial.message).toContain('已持续 12s'); // 查⓪ 拒新语义 pressure/hard 共用,时长由 enteredAt 覆盖
+    errSpy.mockRestore();
+  });
 });
 
 // ─── 二期 Task 5:L3 面板聚合 buildMemoryPanel(doctor / godot_get_context 共享单源) ───

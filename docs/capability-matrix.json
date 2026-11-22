@@ -1,5 +1,5 @@
 {
-  "version": "0.39.0",
+  "version": "0.40.0",
   "tools": [
     {
       "name": "analysis",
@@ -2576,8 +2576,8 @@
       },
       "size": {
         "descBytes": 243,
-        "schemaBytes": 2372,
-        "totalBytes": 2615
+        "schemaBytes": 2460,
+        "totalBytes": 2703
       },
       "annotations": {
         "readOnlyHint": true,
