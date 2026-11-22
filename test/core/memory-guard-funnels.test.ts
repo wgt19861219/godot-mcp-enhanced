@@ -13,6 +13,8 @@
 //    标志 + 归因 run_error,parseGdscriptResult 改报 MEM_BUDGET_EXCEEDED;未命中回归锚
 //    (原 Process exited 路径);run_tests 单片被杀 → opsErrorResult MEM_BUDGET_EXCEEDED;
 //    run_project 会话被杀 → get_debug_output 附 mem_budget_exceeded 与 errors 归因行。
+//    审查补测 I-1/I-2:stop_project 两条归因路径(停止分支 killProcess-等-close 窗口 +
+//    no-running 分支)+ 分片模式 mem_killed 归因链,均含命中/未命中回归锚。
 //
 // mock 策略:memory-guard 模块 vi.mock 接管 acquireLease/bindLeasePid/releaseLease
 // (projectPathFromArgs 等纯函数透传真身);child_process.spawn 可控假 proc;process-state
@@ -109,6 +111,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import { handleTool as runtimeHandleTool } from '../../src/tools/runtime.js';
 import { executeGdscript } from '../../src/gdscript-executor.js';
 import { parseGdscriptResult } from '../../src/tools/shared.js';
+import { killProcess } from '../../src/core/process-state.js';   // mock 面内的可控注入(I-1)
 import { captureScreenshot } from '../../src/screenshot.js';
 import { spawnGodot } from '../../src/tools/spawn-helper.js';
 import { batchValidateScripts } from '../../src/tools/validation.js';
@@ -558,5 +561,124 @@ describe('⑦ 杀归因接线(wasMemKilled 消费)', () => {
       action: 'get_debug_output', project_path: TMP_PROJECT,
     }, makeCtx());
     expect(textOf(r!)).not.toContain('mem_budget_exceeded');
+  });
+
+  // ── 审查 I-1:stop_project 两条归因路径(命中/未命中回归锚各一)────────────────
+  // 停止分支的可达序列依据真实 killProcess 语义("Async kill: waits for 'close' event"):
+  // 看门狗树杀后 close 事件未派发的窗口内 stop 进来 → targetProc 非 null →
+  // await killProcess 期间 close 到达 → close handler 归因落桶+Map → killProcess
+  // resolve → stop 读到快照归因行与 Map 条目。mock 忠实模拟"kill 中 close 到达"。
+
+  it('I-1 stop_project 停止分支:kill 窗口内归因到达 → result 附 mem_budget_exceeded 字段 + errors 归因行', async () => {
+    const proc = fakeProc(5401);
+    spawnMock.mockImplementation(() => proc);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 5401 ? { readingBytes: 9.5 * GB2, declaredMB: 3072, kind: 'game_window' } : null);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    vi.mocked(killProcess).mockImplementationOnce(async (p: { emit: (ev: string, code: number) => void }) => {
+      p.emit('close', 1);   // kill 过程中 close 到达(被看门狗杀,exitCode 1)
+    });
+    const r = await runtimeHandleTool('runtime', { action: 'stop_project', project_path: TMP_PROJECT }, makeCtx());
+    const txt = textOf(r!);
+    expect(txt).toContain('"status": "stopped"');
+    expect(txt).toContain('"mem_budget_exceeded"');                       // 结构化字段
+    expect(txt).toContain('[MEM_BUDGET_EXCEEDED]');                       // 归因行进 errors 分类
+    expect(txt).toContain('GODOT_MCP_DECLARED_MB_GAME_WINDOW');           // 档位上调指引
+  });
+
+  it('I-1 stop_project 停止分支回归锚:正常停止(未被杀)→ 无归因字段无归因行', async () => {
+    const proc = fakeProc(5402);
+    spawnMock.mockImplementation(() => proc);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    vi.mocked(killProcess).mockImplementationOnce(async (p: { emit: (ev: string, code: number) => void }) => {
+      p.emit('close', 0);
+    });
+    const r = await runtimeHandleTool('runtime', { action: 'stop_project', project_path: TMP_PROJECT }, makeCtx());
+    const txt = textOf(r!);
+    expect(txt).toContain('"status": "stopped"');
+    expect(txt).not.toContain('mem_budget_exceeded');
+    expect(txt).not.toContain('MEM_BUDGET_EXCEEDED');
+  });
+
+  it('I-1 stop_project no-running 分支:会话被杀后(close 已清 proc)→ 文本附归因与上调指引', async () => {
+    const proc = fakeProc(5403);
+    spawnMock.mockImplementation(() => proc);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 5403 ? { readingBytes: 17 * GB2, declaredMB: 8192, kind: 'gut_shard' } : null);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    proc.emit('close', 1);   // 看门狗树杀 → close 清 proc,recentMemKills 已记归因
+    await vi.waitFor(() => {
+      expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+    });
+    const r = await runtimeHandleTool('runtime', { action: 'stop_project', project_path: TMP_PROJECT }, makeCtx());
+    const txt = textOf(r!);
+    expect(txt).toContain('No project is currently running');
+    expect(txt).toContain('Last run was killed by memory watchdog: [MEM_BUDGET_EXCEEDED]');
+    expect(txt).toContain('声明 8192MB×2');
+  });
+
+  it('I-1 stop_project no-running 分支回归锚:自然退出后 → 原文本,无 watchdog 附注', async () => {
+    const proc = fakeProc(5404);
+    spawnMock.mockImplementation(() => proc);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    proc.emit('close', 0);
+    await vi.waitFor(() => {
+      expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+    });
+    const r = await runtimeHandleTool('runtime', { action: 'stop_project', project_path: TMP_PROJECT }, makeCtx());
+    const txt = textOf(r!);
+    expect(txt).toContain('No project is currently running');
+    expect(txt).not.toContain('watchdog');
+    expect(txt).not.toContain('MEM_BUDGET_EXCEEDED');
+  });
+
+  // ── 审查 I-2:分片模式 mem_killed 归因链(片级标注 + 顶层升格 + 其余片照跑)────
+
+  it('I-2 run_tests 分片:片1 被看门狗杀 → status=mem_killed 带归因,顶层升格 mem_budget_exceeded,片2 照跑', async () => {
+    const p1 = fakeProc(6101);
+    const p2 = fakeProc(6102);
+    spawnMock.mockImplementationOnce(() => p1).mockImplementationOnce(() => p2);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 6101 ? { readingBytes: 17 * GB2, declaredMB: 8192, kind: 'gut_shard' } : null);
+    const rPromise = runtimeHandleTool('runtime', {
+      action: 'run_tests', project_path: TMP_PROJECT, shards: 2, timeout: 5,
+    }, makeCtx());
+    await vi.waitFor(() => { expect(spawnMock).toHaveBeenCalledTimes(1); });
+    p1.emit('close', 1);   // 片1 被杀(exitCode 1,无 GUT 计数输出)
+    await vi.waitFor(() => { expect(spawnMock).toHaveBeenCalledTimes(2); });   // 失败片不中断后续片
+    p2.emit('close', 0);   // 片2 正常退出
+    const r = await rPromise;
+    const parsed = JSON.parse(textOf(r!)) as {
+      mode: string; mem_budget_exceeded?: string;
+      shard_results: Array<{ shard: number; status: string; mem_kill?: string }>;
+    };
+    expect(parsed.mode).toBe('sharded');
+    expect(parsed.shard_results).toHaveLength(2);
+    // 被杀片归因标注(而非泛化 failed)——审查 I-2 验收点
+    expect(parsed.shard_results[0]!.status).toBe('mem_killed');
+    expect(parsed.shard_results[0]!.mem_kill).toContain('GODOT_MCP_DECLARED_MB_GUT_SHARD');
+    expect(parsed.shard_results[0]!.mem_kill).toContain('声明 8192MB×2');
+    // 其余片照常汇总
+    expect(parsed.shard_results[1]!.status).toBe('ok');
+    // 首个被杀片归因升格顶层(agent 单看汇总即见)
+    expect(parsed.mem_budget_exceeded).toContain('内存预算超限被看门狗终止');
+  });
+
+  it('I-2 run_tests 分片回归锚:无片被杀 → 全片无 mem_killed,顶层无 mem_budget_exceeded', async () => {
+    const p1 = fakeProc(6201);
+    const p2 = fakeProc(6202);
+    spawnMock.mockImplementationOnce(() => p1).mockImplementationOnce(() => p2);
+    const rPromise = runtimeHandleTool('runtime', {
+      action: 'run_tests', project_path: TMP_PROJECT, shards: 2, timeout: 5,
+    }, makeCtx());
+    await vi.waitFor(() => { expect(spawnMock).toHaveBeenCalledTimes(1); });
+    p1.emit('close', 0);
+    await vi.waitFor(() => { expect(spawnMock).toHaveBeenCalledTimes(2); });
+    p2.emit('close', 0);
+    const r = await rPromise;
+    const txt = textOf(r!);
+    expect(txt).not.toContain('mem_killed');
+    expect(txt).not.toContain('mem_budget_exceeded');
+    expect(txt).not.toContain('MEM_BUDGET_EXCEEDED');
   });
 });
