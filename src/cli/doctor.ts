@@ -363,7 +363,12 @@ export async function runDoctor(_args: string[]): Promise<void> {
   console.log('\nMemory guard:');
   try {
     const panel = buildMemoryPanel();
-    console.log(status(true, `memory-guard: ${panel.guard ? 'enabled' : 'disabled'} (budget ${panel.budget.pct}%, leases ${panel.budget.leaseCount}, watermark ${panel.watermarkMB}MB)`));
+    // 三期 Task 2:驱逐豁免组可见性——enabled 且非空才附(固定序逗号连接)。disabled 不附:
+    // guard=0 时看门狗整体旁路,env 豁免无从生效,附了会暗示豁免在生效(误导诊断)。
+    const exemptSuffix = panel.guard && panel.watchdogExempt.length > 0
+      ? ` — exempt ${panel.watchdogExempt.join(',')}`
+      : '';
+    console.log(status(true, `memory-guard: ${panel.guard ? 'enabled' : 'disabled'} (budget ${panel.budget.pct}%, leases ${panel.budget.leaseCount}, watermark ${panel.watermarkMB}MB)${exemptSuffix}`));
     const memSnap = panel.machine;
     const fmtGBv = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
     const fmtGBnum = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);

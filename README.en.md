@@ -281,6 +281,7 @@ Admission control (three checks before every Godot spawn) + per-process budget w
 | `GODOT_MCP_SESSION_IDLE_MINUTES` | (Phase 2) Idle-reap threshold (minutes) for non-preview game sessions: windows with no bridge interaction for this long are reaped (tree-kill + lease release). Preview windows are exempt; `0` = off | `15` |
 | `GODOT_MCP_MEM_PRESSURE_SOFT_MB` | (Phase 2) Machine-level soft threshold (MB): either metric (physical free / commit headroom) below this for **30s sustained** enters pressure state — new spawns rejected, running tasks kept (kubelet soft-eviction semantics); 5min sustained recovery returns to normal | `3072` |
 | `GODOT_MCP_MEM_PRESSURE_HARD_MB` | (Phase 2) Machine-level hard threshold (MB): either metric below this triggers **immediate eviction** (0s grace) — this server's leases tree-killed in descending measured-RSS÷declared order, preview/editor last, stopping once past threshold + 2GB reclaim margin; external processes (user-launched) are never killed | `1536` |
+| `GODOT_MCP_WATCHDOG_EXEMPT` | (Phase 3) Eviction-candidate exemption groups: comma-separated `preview`/`editor` (case-insensitive, trimmed) — matching groups are excluded from hard-threshold eviction candidates entirely (**last-in-order semantics unchanged**: non-exempt groups still sort last and remain killable); the per-process hard cap (declared × kill factor) is **unaffected** (unbounded exemption is forbidden); unknown tokens warn on stderr and are ignored. Visible via the panel's `watchdogExempt` field and the doctor first line | unset |
 
 ## License
 

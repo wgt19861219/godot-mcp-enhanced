@@ -141,7 +141,7 @@ AI 改动涉及用户需要看到效果才能验收的内容（\`.tscn\` / UI �
 多实例连跑/大批量测试把机器内存打爆（全量 GUT 22.5GB 死机类事故）的治理面，三层：
 
 - **L1 准入**：每次 Godot spawn 前依次过查——水位双口径（物理空闲与 commit 余量均 ≥ \`GODOT_MCP_MIN_FREE_MB\`，默认 3072MB）/ 声明预算（Σ max(租约声明, 实测RSS) ≤ \`GODOT_MCP_MEM_BUDGET_PCT\`%×物理总量，默认 67）/ 机器实例 ≤ 8 / 二期软阈值（pressure 态拒新保旧）。**看到 \`MEMGUARD_*\` 拒绝不是 bug，是治理在干活**：stop_project 释放 / 调 \`GODOT_MCP_DECLARED_MB_<KIND>\` 上调档位 / \`GODOT_MCP_MEMORY_GUARD=0\` 豁免（风险自担）。
-- **L2 看门狗**：10s 轮询租约 pid RSS——单进程超声明×系数（headless/gut_shard ×2、game_window/editor ×3）树杀并报 \`MEM_BUDGET_EXCEEDED\`（附档位上调指引）；整机软阈值跌破 \`GODOT_MCP_MEM_PRESSURE_SOFT_MB\`（默认 3072MB）持续 30s 进 pressure（拒新保旧，在跑任务不动）；硬阈值跌破 \`GODOT_MCP_MEM_PRESSURE_HARD_MB\`（默认 1536MB）立即驱逐（实测÷声明降序，preview/editor 殿后，杀到脱离+2GB 余量即停，外部进程永不杀）。
+- **L2 看门狗**：10s 轮询租约 pid RSS——单进程超声明×系数（headless/gut_shard ×2、game_window/editor ×3）树杀并报 \`MEM_BUDGET_EXCEEDED\`（附档位上调指引）；整机软阈值跌破 \`GODOT_MCP_MEM_PRESSURE_SOFT_MB\`（默认 3072MB）持续 30s 进 pressure（拒新保旧，在跑任务不动）；硬阈值跌破 \`GODOT_MCP_MEM_PRESSURE_HARD_MB\`（默认 1536MB）立即驱逐（实测÷声明降序，preview/editor 殿后，杀到脱离+2GB 余量即停，外部进程永不杀）；三期起驱逐候选可经 \`GODOT_MCP_WATCHDOG_EXEMPT\`（逗号分隔 preview/editor，未设=无豁免）整组豁免——命中组不进候选（殿后语义不变：未命中组仍排序最后可杀），单进程硬帽不受影响，未知 token warn 忽略（面板 \`watchdogExempt\` 字段可见）。
 - **L3 面板**：\`godot_get_context\` 的 \`memory\` 对象与 \`doctor\` 的 Memory guard 段——双口径水位 / 预算与已占用 / pressure 状态 / 活跃实例表（pid/项目/kind/声明/实测 RSS/最后交互，实例 RSS 由 TS 侧按 registry pid 采样）。**pressure≠normal 或遇 MEMGUARD 拒绝时先看面板再决定 stop/调档/等待**。
 
 二期生命周期：非 preview 会话 15min 无 bridge 交互自动回收（\`GODOT_MCP_SESSION_IDLE_MINUTES\`，0=关；preview 窗口豁免）；server 退出时优雅回收全部非 preview 会话（10s 有限等待 → 二次触发强杀 → 30s 兜底）。拒绝/驱逐/回收日志可 grep \`MEMGUARD\`。CI 连跑场景 \`GODOT_MCP_MEMORY_GUARD=0\` 一键全关。

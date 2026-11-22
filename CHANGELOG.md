@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- (计划中) memory-guard 二期遗留:多 server 租约读-改-写互斥(Task 1 终审 deferred M-3)、杀事件入 JSONL 审计通道(Task 3 终审 deferred M-3)、树杀异步吞错→失败路径归因虚报+进程失管收口(终审 T3-M-2,triage #9——killPidTree promise 化+杀后验证;杀前探活收窗+60s orphan 扫描双兜底已在一期)、blender 档位扩展(Task 4 终审裁定留档)、驱逐豁免 env `GODOT_MCP_WATCHDOG_EXEMPT`(spec §L2 设计层,Task 3 实现裁为固定 preview/editor 殿后语义,env 未实现——README 不载未实现 env);反馈批 Task 4(挂起)落地后随下版发布。
+- (计划中) memory-guard 二期遗留:多 server 租约读-改-写互斥(Task 1 终审 deferred M-3)、杀事件入 JSONL 审计通道(Task 3 终审 deferred M-3)、树杀异步吞错→失败路径归因虚报+进程失管收口(终审 T3-M-2,triage #9——killPidTree promise 化+杀后验证;杀前探活收窗+60s orphan 扫描双兜底已在一期)、blender 档位扩展(Task 4 终审裁定留档);反馈批 Task 4(挂起)落地后随下版发布。
+- (已收口) 驱逐豁免 env `GODOT_MCP_WATCHDOG_EXEMPT` **三期已实现**(原二期 spec §L2 设计层 deferred 项)——Task 1 候选过滤(commit 0eec3f20)+ Task 2 可见性四件(见 [0.40.0]),移出遗留清单。
+
+## [0.40.0] - 2026-11-22
+
+> memory-guard 三期(WATCHDOG_EXEMPT 收敛 + L3 可见性 + 正交性测试 + static_mem 实测)合版段落骨架——Task 2 先立本段,其余任务条目随任务落地补登(Task 1 env 候选过滤已入库 0eec3f20,详条目待补)。计划 docs/superpowers/plans/2026-11-22-memory-guard-phase3.md。≠发版,npm publish/tag 待用户明确指令;触及工具面(get_context memory 对象/doctor 行)与规则文档双副本,版本 bump 四件套(0.39.0→0.40.0)于本批收口时统一执行。
+
+- **docs(core): WATCHDOG_EXEMPT 可见性四件——panel exempt 字段+doctor 行+README env 表+规则双副本(Task 2,本笔)**:①`MemoryPanelData` 加 `watchdogExempt: Array<'preview'|'editor'>`——`buildMemoryPanel` 与驱逐候选计算(`getEvictionCandidates`)同点实时读 `GODOT_MCP_WATCHDOG_EXEMPT` 不缓存,固定序过滤产出(env 乱序/大小写输入 → 输出恒 preview→editor,doctor 行与 typed outputs 展示稳定);guard=0 照常落值(exempt 是 env 事实非治理状态);doctor/get_context 经既有 buildMemoryPanel 单源自动透出,`get-context.ts` outputSchema typed outputs 契约同步声明(B4 契约:schema 从实际返回提炼)。②doctor Memory guard 第一行 **enabled 且非空**时附「 — exempt preview,editor」——disabled 不附(guard=0 看门狗整体旁路,附了会暗示豁免在生效,误导诊断)。③README 双语 env 表加 `GODOT_MCP_WATCHDOG_EXEMPT` 行(驱逐候选豁免/殿后语义不变/单进程硬帽不受影响/未知 token warn 忽略,默认未设)——Task 1 时「README 不载未实现 env」约束随实现解除。④规则双副本(rule-templates.ts + .claude/rules/godot-mcp-core.md)「内存治理」段 L2 硬阈值驱逐句补 env 豁免语义(与殿后正交、硬帽恒独立)。测试:memory-guard ⑬⑦(watchdogExempt 固定序+guard=0 照出)/doctor(enabled+非空附后缀,disabled 不附)/get-context outputSchema 契约。
 
 ## [0.39.0] - 2026-11-22
 

@@ -85,6 +85,7 @@ vi.mock('../../src/cli/clients/antigravity.js', () => ({
 const memguardDoctor = vi.hoisted(() => ({
   panel: vi.fn(() => ({
     guard: false,
+    watchdogExempt: [] as Array<'preview' | 'editor'>,
     watermarkMB: 3072,
     pressure: { state: 'normal' as const, enteredAt: null },
     machine: {
@@ -402,6 +403,7 @@ describe('doctor', () => {
     const { runDoctor } = await import('../../src/cli/doctor.js');
     memguardDoctor.panel.mockReturnValueOnce({
       guard: true,
+      watchdogExempt: [],
       watermarkMB: 3072,
       pressure: { state: 'normal', enteredAt: null },
       machine: {
@@ -431,6 +433,7 @@ describe('doctor', () => {
     const pokeAt = Date.now() - 2 * 60_000; // 2m ago(相对时间展示)
     memguardDoctor.panel.mockReturnValueOnce({
       guard: true,
+      watchdogExempt: [],
       watermarkMB: 3072,
       pressure: { state: 'pressure', enteredAt: Date.now() - 4 * 60_000 },
       machine: {
@@ -471,6 +474,41 @@ describe('doctor', () => {
       const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
       expect(output).toContain('memory panel skipped (panel boom)');
       expect(output).toContain('Next steps:');   // 后续段照常输出
+    } finally {
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  // ─── 三期 Task 2:第一行 exempt 后缀——enabled 且非空才附(disabled 不附,避免暗示豁免生效) ───
+
+  it('三期 Task 2:enabled+豁免非空附「 — exempt preview,editor」;disabled 不附', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    // enabled + 豁免非空:行尾附后缀(逗号连接,固定序)
+    memguardDoctor.panel.mockReturnValueOnce({
+      guard: true,
+      watchdogExempt: ['preview', 'editor'],
+      watermarkMB: 3072,
+      pressure: { state: 'normal', enteredAt: null },
+      machine: {
+        freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+        commitAvailBytes: 10 * 1024 ** 3, commitTotalBytes: 20 * 1024 ** 3,
+        godotProcCount: 0, sampledAt: 0,
+      },
+      budget: { pct: 67, budgetMB: 10922, usedMB: 0, leaseCount: 0 },
+      instances: [],
+    } as never);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      let output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('memory-guard: enabled (budget 67%, leases 0, watermark 3072MB) — exempt preview,editor');
+      // 第二次调用回落默认 mock(guard=false + 空豁免) → 不附后缀,全 output 无 exempt 字样
+      logSpy.mockClear();
+      await runDoctor([]).catch(() => {});
+      output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('memory-guard: disabled (budget 67%, leases 0, watermark 3072MB)');
+      expect(output).not.toContain('exempt');
     } finally {
       logSpy.mockRestore(); exitSpy.mockRestore();
     }

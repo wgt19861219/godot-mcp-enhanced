@@ -811,6 +811,9 @@ export interface MemoryPanelData {
   machine: MachineMemorySnapshot;
   budget: { pct: number; budgetMB: number; usedMB: number; leaseCount: number };
   instances: MemoryPanelInstance[];
+  watchdogExempt: Array<'preview' | 'editor'>; // 三期 Task 2:GODOT_MCP_WATCHDOG_EXEMPT
+  //   豁免组(固定序 preview→editor,空数组=无豁免)。guard=0 照出——exempt 是 env 事实
+  //   非治理状态(关闭态展示不暗示豁免生效,disabled 语义由 doctor 行控制,见 doctor.ts)。
 }
 
 /** 读 machine registry 心跳条目(~/.godot-mcp/instances/*.json,游戏侧 mcp_bridge autoload
@@ -917,6 +920,10 @@ export function buildMemoryPanel(): MemoryPanelData {
   const budgetMB = Math.round((snap.totalPhysBytes / 1024 / 1024) * (pct / 100));
 
   const instances = [...rows.values()].sort((a, b) => (a.pid ?? 0) - (b.pid ?? 0));
+  // 三期 Task 2:驱逐豁免组可见性——固定序过滤产出(env 乱序/大小写输入 → 输出恒
+  // preview→editor,doctor 行与 get_context typed outputs 展示稳定)。与驱逐候选计算
+  // (getEvictionCandidates) 同点实时读 env 不缓存——面板呈现的豁免与实际生效的一致。
+  const exempt = watchdogExemptGroups();
   return {
     guard: guardOn,
     watermarkMB: minFreeMB(),
@@ -924,6 +931,7 @@ export function buildMemoryPanel(): MemoryPanelData {
     machine: snap,
     budget: { pct, budgetMB, usedMB, leaseCount: leases.length },
     instances,
+    watchdogExempt: (['preview', 'editor'] as const).filter((g) => exempt.has(g)),
   };
 }
 

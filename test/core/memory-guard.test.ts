@@ -4,7 +4,8 @@
 // ④writeFileAtomic 原子写 ⑤快照缓存 ⑥PowerShell 失败降级 ⑦ensureDir 目录自建
 // ⑧fail-open(读失败返 []/写失败降级日志) + 补充(租约生命周期/RSS 采样)
 // + ⑫二期 Task 2 整机软阈值 pressure 状态机(拒新保旧+上报,fake timers 推进多轮)
-// + ⑭三期 WATCHDOG_EXEMPT 驱逐候选过滤(env 豁免整组剔出候选,与殿后排序正交)。
+// + ⑭三期 WATCHDOG_EXEMPT 驱逐候选过滤(env 豁免整组剔出候选,与殿后排序正交)
+// + ⑬⑦三期 Task 2 面板可见性:watchdogExempt 字段(固定序 preview→editor,guard=0 照出)。
 //
 // 测试注入约定:PowerShell 执行器经 _setPsRunnerForTest 注入 fake(不真起 PowerShell);
 // 租约文件路径经 _setLeasesFilePathForTest 重定向到 tmp 夹具目录(不触真实 ~/.godot-mcp);
@@ -840,6 +841,24 @@ describe('⑬ buildMemoryPanel(二期 Task 5)', () => {
     expect(p.machine.freePhysBytes).toBeGreaterThan(0); // 快照照常返回(os 内置读数)
     expect(p.machine.commitAvailBytes).toBeNull();     // WMI 通道随治理旁路(test/setup.js 全局
     expect(p.machine.godotProcCount).toBe(0);          //  guard=0「未 mock 测试零 PowerShell」约定)
+  });
+
+  it('⑦ 三期 Task 2:watchdogExempt 面板字段——未设=[] / editor / preview,editor 恒固定序;guard=0 照出', () => {
+    // beforeEach 已 stubEnv WATCHDOG_EXEMPT=''(空串=未设语义) → 无豁免
+    expect(buildMemoryPanel().watchdogExempt).toEqual([]);
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    expect(buildMemoryPanel().watchdogExempt).toEqual(['editor']);
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'preview,editor');
+    expect(buildMemoryPanel().watchdogExempt).toEqual(['preview', 'editor']);
+    // 乱序+大小写不敏感:输出恒固定序 preview→editor(doctor 行/get_context 展示稳定契约)
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', ' Editor , PREVIEW ');
+    expect(buildMemoryPanel().watchdogExempt).toEqual(['preview', 'editor']);
+    // guard=0 面板照常返回,exempt 字段照出(只读观测不吃总开关——exempt 是 env 事实非治理状态)
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    _resetForTest();                                   // 清总开关读缓存(⑥ 用例同款模式)
+    const p = buildMemoryPanel();
+    expect(p.guard).toBe(false);
+    expect(p.watchdogExempt).toEqual(['preview', 'editor']);
   });
 });
 

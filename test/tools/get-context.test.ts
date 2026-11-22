@@ -385,6 +385,8 @@ describe('memory 面板字段(二期 Task 5)', () => {
     expect(memory.properties).toHaveProperty('budget');
     expect(memory.properties).toHaveProperty('instances');
     expect(memory.properties).toHaveProperty('watermarkMB');
+    // 三期 Task 2:驱逐豁免组字段(typed outputs 契约随返回结构同步)
+    expect(memory.properties).toHaveProperty('watchdogExempt');
   });
 
   it('buildMemoryPanel 抛错 → memory null + failedFields 含 memory + status partial(字段级降级)', async () => {

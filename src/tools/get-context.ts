@@ -142,6 +142,8 @@ export function getToolDefinitions(): Tool[] {
                     },
                   },
                 },
+                // 三期 Task 2:驱逐豁免组(GODOT_MCP_WATCHDOG_EXEMPT,固定序;空数组=无豁免)
+                watchdogExempt: { type: 'array', items: { type: 'string', enum: ['preview', 'editor'] } },
               },
             },
             hint: { type: 'string' },

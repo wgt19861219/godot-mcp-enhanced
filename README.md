@@ -732,6 +732,7 @@ npx godot-mcp-enhanced rules --paths "D:/proj/A;D:/proj/B"
 | `GODOT_MCP_SESSION_IDLE_MINUTES` | (二期)非 preview 会话空闲回收阈值(分钟):距最近 bridge 交互超此值的游戏窗口自动回收(树杀+释放租约)。preview 窗口豁免;`0`=关 | `15` |
 | `GODOT_MCP_MEM_PRESSURE_SOFT_MB` | (二期)整机软阈值(MB):双口径(物理空闲/commit 余量)任一低于此值**持续 30s** 进 pressure 态——拒新 spawn 保旧任务(kubelet 软驱逐语义);连续 5min 双口径恢复才回 normal | `3072` |
 | `GODOT_MCP_MEM_PRESSURE_HARD_MB` | (二期)整机硬阈值(MB):双口径任一跌破**立即驱逐**(0s 宽限)——本 server 租约按「实测 RSS÷声明」降序树杀,preview/editor 殿后,杀到脱离硬阈值+2GB 余量即停;外部进程(用户手开)永不杀 | `1536` |
+| `GODOT_MCP_WATCHDOG_EXEMPT` | (三期)硬阈值驱逐候选豁免组:逗号分隔 `preview`/`editor`(大小写不敏感、trim)——命中组整组剔出驱逐候选(**殿后语义不变**:未豁免组仍排序最后可杀);单进程硬帽(声明×杀线系数)**不受影响**(无上限豁免禁止);未知 token 记 stderr warn 并忽略。面板 `watchdogExempt` 字段与 doctor 第一行可见 | 未设 |
 
 > **⚠️ BREAKING(G7)**:默认 profile 从 `full` 改 `basic`(对齐 GoPeak compact,省 AI context window)。升级后 tools/list 只暴露 basic(lite 9 组:core/bridge/animation/audio/signal/visual/code/test/profiler)。回退全量 46 工具:`GODOT_MCP_PROFILE=full`;或 AI 运行时 `manage_tools activate <groups>` 动态扩容(无需重启)。RCE action(execute_gdscript 等)始终经 action-gate gated,需 `GODOT_MCP_PRIVILEGED_GROUPS=code-execution` 解锁。
 
