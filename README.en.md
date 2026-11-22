@@ -266,6 +266,19 @@ This auto-generates:
 - Node.js >= 18
 - GUT addon (for `run_tests`)
 
+## Memory Guard Environment Variables (v0.38.2+)
+
+Admission control (three checks before every Godot spawn) + per-process budget watchdog. Kills runaway processes before they take the machine down (see `CHANGELOG.md` [0.38.2] for details). Lease ledger is shared across servers at `~/.godot-mcp/memory-leases.json`.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GODOT_MCP_MEMORY_GUARD` | Master switch. `0`/`false` = off — admission always passes (dummy lease, zero disk side effects), watchdog never starts; at your own risk | on |
+| `GODOT_MCP_MIN_FREE_MB` | Low-water mark (MB): both physical free AND commit headroom must be >= this to admit a new spawn | `3072` |
+| `GODOT_MCP_MEM_BUDGET_PCT` | Machine memory budget percent (1-100): Σ max(declared MB, measured RSS) + incoming declaration <= pct × total physical | `67` |
+| `GODOT_MCP_MAX_MACHINE_INSTANCES` | Machine-wide Godot process cap (third admission check). Note: **0 does NOT mean disabled** — non-positive values fall back to the default | `8` |
+| `GODOT_MCP_MEM_POLL_SECONDS` | Watchdog RSS sampling interval (seconds); lower bound 5 (each sample spawns a PowerShell process), upper bound 3600 | `10` |
+| `GODOT_MCP_DECLARED_MB_HEADLESS` etc. | Per-kind declared budget (MB): `_HEADLESS` / `_GUT_SHARD` / `_GAME_WINDOW` / `_EDITOR`, each overridable. If measured RSS exceeds declared × kill factor (headless/gut_shard ×2, game_window/editor ×3), the watchdog kills the process tree and reports MEM_BUDGET_EXCEEDED with a bump-this-env hint | `1024`/`8192`/`3072`/`4096` |
+
 ## License
 
 [MIT](LICENSE) — includes upstream [Coding-Solo/godot-mcp](https://github.com/Coding-Solo/godot-mcp) copyright (Copyright (c) 2025 Solomon Elias).
