@@ -9,7 +9,10 @@
 //  - 租约存 ~/.godot-mcp/memory-leases.json(机器级目录惯例,同 instances/audit),
 //    形态 {version:1, leases:[]},写全部经 fs-atomic 原子写,写前 ensureDir;
 //  - fail-open:租约文件读失败视作无租约、写失败记降级日志后继续(设计 §5④)——
-//    治理层自身故障不得阻断工具链可用性。
+//    治理层自身故障不得阻断工具链可用性;
+//  - 二期 Task 3:整机硬阈值(默认 1536MB,0s 宽限)进 hard + 驱逐候选计算
+//    (实测÷声明降序,preview/editor 殿后)——杀的执行在 mem-watchdog(消费方),
+//    状态机与排序的唯一写者在本模块。
 
 import { spawnSync } from 'child_process';
 import { readFileSync } from 'fs';
@@ -17,6 +20,7 @@ import { freemem, homedir, totalmem } from 'os';
 import { join } from 'path';
 import { getLogger } from './logger.js';
 import { ensureDir, writeFileAtomic } from './fs-atomic.js';
+import { getSession } from './process-state.js';
 
 export type SpawnKind = 'headless' | 'gut_shard' | 'game_window' | 'editor';
 
@@ -115,10 +119,12 @@ function runPs(script: string): string {
 let _snapshotCache: { at: number; snap: MachineMemorySnapshot } | null = null;
 
 /** 机器内存快照(同步,10s 缓存)。物理内存恒可得(os);commit 双口径与 Godot 进程计数
- *  仅 Windows;非 Windows/采样失败降级(commit 置 null、计数 0)并打 degraded 标记。 */
-export function getMachineMemorySnapshot(): MachineMemorySnapshot {
+ *  仅 Windows;非 Windows/采样失败降级(commit 置 null、计数 0)并打 degraded 标记。
+ *  opts.force=true 旁路缓存强制重采样并刷新缓存(二期 Task 3:驱逐循环「杀一个重采样」
+ *  必须拿新鲜读数——10s 缓存会读到杀前旧值反复多杀,审查二期;缓存语义本体不变)。 */
+export function getMachineMemorySnapshot(opts?: { force?: boolean }): MachineMemorySnapshot {
   const now = Date.now();
-  if (_snapshotCache !== null && now - _snapshotCache.at < SNAPSHOT_CACHE_TTL_MS) {
+  if (!opts?.force && _snapshotCache !== null && now - _snapshotCache.at < SNAPSHOT_CACHE_TTL_MS) {
     return _snapshotCache.snap;
   }
   const snap = sampleMachineMemory();
@@ -299,7 +305,7 @@ const DUMMY_LEASE_ID = 'guard-disabled';
 // 整机软阈值 pressure 状态机(二期 Task 2)——唯一写者在本模块,watchdog 只喂快照消费
 // ---------------------------------------------------------------------------
 
-/** pressure 三态:normal(正常受理)/pressure(拒新保旧)/hard(硬阈值,Task 3 进入逻辑)。 */
+/** pressure 三态:normal(正常受理)/pressure(拒新保旧)/hard(硬阈值驱逐区,Task 3)。 */
 export type PressureState = 'normal' | 'pressure' | 'hard';
 
 /** 进压力去抖窗(30s):双口径任一低于软阈值须持续满 30s 才进 pressure——瞬时跌破不抖动。 */
@@ -307,6 +313,10 @@ const PRESSURE_ENTER_MS = 30_000;
 /** 恢复去抖窗(5min):需连续 5min 双口径均高于软阈值才回 normal(中途再跌破重计)
  *  ——kubelet eviction-pressure-transition-period 同款语义,防状态在边界来回翻转。 */
 const PRESSURE_RECOVER_MS = 5 * 60_000;
+/** 硬阈值 minimum-reclaim 余量(MB,固定 2048):hard 态脱离须双口径均达「硬阈值+本值」
+ *  ——一次杀够 2GB 余量防 1536MB 边缘反复杀(kubelet eviction-minimum-reclaim 映射),
+ *  同时是驱逐循环的停止线(杀到该线即停,不全杀)。 */
+const HARD_MIN_RECLAIM_MB = 2048;
 
 let _pressureState: PressureState = 'normal';
 let _pressureEnteredAt: number | null = null;
@@ -319,24 +329,76 @@ function pressureSoftMB(): number {
   return readPositiveIntEnv('GODOT_MCP_MEM_PRESSURE_SOFT_MB', 3072);
 }
 
+/** 整机硬阈值(MB):GODOT_MCP_MEM_PRESSURE_HARD_MB,默认 1536——双口径任一跌破即进
+ *  hard(0s 宽限,与软阈值 30s 防抖不同:kubelet 硬驱逐语义,机器存活线不给宽限,
+ *  跌破立即驱逐)。 */
+function pressureHardMB(): number {
+  return readPositiveIntEnv('GODOT_MCP_MEM_PRESSURE_HARD_MB', 1536);
+}
+
 /** 双口径任一低于软阈值即视为跌破(commit 降级 null 时只看物理口径,与水位查①同款)。 */
 function isBelowSoftThreshold(snap: MachineMemorySnapshot, softBytes: number): boolean {
   if (snap.freePhysBytes < softBytes) return true;
   return snap.commitAvailBytes !== null && snap.commitAvailBytes < softBytes;
 }
 
-/** 喂快照推进 pressure 状态机(唯一写入口:watchdog pollOnce 每轮喂 + 测试直调推进多轮)。
- *  状态机语义(拒新保旧,不杀任何进程——杀是硬阈值 Task 3 的事):
+/** 喂快照推进 pressure 状态机(唯一写入口:watchdog pollOnce 每轮喂 + 驱逐循环杀后
+ *  force 重采样喂 + 测试直调推进多轮)。
+ *  状态机语义:
+ *  - hard 进入(二期 Task 3):双口径任一低于硬阈值(默认 1536MB)→ 立即进 hard,
+ *    0s 宽限(kubelet 硬驱逐语义,机器存活线不给宽限;杀由 watchdog 消费执行);
+ *  - hard 脱离:双口径均达「硬阈值+minimum-reclaim 2048MB」→ 降 pressure(两级恢复,
+ *    见下方恢复语义决定);未达线保持 hard;
  *  - normal 下跌破软阈值持续 30s → pressure;跌破后回升 → 去抖计时清零重来(瞬时跌破不触发);
- *  - 非常态下连续 5min 双口径高于软阈值 → normal;中途再跌破 → 恢复计时重计;
- *  - 'hard' 本任务仅类型占位,进入/退出逻辑属 Task 3(硬阈值杀)。
+ *  - pressure 态连续 5min 双口径高于软阈值 → normal;中途再跌破 → 恢复计时重计。
+ *  进入线(硬阈值)与脱离线(硬阈值+2GB)刻意迟滞:防「杀一个刚过 1536 线 → 降级 →
+ *  又跌破 → 再进」的边缘抖动环——minimum-reclaim 的存在意义。
  *  总开关关闭:整体旁路不更新(pressure 恒 normal 不拒绝,与一期 I-1 口径一致)。
  *  状态切换时 stderr 上报一行(对齐 MEMGUARD kill 惯例:stdout 是 stdio 模式 JSON-RPC 独占通道)。 */
 export function updatePressureState(snap: MachineMemorySnapshot): void {
   if (!memoryGuardEnabled()) return;
   const now = Date.now();
   const softBytes = pressureSoftMB() * 1024 * 1024;
+  const hardEnterBytes = pressureHardMB() * 1024 * 1024;
+  const hardExitBytes = hardEnterBytes + HARD_MIN_RECLAIM_MB * 1024 * 1024;
   const below = isBelowSoftThreshold(snap, softBytes);
+
+  // —— 硬阈值判定(先于软阈值机:硬驱逐区优先级最高)——
+  const belowHardEnter = snap.freePhysBytes < hardEnterBytes
+    || (snap.commitAvailBytes !== null && snap.commitAvailBytes < hardEnterBytes);
+  const reachedHardExit = snap.freePhysBytes >= hardExitBytes
+    && (snap.commitAvailBytes === null || snap.commitAvailBytes >= hardExitBytes);
+
+  if (_pressureState === 'hard') {
+    if (!reachedHardExit) return; // 仍处硬驱逐区:保持 hard(幂等,无日志)
+    // 恢复语义决定(Task 2 审查 Minor-3 遗留,Task 3 裁定):hard 采用两级恢复——
+    // 脱离硬阈值+minimum-reclaim 即降 pressure(事实态:不再深处硬区),pressure 再按
+    // 5min 连续健康回 normal。不采「hard 挂到 5min 直回 normal」:hard 挂 5min 会让
+    // 看门狗每轮 pollOnce 重进驱逐循环空转 force 采样(多余 PowerShell 开销);且
+    // hard/pressure 拒新语义相同(acquireLease 查⓪ 均拒新),两级恢复零准入代价。
+    _pressureState = 'pressure';
+    _pressureEnteredAt = now;
+    _softBreachSince = null;
+    _recoverSince = null; // 恢复计时从降级时刻重起(落入下方软机起算)
+    console.error(
+      `MEMGUARD hard exit → pressure 物理空闲 ${fmtGB(snap.freePhysBytes)} ≥ 硬阈值 ${pressureHardMB()}MB` +
+      `+minimum-reclaim ${HARD_MIN_RECLAIM_MB}MB——回拒新保旧(恢复 normal 需再连续 ${PRESSURE_RECOVER_MS / 1000}s 健康)`,
+    );
+    // 落入下方软阈值机:pressure 态继续按 below 推进恢复计时
+  } else if (belowHardEnter) {
+    // 任何态(normal/pressure)跌破硬阈值 → 立即 hard(0s 宽限;驱逐由 watchdog 执行)
+    const prev = _pressureState;
+    _pressureState = 'hard';
+    _pressureEnteredAt = now;
+    _softBreachSince = null;
+    _recoverSince = null;
+    const commitStr = snap.commitAvailBytes !== null ? fmtGB(snap.commitAvailBytes) : 'n/a';
+    console.error(
+      `MEMGUARD hard enter(prev=${prev}) 物理空闲 ${fmtGB(snap.freePhysBytes)}(commit ${commitStr})` +
+      ` < 硬阈值 ${pressureHardMB()}MB——0s 宽限立即驱逐超声明租约(实测÷声明降序,watchdog 执行)`,
+    );
+    return;
+  }
 
   if (_pressureState === 'normal') {
     if (!below) {
@@ -361,7 +423,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
     return;
   }
 
-  // pressure(及 Task 3 的 hard)态:恢复需连续 5min 高于软阈值,中途跌破恢复计时重计
+  // pressure 态:恢复需连续 5min 高于软阈值,中途跌破恢复计时重计(hard 已在上方专属分支分流)
   if (!below) {
     if (_recoverSince === null) {
       _recoverSince = now; // 回升起算 5min 恢复去抖
@@ -380,7 +442,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
   }
 }
 
-/** 当前 pressure 状态('hard' 为 Task 3 硬阈值占位,本任务不可达)。 */
+/** 当前 pressure 状态(hard=处硬驱逐区:跌破硬阈值进入,达硬阈值+minimum-reclaim 才脱离)。 */
 export function getPressureState(): PressureState {
   return _pressureState;
 }
@@ -388,6 +450,39 @@ export function getPressureState(): PressureState {
 /** 进入 pressure/hard 的时间戳(normal 态为 null)——上报/诊断消费。 */
 export function getPressureEnteredAt(): number | null {
   return _pressureEnteredAt;
+}
+
+// ---------------------------------------------------------------------------
+// 硬阈值驱逐候选计算(二期 Task 3)——排序语义单点在本模块,watchdog 只消费最终序
+// ---------------------------------------------------------------------------
+
+/** 驱逐候选清单(二期 Task 3):本 server 活跃租约(pid 已绑)按「实测 RSS ÷ 声明 MB」
+ *  降序——超声明预算最多者先杀;preview 会话(game_window 且 process-state 会话桶
+ *  preview===true)与 editor kind 整组殿后(豁免优先级最低先杀序,设计 §L2「驱逐排序
+ *  最后」;殿后≠永不杀——硬阈值杀光普通候选仍不够时按组内 ratio 序继续)。
+ *  preview 桥接归属本模块而非 watchdog 组合:排序语义单点完整,消费方拿到即最终序,
+ *  无需二次重排;依赖方向 memory-guard → process-state 安全(反向无 import,不成环),
+ *  会话匹配键 = normalizeProjectKey(与 run_project 建桶同键;getSession 内部归一,
+ *  无会话/非 preview 的 game_window 视为普通候选)。
+ *  外部进程(用户手开的编辑器/游戏,无租约 pid)天然不在集合——候选只来自租约账本,
+ *  且仅本 serverPid(各 server 看门狗各管各的,一期管辖口径)。
+ *  RSS 走 sampleRssBytesCached(与准入共享 10s 缓存);无读数租约 ratio 记 0 仍进候选
+ *  (排最后:读不到≠不占内存,杀光有读数者仍不够时可杀它;候选耗尽则诚实上报,不误报
+ *  「无可驱逐」)。declaredMB 恒 >0(档位/env 守卫),Math.max(1,·) 仅防御脏账本。 */
+export function getEvictionCandidates(): Array<{ lease: MemLease; ratio: number }> {
+  const leases = listActiveLeases().filter(
+    (l) => l.serverPid === process.pid && typeof l.pid === 'number',
+  );
+  const rssMap = sampleRssBytesCached(leasePids(leases));
+  const rows = leases.map((l) => {
+    const rss = rssMap[l.pid as number];
+    const ratio = rss !== undefined ? rss / 1024 / 1024 / Math.max(1, l.declaredMB) : 0;
+    const exempt = l.kind === 'editor'
+      || (l.kind === 'game_window' && getSession(l.projectPath)?.preview === true);
+    return { lease: l, ratio, exempt };
+  });
+  rows.sort((a, b) => (a.exempt === b.exempt ? b.ratio - a.ratio : a.exempt ? 1 : -1));
+  return rows.map(({ lease, ratio }) => ({ lease, ratio }));
 }
 
 // ---------------------------------------------------------------------------

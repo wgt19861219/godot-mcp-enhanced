@@ -6,6 +6,8 @@
 // POSIX pkill -P) ⑦采样抛错一轮跳过不崩+连续 3 轮失败退避 30s。
 // 补充:KILL_FACTOR 表锁死防漂移/他 server 租约不杀/无读数不判杀/杀前已死仅清租约/
 // startWatchdog 幂等/间隔 clamp。
+// 二期 Task 3:整机硬阈值驱逐——①ratio 降序杀最大者 ②杀一个够即停(force 通道断言)
+// ③preview/editor 殿后 ④租约耗尽诚实上报不抛崩 ⑤外部进程不在候选集 + 候选直测。
 //
 // 夹具约定(复制 test/core/memory-guard.test.ts 形态):mkdtemp tmp +
 // _setLeasesFilePathForTest 重定向租约文件 + _resetForTest();memory-guard 部分
@@ -33,13 +35,20 @@ vi.mock('child_process', async (importOriginal) => {
 
 // memory-guard 部分 mock(importOriginal 保真):sampleRssBytes/releaseLease 可控
 // (mock 面覆盖 mem-watchdog 的 import);listActiveLeases 等其余导出保真——「杀后
-// 盘面租约移除」断言走真实 tmp 文件读写。
+// 盘面租约移除」断言走真实 tmp 文件读写。二期 Task 3 增:getMachineMemorySnapshot
+// 进 mock 面(驱逐用例断言 force 通道被调;非 force 分流回真实实现走 psRunner+缓存)。
+// actual 引用经 vi.hoisted 提升(vi.mock 工厂提升执行时顶层 const 尚未初始化)。
+const actualMemguardRef = vi.hoisted(() => ({
+  current: null as typeof import('../../src/core/memory-guard.js') | null,
+}));
 vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/core/memory-guard.js')>();
+  actualMemguardRef.current = actual;
   return {
     ...actual,
     sampleRssBytes: vi.fn(actual.sampleRssBytes),
     releaseLease: vi.fn(actual.releaseLease),
+    getMachineMemorySnapshot: vi.fn(actual.getMachineMemorySnapshot),
   };
 });
 
@@ -56,14 +65,23 @@ import {
 import {
   sampleRssBytes,
   releaseLease,
+  getMachineMemorySnapshot,
+  getEvictionCandidates,
+  getPressureState,
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
   type MemLease,
 } from '../../src/core/memory-guard.js';
+import {
+  getOrCreateSession,
+  normalizeProjectKey,
+  resetState,
+} from '../../src/core/process-state.js';
 
 const IS_WIN = process.platform === 'win32';
 const GB = 1024 * 1024 * 1024;
+const MB = 1024 * 1024; // 二期 Task 3 驱逐用例的 MB 级读数(ratio 构造用)
 
 let tmpDir: string;
 let leasePath: string;
@@ -114,9 +132,17 @@ beforeEach(() => {
   // 本文件测真实看门狗逻辑(pollOnce/startWatchdog 均查总开关),逐用例显式回归「开」——
   // 关闭态用例(⑤ describe)自行 stubEnv('0') 覆盖。stubEnv 须在 _resetForTest 之后(清缓存后重读)。
   vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
-  // 意外真采样立即炸测试(watchdog 的采样面已被 mock 顶替;此 runner 兜底防漏网路径)
-  _setPsRunnerForTest(() => {
-    throw new Error('unexpected real PowerShell spawn');
+  // 二期 Task 3 起 pollOnce 每轮喂 pressure 状态机(真采样经 psRunner)——runner 给恒健康
+  // 快照(空闲 64GB):防真实机器空闲 <1536MB 时既有用例意外进 hard 触发驱逐污染断言;
+  // 驱逐用例自行覆盖为低压快照。runner 起的是「不起真 PowerShell 进程」的保险,假值可断言。
+  _setPsRunnerForTest((script) => {
+    if (script.includes('Win32_OperatingSystem')) {
+      return JSON.stringify({
+        FreePhysicalMemory: 64 * 1024 * 1024, FreeVirtualMemory: 64 * 1024 * 1024,
+        TotalVirtualMemorySize: 64 * 1024 * 1024 * 2,
+      });
+    }
+    return '0';
   });
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-watchdog-test-'));
   leasePath = path.join(tmpDir, '.godot-mcp', 'memory-leases.json');
@@ -130,6 +156,7 @@ beforeEach(() => {
 
 afterEach(() => {
   _resetWatchdogForTest();
+  resetState(); // 清 process-state 会话桶(Task 3 preview 桥接夹具隔离)
   vi.useRealTimers();
   _setLeasesFilePathForTest(null);
   _setPsRunnerForTest(null);
@@ -405,5 +432,167 @@ describe('补充:轮询边界语义', () => {
     startWatchdog();
     await vi.advanceTimersByTimeAsync(3_600_000); // 恰 1 次 tick
     expect(vi.mocked(sampleRssBytes)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===========================================================================
+// 二期 Task 3:整机硬阈值驱逐——硬阈值默认 1536MB(0s 宽限跌破即进)、minimum-reclaim
+// 2GB(脱离线=硬阈值+2048MB,同是驱逐停止线)、排序=实测÷声明降序、preview/editor 殿后。
+// 快照通道注入:watchdog 单进程杀走 mock 的 sampleRssBytes,驱逐候选 ratio 走 memory-guard
+// 内部 psRunner 通道(sampleRssBytesCached 不经导出 mock 面)——两通道分离各自可控。
+// 依赖 psRunner 的用例同 memory-guard.test.ts 惯例 Windows-only(skipIf(!IS_WIN)):
+// 非 Windows 引擎级无 PowerShell 采样通道(快照 commit/RSS 恒降级空),驱逐排序无读数可依。
+// ===========================================================================
+
+/** Task 3:快照/RSS 候选双通道 psRunner mock(照搬 memory-guard.test.ts mockMachinePs 形态)。
+ *  freePhysMB 控制机器快照(pollOnce 首行非 force 喂状态机:低于 1536 → hard);
+ *  rss 喂驱逐候选的实测读数(ratio=实测÷声明)。commit 字段缺席 → 降级 null 只看物理口径。 */
+function mockMachinePsForEvict(fields: { freePhysMB?: number; rss?: Record<number, number> }): void {
+  _setPsRunnerForTest((script) => {
+    if (script.includes('Win32_OperatingSystem')) {
+      const j: Record<string, number> = { TotalVirtualMemorySize: 64 * 1024 * 1024 };
+      if (fields.freePhysMB !== undefined) j.FreePhysicalMemory = Math.round(fields.freePhysMB * 1024);
+      return JSON.stringify(j);
+    }
+    if (script.includes('Win32_Process')) {
+      return JSON.stringify(
+        Object.entries(fields.rss ?? {}).map(([pid, bytes]) => ({ ProcessId: Number(pid), WorkingSetSize: bytes })),
+      );
+    }
+    return '0'; // Godot 计数通道(驱逐路径不消费)
+  });
+}
+
+/** force 快照序列注入:mock getMachineMemorySnapshot 的 force 分支按序消费(耗尽续用
+ *  末值),非 force 分流回真实实现(走 psRunner+10s 缓存)——驱逐循环「杀一个重采样」
+ *  的新鲜读数由本序列驱动,杀后翻恢复态即验证「即停不全杀」。 */
+function mockForceSnapshots(seqMB: number[]): void {
+  const queue = [...seqMB];
+  vi.mocked(getMachineMemorySnapshot).mockImplementation(((opts?: { force?: boolean }) => {
+    if (opts?.force) {
+      const mb = queue.length > 0 ? queue.shift()! : seqMB[seqMB.length - 1];
+      return {
+        freePhysBytes: mb * 1024 * 1024,
+        totalPhysBytes: os.totalmem(),
+        commitAvailBytes: null, commitTotalBytes: null,
+        godotProcCount: 0, sampledAt: Date.now(),
+      };
+    }
+    return actualMemguardRef.current!.getMachineMemorySnapshot();
+  }) as typeof getMachineMemorySnapshot);
+}
+
+/** preview 会话桶夹具:memory-guard 桥接按 normalizeProjectKey 归一查桶,建桶用同键
+ *  (run_project 建桶链走 setRunSessionProc 的同款归一;afterEach resetState 清)。 */
+function makePreviewSession(projectPath: string): void {
+  getOrCreateSession(normalizeProjectKey(projectPath)).preview = true;
+}
+
+describe('二期 Task 3:整机硬阈值驱逐', () => {
+  it.skipIf(!IS_WIN)('① 硬阈值触发:按实测÷声明 ratio 降序杀最大者(A 1.86 先于 B 1.46),B 存活', async () => {
+    writeLeaseFixture([
+      makeLease({ id: 'A', kind: 'headless', declaredMB: 1024, pid: 1001 }),
+      makeLease({ id: 'B', kind: 'gut_shard', declaredMB: 8192, pid: 1002 }),
+    ]);
+    mockKillProbe(new Set([1001, 1002]));
+    const rss = { 1001: 1900 * MB, 1002: 12 * GB }; // ratio 1.856 / 1.465,均低于各自杀线(2048MB/16GB)→ 单进程杀零杀
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    mockMachinePsForEvict({ freePhysMB: 1000, rss }); // 机器空闲 1000MB < 1536 → pollOnce 首行进 hard
+    mockForceSnapshots([1000, 6000]); // force:仍低压(杀 A)→ 6000MB ≥ 3584(脱离+2GB,停)
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 2, killed: 1 });
+    expect(wasMemKilled(1001)).toMatchObject({ readingBytes: 1900 * MB, declaredMB: 1024, kind: 'headless' }); // ratio 最大者被杀
+    expect(wasMemKilled(1002)).toBeNull(); // ratio 次之的 B 存活——降序只杀最大者
+    expect(readDisk().leases.map((l) => l.id)).toEqual(['B']);
+    expect(vi.mocked(releaseLease)).toHaveBeenCalledWith('A');
+    expect(getPressureState()).toBe('pressure'); // 杀到脱离硬阈值+2GB → 降 pressure(拒新保旧)
+  });
+
+  it.skipIf(!IS_WIN)('② 杀一个够即停:force 重采样脱离+2GB 即停不全杀(断言 force 通道被调)', async () => {
+    writeLeaseFixture([
+      makeLease({ id: 'A', kind: 'headless', declaredMB: 2048, pid: 1001 }),
+      makeLease({ id: 'B', kind: 'headless', declaredMB: 2048, pid: 1002 }),
+      makeLease({ id: 'C', kind: 'headless', declaredMB: 2048, pid: 1003 }),
+    ]);
+    mockKillProbe(new Set([1001, 1002, 1003]));
+    const rss = { 1001: 3072 * MB, 1002: 2048 * MB, 1003: 1024 * MB }; // ratio 1.5/1.0/0.5,均低于杀线 4096MB
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    mockMachinePsForEvict({ freePhysMB: 1000, rss });
+    mockForceSnapshots([1000, 6000]); // 杀 A(ratio 最大)后 force 采到恢复 → 停,B/C 不杀
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 3, killed: 1 }); // 只杀 A 一个(杀一个够即停)
+    expect(wasMemKilled(1001)).not.toBeNull();
+    expect(wasMemKilled(1002)).toBeNull();
+    expect(wasMemKilled(1003)).toBeNull();
+    expect(readDisk().leases.map((l) => l.id).sort()).toEqual(['B', 'C']);
+    // 行为断言:驱逐循环采样新鲜度走 force 通道(10s 缓存会让「杀一个重采样」读旧值反复多杀,审查二期)
+    expect(vi.mocked(getMachineMemorySnapshot)).toHaveBeenCalledWith({ force: true });
+  });
+
+  it.skipIf(!IS_WIN)('③ preview/editor 排最后:ratio 更高的 preview(2.0)与 editor(1.95)不先杀,先杀普通 N(1.25)', async () => {
+    writeLeaseFixture([
+      makeLease({ id: 'P', kind: 'game_window', declaredMB: 1024, pid: 3001, projectPath: 'D:/proj-prev' }),
+      makeLease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 3002 }),
+      makeLease({ id: 'N', kind: 'headless', declaredMB: 2048, pid: 3003 }),
+    ]);
+    makePreviewSession('D:/proj-prev'); // P 的会话桶 preview=true(用户在看的窗口)
+    mockKillProbe(new Set([3001, 3002, 3003]));
+    const rss = { 3001: 2048 * MB, 3002: 8 * GB, 3003: 2560 * MB }; // ratio 2.0/1.95/1.25,均低于各自杀线(3072MB/12GB/4096MB)
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    mockMachinePsForEvict({ freePhysMB: 1000, rss });
+    mockForceSnapshots([1000, 6000]); // 杀 N(唯一非豁免)后恢复 → 停,P/E 不杀
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 3, killed: 1 });
+    expect(wasMemKilled(3003)).not.toBeNull(); // 普通租约 N 先杀(尽管 ratio 三者最低)
+    expect(wasMemKilled(3001)).toBeNull(); // ratio 最高的 preview P 不先杀(豁免殿后)
+    expect(wasMemKilled(3002)).toBeNull(); // editor E 不先杀
+    expect(readDisk().leases.map((l) => l.id).sort()).toEqual(['E', 'P']);
+  });
+
+  it.skipIf(!IS_WIN)('④ 租约耗尽仍低压:诚实上报「已无本 server 可驱逐进程」不抛崩,状态诚实保持 hard', async () => {
+    writeLeaseFixture([makeLease({ id: 'A', kind: 'headless', declaredMB: 1024, pid: 1001 })]);
+    mockKillProbe(new Set([1001]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 1001: 1500 * MB }); // ratio 1.46 < 杀线 2048MB,单进程杀零杀
+    mockMachinePsForEvict({ freePhysMB: 1000, rss: { 1001: 1500 * MB } });
+    mockForceSnapshots([1000]); // force 恒低压(外部占用,杀光候选也不恢复)
+
+    const r = await pollOnce(); // 租约耗尽 → 诚实日志 → break,不抛崩
+    expect(r).toEqual({ checked: 1, killed: 1 }); // 候选照杀(能回收一点是一点)
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('已无本 server 可驱逐进程'));
+    expect(getPressureState()).toBe('hard'); // 仍处硬阈值区——不假装修复(外部占用需人工处理)
+  });
+
+  it.skipIf(!IS_WIN)('⑤ 外部进程不在候选集:本 server 无租约(仅他 server 租约在盘)→ 不杀任何进程,诚实上报', async () => {
+    writeLeaseFixture([makeLease({ id: 'other', serverPid: 999_999, declaredMB: 1024, pid: 555 })]);
+    mockKillProbe(new Set([555])); // 他 server 租约的进程活着(但不在本 server 管辖)
+    mockMachinePsForEvict({ freePhysMB: 1000, rss: { 555: 5 * GB } }); // 若误进候选必被杀
+    mockForceSnapshots([1000]); // 恒低压
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 0, killed: 0 });
+    expect(spawnSpy).not.toHaveBeenCalled(); // 无租约 pid(用户手开的外部进程)永不杀
+    expect(readDisk().leases).toHaveLength(1); // 他人租约不动
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('已无本 server 可驱逐进程'));
+  });
+
+  it.skipIf(!IS_WIN)('补充:getEvictionCandidates——pid 未绑不进候选;非豁免组在前,preview/editor 殿后(组内仍 ratio 降序)', () => {
+    writeLeaseFixture([
+      makeLease({ id: 'unbound', pid: null }), // pid 未绑(无法树杀):不进候选
+      makeLease({ id: 'N', kind: 'headless', declaredMB: 2048, pid: 3004 }),
+      makeLease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 3005 }),
+      makeLease({ id: 'P', kind: 'game_window', declaredMB: 1024, pid: 3006, projectPath: 'D:/proj-prev' }),
+    ]);
+    makePreviewSession('D:/proj-prev');
+    mockKillProbe(new Set([3004, 3005, 3006]));
+    mockMachinePsForEvict({ freePhysMB: 65536, rss: { 3004: 1536 * MB, 3005: 6 * GB, 3006: 2048 * MB } });
+
+    const cands = getEvictionCandidates();
+    expect(cands.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']); // 非豁免 N(0.75)在前;豁免组内 P(2.0)>E(1.5)
+    expect(cands[0].ratio).toBeCloseTo(0.75, 5);
+    expect(cands[1].ratio).toBeCloseTo(2.0, 5);
+    expect(cands[2].ratio).toBeCloseTo(1.5, 5);
   });
 });

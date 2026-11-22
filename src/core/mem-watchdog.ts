@@ -13,12 +13,21 @@
 //  - 降级(采样抛错/读数全空):本轮跳过不判杀,连续 3 轮失败退避 30s 并记一次日志;
 //  - 总开关关闭(GODOT_MCP_MEMORY_GUARD=0/false):startWatchdog no-op、pollOnce 不杀;
 //  - 二期 Task 2:pollOnce 每轮把整机快照喂给 memory-guard 的 pressure 状态机
-//    (拒新保旧的软阈值判定;状态机唯一写者在 memory-guard,本模块只消费不拥有状态)。
+//    (拒新保旧的软阈值判定;状态机唯一写者在 memory-guard,本模块只消费不拥有状态);
+//  - 二期 Task 3:hard 态(整机硬阈值,默认 1536MB,0s 宽限)进驱逐循环——逐个树杀
+//    候选(实测÷声明降序,preview/editor 殿后,排序唯一写者在 memory-guard),杀一个
+//    force 重采样再判,杀到脱离硬阈值+minimum-reclaim 2GB 即停;租约耗尽仍低压诚实上报。
+//
+// 驱逐边界声明(Docker 反模式禁令,设计 §L2):preview/editor 殿后≠永不杀;单进程硬帽
+// (声明×KILL_FACTOR,一期)独立于驱逐豁免——即使未来 env 显式全豁免驱逐
+// (GODOT_MCP_WATCHDOG_EXEMPT),单进程硬帽仍须生效(无上限豁免被禁令禁止)。
 
 import { killPidTree } from './process-state.js';
 import { getLogger } from './logger.js';
 import {
+  getEvictionCandidates,
   getMachineMemorySnapshot,
+  getPressureState,
   killPidProbe,
   listActiveLeases,
   memoryGuardEnabled,
@@ -83,9 +92,12 @@ function noteDegrade(): void {
 
 /** 单轮看门狗(测试直调;startWatchdog 周期驱动):先把整机快照喂给 pressure 状态机
  *  (二期 Task 2;快照与准入共享 10s 缓存)→ 取本 serverPid 的活跃租约(pid 已绑)
- *  → 批量采样 RSS → 任一超「声明×系数」→ 树杀+释放租约+归因+一行 stderr。返回
- *  {checked=本轮照看的租约数, killed=实际树杀数}。总开关关闭 → 不读不杀恒零。
- *  降级(抛错/读数全空)→ 本轮跳过判杀(计数见 noteDegrade);部分 pid 无读数不判杀。 */
+ *  → 批量采样 RSS → 任一超「声明×系数」→ 树杀+释放租约+归因+一行 stderr →
+ *  (二期 Task 3)仍处 hard 态 → 进整机驱逐循环。返回
+ *  {checked=本轮照看的租约数, killed=实际树杀数(单进程杀+驱逐杀)}。总开关关闭 →
+ *  不读不杀恒零。降级(抛错/读数全空)→ 本轮跳过一切杀(含驱逐——RSS 通道不可信时
+ *  ratio 排序失效,不按失控序杀;与非 Windows 无 RSS 通道则驱逐不工作的一期同款
+ *  边界,连续 3 轮退避自愈后恢复);部分 pid 无读数不判杀。 */
 export async function pollOnce(): Promise<{ checked: number; killed: number }> {
   if (!memoryGuardEnabled()) return { checked: 0, killed: 0 };
   // 二期 Task 2:每轮喂整机快照推进 pressure 状态机(状态机唯一写者在 memory-guard,
@@ -116,7 +128,55 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
     if (rss <= lease.declaredMB * MB * factor) continue;
     if (killOverBudget(lease, rss)) killed++;
   }
+  // 二期 Task 3:整机硬阈值驱逐——单进程杀后仍处 hard 态(状态机由上方喂快照推进)
+  // 进驱逐循环:杀到脱离硬阈值+minimum-reclaim 2GB 即停(不全杀)。
+  if (getPressureState() === 'hard') killed += evictForHardThreshold();
   return { checked: leases.length, killed };
+}
+
+/** 整机硬阈值驱逐循环(二期 Task 3;watchdog 只消费 memory-guard 导出,不拥有状态):
+ *  每轮 force 刷新快照喂状态机(绕过 10s 缓存——杀一个后重采样读缓存旧值会反复多杀,
+ *  审查二期)→ 仍 hard(未达「硬阈值+2GB」脱离线)→ 取驱逐候选(实测÷声明降序,
+ *  preview/editor 殿后,唯一写者在 memory-guard)树杀队首 → 循环;状态机降级
+ *  pressure 即停;候选耗尽仍 hard → 诚实上报「已无本 server 可驱逐进程,外部占用需
+ *  人工处理」break,不抛崩(外部进程永不杀——候选只在本 server 租约集合内)。
+ *  死循环防护:attempted 集合保证每租约单轮仅尝试一次——killPidTree 异步强杀,
+ *  force 采样可能早于 OS 回收读到旧值(最坏多杀一笔,有界);候选集随每杀单调缩小
+ *  (杀即 releaseLease 清账本),必终止。 */
+function evictForHardThreshold(): number {
+  let killed = 0;
+  const attempted = new Set<string>();
+  for (;;) {
+    updatePressureState(getMachineMemorySnapshot({ force: true }));
+    if (getPressureState() !== 'hard') break; // 杀到脱离硬阈值+2GB → 状态机已降 pressure
+    const victim = getEvictionCandidates().find((c) => !attempted.has(c.lease.id));
+    if (victim === undefined) {
+      console.error('MEMGUARD hard 已无本 server 可驱逐进程,外部占用需人工处理(租约耗尽仍处硬阈值)');
+      break;
+    }
+    attempted.add(victim.lease.id);
+    if (killForEviction(victim.lease, victim.ratio)) killed++;
+  }
+  return killed;
+}
+
+/** 树杀一笔驱逐候选(与 killOverBudget 同语义:杀前探活,已死仅清租约不记归因——
+ *  不是看门狗杀的)。归因记推算实测字节(ratio×声明,与候选 RSS 采样同源);报文带
+ *  ratio(实测÷声明)与声明档位,grep MEMGUARD 可审计。 */
+function killForEviction(lease: MemLease, ratio: number): boolean {
+  const pid = lease.pid as number;
+  if (killPidProbe(pid) === 'dead') {
+    releaseLease(lease.id);
+    return false;
+  }
+  killPidTree(pid);
+  releaseLease(lease.id);
+  const readingBytes = Math.round(ratio * lease.declaredMB * MB);
+  _attributions.set(pid, { readingBytes, declaredMB: lease.declaredMB, kind: lease.kind, at: Date.now() });
+  console.error(
+    `MEMGUARD evict kill ${pid} kind=${lease.kind} ratio=${ratio.toFixed(2)}(实测÷声明) declared=${lease.declaredMB}MB`,
+  );
+  return true;
 }
 
 /** 树杀一笔超预算租约,返回是否真执行了树杀:杀前再探活(进程已自己退出 →
