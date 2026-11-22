@@ -7,6 +7,9 @@
 // 不回收(用户在看的窗口,用户关窗即结束)。
 // 补充:空桶触发 no-op/已结束桶不动/setupExitWatchdog 一次性注册(重复调用不叠加
 // handler)/优雅段 10s 有限等待升级树杀。
+// 三期 Task 3:pressure×exit-watchdog 正交(终审 Minor-5)——hard 态与 normal 态跑同一
+// 退出链,回收目标/preview 豁免口径/优雅→强杀调用序逐字段一致;exit 链不读也不写
+// pressure 状态机(源码锚+行为双钉,防未来往 exit 链加 pressure 分支)。
 //
 // 夹具约定(复制 test/core/session-idle-timer.test.ts 形态):mkdtemp tmp +
 // _setLeasesFilePathForTest 重定向租约文件 + _resetForTest;child_process 的 spawn
@@ -42,7 +45,10 @@ import {
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
+  updatePressureState,
+  getPressureState,
   type MemLease,
+  type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
 import {
   handleExitTrigger,
@@ -362,5 +368,150 @@ describe('挂点锚:注册顺序与 close 不拆除(源码锚定,审查 Importan
   it('connectTransport 不注册 stdin 钩子(daemon 纪律守护,daemon 不经 run() 不挂 watchdog)', () => {
     const src = readFileSync(join(__dirname, '../../src/daemon/main.ts'), 'utf8');
     expect(src).not.toContain('setupExitWatchdog');   // daemon 入口不注册
+  });
+});
+
+// ===========================================================================
+// 三期 Task 3:pressure×exit-watchdog 正交(终审 Minor-5)——二期靠 exit-watchdog.ts
+// 头注释论证「退出回收是生命周期卫生,非 guard 功能」,本 describe 用行为对比+源码锚
+// 双钉:pressure 状态机(normal/hard)不改变退出链的任何行为,exit 链也不反写 pressure。
+// ===========================================================================
+
+/** 退出链单轮行为观测(两态可对比的纯数据:树杀目标序/桶终态/盘面终态/exit 码序)。 */
+interface ExitChainObservation {
+  graceTreeKillPids: number[];    // 优雅段树杀目标 pid 序(含 SIGTERM 轮+5s 兜底轮)
+  normalSessionCleared: boolean;  // 非 preview 桶收尾(proc 清空+status exited)
+  previewProcKept: boolean;       // preview 桶 proc 原对象保留(豁免口径)
+  previewStatusRunning: boolean;  // preview 桶状态未被改写
+  diskLeaseIds: string[];         // 优雅段后盘面租约(仅 preview 的留)
+  exitCallsBeforeForce: number;   // 优雅段 exit 调用数(应 0——退出决策交还既有退出链)
+  forceTreeKillPids: number[];    // 二次强杀段树杀目标 pid 序
+  forceSessionCleared: boolean;   // 二次强杀目标桶清空
+  exitCodes: number[];            // exit 调用码序(二次触发应 [0])
+  pressureChanged: boolean;       // 链前后 pressure 态是否被改写(应 false——exit 链不写状态机)
+}
+
+/** 从 spawn 调用记录提取树杀目标 pid 序(taskkill /F /T /PID <pid> 与 pkill -P <pid>
+ *  双平台形态统一为 pid 数组——观测平台无关,两态对比不受命令形态差异干扰)。 */
+function treeKillPids(): number[] {
+  const out: number[] = [];
+  for (const call of vi.mocked(spawnSpy).mock.calls) {
+    const cmd = call[0] as string;
+    const args = (call[1] ?? []) as readonly string[];
+    if (cmd !== 'taskkill' && cmd !== 'pkill') continue;
+    const pidArg = args.find((a) => /^\d+$/.test(a));
+    if (pidArg !== undefined) out.push(Number(pidArg));
+  }
+  return out;
+}
+
+/** 低压机器快照(物理空闲 100MB < 硬阈值 1536MB,commit 降级 null 只看物理口径)——
+ *  直调 updatePressureState 推进 hard 态(0s 宽限一次即进,不走采样通道)。 */
+function lowPressureSnap(): MachineMemorySnapshot {
+  return {
+    freePhysBytes: 100 * 1024 * 1024,
+    totalPhysBytes: 64 * 1024 * 1024 * 1024,
+    commitAvailBytes: null,
+    commitTotalBytes: null,
+    godotProcCount: 0,
+    sampledAt: Date.now(),
+  };
+}
+
+/** 跑一轮完整退出链(一次触发优雅回收 + 5s 收尾 + 窗口内二次触发强杀),返回行为观测。
+ *  夹具同组会话桶:非 preview(D:/proj-a) + preview(D:/proj-b)各一,二次强杀目标另建
+ *  (D:/proj-c)——覆盖「回收目标集合/preview 豁免/优雅→强杀调用序」三个观测面。 */
+async function runExitChain(): Promise<ExitChainObservation> {
+  resetState();                                        // 清上一轮会话桶
+  _resetExitWatchdogForTest(exitSpy as unknown as (code: number) => void);
+  exitSpy.mockClear();
+  const procNormal = makeProc(4242);
+  const procPreview = makeProc(4343);
+  setRunSessionProc('D:/proj-a', procNormal, true);
+  setRunSessionProc('D:/proj-b', procPreview, true);
+  getSession('D:/proj-b')!.preview = true;            // run_project 建桶处落的值
+  writeLeaseFixture([
+    makeLease({ id: 'L1', pid: 4242 }),
+    makeLease({ id: 'L2', pid: 4343, projectPath: 'D:/proj-b' }),
+  ]);
+  mockKillProbe(new Set([4242, 4343]));
+  const pressureBefore = getPressureState();
+  vi.mocked(spawnSpy).mockClear();
+
+  handleExitTrigger('SIGINT');                        // 第一次:优雅回收段
+  await vi.advanceTimersByTimeAsync(5_000);           // killProcess 5s 兜底后收尾链跑完
+
+  const graceTreeKillPids = treeKillPids();
+  const sNormal = getSession('D:/proj-a');
+  const normalSessionCleared = sNormal?.proc === null && sNormal?.status === 'exited';
+  const sPreview = getSession('D:/proj-b');
+  const previewProcKept = sPreview?.proc === procPreview;
+  const previewStatusRunning = sPreview?.status === 'running';
+  const diskLeaseIds = readDisk().leases.map((l) => l.id);
+  const exitCallsBeforeForce = exitSpy.mock.calls.length;
+
+  setRunSessionProc('D:/proj-c', makeProc(4444), true);  // 重建存活目标(二次强杀要有对象)
+  vi.mocked(spawnSpy).mockClear();
+  handleExitTrigger('SIGTERM');                       // 第二次:10s 窗口内 → 立即强杀+exit
+  const forceTreeKillPids = treeKillPids();
+  const forceSessionCleared = getSession('D:/proj-c')?.proc === null;
+  const exitCodes = exitSpy.mock.calls.map((c) => c[0]);
+  const pressureChanged = getPressureState() !== pressureBefore;
+
+  return {
+    graceTreeKillPids, normalSessionCleared, previewProcKept, previewStatusRunning,
+    diskLeaseIds, exitCallsBeforeForce, forceTreeKillPids, forceSessionCleared,
+    exitCodes, pressureChanged,
+  };
+}
+
+describe('三期 Task 3:pressure×exit-watchdog 正交(exit 链永不读 pressure)', () => {
+  it('normal 态与 hard 态跑同一退出链:回收目标/preview 豁免/优雅→强杀调用序逐字段完全一致', async () => {
+    // updatePressureState 需守卫开(setup.js 全局 '0');两轮同条件跑,唯一变量是 pressure 态
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
+    _resetForTest();                                  // 清开关缓存+状态机复位 normal
+
+    // —— 第一轮:normal 态(基线,绝对期望先钉死——防两态同坏时对比恒绿)——
+    expect(getPressureState()).toBe('normal');
+    const normalObs = await runExitChain();
+    expect(normalObs.graceTreeKillPids).toEqual([4242, 4242]); // 优雅段只杀非 preview(SIGTERM 轮+5s 兜底轮)
+    expect(normalObs.normalSessionCleared).toBe(true);         // 非 preview 桶收尾(验收锚)
+    expect(normalObs.previewProcKept).toBe(true);              // preview 桶原样保留(豁免口径)
+    expect(normalObs.previewStatusRunning).toBe(true);
+    expect(normalObs.diskLeaseIds).toEqual(['L2']);            // 盘面仅剩 preview 租约
+    expect(normalObs.exitCallsBeforeForce).toBe(0);            // 一次触发不主动 exit
+    expect(normalObs.forceTreeKillPids).toEqual([4444]);       // 二次触发立即强杀新存活目标
+    expect(normalObs.forceSessionCleared).toBe(true);
+    expect(normalObs.exitCodes).toEqual([0]);                  // 二次触发 exit(0)
+    expect(normalObs.pressureChanged).toBe(false);             // 链不写状态机
+
+    // —— 第二轮:hard 态(低压快照直调推进,0s 宽限)——
+    updatePressureState(lowPressureSnap());
+    expect(getPressureState()).toBe('hard');
+    const hardObs = await runExitChain();
+
+    // 契约核心:hard 态行为观测与 normal 态完全一致(pressure 不改变退出链任何行为)
+    expect(hardObs).toEqual(normalObs);
+  });
+
+  it('hard 态跑完整退出链后状态机原样仍 hard(exit 链不写 pressure——正交是双向的)', async () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
+    _resetForTest();
+    updatePressureState(lowPressureSnap());
+    expect(getPressureState()).toBe('hard');
+
+    setRunSessionProc('D:/proj-a', makeProc(4242), true);
+    mockKillProbe(new Set([4242]));
+    handleExitTrigger('SIGINT');
+    await vi.advanceTimersByTimeAsync(5_000);
+    handleExitTrigger('SIGTERM');                     // 强杀段也跑完
+
+    expect(getPressureState()).toBe('hard');          // 优雅+强杀全程不喂/不改状态机
+  });
+
+  it('源码锚:exit-watchdog.ts 不含 pressure 面(防未来往 exit 链加 pressure 分支)', () => {
+    const src = readFileSync(join(__dirname, '../../src/core/exit-watchdog.ts'), 'utf8');
+    expect(src).not.toMatch(/pressure/i);             // 任何 pressure 相关引用都该过本测试这关
+    expect(src).not.toContain("from './memory-guard.js'");   // 不直接依赖 memory-guard(租约释放经 idle-timer 单源)
   });
 });

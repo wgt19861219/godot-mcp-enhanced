@@ -6,6 +6,9 @@
 // 源码锚定) ④env=0 关(timer 不启动+扫描直接跳过) ⑤杀日志含 MEMGUARD idle-reap 可 grep。
 // 补充:恰在阈值不收(严格大于)/已结束桶不动/poke 不存在桶 no-op/60s 周期驱动/
 // startIdleTimer 幂等。
+// 三期 Task 3:IdleTimer×驱逐循环双路回收幂等(终审 Minor-5)——同一会话先驱逐杀再
+// idle 扫(死进程感知跳过,无二次树杀)/先 idle 回收再驱逐循环(候选空 no-op),
+// 双向不炸、会话桶与租约账本终态一致(二期靠「releaseLease 幂等双路不冲突」注释论证)。
 //
 // 夹具约定(复制 test/core/mem-watchdog.test.ts 形态):mkdtemp tmp +
 // _setLeasesFilePathForTest 重定向租约文件 + _resetForTest;child_process 的 spawn
@@ -41,8 +44,10 @@ import {
   _setLeasesFilePathForTest,
   _setPsRunnerForTest,
   _resetForTest,
+  getEvictionCandidates,
   type MemLease,
 } from '../../src/core/memory-guard.js';
+import { pollOnce, wasMemKilled, _resetWatchdogForTest } from '../../src/core/mem-watchdog.js';
 import {
   scanIdleSessions,
   startIdleTimer,
@@ -288,5 +293,119 @@ describe('补充:边界语义', () => {
       (args) => typeof args[0] === 'string' && args[0].includes('MEMGUARD idle-reap'),
     );
     expect(reapCalls).toHaveLength(1);
+  });
+});
+
+// ===========================================================================
+// 三期 Task 3:IdleTimer×驱逐循环双路回收幂等(终审 Minor-5)——二期靠
+// session-idle-timer.ts 头注释「releaseLease 幂等,双路不冲突」论证,本 describe 用
+// 双向时序钉行为:驱逐先杀(树杀一次+账本清)→ idle 再扫感知死进程跳过;idle 先回收
+// (树杀+清桶+账本清)→ 驱逐循环候选空 no-op。两侧守卫各在消费方:IdleTimer 侧是
+// 无活进程判据(proc.exitCode/killed,同 getActiveRunPids——驱逐树杀后 close 事件把
+// exitCode 置值,扫描即跳过);驱逐侧是 killForEviction 杀前探活 dead → 仅清租约不杀。
+// 夹具照搬 mem-watchdog.test.ts 驱逐 describe 惯例(psRunner 双通道 mock +
+// it.skipIf(!IS_WIN)——非 Windows 无 PowerShell 采样通道,快照不可控进不了 hard)。
+// ===========================================================================
+
+const MB = 1024 * 1024;
+
+/** 从 spawn 调用记录统计对目标 pid 的树杀命令次数(taskkill /F /T /PID <pid> 与
+ *  pkill -P <pid> 双平台形态)。 */
+function treeKillCount(pid: number): number {
+  return vi.mocked(spawnSpy).mock.calls.filter((call) => {
+    const cmd = call[0] as string;
+    const args = (call[1] ?? []) as readonly string[];
+    return (cmd === 'taskkill' || cmd === 'pkill') && args.includes(String(pid));
+  }).length;
+}
+
+/** 快照/RSS 候选双通道 psRunner mock(照搬 mem-watchdog.test.ts mockMachinePsForEvict
+ *  形态):freePhysMB 控制机器快照(低压 <1536MB → pollOnce 首行进 hard);rss 喂驱逐
+ *  候选的实测读数。commit 字段缺席 → 降级 null 只看物理口径。 */
+function mockMachinePsForEvict(fields: { freePhysMB?: number; rss?: Record<number, number> }): void {
+  _setPsRunnerForTest((script) => {
+    if (script.includes('Win32_OperatingSystem')) {
+      const j: Record<string, number> = { TotalVirtualMemorySize: 64 * 1024 * 1024 };
+      if (fields.freePhysMB !== undefined) j.FreePhysicalMemory = Math.round(fields.freePhysMB * 1024);
+      return JSON.stringify(j);
+    }
+    if (script.includes('Win32_Process')) {
+      return JSON.stringify(
+        Object.entries(fields.rss ?? {}).map(([pid, bytes]) => ({ ProcessId: Number(pid), WorkingSetSize: bytes })),
+      );
+    }
+    return '0'; // Godot 计数通道(驱逐路径不消费)
+  });
+}
+
+describe('三期 Task 3:IdleTimer×驱逐循环双路回收幂等(同一会话双向时序)', () => {
+  beforeEach(() => {
+    // pollOnce/pressure 状态机需守卫开(setup.js 全局 '0');驱逐候选受 WATCHDOG_EXEMPT
+    // 影响,显式归零防宿主 env 泄漏(两测试文件既有惯例)。归因记录隔离(wasMemKilled 跨用例)。
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
+    _resetWatchdogForTest();
+  });
+
+  it.skipIf(!IS_WIN)('正向序:驱逐先杀(树杀一次+账本清)→ idle 再扫感知死进程跳过——无二次树杀、桶/账本终态一致、不抛异常', async () => {
+    const proc = makeProc(4242);
+    setRunSessionProc('D:/proj-a', proc, true);
+    writeLeaseFixture([makeLease({ id: 'L1', pid: 4242 })]);   // game_window 声明 3072MB(杀线 9GB)
+    const alive = new Set([4242]);
+    mockKillProbe(alive);
+    // RSS 4GB < 杀线 9GB(单进程杀零杀),ratio 1.33 进驱逐候选;机器空闲 1000MB < 1536 → 进 hard
+    mockMachinePsForEvict({ freePhysMB: 1000, rss: { 4242: 4096 * MB } });
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 1, killed: 1 });    // 驱逐路径杀掉:releaseLease+树杀记一次
+    expect(treeKillCount(4242)).toBe(1);             // 树杀恰一次
+    expect(wasMemKilled(4242)).not.toBeNull();       // 归因在案(驱逐侧杀的)
+    expect(readDisk().leases).toHaveLength(0);       // 账本已清
+
+    // 模拟驱逐树杀生效的进程级后果:close 事件已派发(exitCode 置值)+进程亡——这正是
+    // IdleTimer 侧死进程感知判据(proc.exitCode/killed)的数据源
+    proc.exitCode = 1;
+    alive.delete(4242);
+    vi.mocked(spawnSpy).mockClear();
+
+    vi.setSystemTime(Date.now() + 16 * MIN);         // 空闲超阈值(若不跳过必再杀)
+    let reaped: { reaped: number } | undefined;
+    expect(() => { reaped = scanIdleSessions(); }).not.toThrow();   // 无异常抛出
+    expect(reaped).toEqual({ reaped: 0 });           // 死进程感知跳过:零回收
+
+    expect(vi.mocked(spawnSpy).mock.calls).toHaveLength(0);         // 无二次树杀(核心契约)
+    expect(readDisk().leases).toHaveLength(0);       // 账本终态保持(idle 路径零重复动作)
+    expect(getSession('D:/proj-a')?.proc).toBe(proc);               // 桶原样(idle 未二次触碰,桶收尾归 close 回调链)
+    expect(scanIdleSessions()).toEqual({ reaped: 0 });              // 重复扫描仍幂等 no-op
+  });
+
+  it.skipIf(!IS_WIN)('反向序:idle 先回收(树杀+清桶+账本清)→ 驱逐循环再进:候选空 no-op 不炸、无二次树杀', async () => {
+    const proc = makeProc(4242);
+    setRunSessionProc('D:/proj-a', proc, true);
+    writeLeaseFixture([makeLease({ id: 'L1', pid: 4242 })]);
+    const alive = new Set([4242]);
+    mockKillProbe(alive);
+
+    vi.setSystemTime(Date.now() + 16 * MIN);
+    expect(scanIdleSessions()).toEqual({ reaped: 1 });            // idle 回收:树杀+清桶+租约出账
+    expect(treeKillCount(4242)).toBe(1);                          // 树杀恰一次
+    const s = getSession('D:/proj-a');
+    expect(s?.proc).toBeNull();                                   // 桶清干净(验收锚)
+    expect(s?.status).toBe('exited');
+    expect(readDisk().leases).toHaveLength(0);                    // 账本已清
+
+    // 模拟树杀生效:进程亡;再进 hard(账本已空,无 pid 可采)走驱逐循环
+    alive.delete(4242);
+    vi.mocked(spawnSpy).mockClear();
+    mockMachinePsForEvict({ freePhysMB: 1000, rss: {} });
+
+    const r = await pollOnce();                                   // 驱逐循环:候选空 → 诚实上报 break
+    expect(r).toEqual({ checked: 0, killed: 0 });
+    expect(vi.mocked(spawnSpy).mock.calls).toHaveLength(0);       // 无二次树杀
+    // Task 1 新签名直证:该租约已不在驱逐候选(候选空+豁免计数零)
+    const { candidates, envExempted } = getEvictionCandidates();
+    expect(candidates).toEqual([]);
+    expect(envExempted).toEqual({ preview: 0, editor: 0 });
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('已无本 server 可驱逐进程'));
   });
 });
