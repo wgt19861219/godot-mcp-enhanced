@@ -4,7 +4,7 @@
 >
 > **retryable 语义**：`true` = 等待 1-2s 或修复环境（连接/游戏进程/编辑器）后重试有意义；`false` = 按 `suggestion` 改参数/换路径后重试，原样重试只会再失败（连续失败会被工具熔断器拒绝）。
 >
-> `category` 为结构化枚举（validation/timeout/transport/guard/path/connection/internal，非错误文本推断，无 PII 外传）。
+> `category` 为结构化枚举（validation/timeout/transport/guard/path/connection/internal/resource，非错误文本推断，无 PII 外传）。
 >
 > 未登记码保守补 `retryable: false` 并在 server 日志 warn 一次（不拒调用）；新码按本表格式收编。
 
@@ -25,6 +25,9 @@
 | VERIFICATION_IN_PROGRESS | guard | true | editor 连接项目校验进行中（稍候重试） | 等校验完成后再试 |
 | SERVER_STALE | internal | true | MCP server 版本/registry 过期（重启即恢复） | 重启 MCP server 后重试 |
 | BUSY | guard | true | 资源占用中（会话/实例忙，稍候重试） | 等占用方完成或 stop_project 后再试 |
+| MEMGUARD_LOW_WATER | resource | true | 内存水位不足拒 spawn（内存治理准入） | stop_project/关空闲 Godot 释放内存后重试 |
+| MEMGUARD_BUDGET | resource | true | 声明内存预算已占满拒 spawn（内存治理准入） | 等租约释放（进程退出/stop_project）后重试 |
+| MEMGUARD_INSTANCE_CAP | resource | true | 机器 Godot 实例数达上限拒 spawn（内存治理准入） | 关闭空闲 Godot 实例后重试 |
 
 ## 确定性失败（retryable=false）
 
@@ -58,6 +61,7 @@
 | SANDBOX_BLOCKED | guard | false | 沙箱阻断（工具级内容拦截） | 按消息调整内容后重写 |
 | SCRIPT_EXEC_FAILED | internal | false | GDScript 编译/运行失败（消息附引擎错误行） | 按引擎错误行修脚本后重试 |
 | SPAWN_FAILED | internal | false | Godot 进程 spawn 失败（二进制缺失/文件锁） | 检查 GODOT_PATH/清残留进程 |
+| MEM_BUDGET_EXCEEDED | resource | false | 进程超内存预算被看门狗终止（消息附峰值/声明档位/上调指引） | 合法重负载按指引调 `GODOT_MCP_DECLARED_MB_<KIND>` 上调档位后重跑；非合法负载先拆小任务 |
 | GODOT_NOT_FOUND | internal | false | 找不到 Godot 二进制（设 GODOT_PATH 或安装） | 设置 GODOT_PATH 后重启 MCP server |
 | EDIT_REVERTED | validation | false | edit_script 内容守卫失败已回滚（读最新内容后重做） | 重新 read_script 后基于最新内容再编辑 |
 | EDITOR_SCENE_OPEN | guard | false | headless 改盘与编辑器打开场景冲突（需 Reload 后重做） | 编辑器内 Reload 场景或关闭后重试 |

@@ -60,6 +60,22 @@ describe('parseGdscriptResult', () => {
     const parsed = JSON.parse(r.content[0].text);
     expect(parsed.error_code).toBe('SCRIPT_EXEC_FAILED');
   });
+  // 内存治理一期 Task 5:看门狗杀归因优先——executor 命中 wasMemKilled 时结果带
+  // mem_budget_exceeded 标志,此处改报 MEM_BUDGET_EXCEEDED(retryable:false + resource),
+  // 优先于 compile/run 两分支的 SCRIPT_EXEC_FAILED(超预算非脚本自身失败)。
+  it('mem_budget_exceeded 优先改报 MEM_BUDGET_EXCEEDED(注册表补全 retryable/category)', () => {
+    const r = parseGdscriptResult({
+      compile_success: true, compile_error: '',
+      run_success: false,
+      run_error: '内存预算超限被看门狗终止: 峰值 5.0 GB / 声明 1024MB×2。若为合法重负载,调 GODOT_MCP_DECLARED_MB_HEADLESS 上调档位',
+      outputs: [], mem_budget_exceeded: true,
+    });
+    const parsed = JSON.parse(r.content[0].text);
+    expect(parsed.error_code).toBe('MEM_BUDGET_EXCEEDED');
+    expect(parsed.error).toContain('内存预算超限被看门狗终止');
+    expect(parsed.retryable).toBe(false);
+    expect(parsed.error_category).toBe('resource');
+  });
   it('returns run error as SCRIPT_EXEC_FAILED', () => {
     const r = parseGdscriptResult({
       compile_success: true, compile_error: '',

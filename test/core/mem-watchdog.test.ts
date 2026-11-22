@@ -46,6 +46,7 @@ vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
 import { spawn as spawnSpy } from 'child_process';
 import {
   KILL_FACTOR,
+  formatMemKillMessage,
   startWatchdog,
   stopWatchdog,
   wasMemKilled,
@@ -140,6 +141,20 @@ afterEach(() => {
 describe('系数表 KILL_FACTOR 锁死(防漂移)', () => {
   it('headless/gut_shard ×2,game_window/editor ×3(设计 §5 单进程杀系数裁定)', () => {
     expect(KILL_FACTOR).toEqual({ headless: 2, gut_shard: 2, game_window: 3, editor: 3 });
+  });
+});
+
+describe('formatMemKillMessage 归因报文(Task 5 接线消费)', () => {
+  it('brief 逐字模板:峰值 GB / 声明MB×系数 / 上调档位指引(kind 大写进 env 名)', () => {
+    expect(formatMemKillMessage({ readingBytes: 5 * GB, declaredMB: 1024, kind: 'gut_shard' }))
+      .toBe('内存预算超限被看门狗终止: 峰值 5.0 GB / 声明 1024MB×2。若为合法重负载,调 GODOT_MCP_DECLARED_MB_GUT_SHARD 上调档位');
+  });
+
+  it('系数按 kind 取表(game_window ×3),峰值 X.Y GB 格式', () => {
+    const msg = formatMemKillMessage({ readingBytes: 9.5 * GB, declaredMB: 3072, kind: 'game_window' });
+    expect(msg).toContain('峰值 9.5 GB');
+    expect(msg).toContain('声明 3072MB×3');
+    expect(msg).toContain('GODOT_MCP_DECLARED_MB_GAME_WINDOW');
   });
 });
 

@@ -30,6 +30,8 @@ import { getLogger, resolveLogDir } from './core/logger.js';
 import { needsImport, runImport } from './tools/import-check.js';
 // 内存治理一期 Task 4:headless 漏斗准入(spawnKind 可选参,调用方按场景注入档位)
 import { acquireLease, bindLeasePid, releaseLease, type SpawnKind } from './core/memory-guard.js';
+// 内存治理一期 Task 5:看门狗杀归因(close 时查 wasMemKilled,命中优先报 MEM_BUDGET_EXCEEDED)
+import { wasMemKilled, formatMemKillMessage } from './core/mem-watchdog.js';
 
 
 // W5 遗留批5(2026-09-20):Sandbox scanner + autoload 防线段拆至 core/sandbox-scanner.ts(纯搬家)。
@@ -78,6 +80,10 @@ export interface ExecuteGdscriptResult {
   scriptSha256?: string;
   /** L-3(2026-10-22 审查第二轮):输出超 10MB 被截断强杀时为 true;此时 run_success 必为 false */
   truncated?: boolean;
+  /** 内存治理一期 Task 5:进程被内存看门狗树杀(close 时查 wasMemKilled 命中)时为 true;
+   *  run_error 换归因报文(峰值/声明档位/上调指引),消费方 parseGdscriptResult 据此改报
+   *  MEM_BUDGET_EXCEEDED——优先于 SCRIPT_EXEC_FAILED(超预算非脚本自身失败)。 */
+  mem_budget_exceeded?: boolean;
 }
 
 export interface ExecuteGdscriptOptions {
@@ -1030,6 +1036,30 @@ export async function executeGdscript(
       const duration = Date.now() - startTime;
       const { parsed, logLines } = parseMcpMarkers(rawOutput, rndResult, rndError);
       const analysis = analyzeOutput(logLines, projectPath ? { projectPath } : undefined);
+
+      // 内存治理 Task 5:看门狗杀归因优先——命中即短路所有失败分支:被树杀的进程输出
+      // 半截不可信,无论 marker 有无都报 MEM_BUDGET_EXCEEDED 归因(消费方按标志改码,
+      // 注册表 retryable:false——原样重试同参数必再被杀)。归因记录在树杀时同步写入,
+      // close 事件必晚于其落地,查询无竞态;未命中走原路径(回归锚)。
+      const memKill = proc.pid ? wasMemKilled(proc.pid) : null;
+      if (memKill) {
+        resolve({
+          success: false,
+          compile_success: true,
+          compile_error: '',
+          errors: analysis.errors,
+          run_success: false,
+          run_error: formatMemKillMessage(memKill),
+          outputs: [],
+          raw_output: logLines.join('\n'),
+          duration_ms: duration,
+          autoload_detected: autoloadDetected,
+          executionId,
+          scriptSha256,
+          mem_budget_exceeded: true,
+        });
+        return;
+      }
 
       if (parsed) {
         const isSuccess = parsed.success === true;

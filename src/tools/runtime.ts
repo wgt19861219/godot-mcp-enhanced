@@ -19,7 +19,10 @@ import { join } from 'path';
 import { getLogger } from '../core/logger.js';
 import type { RiskLevel } from '../core/tool-registry.js';
 // 内存治理一期 Task 4:spawn 漏斗准入(game_window/editor 档)——run_project 与 launch_editor
-import { acquireLease, bindLeasePid, releaseLease, projectPathFromArgs } from '../core/memory-guard.js';
+import { acquireLease, bindLeasePid, releaseLease, projectPathFromArgs, type SpawnKind } from '../core/memory-guard.js';
+// 内存治理一期 Task 5:看门狗杀归因——runGutProcess/run_project close 命中 wasMemKilled
+// 时优先报 MEM_BUDGET_EXCEEDED(单片 denial 同通道;会话行进 errors 分类可见)
+import { wasMemKilled, formatMemKillMessage } from '../core/mem-watchdog.js';
 
 const ACTIONS = [
   'launch_editor',
@@ -109,6 +112,12 @@ let profilerOwnerKey: string | undefined;
 // 主动归还被停会话的租约(不等 close 事件兜底——新一轮 acquire 前旧租约就该出预算);
 // close/error 释放走闭包 leaseId(条件删除防旧回调误删新一轮条目)。
 const gameWindowLeases = new Map<string, string>();
+
+// 内存治理一期 Task 5:看门狗杀归因行(sessionKey → 归因报文)。run_project close 命中
+// wasMemKilled 时记录,供杀后的 get_debug_output/stop 附结构化 mem_budget_exceeded 字段
+// (归因行同时 appendOutput 进快照,errors 分类可见);新一轮 run 重置。归因源头
+// (wasMemKilled)自带 10min TTL,本 Map 单进程生命周期、重跑覆盖,无泄漏面。
+const recentMemKills = new Map<string, string>();
 
 // ─── Tool definitions ──────────────────────────────────────────────────────
 
@@ -220,6 +229,10 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
       gameWindowLeases.delete(sessionKey);
     }
   }
+
+  // 内存治理 Task 5:新会话开始,旧会话的杀归因不再挂账(防新一轮 get_debug_output
+  // 误报上一轮的 MEM_BUDGET_EXCEEDED)。
+  recentMemKills.delete(sessionKey);
 
   // Atomically acquire the process slot after clearing any existing process
   // (显式传 p 锁目标桶——acquire 先于 setProjectDir,按活跃桶锁会锁错桶,设计 §4.2)
@@ -334,6 +347,17 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     // Imp-4 (2026-06-24 审查): 守卫同 autoStopTimer,按桶内 proc 身份比对,
     // 避免进程被替换后误清新进程的桶状态(坑 4:判断与体内动作都按 sessionKey)
     if (getRunSessionProc(sessionKey) === proc) {
+      // 内存治理 Task 5:看门狗杀归因——命中则在快照挪移前进桶(随 clearRunSession 持久
+      // 到 lastFinishedRunOutput,杀后 get_debug_output/stop 的 errors 分类可见),并记
+      // recentMemKills 供两路径附结构化 mem_budget_exceeded 字段。
+      if (proc.pid) {
+        const memKill = wasMemKilled(proc.pid);
+        if (memKill) {
+          const msg = formatMemKillMessage(memKill);
+          recentMemKills.set(sessionKey, msg);
+          appendOutput([`ERROR: [MEM_BUDGET_EXCEEDED] ${msg}`], sessionKey);
+        }
+      }
       markSessionExited(p, code);   // exited_early/errored/exited 判定(设计 §4.1)
       clearRunSession(sessionKey);  // 快照挪移 + busy 释放,桶保留可查
     }
@@ -485,7 +509,7 @@ function runGutProcess(
   godot: string,
   args: string[],
   timeoutSecs: number,
-): Promise<{ exitCode: number | null; out: string; timedOut: boolean; spawnError?: string; denial?: { code: string; message: string } }> {
+): Promise<{ exitCode: number | null; out: string; timedOut: boolean; spawnError?: string; denial?: { code: string; message: string }; memKill?: { readingBytes: number; declaredMB: number; kind: SpawnKind } }> {
   return new Promise((resolve) => {
     let settled = false;
     let out = '';
@@ -530,7 +554,10 @@ function runGutProcess(
       settled = true;
       unregisterSpawn();
       releaseLease(leaseId);
-      resolve({ exitCode: code, out, timedOut: false });
+      // 内存治理 Task 5:看门狗杀归因——命中则随返回值上抛(单片消费方报
+      // MEM_BUDGET_EXCEEDED,分片消费方片级标注);未命中原样返回(回归锚)。
+      const memKill = proc.pid ? wasMemKilled(proc.pid) : null;
+      resolve({ exitCode: code, out, timedOut: false, ...(memKill ? { memKill } : {}) });
     });
 
     proc.on('error', (err) => {
@@ -605,8 +632,12 @@ async function runShardedTests(opts: {
       exit_code: r.exitCode,
       tests,
       failed,
-      status: r.timedOut ? 'timeout' : (r.spawnError ? 'error' : (r.exitCode === 0 && failed === 0 ? 'ok' : 'failed')),
+      // 内存治理 Task 5:被看门狗杀的片标 mem_killed(失败片不中断后续片——其余片统计
+      // 仍有价值,归因报文片级附上,首个被杀片升格进汇总顶层)。
+      status: r.memKill ? 'mem_killed'
+        : (r.timedOut ? 'timeout' : (r.spawnError ? 'error' : (r.exitCode === 0 && failed === 0 ? 'ok' : 'failed'))),
       spawn_error: r.spawnError,
+      ...(r.memKill ? { mem_kill: formatMemKillMessage(r.memKill) } : {}),
       raw_output: r.out.length > SHARD_TAIL
         ? r.out.slice(r.out.length - SHARD_TAIL) + `\n... [tail ${SHARD_TAIL}/${r.out.length} bytes]`
         : r.out,
@@ -615,6 +646,8 @@ async function runShardedTests(opts: {
 
   const totalTests = shardResults.reduce((s, x) => s + x.tests, 0);
   const totalFailed = shardResults.reduce((s, x) => s + x.failed, 0);
+  // 内存治理 Task 5:首个被杀片的归因升格顶层(agent 单看汇总即见,不必逐片翻)
+  const firstMemKill = shardResults.find(x => x.status === 'mem_killed' && typeof x.mem_kill === 'string');
   return {
     content: [{
       type: 'text',
@@ -626,6 +659,7 @@ async function runShardedTests(opts: {
         total_failed: totalFailed,
         all_passed: totalFailed === 0 && shardResults.every(x => x.status === 'ok'),
         timeout_per_shard_s: timeoutSecs,
+        ...(firstMemKill ? { mem_budget_exceeded: firstMemKill.mem_kill } : {}),
         shard_results: shardResults,
       }, null, 2),
     }],
@@ -693,6 +727,12 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
             ? `Project ${rawStopPath} has no running process. Other sessions: ${aliveList}.`
             : `Active project has no running process. Sessions still running: ${aliveList}. Pass project_path to target one.`);
         }
+        // 内存治理 Task 5:无在跑进程但目标桶最近一次运行被看门狗杀——附归因与档位
+        // 上调指引(杀后 stop 常见路径:close 已清 proc,归因仍可查)。
+        const noRunKillNote = recentMemKills.get(stopTargetKey);
+        if (noRunKillNote) {
+          return textResult(`No project is currently running. Last run was killed by memory watchdog: [MEM_BUDGET_EXCEEDED] ${noRunKillNote}`);
+        }
         return textResult('No project is currently running.');
       }
       markSessionStopping(stopTargetKey);
@@ -717,6 +757,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const classified = classifyOutput(stopLines);
       // I-10: Guard against processStartTime=0 producing absurd runtime values
       const runtimeMs = s && s.processStartTime > 0 ? Date.now() - s.processStartTime : 0;
+      // 内存治理 Task 5:目标桶最近一次看门狗杀归因(结构化字段对齐 get_debug_output)
+      const stopMemKillMsg = recentMemKills.get(stopTargetKey);
       const result = {
         status: 'stopped',
         source: stopFromSnapshot ? 'last_finished_run' : 'current_run',
@@ -727,6 +769,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         total_lines: stopLines.length,
         secretsCleaned,
         ...(secretCleanupWarning ? { secret_cleanup_warning: secretCleanupWarning } : {}),
+        ...(stopMemKillMsg ? { mem_budget_exceeded: stopMemKillMsg } : {}),
       };
       clearRunSession(stopTargetKey);   // 快照挪移 + busy/proc 清理(桶保留可查)
       return textResult(maybeWrapUntrusted('runtime.stop_output', 'godot-process', JSON.stringify(result, null, 2)))
@@ -750,6 +793,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const classified = classifyOutput(lines);
       // per-key 读数(设计 §4.3 M-3)
       const debugRuntimeMs = s.processStartTime > 0 ? Date.now() - s.processStartTime : 0;
+      // 内存治理 Task 5:本桶最近一次看门狗杀归因(结构化字段,快照 errors 行之外的显式通道)
+      const memKillMsg = recentMemKills.get(debugTargetKey);
       const result = {
         running: s.proc !== null,
         runtime: `${(debugRuntimeMs / 1000).toFixed(1)}s`,
@@ -758,6 +803,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         warnings: classified.warnings,
         prints: classified.prints.slice(-50),
         total_lines: lines.length,
+        ...(memKillMsg ? { mem_budget_exceeded: memKillMsg } : {}),
       };
       // P1-1: 引擎/游戏输出 nonce 信封(prints/errors/warnings 含项目 print 任意文本,输出侧防注入)
       return textResult(maybeWrapUntrusted('runtime.debug_output', 'godot-process', JSON.stringify(result, null, 2)));
@@ -807,6 +853,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         ], timeoutSecs);
         if (r.denial) {
           return opsErrorResult(r.denial.code, r.denial.message);
+        }
+        // 内存治理 Task 5:被看门狗杀 → 优先报 MEM_BUDGET_EXCEEDED(报文含峰值/档位上调
+        // 指引;注册表 retryable:false——原样重试必再被杀)。
+        if (r.memKill) {
+          return opsErrorResult('MEM_BUDGET_EXCEEDED', formatMemKillMessage(r.memKill));
         }
         if (r.timedOut) {
           return textResult(`run_tests timed out after ${timeoutSecs}s`);

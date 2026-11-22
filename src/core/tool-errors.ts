@@ -27,7 +27,10 @@ export type ErrorCategory =
   | 'guard'
   | 'path'
   | 'connection'
-  | 'internal';
+  | 'internal'
+  // 内存治理一期 Task 5(2026-11-22):MEMGUARD_* 四码的类别——机器资源水位/预算,
+  // 与 guard(行为拦截)语义不同,单列防误归类。
+  | 'resource';
 
 export interface ClassifiedError {
   category: ErrorCategory;

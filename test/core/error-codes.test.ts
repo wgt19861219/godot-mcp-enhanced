@@ -36,8 +36,9 @@ describe('ERROR_CODES 注册表', () => {
     expect(Object.keys(ERROR_CODES).length).toBeGreaterThanOrEqual(25);
   });
 
-  it('每码声明齐全(retryable/meaning 必有,category 为合法七类之一)', () => {
-    const validCategories = new Set(['validation', 'timeout', 'transport', 'guard', 'path', 'connection', 'internal']);
+  it('每码声明齐全(retryable/meaning 必有,category 为合法枚举之一)', () => {
+    // 内存治理一期 Task 5:新增 'resource' 类别(MEMGUARD_* 四码)
+    const validCategories = new Set(['validation', 'timeout', 'transport', 'guard', 'path', 'connection', 'internal', 'resource']);
     for (const [code, spec] of Object.entries(ERROR_CODES)) {
       expect(typeof spec.retryable, `${code}.retryable`).toBe('boolean');
       expect(spec.meaning.length, `${code}.meaning 非空`).toBeGreaterThan(0);
@@ -53,6 +54,25 @@ describe('ERROR_CODES 注册表', () => {
     ]) {
       expect(ERROR_CODES[code], code).toBeDefined();
     }
+  });
+
+  // 内存治理一期 Task 5(2026-11-22):MEMGUARD 4 码收编——准入三拒可重试(水位回升/
+  // 预算释放/进程退出后同参数重试有意义),超预算被杀不可重试(原样重试同参数必再被杀,
+  // 须先上调声明档位)。未注册前 denial 走 opsErrorResult 落兜底 retryable:false,
+  // 与报文「稍后重试」建议自相矛盾(审查制度项)。
+  it('MEMGUARD 4 码注册(准入拒绝 retryable:true,超预算杀 retryable:false,均 resource)', () => {
+    expect(ERROR_CODES.MEMGUARD_LOW_WATER).toEqual({
+      retryable: true, category: 'resource', meaning: '内存水位不足拒 spawn',
+    });
+    expect(ERROR_CODES.MEMGUARD_BUDGET).toMatchObject({ retryable: true, category: 'resource' });
+    expect(ERROR_CODES.MEMGUARD_INSTANCE_CAP).toMatchObject({ retryable: true, category: 'resource' });
+    expect(ERROR_CODES.MEM_BUDGET_EXCEEDED).toEqual({
+      retryable: false, category: 'resource', meaning: '进程超内存预算被看门狗终止',
+    });
+    // 补全语义闭环:deny 码经 opsError 补全不再落兜底 false
+    expect(opsError('MEMGUARD_LOW_WATER', 'm').retryable).toBe(true);
+    expect(opsError('MEMGUARD_LOW_WATER', 'm').error_category).toBe('resource');
+    expect(opsError('MEM_BUDGET_EXCEEDED', 'm').retryable).toBe(false);
   });
 });
 

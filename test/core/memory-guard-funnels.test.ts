@@ -9,6 +9,10 @@
 //  ④ spawnGodot 拒 → validation 消费链(batchValidateScripts)返回 denial 文本;
 //  ⑤ executor / screenshot / headless-process(runGodotHeadless) 拒路径各一条 + 过态释放;
 //  ⑥ run_project 既有成功前缀文本契约回归(Running project at / Preview mode: / Bridge ready.)。
+//  ⑦ 看门狗杀归因接线(Task 5)——executor close 命中 wasMemKilled → mem_budget_exceeded
+//    标志 + 归因 run_error,parseGdscriptResult 改报 MEM_BUDGET_EXCEEDED;未命中回归锚
+//    (原 Process exited 路径);run_tests 单片被杀 → opsErrorResult MEM_BUDGET_EXCEEDED;
+//    run_project 会话被杀 → get_debug_output 附 mem_budget_exceeded 与 errors 归因行。
 //
 // mock 策略:memory-guard 模块 vi.mock 接管 acquireLease/bindLeasePid/releaseLease
 // (projectPathFromArgs 等纯函数透传真身);child_process.spawn 可控假 proc;process-state
@@ -73,6 +77,14 @@ vi.mock('../../src/tools/game-bridge.js', async (importOriginal) => {
   return { ...actual, isBridgeReady: bridgeReadyMock };
 });
 
+// ── mem-watchdog mock(⑦ 归因接线):wasMemKilled 可控,其余导出透传真身(formatMemKillMessage
+//    纯函数保真——断言真实报文模板,而非 mock 回声) ──
+const wasMemKilledMock = vi.hoisted(() => vi.fn());
+vi.mock('../../src/core/mem-watchdog.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/mem-watchdog.js')>();
+  return { ...actual, wasMemKilled: wasMemKilledMock };
+});
+
 // ── import-check:needsImport 恒 false(跳过 executor 的 import warmup) ──
 vi.mock('../../src/tools/import-check.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/tools/import-check.js')>();
@@ -96,6 +108,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 import { handleTool as runtimeHandleTool } from '../../src/tools/runtime.js';
 import { executeGdscript } from '../../src/gdscript-executor.js';
+import { parseGdscriptResult } from '../../src/tools/shared.js';
 import { captureScreenshot } from '../../src/screenshot.js';
 import { spawnGodot } from '../../src/tools/spawn-helper.js';
 import { batchValidateScripts } from '../../src/tools/validation.js';
@@ -438,5 +451,112 @@ describe('⑥ run_project 成功前缀文本契约', () => {
       action: 'run_project', project_path: TMP_PROJECT, wait_for_bridge: true, timeout: 30,
     }, makeCtx());
     expect(textOf(r!)).toMatch(/^Bridge ready\. /);
+  });
+});
+
+// ─── ⑦ 看门狗杀归因接线(Task 5)─────────────────────────────────────────────
+
+describe('⑦ 杀归因接线(wasMemKilled 消费)', () => {
+  const GB2 = 1024 ** 3;
+
+  beforeEach(() => {
+    wasMemKilledMock.mockReset();
+    wasMemKilledMock.mockReturnValue(null); // 安全默认:未命中(回归锚语义)
+  });
+
+  it('executor:close 命中归因 → mem_budget_exceeded 标志 + 归因 run_error,parseGdscriptResult 改报 MEM_BUDGET_EXCEEDED', async () => {
+    const proc = fakeProc(5101);
+    spawnMock.mockImplementation(() => proc);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 5101 ? { readingBytes: 5 * GB2, declaredMB: 1024, kind: 'headless' } : null);
+    const p = executeGdscript({
+      godotPath: GODOT_BIN, projectPath: TMP_PROJECT, code: 'var x := 1', timeout: 5,
+    });
+    await vi.waitFor(() => {
+      expect(memguard.bindLeasePid).toHaveBeenCalledWith(OK_LEASE_ID, 5101);
+    });
+    proc.emit('close', 1);   // 被杀进程退出码非 0,stdout 无 marker(半截输出)
+    const r = await p;
+    expect(r.mem_budget_exceeded).toBe(true);
+    expect(r.run_error).toContain('内存预算超限被看门狗终止');
+    expect(r.run_error).toContain('峰值 5.0 GB');
+    expect(r.run_error).toContain('GODOT_MCP_DECLARED_MB_HEADLESS');   // 档位上调指引(kind 大写)
+    // 消费链:parseGdscriptResult 优先报 MEM_BUDGET_EXCEEDED(注册表补全 retryable/category)
+    const tr = parseGdscriptResult(r);
+    const parsed = JSON.parse(tr.content[0]!.text!) as { error_code: string; retryable: boolean; error_category: string };
+    expect(parsed.error_code).toBe('MEM_BUDGET_EXCEEDED');
+    expect(parsed.retryable).toBe(false);
+    expect(parsed.error_category).toBe('resource');
+  });
+
+  it('executor 回归锚:未命中归因 → 原路径(run_error=Process exited,无标志,仍报 SCRIPT_EXEC_FAILED)', async () => {
+    const proc = fakeProc(5102);
+    spawnMock.mockImplementation(() => proc);
+    const p = executeGdscript({
+      godotPath: GODOT_BIN, projectPath: TMP_PROJECT, code: 'var x := 1', timeout: 5,
+    });
+    await vi.waitFor(() => {
+      expect(memguard.bindLeasePid).toHaveBeenCalledWith(OK_LEASE_ID, 5102);
+    });
+    proc.emit('close', 1);
+    const r = await p;
+    expect(r.mem_budget_exceeded).toBeUndefined();
+    expect(r.run_error).toContain('Process exited with code 1');
+    const tr = parseGdscriptResult(r);
+    expect((JSON.parse(tr.content[0]!.text!) as { error_code: string }).error_code).toBe('SCRIPT_EXEC_FAILED');
+  });
+
+  it('run_tests 单片:被看门狗杀 → opsErrorResult MEM_BUDGET_EXCEEDED 附档位指引', async () => {
+    const proc = fakeProc(5201);
+    spawnMock.mockImplementation(() => proc);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 5201 ? { readingBytes: 17 * GB2, declaredMB: 8192, kind: 'gut_shard' } : null);
+    // handleTool 等 close 才返回——先拿 promise,spawn 落地后 emit close(被杀进程退出码 1)
+    const rPromise = runtimeHandleTool('runtime', {
+      action: 'run_tests', project_path: TMP_PROJECT, timeout: 5,
+    }, makeCtx());
+    await vi.waitFor(() => { expect(spawnMock).toHaveBeenCalled(); });
+    proc.emit('close', 1);
+    const r = await rPromise;
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    const parsed = JSON.parse(textOf(r!)) as { error_code: string; error: string; retryable: boolean };
+    expect(parsed.error_code).toBe('MEM_BUDGET_EXCEEDED');
+    expect(parsed.error).toContain('声明 8192MB×2');
+    expect(parsed.error).toContain('GODOT_MCP_DECLARED_MB_GUT_SHARD');
+    expect(parsed.retryable).toBe(false);
+  });
+
+  it('run_project 会话被杀:get_debug_output 附 mem_budget_exceeded 字段且 errors 含归因行', async () => {
+    const proc = fakeProc(5301);
+    spawnMock.mockImplementation(() => proc);
+    wasMemKilledMock.mockImplementation((pid: number) =>
+      pid === 5301 ? { readingBytes: 9.5 * GB2, declaredMB: 3072, kind: 'game_window' } : null);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    proc.emit('close', 1);   // 看门狗树杀 → close(code=1)
+    await vi.waitFor(() => {
+      expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+    });
+    const r = await runtimeHandleTool('runtime', {
+      action: 'get_debug_output', project_path: TMP_PROJECT,
+    }, makeCtx());
+    const txt = textOf(r!);
+    expect(txt).toContain('"mem_budget_exceeded"');                              // 结构化字段
+    expect(txt).toContain('内存预算超限被看门狗终止');
+    expect(txt).toContain('[MEM_BUDGET_EXCEEDED]');                              // 归因行进 errors 分类
+    expect(txt).toContain('GODOT_MCP_DECLARED_MB_GAME_WINDOW');
+  });
+
+  it('run_project 回归锚:未被杀的自然退出 → get_debug_output 无 mem_budget_exceeded 字段', async () => {
+    const proc = fakeProc(5302);
+    spawnMock.mockImplementation(() => proc);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    proc.emit('close', 0);
+    await vi.waitFor(() => {
+      expect(memguard.releaseLease).toHaveBeenCalledWith(OK_LEASE_ID);
+    });
+    const r = await runtimeHandleTool('runtime', {
+      action: 'get_debug_output', project_path: TMP_PROJECT,
+    }, makeCtx());
+    expect(textOf(r!)).not.toContain('mem_budget_exceeded');
   });
 });

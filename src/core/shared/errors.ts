@@ -86,6 +86,13 @@ export function parseGdscriptResult(
 ): ToolResult {
   // Task D4: 三个失败分支统一拼引擎错误行（compile/run/errorMapper——如 LOAD_FAILED）
   const engineLines = formatEngineErrorLines(result.errors);
+  // 内存治理一期 Task 5:看门狗杀归因优先——executor close 命中 wasMemKilled 时结果带
+  // mem_budget_exceeded 标志,此处改报 MEM_BUDGET_EXCEEDED(报文自带峰值/声明档位/上调
+  // 指引),优先于 SCRIPT_EXEC_FAILED 两分支:超预算非脚本自身失败,原样重试必再被杀
+  // (注册表 retryable:false + category resource)。
+  if (result.mem_budget_exceeded) {
+    return opsErrorResult('MEM_BUDGET_EXCEEDED', result.run_error + engineLines, errorOpts);
+  }
   if (!result.compile_success) {
     return opsErrorResult('SCRIPT_EXEC_FAILED', result.compile_error + engineLines, errorOpts);
   }

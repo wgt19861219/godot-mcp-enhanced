@@ -15,6 +15,8 @@ import { PKG_VERSION } from '../core/update-checker.js';
 import { inspectRulesDistribution, type RulesDistInfo } from '../tools/project.js';
 import { ALL_ADAPTERS } from './clients/index.js';
 import { readJsonForCheck } from './clients/json-config.js';
+// 内存治理一期 Task 5:guard 可见性两行——开关/阈值/租约计数 + 机器快照
+import { memoryGuardEnabled, getMachineMemorySnapshot, listActiveLeases, minFreeMB, budgetPct } from '../core/memory-guard.js';
 
 function status(ok: boolean, msg: string): string {
   return ok ? `  ✓ ${msg}` : `  ✗ ${msg}`;
@@ -340,6 +342,24 @@ export async function runDoctor(_args: string[]): Promise<void> {
   } catch (e) {
     console.log(na(`rules distribution check skipped (${e instanceof Error ? e.message : String(e)})`));
   }
+
+  // 5.8 Memory guard(内存治理一期 Task 5)——治理机制最小可见性:第一行开关+阈值+租约
+  // 计数(预算%与水位线与准入判定同源导出,不重复读 env),第二行机器快照(物理/commit/
+  // Godot 进程计数)。快照降级(非 Windows/PowerShell 失败)用 ! 标记并注明原因,恒不
+  // fail——诊断信息缺失非环境错误(对齐 Rules distribution 语义)。
+  console.log('\nMemory guard:');
+  const guardOn = memoryGuardEnabled();
+  console.log(status(true, `memory-guard: ${guardOn ? 'enabled' : 'disabled'} (budget ${budgetPct()}%, leases ${listActiveLeases().length}, watermark ${minFreeMB()}MB)`));
+  const memSnap = getMachineMemorySnapshot();
+  const fmtGBv = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  const fmtGBnum = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
+  const physUsedPct = memSnap.totalPhysBytes > 0
+    ? Math.round((1 - memSnap.freePhysBytes / memSnap.totalPhysBytes) * 100)
+    : 0;
+  const commitStr = memSnap.commitAvailBytes !== null ? `commit avail ${fmtGBv(memSnap.commitAvailBytes)}` : 'commit n/a';
+  const memLine = `machine memory: physical ${fmtGBnum(memSnap.freePhysBytes)}/${fmtGBnum(memSnap.totalPhysBytes)} GB free (${physUsedPct}% used), ${commitStr}, godot procs ${memSnap.godotProcCount}`
+    + (memSnap.degraded ? ` (degraded: ${memSnap.degraded})` : '');
+  console.log(memSnap.degraded ? warn(memLine) : status(true, memLine));
 
   // 易用性批4:结尾一行下一步(两出口共享,弥补此前"满屏 ✗ 却不知道怎么办")
   console.log('\nNext steps: 配置客户端 `npx godot-mcp-enhanced setup` / 定向 `configure <客户端>`;验证链路:AI 客户端内调用 get_godot_version。');

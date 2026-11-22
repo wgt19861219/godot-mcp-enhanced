@@ -308,13 +308,15 @@ function readPositiveIntEnv(name: string, def: number, max?: number): number {
   return def;
 }
 
-/** 水位线下限(MB):GODOT_MCP_MIN_FREE_MB,默认 3072——物理空闲与 commit 余量两口径共用。 */
-function minFreeMB(): number {
+/** 水位线下限(MB):GODOT_MCP_MIN_FREE_MB,默认 3072——物理空闲与 commit 余量两口径共用。
+ *  Task 5 起导出:doctor 可见性行消费(与准入判定同源,防两处阈值漂移)。 */
+export function minFreeMB(): number {
   return readPositiveIntEnv('GODOT_MCP_MIN_FREE_MB', 3072);
 }
 
-/** 内存预算百分比:GODOT_MCP_MEM_BUDGET_PCT,默认 67(合法区间 1-100)。 */
-function budgetPct(): number {
+/** 内存预算百分比:GODOT_MCP_MEM_BUDGET_PCT,默认 67(合法区间 1-100)。
+ *  Task 5 起导出:doctor 可见性行消费(同上)。 */
+export function budgetPct(): number {
   return readPositiveIntEnv('GODOT_MCP_MEM_BUDGET_PCT', 67, 100);
 }
 

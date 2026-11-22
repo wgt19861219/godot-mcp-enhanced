@@ -78,6 +78,30 @@ vi.mock('../../src/cli/clients/antigravity.js', () => ({
   }),
 }));
 
+// 内存治理一期 Task 5:memory-guard mock(5.8 段两行断言)——不 mock 会真起 PowerShell
+// 采样 + 读真实 ~/.godot-mcp/memory-leases.json(测试隔离纪律)。importOriginal 展开:
+// 阈值函数(minFreeMB/budgetPct)固定 mock 值,快照/租约/开关可控注入。
+const memguardDoctor = vi.hoisted(() => ({
+  enabled: vi.fn(() => false),
+  leases: vi.fn(() => [] as unknown[]),
+  snapshot: vi.fn(() => ({
+    freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+    commitAvailBytes: 10 * 1024 ** 3, commitTotalBytes: 20 * 1024 ** 3,
+    godotProcCount: 2, sampledAt: 0,
+  })),
+}));
+vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/memory-guard.js')>();
+  return {
+    ...actual,
+    memoryGuardEnabled: memguardDoctor.enabled,
+    listActiveLeases: memguardDoctor.leases,
+    getMachineMemorySnapshot: memguardDoctor.snapshot,
+    minFreeMB: vi.fn(() => 3072),
+    budgetPct: vi.fn(() => 67),
+  };
+});
+
 vi.mock('../../src/cli/clients/trae.js', () => ({
   TraeAdapter: vi.fn().mockImplementation(function () {
     this.name = 'Trae'; this.scope = 'global'; this.detect = vi.fn().mockResolvedValue(false); this.isConfigured = vi.fn().mockResolvedValue(false);
@@ -347,6 +371,46 @@ describe('doctor', () => {
       consoleSpy.mockRestore();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  // ─── 内存治理一期 Task 5 (2026-11-22): Memory guard 段两行可见性 ───
+
+  it('附 memory-guard 状态行(disabled)+ 机器快照行', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      // 第一行:开关 + 预算阈值 + 租约计数 + 水位线(brief 逐字格式)
+      expect(output).toContain('memory-guard: disabled (budget 67%, leases 0, watermark 3072MB)');
+      // 第二行:机器内存快照(物理/commit/Godot 进程计数)
+      expect(output).toMatch(/machine memory: physical 8\.0\/16\.0 GB free \(50% used\), commit avail 10\.0 GB, godot procs 2/);
+    } finally {
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  it('enabled 态 + 租约非空 + 快照降级:状态行切 enabled,快照行 warn 标记带降级原因', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    memguardDoctor.enabled.mockReturnValueOnce(true);
+    memguardDoctor.leases.mockReturnValueOnce([{ id: 'a' }, { id: 'b' }] as never);
+    memguardDoctor.snapshot.mockReturnValueOnce({
+      freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+      commitAvailBytes: null, commitTotalBytes: null,
+      godotProcCount: 0, sampledAt: 0, degraded: 'non-windows',
+    } as never);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('memory-guard: enabled (budget 67%, leases 2, watermark 3072MB)');
+      expect(output).toContain('! machine memory:');
+      expect(output).toContain('degraded: non-windows');
+    } finally {
+      logSpy.mockRestore(); exitSpy.mockRestore();
     }
   });
 });

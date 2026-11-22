@@ -144,6 +144,14 @@ export function wasMemKilled(pid: number): { readingBytes: number; declaredMB: n
   return { readingBytes: rec.readingBytes, declaredMB: rec.declaredMB, kind: rec.kind };
 }
 
+/** 归因报文(Task 5 接线消费):executor/runtime 失败路径优先报 MEM_BUDGET_EXCEEDED 的
+ *  message 文本——峰值读数 / 声明档位×杀线系数 / 上调档位指引(env 名按 kind 大写)。
+ *  单一来源供两处消费方共用,防报文格式漂移。 */
+export function formatMemKillMessage(attr: { readingBytes: number; declaredMB: number; kind: SpawnKind }): string {
+  const factor = KILL_FACTOR[attr.kind] ?? 2;
+  return `内存预算超限被看门狗终止: 峰值 ${fmtGB(attr.readingBytes)} / 声明 ${attr.declaredMB}MB×${factor}。若为合法重负载,调 GODOT_MCP_DECLARED_MB_${attr.kind.toUpperCase()} 上调档位`;
+}
+
 /** 启动看门狗轮询(幂等):间隔 = clamp(GODOT_MCP_MEM_POLL_SECONDS,5,3600) 默认 10s;
  *  降级退避窗口内 tick 跳过;timer unref 不阻塞进程退出;总开关关闭 → no-op。 */
 export function startWatchdog(): void {

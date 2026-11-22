@@ -46,6 +46,12 @@ export const ERROR_CODES: Readonly<Record<string, ErrorCodeSpec>> = {
   VERIFICATION_IN_PROGRESS: { retryable: true, category: 'guard',      meaning: 'editor 连接项目校验进行中(稍候重试)' },
   SERVER_STALE:             { retryable: true, category: 'internal',   meaning: 'MCP server 版本/registry 过期(重启即恢复)' },
   BUSY:                     { retryable: true, category: 'guard',      meaning: '资源占用中(会话/实例忙,稍候重试)' },
+  // 内存治理一期 Task 5(2026-11-22):准入三拒可重试(水位回升/预算释放/进程退出后同参数
+  // 重试有意义)——未注册前 denial 走 opsErrorResult 落兜底 retryable:false,与报文
+  // 「稍后重试」建议自相矛盾(审查制度项)。
+  MEMGUARD_LOW_WATER:       { retryable: true, category: 'resource',   meaning: '内存水位不足拒 spawn' },
+  MEMGUARD_BUDGET:          { retryable: true, category: 'resource',   meaning: '声明内存预算已占满拒 spawn' },
+  MEMGUARD_INSTANCE_CAP:    { retryable: true, category: 'resource',   meaning: '机器 Godot 实例数达上限拒 spawn' },
 
   // ── 确定性失败(retryable=false,按 suggestion 改参数/换路径)────────────
   INVALID_PARAMS:           { retryable: false, category: 'validation', meaning: '参数校验失败' },
@@ -79,6 +85,9 @@ export const ERROR_CODES: Readonly<Record<string, ErrorCodeSpec>> = {
   SANDBOX_BLOCKED:          { retryable: false, category: 'guard',      meaning: '沙箱阻断(工具级内容拦截)' },
   SCRIPT_EXEC_FAILED:       { retryable: false, category: 'internal',   meaning: 'GDScript 编译/运行失败(消息附引擎错误行)' },
   SPAWN_FAILED:             { retryable: false, category: 'internal',   meaning: 'Godot 进程 spawn 失败(二进制缺失/文件锁)' },
+  // 内存治理一期 Task 5:超预算被看门狗杀不可重试——原样重试同参数必再被杀,
+  // 须先调 GODOT_MCP_DECLARED_MB_<KIND> 上调声明档位(报文自带指引)。
+  MEM_BUDGET_EXCEEDED:      { retryable: false, category: 'resource',   meaning: '进程超内存预算被看门狗终止' },
   GODOT_NOT_FOUND:          { retryable: false, category: 'internal',   meaning: '找不到 Godot 二进制(设 GODOT_PATH 或安装)' },
   EDIT_REVERTED:            { retryable: false, category: 'validation', meaning: 'edit_script 内容守卫失败已回滚(读最新内容后重做)' },
   EDITOR_SCENE_OPEN:        { retryable: false, category: 'guard',      meaning: 'headless 改盘与编辑器打开场景冲突(需 Reload 后重做)' },
