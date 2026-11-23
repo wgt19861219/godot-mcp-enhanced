@@ -514,13 +514,31 @@ export function getMachineAuditFile(): string {
   return process.env.GODOT_MCP_MACHINE_AUDIT_FILE ?? join(homedir(), '.godot-mcp', 'machine-audit.jsonl');
 }
 
+/** 机器级审计追加串行链(终审 Important-2):全部 appendMachineAuditLine 在进程内严格 FIFO。
+ *  不串行时,同 tick 连发的 N 次追加各自并发 `stat → rotateIfNeeded → appendFile`,同时见文件
+ *  超限,而轮转锁对同 pid 重入放行(rotateIfNeededWith 仅对「他人存活」skip)——N 次并发轮转里
+ *  后一次的 rm 最老代删掉前一次刚推上来的代、rename 主文件 ENOENT:审计整代丢失 + 虚假失败
+ *  计数。触发源正是 hard 阈值驱逐循环(evict×N + evict_exhausted 同步连发)。与 memory-guard
+ *  `_sampleAppendChain` 同款:每段自带 catch(单段失败不阻断后续段,链恒为已决态),行序 =
+ *  调用序;返回调用方的 promise 照常 reject(失败处置仍归调用方,如 recordAuditWriteFailure)。
+ *  timestamp 与目标文件在**调用时**定格(事件时刻而非排队执行时刻;env 重定向按调用方当时的
+ *  值——测试逐用例 stubEnv 不串台)。不设重置出口:重置会另起并行链重现竞态,旧链自然排空。
+ *  仅进程内有序——跨进程多写者仍无序(轮转锁只管轮转,不管追加)。 */
+let _machineAuditChain: Promise<void> = Promise.resolve();
+
 /** 追加一条机器级审计行(timestamp 由本函数补)。四期 Task 5 补接大小轮转(此前只 append
  *  无轮转——随 T3-M-3 清偿):追加前 rotateIfNeeded,时机对齐 appendAuditLine;审计通道
- *  口径 10MB×3 代,失败 best-effort 不阻断追加。 */
+ *  口径 10MB×3 代,失败 best-effort 不阻断追加(轮转失败由 rotateIfNeeded 内部计数,不 reject;
+ *  追加失败向调用方 reject)。`mkdir → 轮转检查 → appendFile` 整段进串行链(见 _machineAuditChain)。 */
 export async function appendMachineAuditLine(entry: Omit<AuditEntry, 'timestamp'>): Promise<void> {
   const full: AuditEntry = { ...entry, timestamp: new Date().toISOString() };
   const file = getMachineAuditFile();
-  await mkdir(dirname(file), { recursive: true });
-  await rotateIfNeeded(file);
-  await appendFile(file, JSON.stringify(full) + '\n', 'utf-8');
+  const segment = _machineAuditChain.then(async () => {
+    await mkdir(dirname(file), { recursive: true });
+    await rotateIfNeeded(file);
+    await appendFile(file, JSON.stringify(full) + '\n', 'utf-8');
+  });
+  // 链尾吞掉本段失败(否则一次失败会毒化链,其后所有审计行永不再写);本段失败仍经返回值交调用方
+  _machineAuditChain = segment.catch(() => { /* 失败处置归调用方 */ });
+  await segment;
 }

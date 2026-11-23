@@ -85,9 +85,13 @@ import {
   acquireLease,
   bindLeasePid,
   declaredMBFor,
+  heartbeatLeases,
+  listActiveLeases,
+  notePollRss,
   releaseLease,
   updatePressureState,
   sampleRssBytes,
+  type MemLease,
   _setLeasesFilePathForTest,
   _resetForTest,
   _setPsRunnerForTest,
@@ -1004,6 +1008,53 @@ describe('⑩ Task 4:rss_sample 采样策略 + kill 采样行 + final sample', (
     expect(row(rows, 1)['leaseId']).toBe('B1'); // 若空轮误耗首采标志,B1 需等 60s → 只 1 行
     expect(row(rows, 1)['rssBytes']).toBe(256 * MB);
   });
+
+  it('⑨ 自然退出路径 final sample(终审 Important-1):轮询后进程退出 → 租约被读时清理移出账本 → releaseLease 仍落 final 行,字段取自按 leaseId 的快照', async () => {
+    writeLeases([lease({ id: 'R1', pid: 4242, declaredMB: 2048, projectPath: 'D:/gone' })]);
+    const alive = new Set([4242]);
+    mockKillProbe(alive);                        // 轮询时进程仍活(真实前置:租约在册、看门狗拿到读数)
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB });
+
+    await pollOnce();                            // R1 首采落行;看门狗记下本轮读数
+    // 进程自然退出:此后探活为死(process.kill 抛 ESRCH)。生产中 60s 心跳或任一 listActiveLeases
+    // 读时清理都会先把死 pid 租约移出账本,随后漏斗的 child.on('close') 才调 releaseLease
+    alive.delete(4242);
+    heartbeatLeases();                           // 读时清理:R1(pid 已死)被移出账本
+    expect(listActiveLeases().some((l) => l.id === 'R1')).toBe(false); // 目标分支:释放前租约已不在账本
+
+    releaseLease('R1');                          // 自然退出路径的漏斗归还——final sample 的设计目标路径
+    await waitForRss(2);                         // R1 首采 + R1 final
+    const final = row(rssRows(), 1);
+    expect(final['leaseId']).toBe('R1');
+    expect(final['rssBytes']).toBe(512 * MB);    // 取自快照(末次轮询读数),零 PowerShell
+    expect(final['pid']).toBe(4242);
+    expect(final['kind']).toBe('headless');
+    expect(final['project']).toBe('D:/gone');
+    expect(final['declaredMB']).toBe(2048);
+    releaseLease('R1');                          // 快照读后即删:重复释放不重复落
+    await settle();
+    expect(rssRows()).toHaveLength(2);
+  });
+
+  it('⑩ final 快照 TTL(终审 Important-1 有界性):窗内(≤10min)快照保留;超窗未释放的在下一次 notePollRss 时惰性清理——超窗者释放不落行、窗内者照落', async () => {
+    const TTL = 10 * 60_000;                     // 与 memory-guard.ts 快照 TTL 同值(量级对齐 mem-watchdog ATTRIBUTION_TTL_MS)
+    const snap = (id: string, pid: number): MemLease => ({
+      id, serverPid: process.pid, kind: 'headless', declaredMB: 1024,
+      projectPath: 'D:/proj', pid, startedAt: 0, lastHeartbeat: 0,
+    });
+    vi.setSystemTime(1_000_000);
+    notePollRss(snap('A', 4242), 512 * MB);      // t0
+    vi.setSystemTime(1_000_000 + TTL - 1000);
+    notePollRss(snap('B', 5555), 256 * MB);       // A 尚在窗内 → 保留
+    vi.setSystemTime(1_000_000 + TTL + 1);
+    notePollRss(snap('C', 6666), 128 * MB);       // A 超窗 → 本次写入时惰性清理;B(1s 前写入)保留
+    releaseLease('A');                           // 快照已被清 → 不落
+    releaseLease('B');                           // 窗内 → 落
+    await waitForRss(1);
+    await settle();
+    expect(rssRows().map((x) => x['leaseId'])).toEqual(['B']);
+    expect(row(rssRows(), 0)['rssBytes']).toBe(256 * MB);
+  });
 });
 
 // ===========================================================================
@@ -1108,6 +1159,38 @@ describe('⑪ Task 5:采样文件轮转(8MB×4,复用审计轮转机制)', () =>
       vi.stubEnv(envName, envName === 'GODOT_MCP_MEMORY_GUARD' ? '1' : ''); // 复位(空串=开)
     }
     expect(sizeChecks()).toBe(0); // 开关关闭:连 stat 都没发生
+  });
+
+  it('⑤ 重试标志在「他人持活锁跳过」(skipped)后保留(终审 Minor-4):锁释放后下一条 append 即重查并完成轮转;rotated 才清标志', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      seedOversized();
+      fs.mkdirSync(`${samplePath}.4`); // 最老代位置放目录 → 轮转的 rm 抛 = 瞬态故障(同 ③)
+      memSample('lease_acquired', { kind: 'headless' }); // server_start(首查失败)+ 事件(重查,再失败)→ 重试标志置位
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(2);
+      expect(fs.existsSync(`${samplePath}.1`)).toBe(false);
+      fs.rmdirSync(`${samplePath}.4`); // 故障消除
+      // 他人持活锁(Windows pid 4=System / POSIX pid 1=init 恒活,同 audit-log.test L-14 先例)→ 轮转 skipped
+      const liveForeignPid = process.platform === 'win32' ? 4 : 1;
+      fs.writeFileSync(`${samplePath}.lock`, String(liveForeignPid));
+      memSample('lease_acquired', { kind: 'editor' });
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(3);                  // 重试标志生效:即时重查
+      expect(fs.existsSync(`${samplePath}.1`)).toBe(false); // 他人持锁:本轮 skipped 未轮转
+      expect(fs.existsSync(`${samplePath}.lock`)).toBe(true); // 他人的锁不动
+      fs.rmSync(`${samplePath}.lock`); // 他人轮转结束,锁释放
+      memSample('lease_acquired', { kind: 'game_window' });
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(4);                  // skipped 未清标志 → 本条仍即时重查(旧实现清了标志则停在 3)
+      expect(fs.readFileSync(`${samplePath}.1`, 'utf8')).toContain('old-main'); // 轮转完成
+      expect(readLines().map((r) => r['kind'])).toEqual(['game_window']); // 主文件仅第 3 条新行(前两条随旧内容进了 .1)
+      memSample('lease_acquired', { kind: 'editor' });
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(4);                  // rotated 清标志:下一条回到 500 计数节奏
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
 

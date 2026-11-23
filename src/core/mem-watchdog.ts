@@ -149,10 +149,13 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
     memSample('watchdog_recovered', {}); // 四期 Task 3:此前已降级(≥3),恢复首轮拿到读数——通道恢复
   }
   _consecutiveDegrades = 0; // 拿到读数(哪怕部分)即视为通道健康,降级计数清零
-  // 四期 Task 4:pid 读数表覆盖写(final sample 查表源,releaseLease 消费——表本体在
-  // memory-guard 侧防反向 import 成环)。先写再进杀检查:kill 路径的 releaseLease
-  // final sample 要拿到本轮读数(含本轮将被杀的租约)。
-  for (const [pid, rss] of Object.entries(rssMap)) notePollRss(Number(pid), rss);
+  // 四期 Task 4:按 leaseId 记本轮读数快照(final sample 数据源,releaseLease 在任何账本查找之前
+  // 按 leaseId 取用——表本体在 memory-guard 侧防反向 import 成环)。先记再进杀检查:kill 路径的
+  // releaseLease final sample 要拿到本轮读数(含本轮将被杀的租约)。
+  for (const lease of leases) {
+    const rss = rssMap[lease.pid as number];
+    if (rss !== undefined) notePollRss(lease, rss);
+  }
   let killed = 0;
   const releasedIds = new Set<string>(); // 本轮已释放租约(真杀/探活死清账):不再进策略采样
   for (const lease of leases) {

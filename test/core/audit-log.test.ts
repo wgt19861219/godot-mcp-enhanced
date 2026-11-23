@@ -559,6 +559,63 @@ describe('appendMachineAuditLine 轮转(四期 Task 5 补轮转债)', () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it('终审 Important-2:同进程并发 3 次 append(Promise.all)→ 进程内串行仅轮转一次——三代 A/B/C 全在、链不错位、行序=调用序、失败计数不变', async () => {
+    const { appendMachineAuditLine, AUDIT_ROTATE_SIZE } = await import('../../src/core/audit-log.js');
+    const auditPath = join(tmpDir, 'machine-audit.jsonl');
+    vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', auditPath);
+    try {
+      // 代际链:main=A(>10MB) / .1=B / .2=C —— 期望单次轮转后 .1=A / .2=B / .3=C,三代全在
+      writeFileSync(auditPath, JSON.stringify({ marker: 'A-main', pad: 'x'.repeat(AUDIT_ROTATE_SIZE) }) + '\n', 'utf8');
+      writeFileSync(`${auditPath}.1`, JSON.stringify({ marker: 'B-gen1' }) + '\n', 'utf8');
+      writeFileSync(`${auditPath}.2`, JSON.stringify({ marker: 'C-gen2' }) + '\n', 'utf8');
+      const mk = (action: string) => appendMachineAuditLine({
+        trace_id: 'memguard', tool: 'memory-guard', action, risk: 'process',
+        ok: true, project_path: '', changed_files: [], duration_ms: 0, details: {},
+      });
+      const failuresBefore = getAuditFailureStats().failures;
+      // 同 tick 连发(mem-watchdog 驱逐循环 evict + evict + evict_exhausted 的形态)。旧实现各自
+      // stat 见 >10MB,同 pid 重入放行致并发两次轮转:C 被挤出保留窗、.1 缺失、链错位
+      await Promise.all([mk('evict'), mk('evict'), mk('evict_exhausted')]);
+      expect(readFileSync(`${auditPath}.1`, 'utf8')).toContain('A-main');
+      expect(readFileSync(`${auditPath}.2`, 'utf8')).toContain('B-gen1');
+      expect(readFileSync(`${auditPath}.3`, 'utf8')).toContain('C-gen2');
+      expect(existsSync(`${auditPath}.4`)).toBe(false);
+      const actions = readFileSync(auditPath, 'utf8').trim().split('\n')
+        .map((l) => (JSON.parse(l) as { action: string }).action);
+      expect(actions).toEqual(['evict', 'evict', 'evict_exhausted']); // 行序 = 调用序
+      expect(existsSync(`${auditPath}.lock`)).toBe(false);
+      expect(getAuditFailureStats().failures).toBe(failuresBefore);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('串行链失败隔离:前一段失败仍向调用方 reject,且不阻断后一段(后续行照落);无未处理 rejection', async () => {
+    const { appendMachineAuditLine } = await import('../../src/core/audit-log.js');
+    const auditPath = join(tmpDir, 'machine-audit.jsonl');
+    vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', auditPath);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      mkdirSync(auditPath); // 首条:审计文件路径是目录 → appendFile 必拒(EISDIR)
+      const mk = (action: string) => appendMachineAuditLine({
+        trace_id: 't', tool: 'tool', action, risk: 'write', ok: true,
+        project_path: '', changed_files: [], duration_ms: 0,
+      });
+      await expect(mk('first')).rejects.toThrow(); // 调用方仍拿到失败(审计通道可观测面不丢)
+      rmSync(auditPath, { recursive: true }); // 故障消除
+      await mk('second'); // 前段失败不得毒化链:后一段照常落盘
+      const lines = readFileSync(auditPath, 'utf8').trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect((JSON.parse(lines[0]!) as { action: string }).action).toBe('second');
+      await new Promise((r) => setTimeout(r, 50)); // 给可能的 unhandledRejection 留出一拍
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 // ─── 批4-T3(五维评估 P1): extractAuditHint 工具→审计上报通道 ─────────────────

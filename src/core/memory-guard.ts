@@ -808,24 +808,15 @@ export function projectPathFromArgs(args: readonly string[]): string {
 }
 
 /** 释放租约(幂等:租约不存在/已被清理时静默)。dummy lease 无盘面实体 → no-op,可重复调(I-1)。
- *  四期 Task 4:释放前若 watchdog 轮询读数表(_lastRssByPid)有本租约 pid 的最近读数,
- *  补一行 final rss_sample(零 PowerShell 成本——查表即得;短命进程的末值,分析端按
- *  leaseId 并入 max)。自然退出/杀后清账/探活死清账三路径统一在此落,kill 路径与
- *  budget_kill/evict 行同读数并存——聚合口径取 max,冗余无害。 */
+ *  四期 Task 4:释放时按 leaseId 查看门狗快照,命中则补一行 final rss_sample(零 PowerShell
+ *  成本——查表即得;短命进程的末值,分析端按 leaseId 并入 max)。**先于一切账本查找与提前
+ *  返回**(终审 Important-1):自然退出路径进程已死、租约多半已被读时清理移出账本,final
+ *  sample 不得依赖账本状态。kill 路径(killOverBudget/killForEviction 杀后的 releaseLease)
+ *  与 budget_kill/evict 行同读数再落一行——聚合口径取 max,冗余无害(既有设计,保留)。 */
 export function releaseLease(leaseId: string): void {
+  emitFinalRssSample(leaseId);
   if (leaseId === DUMMY_LEASE_ID) return;
   const leases = listActiveLeases();
-  const target = leases.find((l) => l.id === leaseId);
-  if (target !== undefined && typeof target.pid === 'number') {
-    const rss = _lastRssByPid.get(target.pid);
-    if (rss !== undefined) {
-      _lastRssByPid.delete(target.pid); // 读数一次性:释放后 pid 与租约脱钩,防 OS 复用误关联
-      memSample('rss_sample', {
-        kind: target.kind, project: target.projectPath, leaseId,
-        pid: target.pid, declaredMB: target.declaredMB, rssBytes: rss,
-      });
-    }
-  }
   const kept = leases.filter((l) => l.id !== leaseId);
   if (kept.length !== leases.length) writeLeases(kept);
 }
@@ -1061,22 +1052,55 @@ let _sampleAppendCount = 0;
 /** 上次 size 检查时刻(0=进程启动后未查过:首条 append 前 stat 一次,防已有大文件时
  *  「500 次后检查」形同虚设,设计 N4)。 */
 let _lastSizeCheckAt = 0;
-/** 轮转失败重试标志:置位后下一条 append 即重查(不等下个 500 计数);重查成功即清。
- *  「他人持活锁跳过」不算失败不置位(对方正在转,下个 500 边界再看)。 */
+/** 轮转失败重试标志:置位后下一条 append 即重查(不等下个 500 计数);**只有确认转成(rotated)
+ *  才清**。「他人持活锁跳过」(skipped)既不置位也不清(终审 Minor-4:对方正在转,其轮转若随后
+ *  失败,我方标志须留到下次重查;原实现在 skipped 时一并清掉,双方都失败时我方要等 500 边界)。 */
 let _sampleRotateRetry = false;
 
-/** watchdog 轮询读数表(pid → 最近一轮 RSS 字节,四期 Task 4):releaseLease final
- *  sample 的查表源(短命进程的末值,零 PowerShell 成本)。表本体在本模块而非
- *  mem-watchdog:releaseLease 在此消费,反向 import watchdog 会成环(watchdog 已
- *  import 本模块)。写者唯一——notePollRss(pollOnce 每轮对有读数 pid 覆盖写,无
- *  setter 注入);reader 内聚在 releaseLease,读后即删(租约已释放,pid 与租约
- *  脱钩,防 OS 复用误关联)。运行时不做全表清理:仅本 server 起过的进程 pid 会进
- *  表,量级有界,测试隔离走 _resetForTest。 */
-const _lastRssByPid = new Map<number, number>();
+/** final sample 快照 TTL(10min,终审 Important-1):量级对齐 mem-watchdog ATTRIBUTION_TTL_MS——
+ *  超过此时长无人释放的快照(进程死后漏斗未归还/租约被别的路径清掉)在下一次 notePollRss 时
+ *  惰性清理,条目不无限滞留;活租约每轮覆盖写 at,恒在窗内。 */
+const POLL_RSS_SNAPSHOT_TTL_MS = 10 * 60_000;
 
-/** 记录/覆盖一轮轮询的 pid → RSS 读数(mem-watchdog pollOnce 每轮调用;final sample 查表源)。 */
-export function notePollRss(pid: number, bytes: number): void {
-  _lastRssByPid.set(pid, bytes);
+/** watchdog 轮询快照(四期 Task 4;终审 Important-1 改键):leaseId → 最近一轮读数 + 落 final
+ *  sample 行所需的身份字段。releaseLease final sample 的数据源(短命进程的末值,零 PowerShell
+ *  成本)。**按 leaseId 键而非 pid**:releaseLease 在任何账本查找之前按 leaseId 取快照——自然
+ *  退出路径(进程已死,listActiveLeases 读时清理已把租约移出账本)同样落行,不依赖账本状态,
+ *  亦无 OS pid 复用误关联。表本体在本模块而非 mem-watchdog:releaseLease 在此消费,反向
+ *  import watchdog 会成环(watchdog 已 import 本模块)。写者唯一——notePollRss(pollOnce 每轮
+ *  对有读数租约覆盖写,无 setter 注入);读者内聚在 releaseLease,读后即删(快照一次性)。
+ *  有界:条目随下次写入按 at 惰性 TTL 清理;测试隔离走 _resetForTest。 */
+interface PollRssSnapshot {
+  pid: number; kind: SpawnKind; projectPath: string; declaredMB: number; rssBytes: number; at: number;
+}
+const _lastRssByLease = new Map<string, PollRssSnapshot>();
+
+/** 记录/覆盖一轮轮询的租约读数(mem-watchdog pollOnce 每轮调用;final sample 数据源)。写入前
+ *  按 at 惰性清理超 TTL 的条目(无人释放的快照兜底回收)。未绑 pid 的租约无读数可言,直接跳过。 */
+export function notePollRss(lease: MemLease, rssBytes: number): void {
+  if (lease.pid === null || lease.pid === undefined) return;
+  const now = Date.now();
+  for (const [id, s] of _lastRssByLease) {
+    if (now - s.at > POLL_RSS_SNAPSHOT_TTL_MS) _lastRssByLease.delete(id);
+  }
+  _lastRssByLease.set(lease.id, {
+    pid: lease.pid, kind: lease.kind, projectPath: lease.projectPath, declaredMB: lease.declaredMB,
+    rssBytes, at: now,
+  });
+}
+
+/** final sample(四期 Task 4):按 leaseId 取看门狗最近一轮快照,命中即落一行 rss_sample(与策略
+ *  采样行同形态)并删快照——一次性,重复释放不重复落。不查账本:租约是否仍在册、进程是否已死
+ *  都不影响(终审 Important-1:原实现经 listActiveLeases 找租约再按 pid 查表,自然退出路径——
+ *  final sample 的设计目标——因读时清理先行而整段跳过,pid 键条目亦随之永不删除)。 */
+function emitFinalRssSample(leaseId: string): void {
+  const s = _lastRssByLease.get(leaseId);
+  if (s === undefined) return;
+  _lastRssByLease.delete(leaseId);
+  memSample('rss_sample', {
+    kind: s.kind, project: s.projectPath, leaseId,
+    pid: s.pid, declaredMB: s.declaredMB, rssBytes: s.rssBytes,
+  });
 }
 
 /** 采样开关:GODOT_MCP_MEM_SAMPLE 非 '0'/'false' 即开(未设=开)——实时读不缓存,
@@ -1207,7 +1231,8 @@ function appendSampleLine(filePath: string, line: string): void {
  *  启动突发(server_start+首事件)不重复 stat。失败走采样通道口径:同因去重 warn +
  *  置重试标志(下一条 append 即重查,不等下个 500 计数),**不计**审计失败统计
  *  (recordAuditWriteFailure 是审计通道的可观测面,两通道口径独立);轮转失败不阻断本次
- *  append(继续追加到超限文件,下次再转)。「他人持活锁跳过」(skipped)非失败不置位。 */
+ *  append(继续追加到超限文件,下次再转)。「他人持活锁跳过」(skipped)非失败不置位,亦不清
+ *  重试标志(终审 Minor-4,见 _sampleRotateRetry 注释)。 */
 async function rotateSampleIfNeeded(filePath: string): Promise<void> {
   const due = _sampleRotateRetry || _lastSizeCheckAt === 0 || _sampleAppendCount % SAMPLE_ROTATE_CHECK_EVERY === 0;
   if (!due) return;
@@ -1216,7 +1241,7 @@ async function rotateSampleIfNeeded(filePath: string): Promise<void> {
   if (r.outcome === 'failed') {
     _sampleRotateRetry = true;
     warnSampleFailOnce(r.error, '轮转失败');
-  } else {
+  } else if (r.outcome === 'rotated') {
     _sampleRotateRetry = false;
   }
 }
@@ -1256,5 +1281,5 @@ export function _resetForTest(): void {
   _sampleAppendCount = 0;
   _lastSizeCheckAt = 0;
   _sampleRotateRetry = false;
-  _lastRssByPid.clear();
+  _lastRssByLease.clear();
 }

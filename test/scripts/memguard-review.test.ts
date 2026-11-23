@@ -7,6 +7,7 @@ import {
   KILL_FACTOR, PRESSURE_RECOVER_MS, HARD_MIN_RECLAIM_MB, KINDS,
   parseLines, loadSampleFile, analyze, formatReport, defaultSamplePath,
 } from '../../scripts/memguard-review.mjs';
+import { SAMPLE_ROTATE_KEEP } from '../../src/core/memory-guard.js';
 
 // golden fixture 六场景（A–F）+ 常量机械比对——直接 import mjs 的纯函数（analyze 不碰文件系统）。
 // 行形态逐字对齐 src/core/memory-guard.ts buildSampleLine：公共壳 ts/v/event/serverPid，
@@ -697,6 +698,12 @@ describe('常量机械比对（mjs 常量表 ↔ 源码）', () => {
   it('HARD_MIN_RECLAIM_MB：源码 = 2048 = mjs', () => {
     expect(evalNumeric(extractConst(guard, 'HARD_MIN_RECLAIM_MB'))).toBe(2048);
     expect(HARD_MIN_RECLAIM_MB).toBe(2048);
+  });
+
+  it('SAMPLE_ROTATE_KEEP：mjs 代际数（未导出，读源码文本抽取）= memory-guard.ts 导出值 = 4（源码改代数而脚本不改则静默少读代际）', () => {
+    const mjs = readFileSync(join(__dirname, '..', '..', 'scripts', 'memguard-review.mjs'), 'utf8');
+    expect(Number(extractConst(mjs, 'SAMPLE_ROTATE_KEEP'))).toBe(SAMPLE_ROTATE_KEEP);
+    expect(SAMPLE_ROTATE_KEEP).toBe(4);
   });
 });
 
