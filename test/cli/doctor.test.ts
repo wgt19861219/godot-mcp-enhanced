@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, symlinkSync, mkdtempSync } from 'fs';
+import type { PathLike, StatSyncOptions } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -102,6 +103,21 @@ vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
   return {
     ...actual,
     buildMemoryPanel: memguardDoctor.panel,
+  };
+});
+
+// fs 部分 mock(importOriginal 保真,同 memory-guard-sample 的 fs/promises 惯例):四期 Task 7
+// sampling 行「读取降级」用例需可控 statSync 失败——按路径注入(命中 statFailPath 才抛),
+// doctor 其余 fs 调用零影响;默认 null 全透传。
+const fsDoctor = vi.hoisted(() => ({ statFailPath: null as string | null }));
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    statSync: vi.fn((p: PathLike, o?: StatSyncOptions) => {
+      if (String(p) === fsDoctor.statFailPath) throw new Error('stat boom');
+      return actual.statSync(p, o);
+    }),
   };
 });
 
@@ -548,6 +564,183 @@ describe('doctor', () => {
       expect(guardLine).not.toContain('exempt');
     } finally {
       logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
+
+  // ─── 四期 Task 7:sampling 可见性行——有效采样态 = 守卫开 && GODOT_MCP_MEM_SAMPLE 开 ───
+  // 采样文件经 vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE') 逐用例重定向到 tmp 夹具(sampleFilePath
+  // 实时读 env,覆盖 test/setup.js 全局重定向值,不触真实 ~/.godot-mcp);memSampleEnabled 走真实
+  // env(上方部分 mock 只接管 buildMemoryPanel);守卫态取面板 guard(逐次显式指定,不依赖默认 mock)。
+
+  /** 指定守卫态的面板:sampling 行只消费 panel.guard,其余字段给健康态默认值(上方面板行照常打印)。 */
+  const panelWithGuard = (guard: boolean) => ({
+    guard,
+    watchdogExempt: [],
+    watermarkMB: 3072,
+    pressure: { state: 'normal', enteredAt: null },
+    machine: {
+      freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+      commitAvailBytes: 10 * 1024 ** 3, commitTotalBytes: 20 * 1024 ** 3,
+      godotProcCount: 0, sampledAt: 0,
+    },
+    budget: { pct: 67, budgetMB: 10922, usedMB: 0, leaseCount: 0 },
+    instances: [],
+  }) as never;
+
+  /** 逐用例 tmp 夹具目录(采样文件由用例按需落盘;调用方 finally rmSync)。 */
+  const makeSampleDir = (): string => mkdtempSync(join(tmpdir(), 'doctor-sample-'));
+
+  /** 跑一次 doctor 取 sampling 行(spy 均 finally 恢复;取不到为 '' 便于断言直读失败)。 */
+  const runDoctorSamplingLine = async (guard: boolean): Promise<string> => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      memguardDoctor.panel.mockReturnValueOnce(panelWithGuard(guard));
+      await runDoctor([]).catch(() => {});
+      return logSpy.mock.calls.map(c => c.join(' ')).find(l => l.includes('sampling')) ?? '';
+    } finally {
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  };
+
+  it('四期 Task 7:开+有文件 → on + 文件大小 + 最后事件年龄(取最后一条可解析行;未来 ts 钳 0s)', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    const ts = Date.now() - 5000;
+    // 首行 ts 更旧(65s 前):年龄须取最后一条可解析行,而非首行
+    const content = `${JSON.stringify({ ts: ts - 60_000, event: 'server_start' })}\n${JSON.stringify({ ts, event: 'rss_sample' })}\n`;
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      writeFileSync(file, content, 'utf-8');
+      const line = await runDoctorSamplingLine(true);
+      expect(line).toMatch(/^\s*✓ sampling: on, file \d+ B, last event [5-9]s ago$/);
+      expect(line).toContain(`file ${Buffer.byteLength(content)} B`);
+      // 最后事件 ts 晚于当前时钟(时钟回拨)→ 年龄钳 0
+      writeFileSync(file, `${JSON.stringify({ ts: Date.now() + 60_000, event: 'rss_sample' })}\n`, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event 0s ago$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:GODOT_MCP_MEM_SAMPLE=0 → off 点名 env,不附 file/age(文件存在也不读)', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '0');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      writeFileSync(file, `${JSON.stringify({ ts: Date.now() - 5000, event: 'rss_sample' })}\n`, 'utf-8');
+      // 全行匹配:off 态行尾即右括号,隐含不附 file/age
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*✓ sampling: off \(GODOT_MCP_MEM_SAMPLE disabled\)$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:守卫关 → off 点名 memory-guard(采样开关开/关均优先报守卫)', async () => {
+    const dir = makeSampleDir();
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', join(dir, 'events.jsonl'));
+    try {
+      vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+      expect(await runDoctorSamplingLine(false)).toMatch(/^\s*✓ sampling: off \(memory-guard disabled\)$/);
+      vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '0');
+      expect(await runDoctorSamplingLine(false)).toMatch(/^\s*✓ sampling: off \(memory-guard disabled\)$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:文件不存在 / 空文件 / 无可解析行 → on, no data yet(⊘ 空态中性行)', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      // 文件不存在(夹具目录已建,文件未落盘);⊘ 对齐「memory instances: none」空态先例,非 ✓
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
+      // 空文件
+      writeFileSync(file, '', 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
+      // 有内容但无可解析行:非 JSON / 无 ts / ts 非数值
+      writeFileSync(file, 'not json\n{"event":"rss_sample"}\n{"ts":"abc"}\n', 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:末尾半行(并发写入中)跳过,取最后一条以 \\n 终止的完整行', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    const ts = Date.now() - 5000;
+    const complete = `${JSON.stringify({ ts, event: 'rss_sample' })}\n`;
+    // 更旧的末行(65s 前):若被误当完整行采信,年龄会显示 ~65s 而非 ~5s
+    const stale = JSON.stringify({ ts: ts - 60_000, event: 'rss_sample' });
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      // 半行①:JSON 截断(解析失败)
+      writeFileSync(file, complete + stale.slice(0, 20), 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event [5-9]s ago$/);
+      // 半行②:JSON 合法但无 \n 终止——仍不算完整行
+      writeFileSync(file, complete + stale, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event [5-9]s ago$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:文件大于尾部窗口只读末尾(年龄取自尾部);size 三档 B/KB/MB', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    const lastLine = `${JSON.stringify({ ts: Date.now() - 5000, event: 'rss_sample' })}\n`;
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      // ~1.5MB 旧行填充(ts=0,远超 64KB 尾部窗口):读到尾部才得 ~5s 而非数十万秒
+      writeFileSync(file, `${JSON.stringify({ ts: 0, event: 'server_start', pad: 'x'.repeat(1_500_000) })}\n${lastLine}`, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/file 1\.4 MB, last event [5-9]s ago$/);
+      // KB 档(~5KB):一位小数 + KB 单位
+      writeFileSync(file, `${JSON.stringify({ ts: 0, event: 'server_start', pad: 'x'.repeat(4900) })}\n${lastLine}`, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/file \d\.\d KB, last event [5-9]s ago$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:采样文件读取出错 → ⊘ 降级行,doctor 不中断不 exit(恒不 fail)', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    fsDoctor.statFailPath = file;
+    try {
+      writeFileSync(file, `${JSON.stringify({ ts: Date.now() - 5000, event: 'rss_sample' })}\n`, 'utf-8');
+      memguardDoctor.panel.mockReturnValueOnce(panelWithGuard(true));
+      await runDoctor([]).catch(() => {});
+      const output = logSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('⊘ sampling check skipped (stat boom)');
+      // sampling 行自带防护:不触发外层面板降级文案,上方面板行照常输出
+      expect(output).not.toContain('memory panel skipped');
+      expect(output).toContain('memory budget: 67% = 10.7 GB, used 0.0 GB (0 leases)');
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(output).toContain('Next steps:');
+    } finally {
+      fsDoctor.statFailPath = null;
+      vi.unstubAllEnvs();
+      logSpy.mockRestore(); exitSpy.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

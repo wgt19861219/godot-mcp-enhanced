@@ -5,7 +5,7 @@
  * 先例 cli/qa.ts 之于 tools/qa/。CLI 每次新起进程,读到的模板/版本恒为磁盘最新
  * （免疫 MCP 旧进程毒化）。
  */
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'fs';
 import { createHash } from 'crypto';
 import { join, dirname, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
@@ -16,8 +16,9 @@ import { inspectRulesDistribution, type RulesDistInfo } from '../tools/project.j
 import { ALL_ADAPTERS } from './clients/index.js';
 import { readJsonForCheck } from './clients/json-config.js';
 // 内存治理(一期 Task 5 两行 → 二期 Task 5 面板行):doctor / godot_get_context 共享
-// buildMemoryPanel 单源(快照/租约/pressure/RSS 采样聚合,防两处漂移)
-import { buildMemoryPanel } from '../core/memory-guard.js';
+// buildMemoryPanel 单源(快照/租约/pressure/RSS 采样聚合,防两处漂移)。四期 Task 7:sampling
+// 行的开关/文件路径取 memSampleEnabled/sampleFilePath(与 memSample 写盘通道同源)
+import { buildMemoryPanel, memSampleEnabled, sampleFilePath } from '../core/memory-guard.js';
 
 function status(ok: boolean, msg: string): string {
   return ok ? `  ✓ ${msg}` : `  ✗ ${msg}`;
@@ -161,6 +162,82 @@ function fmtAgo(ts: number): string {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ago`;
   return `${Math.floor(m / 60)}h ago`;
+}
+
+// ─── Memory guard 段 sampling 可见性行(四期 Task 7,N6:用户遇「数据不足」可自证采样在跑) ───
+
+/** 采样文件尾部读取上限:采样文件 8MB/代轮转,doctor 只读末尾 64KB 取最后一条事件,
+ *  不整读(诊断命令不得重 IO;最新事件必在尾部)。 */
+const SAMPLE_TAIL_BYTES = 64 * 1024;
+
+/** 字节数 → 人类可读(B / KB / MB,KB 起 1 位小数);采样文件 8MB/代封顶,MB 档足够。 */
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
+/** 读文件末尾至多 SAMPLE_TAIL_BYTES 字节(UTF-8 文本)。循环读到窗口满或 EOF(readSync
+ *  不保证一次读满);fd 恒关闭。 */
+function readTailText(filePath: string, size: number): string {
+  const len = Math.min(size, SAMPLE_TAIL_BYTES);
+  const buf = Buffer.allocUnsafe(len);
+  const fd = openSync(filePath, 'r');
+  try {
+    let read = 0;
+    while (read < len) {
+      const n = readSync(fd, buf, read, len - read, size - len + read);
+      if (n <= 0) break;
+      read += n;
+    }
+    return buf.toString('utf8', 0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** 采样 JSONL 尾部文本 → 最后一条完整可解析行的 ts(epoch 毫秒);无则 null。
+ *  只认以 \n 终止的行:末尾无 \n 的片段是并发写入中的半行(JSON 合法与否均不算完整),
+ *  整体丢弃;其余行从后往前试解析,坏行(非 JSON / ts 非有限数值)跳过。 */
+function lastSampleTs(tail: string): number | null {
+  const terminated = tail.slice(0, tail.lastIndexOf('\n') + 1);
+  const lines = terminated.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    let row: unknown;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const ts = typeof row === 'object' && row !== null ? (row as { ts?: unknown }).ts : undefined;
+    if (typeof ts === 'number' && Number.isFinite(ts)) return ts;
+  }
+  return null;
+}
+
+/** sampling 行(四期 Task 7)——有效采样态 = 守卫开 && GODOT_MCP_MEM_SAMPLE 开(与 memSample
+ *  双开关短路同源:任一关则零写盘,如实显示 off 并点名原因,不读文件);开则报采样文件大小
+ *  + 最后一条事件年龄(整数秒,未来 ts 钳 0)。恒不 fail:读/解析出错降级为 ⊘ 一行,
+ *  不影响 exit code。前缀:有数据 ✓ / 空态与降级 ⊘(对齐「memory instances: none」)/
+ *  off ✓(对齐同行上方「memory-guard: disabled」)。 */
+function formatSamplingLine(guard: boolean): string {
+  if (!guard) return status(true, 'sampling: off (memory-guard disabled)');
+  if (!memSampleEnabled()) return status(true, 'sampling: off (GODOT_MCP_MEM_SAMPLE disabled)');
+  try {
+    const filePath = sampleFilePath();
+    if (!existsSync(filePath)) return na('sampling: on, no data yet');
+    const size = statSync(filePath).size;
+    const tail = readTailText(filePath, size);
+    // 窗口起点落在行中(文件大于窗口)→ 首个残片丢弃,免得被当成一行
+    const lastTs = lastSampleTs(size > SAMPLE_TAIL_BYTES ? tail.slice(tail.indexOf('\n') + 1) : tail);
+    if (lastTs === null) return na('sampling: on, no data yet');
+    const ageS = Math.max(0, Math.floor((Date.now() - lastTs) / 1000));
+    return status(true, `sampling: on, file ${fmtBytes(size)}, last event ${ageS}s ago`);
+  } catch (e) {
+    return na(`sampling check skipped (${e instanceof Error ? e.message : String(e)})`);
+  }
 }
 
 // ─── 反馈批次 C1 (2026-11-12): godot-paths.json 命中判定纯函数(可单测) ──────────
@@ -360,6 +437,7 @@ export async function runDoctor(_args: string[]): Promise<void> {
   // 非环境错误(对齐 Rules distribution 语义);guard=0 面板照常显示(只读观测不吃总开关)。
   // 面板聚合抛错(理论不抛,防御未来改动)→ ⊘ 跳过本段,doctor 后续段照常(对齐 Rules
   // distribution 的 try-catch 先例——诊断命令自身不得中断)。
+  // 四期 Task 7:段末补 sampling 行(采样开关/文件大小/最后事件年龄),自带防护。
   console.log('\nMemory guard:');
   try {
     const panel = buildMemoryPanel();
@@ -407,6 +485,9 @@ export async function runDoctor(_args: string[]): Promise<void> {
         console.log(`      ${slots}`);
       }
     }
+    // sampling 行放段末、自带 try-catch(formatSamplingLine 内):读/解析出错降级 ⊘ 一行,
+    // 不触发外层 catch 的「panel skipped」误导文案(上方面板行已输出,不受影响)。
+    console.log(formatSamplingLine(panel.guard));
   } catch (e) {
     console.log(na(`memory panel skipped (${e instanceof Error ? e.message : String(e)})`));
   }
