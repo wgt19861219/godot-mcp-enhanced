@@ -218,10 +218,12 @@ function lastSampleTs(tail: string): number | null {
 }
 
 /** sampling 行(四期 Task 7)——有效采样态 = 守卫开 && GODOT_MCP_MEM_SAMPLE 开(与 memSample
- *  双开关短路同源:任一关则零写盘,如实显示 off 并点名原因,不读文件);开则报采样文件大小
- *  + 最后一条事件年龄(整数秒,未来 ts 钳 0)。恒不 fail:读/解析出错降级为 ⊘ 一行,
- *  不影响 exit code。前缀:有数据 ✓ / 空态与降级 ⊘(对齐「memory instances: none」)/
- *  off ✓(对齐同行上方「memory-guard: disabled」)。 */
+ *  双开关短路同源:任一关则零写盘,如实显示 off 并点名原因,不读文件)。开时四态:文件不存在
+ *  → no data yet;文件存在即恒带大小——空文件 no data yet / 非空却无可解析完整行 no readable
+ *  event(异常态:文件损坏或路径指向别的文件,不得与「还没数据」同文案)/ 有数据附最后一条
+ *  事件年龄(fmtAgo,与相邻 entered/poked 行同风格)。恒不 fail:读/解析出错降级为 ⊘ 一行,
+ *  不影响 exit code。前缀:有数据与 off ✓(off 对齐上方「memory-guard: disabled」)/ 空态与
+ *  降级 ⊘(对齐「memory instances: none」)/ 读不出事件 !(对齐快照降级)。 */
 function formatSamplingLine(guard: boolean): string {
   if (!guard) return status(true, 'sampling: off (memory-guard disabled)');
   if (!memSampleEnabled()) return status(true, 'sampling: off (GODOT_MCP_MEM_SAMPLE disabled)');
@@ -229,12 +231,12 @@ function formatSamplingLine(guard: boolean): string {
     const filePath = sampleFilePath();
     if (!existsSync(filePath)) return na('sampling: on, no data yet');
     const size = statSync(filePath).size;
+    if (size === 0) return na(`sampling: on, file ${fmtBytes(size)}, no data yet`);
     const tail = readTailText(filePath, size);
     // 窗口起点落在行中(文件大于窗口)→ 首个残片丢弃,免得被当成一行
     const lastTs = lastSampleTs(size > SAMPLE_TAIL_BYTES ? tail.slice(tail.indexOf('\n') + 1) : tail);
-    if (lastTs === null) return na('sampling: on, no data yet');
-    const ageS = Math.max(0, Math.floor((Date.now() - lastTs) / 1000));
-    return status(true, `sampling: on, file ${fmtBytes(size)}, last event ${ageS}s ago`);
+    if (lastTs === null) return warn(`sampling: on, file ${fmtBytes(size)}, no readable event`);
+    return status(true, `sampling: on, file ${fmtBytes(size)}, last event ${fmtAgo(lastTs)}`);
   } catch (e) {
     return na(`sampling check skipped (${e instanceof Error ? e.message : String(e)})`);
   }

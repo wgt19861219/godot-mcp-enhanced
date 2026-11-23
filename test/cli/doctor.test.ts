@@ -655,21 +655,67 @@ describe('doctor', () => {
     }
   });
 
-  it('四期 Task 7:文件不存在 / 空文件 / 无可解析行 → on, no data yet(⊘ 空态中性行)', async () => {
+  it('四期 Task 7:文件不存在 → ⊘ no data yet(不附 file);空文件 → ⊘ file 0 B, no data yet', async () => {
     const dir = makeSampleDir();
     const file = join(dir, 'events.jsonl');
     vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
     vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
     try {
-      // 文件不存在(夹具目录已建,文件未落盘);⊘ 对齐「memory instances: none」空态先例,非 ✓
+      // 文件不存在(夹具目录已建,文件未落盘):「还没数据」;⊘ 对齐「memory instances: none」空态先例
       expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
-      // 空文件
+      // 空文件:文件存在即恒带 file size(控制器裁定 2)
       writeFileSync(file, '', 'utf-8');
-      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
-      // 有内容但无可解析行:非 JSON / 无 ts / ts 非数值
-      writeFileSync(file, 'not json\n{"event":"rss_sample"}\n{"ts":"abc"}\n', 'utf-8');
-      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, no data yet$/);
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*⊘ sampling: on, file 0 B, no data yet$/);
     } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:文件非空却无可解析完整行 → ! 异常态(文件损坏/路径指向别的文件),带 file size', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      // 有内容但无可解析行:非 JSON / 无 ts / ts 非数值
+      const garbage = 'not json\n{"event":"rss_sample"}\n{"ts":"abc"}\n';
+      writeFileSync(file, garbage, 'utf-8');
+      let line = await runDoctorSamplingLine(true);
+      expect(line).toMatch(/^\s*! sampling: on, file \d+ B, no readable event$/);
+      expect(line).toContain(`file ${Buffer.byteLength(garbage)} B`);
+      // 只有空行:同为「非空文件却读不出事件」
+      writeFileSync(file, '\n\n\n', 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/^\s*! sampling: on, file 3 B, no readable event$/);
+      // 唯一一行无 \n 终止(并发写入中的半行):不算完整行
+      writeFileSync(file, '{"ts":1700000000000,"event":"rss_sam', 'utf-8');
+      line = await runDoctorSamplingLine(true);
+      expect(line).toMatch(/^\s*! sampling: on, file \d+ B, no readable event$/);
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('四期 Task 7:年龄复用 fmtAgo(与相邻 entered/poked 行同风格:s/m/h 分档,未来 ts 钳 0)', async () => {
+    const dir = makeSampleDir();
+    const file = join(dir, 'events.jsonl');
+    const now = new Date('2026-11-23T12:00:00Z');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
+    vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
+    try {
+      // 90s 前 → 1m(不是纯秒数的「90s ago」)
+      writeFileSync(file, `${JSON.stringify({ ts: now.getTime() - 90_000, event: 'rss_sample' })}\n`, 'utf-8');
+      vi.setSystemTime(now);
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event 1m ago$/);
+      // 3h 前 → 3h
+      writeFileSync(file, `${JSON.stringify({ ts: now.getTime() - 3 * 60 * 60_000, event: 'rss_sample' })}\n`, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event 3h ago$/);
+      // 最后事件 ts 晚于当前时钟(时钟回拨)→ 钳 0
+      writeFileSync(file, `${JSON.stringify({ ts: now.getTime() + 60_000, event: 'rss_sample' })}\n`, 'utf-8');
+      expect(await runDoctorSamplingLine(true)).toMatch(/last event 0s ago$/);
+    } finally {
+      vi.useRealTimers();
       vi.unstubAllEnvs();
       rmSync(dir, { recursive: true, force: true });
     }
@@ -680,7 +726,7 @@ describe('doctor', () => {
     const file = join(dir, 'events.jsonl');
     const ts = Date.now() - 5000;
     const complete = `${JSON.stringify({ ts, event: 'rss_sample' })}\n`;
-    // 更旧的末行(65s 前):若被误当完整行采信,年龄会显示 ~65s 而非 ~5s
+    // 更旧的末行(65s 前):若被误当完整行采信,年龄会显示 1m ago 而非 5s ago
     const stale = JSON.stringify({ ts: ts - 60_000, event: 'rss_sample' });
     vi.stubEnv('GODOT_MCP_MEM_SAMPLE', '1');
     vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', file);
