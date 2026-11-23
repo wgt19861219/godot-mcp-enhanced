@@ -34,6 +34,7 @@ import {
   listActiveLeases,
   memSample,
   memoryGuardEnabled,
+  notePollRss,
   releaseLease,
   sampleRssBytes,
   updatePressureState,
@@ -56,6 +57,15 @@ const DEGRADE_THRESHOLD = 3;
 /** 降级退避窗口(30s):期间轮询 tick 跳过,降低无效采样开销。 */
 const DEGRADE_BACKOFF_MS = 30_000;
 
+/** rss_sample 常规采样间隔(60s,四期 Task 4):时间驱动节流(非 N 次轮计数)——
+ *  GODOT_MCP_MEM_POLL_SECONDS 改动不漂(clamp 5-3600 全区间成立,设计 N3)。 */
+const RSS_SAMPLE_INTERVAL_MS = 60_000;
+/** 长活租约降频间隔(300s):存活 >1h 后边际信息量小,省体积(editor/game_window 常驻)。 */
+const RSS_SAMPLE_LONG_LIVED_MS = 300_000;
+/** 长活判定线(1h):租约存活(now-startedAt)越过该值起采样间隔放宽到 300s——
+ *  锚是 MemLease.startedAt 既有字段(bind≈acquire 后毫秒级,无需独立 bind 时刻表)。 */
+const RSS_SAMPLE_LONG_LIVED_AFTER_MS = 3_600_000;
+
 const MB = 1024 * 1024;
 
 interface KillAttribution { readingBytes: number; declaredMB: number; kind: SpawnKind; at: number; }
@@ -64,6 +74,12 @@ let _timer: ReturnType<typeof setInterval> | null = null;
 let _consecutiveDegrades = 0;
 let _backoffUntil = 0;
 const _attributions = new Map<number, KillAttribution>();
+/** 首采标志(leaseId 集,四期 Task 4):bind 后首个拿到读数的 pollOnce 必落一行
+ *  rss_sample(不受 60s 节流)——几秒结束的短命作业至少留一行样本(治「短命
+ *  headless 0 样本」)。无读数轮不消耗标志(落不了行——rssBytes 缺值)。 */
+const _sampledOnce = new Set<string>();
+/** 每租约上次采样时刻(leaseId → ts):时间驱动节流的计时锚(非轮次计数)。 */
+const _lastSampleAt = new Map<string, number>();
 
 /** 字节数 → 「X.Y GB」展示(与 memory-guard 拒绝报文同格式)。 */
 function fmtGB(bytes: number): string {
@@ -128,7 +144,12 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
     memSample('watchdog_recovered', {}); // 四期 Task 3:此前已降级(≥3),恢复首轮拿到读数——通道恢复
   }
   _consecutiveDegrades = 0; // 拿到读数(哪怕部分)即视为通道健康,降级计数清零
+  // 四期 Task 4:pid 读数表覆盖写(final sample 查表源,releaseLease 消费——表本体在
+  // memory-guard 侧防反向 import 成环)。先写再进杀检查:kill 路径的 releaseLease
+  // final sample 要拿到本轮读数(含本轮将被杀的租约)。
+  for (const [pid, rss] of Object.entries(rssMap)) notePollRss(Number(pid), rss);
   let killed = 0;
+  const releasedIds = new Set<string>(); // 本轮已释放租约(真杀/探活死清账):不再进策略采样
   for (const lease of leases) {
     const pid = lease.pid as number;
     const rss = rssMap[pid];
@@ -136,11 +157,49 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
     const factor = KILL_FACTOR[lease.kind] ?? 2;
     if (rss <= lease.declaredMB * MB * factor) continue;
     if (killOverBudget(lease, rss)) killed++;
+    releasedIds.add(lease.id); // killOverBudget 两出口(真杀/探活死)都已释放租约
   }
   // 二期 Task 3:整机硬阈值驱逐——单进程杀后仍处 hard 态(状态机由上方喂快照推进)
   // 进驱逐循环:杀到脱离硬阈值+minimum-reclaim 2GB 即停(不全杀)。
-  if (getPressureState() === 'hard') killed += evictForHardThreshold();
+  if (getPressureState() === 'hard') killed += evictForHardThreshold(releasedIds);
+  // 四期 Task 4:rss_sample 策略采样——仍存活租约按策略落行(本轮已释放者的 RSS
+  // 证据由 budget_kill/evict 行携带,不重复采)。
+  sampleRssRows(leases, rssMap, releasedIds);
   return { checked: leases.length, killed };
+}
+
+/** rss_sample 策略采样(四期 Task 4,设计 §「RSS 采样策略」):
+ *  ① 首采必落——bind 后首个拿到读数的 pollOnce 不受节流(短命作业至少留一行;
+ *     无读数轮不消耗标志,rssBytes 缺值无法落行);
+ *  ② 时间驱动——距上次采样 ≥60s(非轮次计数,GODOT_MCP_MEM_POLL_SECONDS 改动不漂);
+ *  ③ 长活降频——存活 >1h(锚 MemLease.startedAt)间隔放宽到 300s;
+ *  ④ 压力态恢复 60s 档——pressure/hard 下长活降频收回(保持观测密度;不加密到
+ *     每轮:300s 轮询下「每轮」=半小时一行没意义,恒 60s 档即「不低于 60s 不松于 60s」);
+ *  本轮已释放租约(releasedIds)不采(budget_kill/evict 行已带 RSS 峰值证据);
+ *  行不带 machine 键(省体积 M11,buildSampleLine 按 event 省略),pressure 键保留。
+ *  尾部顺手清已释放租约的簿记(租约 id 不复用,残留即死条目,防长期运行缓慢积累)。 */
+function sampleRssRows(leases: MemLease[], rssMap: Record<number, number>, releasedIds: Set<string>): void {
+  const now = Date.now();
+  for (const lease of leases) {
+    if (releasedIds.has(lease.id)) continue;
+    const rss = rssMap[lease.pid as number];
+    if (rss === undefined) continue; // 无读数不采(首采标志不消耗,顺延到首个有读数轮)
+    if (_sampledOnce.has(lease.id)) {
+      let interval = RSS_SAMPLE_INTERVAL_MS;
+      if (now - lease.startedAt >= RSS_SAMPLE_LONG_LIVED_AFTER_MS) interval = RSS_SAMPLE_LONG_LIVED_MS;
+      if (getPressureState() !== 'normal') interval = RSS_SAMPLE_INTERVAL_MS; // 压力态:降频收回 60s 档
+      if (now - (_lastSampleAt.get(lease.id) ?? 0) < interval) continue;
+    }
+    _sampledOnce.add(lease.id);
+    _lastSampleAt.set(lease.id, now);
+    memSample('rss_sample', {
+      kind: lease.kind, project: lease.projectPath, leaseId: lease.id,
+      pid: lease.pid, declaredMB: lease.declaredMB, rssBytes: rss,
+    });
+  }
+  const liveIds = new Set(leases.map((l) => l.id));
+  for (const id of _sampledOnce) if (!liveIds.has(id)) _sampledOnce.delete(id);
+  for (const id of _lastSampleAt.keys()) if (!liveIds.has(id)) _lastSampleAt.delete(id);
 }
 
 /** 整机硬阈值驱逐循环(二期 Task 3;三期 Task 1 候选增 env 豁免过滤;watchdog 只消费
@@ -155,7 +214,7 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
  *  force 采样可能早于 OS 回收读到旧值(最坏杀光全部候选(attempted 集合保证有界
  *  终止,非最小杀伤);taskkill /F 后 Windows 工作集随进程终止即释放,实际风险低);
  *  候选集随每杀单调缩小(杀即 releaseLease 清账本),必终止。 */
-function evictForHardThreshold(): number {
+function evictForHardThreshold(releasedIds: Set<string>): number {
   let killed = 0;
   const attempted = new Set<string>();
   for (;;) {
@@ -174,10 +233,12 @@ function evictForHardThreshold(): number {
       } else {
         console.error(msg);
       }
+      memSample('evict_exhausted', { envExempted }); // 四期 Task 4:候选耗尽仍 hard 的诚实证据行
       break;
     }
     attempted.add(victim.lease.id);
     if (killForEviction(victim.lease, victim.ratio)) killed++;
+    releasedIds.add(victim.lease.id); // 驱逐两出口(真杀/探活死)都已释放租约,不进策略采样
   }
   return killed;
 }
@@ -192,8 +253,12 @@ function killForEviction(lease: MemLease, ratio: number): boolean {
     return false;
   }
   killPidTree(pid);
-  releaseLease(lease.id);
   const readingBytes = Math.round(ratio * lease.declaredMB * MB);
+  memSample('evict', { // 四期 Task 4:驱逐杀采样行(rssBytes=推算读数,与候选 ratio 同源)
+    kind: lease.kind, project: lease.projectPath, leaseId: lease.id, pid,
+    declaredMB: lease.declaredMB, rssBytes: readingBytes, ratio, reason: 'hard',
+  });
+  releaseLease(lease.id);
   _attributions.set(pid, { readingBytes, declaredMB: lease.declaredMB, kind: lease.kind, at: Date.now() });
   console.error(
     `MEMGUARD evict kill ${pid} kind=${lease.kind} ratio=${ratio.toFixed(2)}(实测÷声明) declared=${lease.declaredMB}MB`,
@@ -216,6 +281,10 @@ function killOverBudget(lease: MemLease, readingBytes: number): boolean {
   const factor = KILL_FACTOR[lease.kind] ?? 2;
   const budgetBytes = lease.declaredMB * MB * factor;
   killPidTree(pid);
+  memSample('budget_kill', { // 四期 Task 4:超预算杀采样行(杀时读数=超线峰值证据,喂 per-process max)
+    kind: lease.kind, project: lease.projectPath, leaseId: lease.id, pid,
+    declaredMB: lease.declaredMB, rssBytes: readingBytes, budgetBytes, killFactor: factor,
+  });
   releaseLease(lease.id);
   _attributions.set(pid, { readingBytes, declaredMB: lease.declaredMB, kind: lease.kind, at: Date.now() });
   console.error(`MEMGUARD kill ${pid} kind=${lease.kind} rss=${fmtGB(readingBytes)} budget=${fmtGB(budgetBytes)}`);
@@ -262,10 +331,12 @@ export function stopWatchdog(): void {
   }
 }
 
-/** 重置模块可变状态(timer/降级计数/归因记录),测试隔离用。 */
+/** 重置模块可变状态(timer/降级计数/归因记录/rss_sample 采样簿记),测试隔离用。 */
 export function _resetWatchdogForTest(): void {
   stopWatchdog();
   _consecutiveDegrades = 0;
   _backoffUntil = 0;
   _attributions.clear();
+  _sampledOnce.clear();
+  _lastSampleAt.clear();
 }

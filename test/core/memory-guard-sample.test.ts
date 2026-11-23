@@ -41,6 +41,7 @@ import {
   acquireLease,
   bindLeasePid,
   declaredMBFor,
+  releaseLease,
   updatePressureState,
   sampleRssBytes,
   _setLeasesFilePathForTest,
@@ -701,13 +702,13 @@ describe('⑨ Task 3:watchdog_degraded/recovered 接线(noteDegrade/恢复点)',
     expect(readLines()).toHaveLength(2);
   });
 
-  it('② 降级后首轮拿到读数 → watchdog_recovered;再失败重新累计,未满 3 轮不落 degraded', async () => {
+  it('② 降级后首轮拿到读数 → watchdog_recovered + rss_sample 首采行(Task 4:成功轮必采);再失败重新累计,未满 3 轮不落 degraded', async () => {
     await pollOnce();
     await pollOnce();
     await pollOnce(); // 降级(row 1)
     vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * 1024 * 1024 }); // 恢复轮:读数正常
     await pollOnce();
-    await waitForLineCount(3); // + watchdog_recovered
+    await waitForLineCount(4); // + watchdog_recovered + rss_sample(四期 Task 4:首个拿到读数的轮次必采)
     const r = row(readLines(), 2);
     expect(r['event']).toBe('watchdog_recovered');
     expect('consecutiveRounds' in r).toBe(false); // recovered 无专有字段(接口 {})
@@ -716,16 +717,238 @@ describe('⑨ Task 3:watchdog_degraded/recovered 接线(noteDegrade/恢复点)',
     await pollOnce();
     await pollOnce(); // 恢复后重新累计 1+2=2 轮,未达 3 → 不落 degraded
     await settle();
-    expect(readLines()).toHaveLength(3);
+    expect(readLines()).toHaveLength(4);
   });
 
-  it('③ 未达阈值的失败(2 轮)+ 成功轮:零降级事件也零恢复事件(此前 <3,恢复语义不成立)', async () => {
+  it('③ 未达阈值的失败(2 轮)+ 成功轮:零降级事件也零恢复事件(此前 <3,恢复语义不成立;成功轮仅 Task 4 首采行)', async () => {
     await pollOnce();
     await pollOnce();
     vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * 1024 * 1024 });
     await pollOnce(); // 2 轮失败后成功:计数清零,无 degraded 也无 recovered
-    await settle();
-    // 零事件 → memSample 一次未被调(server_start 也惰性未触发)→ 文件不创建
-    expect(fs.existsSync(samplePath)).toBe(false);
+    await waitForLineCount(2); // server_start + rss_sample 首采(Task 4 前成功轮零事件,Task 4 起必采)
+    const events = readLines().map((x) => x['event']);
+    expect(events).not.toContain('watchdog_degraded');
+    expect(events).not.toContain('watchdog_recovered');
+  });
+});
+
+// ===========================================================================
+// 四期 Task 4:rss_sample 五策略采样 + kill 三事件采样行 + final sample——
+// 接线在 src 侧(pollOnce 采样循环/killOverBudget/killForEviction/耗尽分支/
+// releaseLease),此处经公开 API 真实触发并断言采样行形态(字段名即 Task 6
+// 分析端契约)。夹具:fake timers + setSystemTime 控时(60s/300s/1h 算术直观,
+// 时间驱动节流的 now 锚);租约夹具直写盘(startedAt 可控——长活 >1h 判定锚,
+// 直接用 MemLease.startedAt 既有字段);sampleRssBytes mock 读数;pollOnce 首行
+// 喂状态机的机器快照走 mockMachinePs 恒健康(不进 hard 免驱逐污染采样账本)。
+// ===========================================================================
+
+describe('⑩ Task 4:rss_sample 采样策略 + kill 采样行 + final sample', () => {
+  const MB = 1024 * 1024;
+
+  /** 租约夹具模板(⑨ 内联形态抽 helper:serverPid 本进程/startedAt 可覆盖)。 */
+  function lease(o: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: 'R1', serverPid: process.pid, kind: 'headless', declaredMB: 1024,
+      projectPath: 'D:/proj', pid: 4242, startedAt: 0, lastHeartbeat: 0,
+      ...o,
+    };
+  }
+
+  /** 写租约盘面(绕过被测模块,直构造)。 */
+  function writeLeases(leases: Array<Record<string, unknown>>): void {
+    fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+    fs.writeFileSync(path.join(path.dirname(samplePath), 'memory-leases.json'),
+      JSON.stringify({ version: 1, leases }));
+  }
+
+  /** rss_sample 行清单(策略/首采/final 全走本事件;kill 事件另行过滤)。 */
+  function rssRows(): Array<Record<string, unknown>> {
+    return readLines().filter((r) => r['event'] === 'rss_sample');
+  }
+
+  /** 等 fire-and-forget 落盘至 rss_sample 行数达 n(先回真实时钟再等,同 ⑧ 惯例——
+   *  调用后 fake timers 已关,时间推进须在此之前完成)。 */
+  async function waitForRss(n: number): Promise<void> {
+    vi.useRealTimers();
+    await vi.waitFor(() => expect(rssRows()).toHaveLength(n));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0); // 时间原点归零:60s/300s 节流算术直观,行 ts 可直接断言
+    _setLeasesFilePathForTest(path.join(tmpDir, 'memory-leases.json'));
+    _resetWatchdogForTest();
+    // 机器快照恒健康(空闲 64GB):pollOnce 首行喂状态机零切换,不进 hard 免驱逐污染
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    _setLeasesFilePathForTest(null);
+  });
+
+  it('① 首个 pollOnce 必落一行(首采不受 60s 节流);+10s 不落;+61s 落(时间驱动,非轮次计数);行无 machine 键(M11)', async () => {
+    writeLeases([lease()]);
+    mockKillProbe(new Set([4242]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB });
+
+    await pollOnce();               // t=0:首采必落
+    vi.advanceTimersByTime(10_000);
+    await pollOnce();               // t=10s:未满 60s 不落
+    vi.advanceTimersByTime(51_000);
+    await pollOnce();               // t=61s:满 60s 落
+    await waitForRss(2);            // 若 10s 轮误落会是 3 行
+    const rows = rssRows();
+    const r = row(rows, 0);
+    expect(r['kind']).toBe('headless');
+    expect(r['project']).toBe('D:/proj');
+    expect(r['leaseId']).toBe('R1');
+    expect(r['pid']).toBe(4242);
+    expect(r['declaredMB']).toBe(1024);
+    expect(r['rssBytes']).toBe(512 * MB);
+    expect('machine' in r).toBe(false); // 省体积(M11):rss_sample 行不带 machine 键
+    expect(r['pressure']).toBe('normal'); // pressure 键保留(公共壳默认)
+    expect(row(rows, 1)['ts']).toBe(61_000); // 第二行是 t=61s 轮(t=10s 轮零行)
+  });
+
+  it('② 长活(>1h)降频 300s 档:+61s 不落、+301s 落(startedAt 为锚)', async () => {
+    vi.setSystemTime(3_600_001);    // t=1h+1ms:租约(t=0 建)存活已越 1h 线
+    writeLeases([lease({ startedAt: 0 })]);
+    mockKillProbe(new Set([4242]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB });
+
+    await pollOnce();               // 首采必落(长活不豁免首采)
+    vi.advanceTimersByTime(61_000);
+    await pollOnce();               // 61s < 300s 不落
+    vi.advanceTimersByTime(240_000);
+    await pollOnce();               // 累计 301s ≥ 300s 落
+    await waitForRss(2);            // 若未降频(恒 60s 档)61s 轮即落 → 3 行
+  });
+
+  it('③ 压力态恢复 60s 档:长活租约 + pressure → +61s 落(长活降频收回,保持观测密度)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // pressure enter stderr 行
+    vi.setSystemTime(3_600_001);
+    writeLeases([lease({ startedAt: 0 })]);
+    mockKillProbe(new Set([4242]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB });
+    // 进 pressure:持续跌破软阈值(默认 3072MB)满 30s(照 ⑧ driveSoftEnter 形态;
+    // 随后 pollOnce 喂的健康快照只起算 5min 恢复去抖,窗内不回 normal)
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024));
+    for (let t = 10_000; t <= 30_000; t += 10_000) {
+      vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024));
+    }
+    await pollOnce();               // 首采必落(pressure 下同样)
+    vi.advanceTimersByTime(61_000);
+    await pollOnce();               // pressure:60s 档 → 61s 落(若维持 300s 档不落 → 1 行)
+    await waitForRss(2);
+    errSpy.mockRestore();
+  });
+
+  it('④ 超杀线 → budget_kill 行(rssBytes=读数/budgetBytes=declared×factor/killFactor)+ final sample 行(releaseLease 查表,同读数并入 leaseId max)', async () => {
+    writeLeases([lease({ pid: 4242 })]); // headless 杀线 1024MB×2=2048MB
+    mockKillProbe(new Set([4242]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 5 * 1024 ** 3 }); // 5GB > 2GB
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 1, killed: 1 });
+    await waitForRss(1);            // kill 路径 final sample(releaseLease 查表命中)
+    const rows = readLines();
+    const bk = rows.find((x) => x['event'] === 'budget_kill');
+    if (bk === undefined) throw new Error('budget_kill row missing');
+    expect(bk['kind']).toBe('headless');
+    expect(bk['project']).toBe('D:/proj');
+    expect(bk['leaseId']).toBe('R1');
+    expect(bk['pid']).toBe(4242);
+    expect(bk['declaredMB']).toBe(1024);
+    expect(bk['rssBytes']).toBe(5 * 1024 ** 3);        // 杀时读数=超线峰值证据
+    expect(bk['budgetBytes']).toBe(1024 * MB * 2);     // declared×MB×factor
+    expect(bk['killFactor']).toBe(2);
+    expect(bk['machine']).not.toBeNull();              // 非 rss_sample 事件:machine 默认(缓存暖)
+    // 被杀租约不进策略采样循环(证据由 budget_kill 行携带):rss_sample 仅 final 一行
+    const final = rssRows();
+    expect(final).toHaveLength(1);
+    expect(row(final, 0)['leaseId']).toBe('R1');
+    expect(row(final, 0)['rssBytes']).toBe(5 * 1024 ** 3);
+  });
+
+  it.skipIf(process.platform !== 'win32')('⑤⑥ hard 驱逐 → evict 行(ratio/reason=hard/rssBytes=推算读数,无 killFactor 字段)+ 候选耗尽 → evict_exhausted 行(envExempted 计数)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // hard enter/耗尽 stderr 行
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor'); // editor 租约剔出候选(envExempted 计数归因)
+    writeLeases([
+      lease({ id: 'N', kind: 'headless', declaredMB: 2048, pid: 4242 }),
+      lease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 4243 }),
+    ]);
+    mockKillProbe(new Set([4242, 4243]));
+    // 单进程杀走 mock sampleRssBytes(均低于各自杀线 4096MB/12GB,零杀);机器快照恒低压
+    // (空闲 1000MB<1536MB → pollOnce 首行 0s 宽限进 hard;驱逐循环 force 重采样同走
+    // psRunner 恒低压 → 杀 N 后仍 hard → 候选耗尽);候选 ratio 走 psRunner Win32_Process
+    // 通道(N 3072MB/2048MB=1.5 先杀;E 被豁免剔出)。非 Windows 无该通道,skipIf 同款。
+    const rss = { 4242: 3072 * MB, 4243: 6 * 1024 ** 3 };
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    _setPsRunnerForTest((script) => {
+      if (script.includes('Win32_OperatingSystem')) {
+        return JSON.stringify({
+          FreePhysicalMemory: 1000 * 1024, FreeVirtualMemory: 64 * 1024 * 1024,
+          TotalVirtualMemorySize: 128 * 1024 * 1024,
+        });
+      }
+      if (script.includes('Win32_Process')) {
+        return JSON.stringify(Object.entries(rss).map(([pid, b]) => ({ ProcessId: Number(pid), WorkingSetSize: b })));
+      }
+      return '0';
+    });
+
+    const r = await pollOnce();
+    expect(r).toEqual({ checked: 2, killed: 1 }); // 驱逐杀 N(ratio 最高非豁免)
+    // 存活豁免租约 E 照走策略采样(首采必落);被杀 N 仅 final 一行(releaseLease 查表)
+    await waitForRss(2);
+    const rows = readLines();
+    const ev = rows.find((x) => x['event'] === 'evict');
+    if (ev === undefined) throw new Error('evict row missing');
+    expect(ev['kind']).toBe('headless');
+    expect(ev['leaseId']).toBe('N');
+    expect(ev['pid']).toBe(4242);
+    expect(ev['declaredMB']).toBe(2048);
+    expect(ev['ratio']).toBeCloseTo(1.5, 5);
+    expect(ev['reason']).toBe('hard');
+    expect(ev['rssBytes']).toBe(Math.round(1.5 * 2048 * MB)); // 推算= ratio×声明(与候选采样同源)
+    expect('killFactor' in ev).toBe(false);                   // spec I5:evict 无 killFactor 字段
+    const ex = rows.find((x) => x['event'] === 'evict_exhausted');
+    if (ex === undefined) throw new Error('evict_exhausted row missing');
+    expect(ex['envExempted']).toEqual({ preview: 0, editor: 1 }); // editor 1 笔被豁免剔出
+    const rssRowsAfter = rssRows();
+    expect(rssRowsAfter.filter((x) => x['leaseId'] === 'E')).toHaveLength(1);
+    expect(rssRowsAfter.filter((x) => x['leaseId'] === 'N')).toHaveLength(1);
+    errSpy.mockRestore();
+  });
+
+  it('⑦ releaseLease final sample:表有 pid 读数 → 落一行 final rss_sample;无读数租约 → 不落', async () => {
+    writeLeases([lease({ id: 'R1', pid: 4242 }), lease({ id: 'R2', pid: 5555 })]);
+    mockKillProbe(new Set([4242, 5555]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB }); // 5555 无读数
+
+    await pollOnce();               // R1 首采落行;R2 无读数不采
+    releaseLease('R1');             // 表有 4242 读数 → final 落行
+    releaseLease('R2');             // 表无 5555 读数 → 不落
+    await waitForRss(2);            // R1 首采 + R1 final;R2 零行
+    const rows = rssRows();
+    expect(rows.filter((x) => x['leaseId'] === 'R2')).toHaveLength(0);
+    expect(row(rows, 1)['leaseId']).toBe('R1'); // final 行(零 PowerShell:查表即得)
+    expect(row(rows, 1)['rssBytes']).toBe(512 * MB);
+  });
+
+  it('⑧ 部分读数轮:有读数者落/无读数者不落且首采顺延——读数恢复轮(+30s,未满 60s)必落(标志未被空轮消耗)', async () => {
+    writeLeases([lease({ id: 'A1', pid: 4242 }), lease({ id: 'B1', pid: 5555 })]);
+    mockKillProbe(new Set([4242, 5555]));
+    vi.mocked(sampleRssBytes).mockResolvedValueOnce({ 4242: 512 * MB }); // B1 无读数(刚退出)
+    await pollOnce();               // A1 首采落;B1 无读数不落且不记首采
+    vi.advanceTimersByTime(30_000);
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * MB, 5555: 256 * MB });
+    await pollOnce();               // B1 读数恢复:首采必落(30s<60s 也落);A1 未满 60s 不落
+    await waitForRss(2);
+    const rows = rssRows();
+    expect(row(rows, 1)['leaseId']).toBe('B1'); // 若空轮误耗首采标志,B1 需等 60s → 只 1 行
+    expect(row(rows, 1)['rssBytes']).toBe(256 * MB);
   });
 });

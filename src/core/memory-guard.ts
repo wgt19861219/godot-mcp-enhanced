@@ -806,10 +806,25 @@ export function projectPathFromArgs(args: readonly string[]): string {
   return typeof v === 'string' && v.length > 0 ? v : '(no-path)';
 }
 
-/** 释放租约(幂等:租约不存在/已被清理时静默)。dummy lease 无盘面实体 → no-op,可重复调(I-1)。 */
+/** 释放租约(幂等:租约不存在/已被清理时静默)。dummy lease 无盘面实体 → no-op,可重复调(I-1)。
+ *  四期 Task 4:释放前若 watchdog 轮询读数表(_lastRssByPid)有本租约 pid 的最近读数,
+ *  补一行 final rss_sample(零 PowerShell 成本——查表即得;短命进程的末值,分析端按
+ *  leaseId 并入 max)。自然退出/杀后清账/探活死清账三路径统一在此落,kill 路径与
+ *  budget_kill/evict 行同读数并存——聚合口径取 max,冗余无害。 */
 export function releaseLease(leaseId: string): void {
   if (leaseId === DUMMY_LEASE_ID) return;
   const leases = listActiveLeases();
+  const target = leases.find((l) => l.id === leaseId);
+  if (target !== undefined && typeof target.pid === 'number') {
+    const rss = _lastRssByPid.get(target.pid);
+    if (rss !== undefined) {
+      _lastRssByPid.delete(target.pid); // 读数一次性:释放后 pid 与租约脱钩,防 OS 复用误关联
+      memSample('rss_sample', {
+        kind: target.kind, project: target.projectPath, leaseId,
+        pid: target.pid, declaredMB: target.declaredMB, rssBytes: rss,
+      });
+    }
+  }
   const kept = leases.filter((l) => l.id !== leaseId);
   if (kept.length !== leases.length) writeLeases(kept);
 }
@@ -1040,6 +1055,20 @@ let _sampleAppendCount = 0;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let _lastSizeCheckAt = 0;
 
+/** watchdog 轮询读数表(pid → 最近一轮 RSS 字节,四期 Task 4):releaseLease final
+ *  sample 的查表源(短命进程的末值,零 PowerShell 成本)。表本体在本模块而非
+ *  mem-watchdog:releaseLease 在此消费,反向 import watchdog 会成环(watchdog 已
+ *  import 本模块)。写者唯一——notePollRss(pollOnce 每轮对有读数 pid 覆盖写,无
+ *  setter 注入);reader 内聚在 releaseLease,读后即删(租约已释放,pid 与租约
+ *  脱钩,防 OS 复用误关联)。运行时不做全表清理:仅本 server 起过的进程 pid 会进
+ *  表,量级有界,测试隔离走 _resetForTest。 */
+const _lastRssByPid = new Map<number, number>();
+
+/** 记录/覆盖一轮轮询的 pid → RSS 读数(mem-watchdog pollOnce 每轮调用;final sample 查表源)。 */
+export function notePollRss(pid: number, bytes: number): void {
+  _lastRssByPid.set(pid, bytes);
+}
+
 /** 采样开关:GODOT_MCP_MEM_SAMPLE 非 '0'/'false' 即开(未设=开)——实时读不缓存,
  *  对齐 WATCHDOG_EXEMPT 读法(轮询低频,env 改动即时生效)。 */
 export function memSampleEnabled(): boolean {
@@ -1102,23 +1131,28 @@ function buildServerStartFields(): Record<string, unknown> {
  *  等由调用方传入即进壳)+ machine + pressure(after-state)。snap 语义:null 显式
  *  machine:null;undefined 只读快照缓存(_snapshotCache,不触发新采样——同步 2×5s
  *  PowerShell 会打脸「延迟零感知」,设计非功能约束),缓存冷落 null。
- *  例外(四期 Task 3):pressure_change 事件壳省略 pressure 键——from/to 即切换前后
- *  态,第三个「切换后态」键与 to 同值有歧义(分析端接口裁定,Task 6 契约)。 */
+ *  例外1(四期 Task 3):pressure_change 事件壳省略 pressure 键——from/to 即切换前后
+ *  态,第三个「切换后态」键与 to 同值有歧义(分析端接口裁定,Task 6 契约)。
+ *  例外2(四期 Task 4):rss_sample 事件壳省略 machine 键——高频行且读数与机器快照
+ *  无逐行关联(10s 缓存同一快照),省 20-30% 体积(设计 M11);pressure 键保留。 */
 function buildSampleLine(
   event: string,
   fields: Record<string, unknown>,
   snap?: MachineMemorySnapshot | null,
 ): string {
+  const withMachine = event !== 'rss_sample';
   let machine: Record<string, unknown> | null = null;
-  if (snap !== undefined && snap !== null) machine = serializeMachine(snap);
-  else if (snap === undefined && _snapshotCache !== null) machine = serializeMachine(_snapshotCache.snap);
+  if (withMachine) {
+    if (snap !== undefined && snap !== null) machine = serializeMachine(snap);
+    else if (snap === undefined && _snapshotCache !== null) machine = serializeMachine(_snapshotCache.snap);
+  }
   const line: Record<string, unknown> = {
     ts: Date.now(),
     v: SAMPLE_SCHEMA_V,
     event,
     serverPid: process.pid,
     ...fields,
-    machine,
+    ...(withMachine ? { machine } : {}),
     ...(event === 'pressure_change' ? {} : { pressure: getPressureState() }),
   };
   return `${JSON.stringify(line)}\n`;
@@ -1177,4 +1211,5 @@ export function _resetForTest(): void {
   _serverStartLogged = false;
   _sampleAppendCount = 0;
   _lastSizeCheckAt = 0;
+  _lastRssByPid.clear();
 }
