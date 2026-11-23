@@ -16,8 +16,10 @@
 
 import { spawnSync } from 'child_process';
 import { readFileSync, readdirSync } from 'fs';
+import { appendFile, mkdir } from 'fs/promises';
+import { createRequire } from 'module';
 import { freemem, homedir, totalmem } from 'os';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { getLogger } from './logger.js';
 import { ensureDir, writeFileAtomic } from './fs-atomic.js';
 import { getSession } from './process-state.js';
@@ -961,8 +963,170 @@ export function _setLeasesFilePathForTest(p: string | null): void {
   _leasesFilePathOverride = p;
 }
 
+// ---------------------------------------------------------------------------
+// 事件采样落盘(四期 Task 1)——memSample 单点:公共壳自动拼装 + server_start 惰性首发
+// + 双开关短路 + fail-open appendFile(0600)。事件 schema/采样策略/轮转见
+// docs/superpowers/specs/2026-11-23-memory-guard-p4-design.md「事件 schema」节;
+// 各事件点接线(Task 2-4)与轮转(Task 5)后续任务落在本区之上。
+// ---------------------------------------------------------------------------
+
+/** 采样 schema 版本(公共壳 v 字段;升版=不兼容变更,分析端 memguard-review 按 v 过滤)。 */
+const SAMPLE_SCHEMA_V = 1;
+
+/** server_start 的 pkgVersion:createRequire idiom 同 web-gui/server.ts PKG_VERSION——
+ *  本模块在 src/core/,包根 package.json 上两级;vitest 从 src 跑与 node 从 build 跑的
+ *  相对深度一致,同一路径双场景成立。 */
+const PKG_VERSION: string = (createRequire(import.meta.url)('../../package.json') as { version?: string }).version ?? 'unknown';
+
+/** server_start 的 killFactor 快照:与 mem-watchdog.ts KILL_FACTOR 逐值一致——**不可
+ *  import**(mem-watchdog 已 import 本模块,反向 import 成环),故硬编码复制;Task 6 的
+ *  机械比对测试(读源码抽常量断言相等)防漂移,勿单侧改值。 */
+const SAMPLE_KILL_FACTOR: Record<SpawnKind, number> = {
+  headless: 2, gut_shard: 2, game_window: 3, editor: 3,
+};
+
+/** server_start 的 pollSeconds 快照:与 mem-watchdog.ts pollIntervalSeconds 同式
+ *  (clamp(GODOT_MCP_MEM_POLL_SECONDS,5,3600) 默认 10)——同 killFactor 不可 import,复制防环。 */
+function samplePollSeconds(): number {
+  const raw = Number.parseInt(process.env.GODOT_MCP_MEM_POLL_SECONDS ?? '', 10);
+  if (!Number.isFinite(raw)) return 10;
+  return Math.min(3600, Math.max(5, raw));
+}
+
+/** fail-open warn 同因去重集:键为 error message 归一形态(Error.message / String(e),trim)。 */
+const _sampleWarnedOnce = new Set<string>();
+/** server_start 惰性首发标志:进程内首个事件 append 前置一行,只发一次(含失败——重试
+ *  会在每次事件前双写,刷屏弊大于补一行首发行)。 */
+let _serverStartLogged = false;
+/** append 计数:Task 5 轮转用(每 500 次查一次 size),Task 1 先占位递增。
+ *  读取方在 Task 5 接线——no-unused-vars 定向豁免(scene-commit.ts C-02 同款先例),接线后删。 */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let _sampleAppendCount = 0;
+/** 上次 size 检查时刻:Task 5 轮转用占位(0=进程启动后未查过,Task 5 接线启动 stat 一次)。 */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let _lastSizeCheckAt = 0;
+
+/** 采样开关:GODOT_MCP_MEM_SAMPLE 非 '0'/'false' 即开(未设=开)——实时读不缓存,
+ *  对齐 WATCHDOG_EXEMPT 读法(轮询低频,env 改动即时生效)。 */
+export function memSampleEnabled(): boolean {
+  const raw = process.env.GODOT_MCP_MEM_SAMPLE;
+  return raw !== '0' && raw !== 'false';
+}
+
+/** 采样文件路径:env GODOT_MCP_MEM_SAMPLE_FILE 优先(测试隔离重定向用),默认
+ *  ~/.godot-mcp/memory-guard-events.jsonl(机器级目录惯例,同 memory-leases)。 */
+export function sampleFilePath(): string {
+  return process.env.GODOT_MCP_MEM_SAMPLE_FILE ?? join(homedir(), '.godot-mcp', 'memory-guard-events.jsonl');
+}
+
+/** fail-open warn:同 error message 归一形态首次一行 console.error、后续静默(采样通道
+ *  故障刷屏无益;stderr 惯例同 MEMGUARD 其余上报)。治理判定不经采样通道,降级不影响守卫。 */
+function warnSampleFailOnce(e: unknown): void {
+  const key = (e instanceof Error ? e.message : String(e)).trim();
+  if (_sampleWarnedOnce.has(key)) return;
+  _sampleWarnedOnce.add(key);
+  console.error(`MEMGUARD memSample 采样降级: 追加失败(${key})——本行丢弃,治理不受影响`);
+}
+
+/** 快照 → machine 壳字段:bytes→MB 取整序列化(commitAvailBytes null 透传 null;
+ *  degraded 字符串枚举转 bool——公共壳示例 {"degraded": false},内部枚举形态不落盘)。 */
+function serializeMachine(snap: MachineMemorySnapshot): Record<string, unknown> {
+  return {
+    freePhysMB: Math.round(snap.freePhysBytes / 1024 / 1024),
+    commitAvailMB: snap.commitAvailBytes !== null ? Math.round(snap.commitAvailBytes / 1024 / 1024) : null,
+    totalPhysMB: Math.round(snap.totalPhysBytes / 1024 / 1024),
+    godotProcCount: snap.godotProcCount,
+    degraded: snap.degraded !== undefined,
+  };
+}
+
+/** server_start 专有字段:进程内一次性快照全部阈值/档位——历史数据按事件时刻阈值判定,
+ *  不按分析时的当前 env(设计事件表)。tzOffsetMin 取 ISO 习惯东经为正(UTC+8 → 480)。 */
+function buildServerStartFields(): Record<string, unknown> {
+  return {
+    pkgVersion: PKG_VERSION,
+    thresholds: {
+      minFreeMB: minFreeMB(),
+      budgetPct: budgetPct(),
+      maxInstances: maxMachineInstances(),
+      softMB: pressureSoftMB(),
+      hardMB: pressureHardMB(),
+    },
+    declaredMB: {
+      headless: declaredMBFor('headless'),
+      gut_shard: declaredMBFor('gut_shard'),
+      game_window: declaredMBFor('game_window'),
+      editor: declaredMBFor('editor'),
+    },
+    killFactor: { ...SAMPLE_KILL_FACTOR },
+    pollSeconds: samplePollSeconds(),
+    tzOffsetMin: -new Date().getTimezoneOffset(),
+  };
+}
+
+/** 拼一行 JSONL:公共壳(ts/v/event/serverPid)+ fields 直铺(kind/project/leaseId/pid
+ *  等由调用方传入即进壳)+ machine + pressure(after-state)。snap 语义:null 显式
+ *  machine:null;undefined 只读快照缓存(_snapshotCache,不触发新采样——同步 2×5s
+ *  PowerShell 会打脸「延迟零感知」,设计非功能约束),缓存冷落 null。 */
+function buildSampleLine(
+  event: string,
+  fields: Record<string, unknown>,
+  snap?: MachineMemorySnapshot | null,
+): string {
+  let machine: Record<string, unknown> | null = null;
+  if (snap !== undefined && snap !== null) machine = serializeMachine(snap);
+  else if (snap === undefined && _snapshotCache !== null) machine = serializeMachine(_snapshotCache.snap);
+  const line: Record<string, unknown> = {
+    ts: Date.now(),
+    v: SAMPLE_SCHEMA_V,
+    event,
+    serverPid: process.pid,
+    ...fields,
+    machine,
+    pressure: getPressureState(),
+  };
+  return `${JSON.stringify(line)}\n`;
+}
+
+/** 采样追加串行链:全部 append 严格 FIFO——独立 fire-and-forget 链的 mkdir/appendFile
+ *  在线程池完成序不确定(server_start 与首事件行竞态颠倒,实测抓于 Task 1 测试),链式
+ *  排队保证行序 = 调用序。每段自带 catch(单段失败不阻断后续段,链恒为已决态)。
+ *  不进 _resetForTest:重置会另起并行链重现竞态,旧链自然排空(跨测试行序无断言依赖)。 */
+let _sampleAppendChain: Promise<void> = Promise.resolve();
+
+/** fire-and-forget 追加:mkdir(recursive) → appendFile(0600,mode 仅首建生效——正是
+ *  想要的语义:已有文件不重设权限,新文件收紧);任一步失败同因去重 warn,绝不抛
+ *  (未处理 rejection 崩进程是红线)。Task 5 在此挂钩轮转检查。 */
+function appendSampleLine(filePath: string, line: string): void {
+  _sampleAppendCount++;
+  _sampleAppendChain = _sampleAppendChain
+    .then(() => mkdir(dirname(filePath), { recursive: true }))
+    .then(() => appendFile(filePath, line, { mode: 0o600 }))
+    .catch((e: unknown) => {
+      warnSampleFailOnce(e);
+    });
+}
+
+/** 采样单点(四期 Task 1):同步签名、内部 fire-and-forget——调用点零 await 负担。
+ *  双开关短路均在**文件不创建级别**(不 mkdir 不 append,实时读):
+ *  GODOT_MCP_MEMORY_GUARD=0(治理整体旁路)与 GODOT_MCP_MEM_SAMPLE=0/false(仅关采样)。
+ *  server_start 惰性首发:进程内首个事件 append 前自动先落一行(全部阈值快照),只发一次。 */
+export function memSample(
+  event: string,
+  fields: Record<string, unknown>,
+  snap?: MachineMemorySnapshot | null,
+): void {
+  if (!memoryGuardEnabled()) return;
+  if (!memSampleEnabled()) return;
+  if (!_serverStartLogged) {
+    _serverStartLogged = true;
+    appendSampleLine(sampleFilePath(), buildSampleLine('server_start', buildServerStartFields(), undefined));
+  }
+  appendSampleLine(sampleFilePath(), buildSampleLine(event, fields, snap));
+}
+
 /** 重置模块可变状态(env 开关缓存/快照缓存/RSS 缓存/租约序号/pressure 状态机/豁免 warn
- *  去重集),测试隔离用。 */
+ *  去重集/采样区状态),测试隔离用。 */
 export function _resetForTest(): void {
   _enabledCache = null;
   _snapshotCache = null;
@@ -973,4 +1137,8 @@ export function _resetForTest(): void {
   _softBreachSince = null;
   _recoverSince = null;
   _warnedExemptTokens.clear();
+  _sampleWarnedOnce.clear();
+  _serverStartLogged = false;
+  _sampleAppendCount = 0;
+  _lastSizeCheckAt = 0;
 }

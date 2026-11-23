@@ -36,3 +36,9 @@ process.env.GODOT_MCP_BRIDGE_REGISTRY_DIR = join(
 // 漏斗行为对既有测试零影响。memory-guard 专属测试(test/core/memory-guard*.test.ts)自管
 // env(delete/stubEnv 覆盖本值);漏斗测试 vi.mock 接管 acquireLease,与本值无关。
 process.env.GODOT_MCP_MEMORY_GUARD = '0';
+
+// memory-guard 四期:采样文件重定向到临时目录——memSample 默认开,不重定向则任何
+// 走真实采样的测试写真实 ~/.godot-mcp/memory-guard-events.jsonl。采样专属测试自行覆盖本值。
+process.env.GODOT_MCP_MEM_SAMPLE_FILE = join(
+  mkdtempSync(join(tmpdir(), 'mcp-mem-sample-')), 'memory-guard-events.jsonl',
+);
