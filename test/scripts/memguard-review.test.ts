@@ -107,7 +107,7 @@ interface Report {
   episodes: {
     resolved: number; unresolved: number; orphanCloses: number;
     viaPressure: number; directHard: number; upgradedHard: number; downgrades: number; hardEntries: number; flaps: number;
-    medianMin: number | null; shareUnder15min: number | null;
+    medianMin: number | null; shortCount: number; shareUnder15min: number | null;
     list: Array<{ serverPid: number; startTs: number; endTs: number | null; resolved: boolean; durationMin: number | null }>;
   };
   trigger: { met: boolean; reason: string };
@@ -381,34 +381,90 @@ describe('fixture C（pid 复用 + 跨 server）', () => {
 });
 
 // ---------------------------------------------------------------------------
-// fixture D（悬挂 episode）：server 崩溃无 to:'normal' 闭合 → unresolved 丢弃不进分母。
+// fixture D（悬挂 episode，控制器裁定 C3）：悬挂段只从 #5b 时长集剔除，其切换行照常进 #5a/#6。
+// 两个形态各给一个方向的判别证据——悬挂行被排除则结论翻转。
 // ---------------------------------------------------------------------------
-function fixtureD(): string[] {
+function startRow(serverPid: number, ts: number): string {
+  return line('server_start', { pkgVersion: '0.41.0' }, { ts, serverPid });
+}
+const TAIL_ROW = line('lease_acquired', { kind: 'headless', project: 'p', leaseId: 'tail', declaredMB: 2048 }, { ts: T0 + 300 * MIN });
+
+/** D1（命中方向）：悬挂段直进 hard + 降级后 5min 再升级（无闭合）；闭合段经 pressure 进入后 10min 恢复。 */
+function fixtureD1(): string[] {
   return [
-    line('server_start', { pkgVersion: '0.41.0' }, { ts: T0, serverPid: 300 }),
-    pc('normal', 'pressure', T0 + 60 * MIN, 300), pc('pressure', 'hard', T0 + 70 * MIN, 300), // 无闭合
-    line('server_start', { pkgVersion: '0.41.0' }, { ts: T0 + 120 * MIN, serverPid: 400 }),
+    startRow(300, T0),
+    pc('normal', 'hard', T0 + 60 * MIN, 300), pc('hard', 'pressure', T0 + 70 * MIN, 300), pc('pressure', 'hard', T0 + 75 * MIN, 300), // 无闭合
+    startRow(400, T0 + 120 * MIN),
     pc('normal', 'pressure', T0 + 180 * MIN, 400), pc('pressure', 'normal', T0 + 190 * MIN, 400), // 10min 闭合
     pc('pressure', 'normal', T0 + 240 * MIN, 500), // 孤立闭合行（进入行已轮转掉）
-    line('lease_acquired', { kind: 'headless', project: 'p', leaseId: 'tail', declaredMB: 2048 }, { ts: T0 + 300 * MIN }),
+    TAIL_ROW,
   ];
 }
 
-describe('fixture D（悬挂 episode）', () => {
-  it('unresolved 计数、不进 #5b 分母；孤立闭合行计数', () => {
-    const r = run(fixtureD());
-    expect(r.episodes.resolved).toBe(1);
-    expect(r.episodes.unresolved).toBe(1);
-    expect(r.episodes.orphanCloses).toBe(1);
-    expect(r.episodes.list.find((x) => !x.resolved)!.serverPid).toBe(300);
-    // 仅闭合的 10min episode 进分母 → <15min 占比 100% 命中；若悬挂段（≥230min）被误计入则为 50% 未命中
+/** D2（未命中方向）：三段悬挂均经 pressure 进入（其中一段含降级后 5min 再升级）；闭合段直进 hard 后降级（无再升级）恢复，40min。 */
+function fixtureD2(): string[] {
+  return [
+    startRow(310, T0), pc('normal', 'pressure', T0 + 10 * MIN, 310),
+    startRow(320, T0 + MIN), pc('normal', 'pressure', T0 + 20 * MIN, 320),
+    startRow(330, T0 + 2 * MIN),
+    pc('normal', 'pressure', T0 + 30 * MIN, 330), pc('pressure', 'hard', T0 + 35 * MIN, 330),
+    pc('hard', 'pressure', T0 + 40 * MIN, 330), pc('pressure', 'hard', T0 + 45 * MIN, 330), // 降级后 5min 再升级，无闭合
+    startRow(400, T0 + 3 * MIN),
+    pc('normal', 'hard', T0 + 100 * MIN, 400), pc('hard', 'pressure', T0 + 110 * MIN, 400), pc('pressure', 'normal', T0 + 140 * MIN, 400),
+    TAIL_ROW,
+  ];
+}
+
+describe('fixture D（悬挂 episode：只从 #5b 时长集剔除）', () => {
+  it('D1：悬挂段直进行进 #6 分子分母 → 1/2 命中；降级后再升级进 #5a → 1/2 命中；#5b 仍只用闭合段 → 100% 命中', () => {
+    const r = run(fixtureD1());
+    const e = r.episodes;
+    expect(e.resolved).toBe(1);
+    expect(e.unresolved).toBe(1);
+    expect(e.orphanCloses).toBe(1);
+    expect(e.list.find((x) => !x.resolved)!.serverPid).toBe(300);
+    // 行级统计含悬挂段
+    expect(e.directHard).toBe(1);
+    expect(e.viaPressure).toBe(1);
+    expect(e.upgradedHard).toBe(1);
+    expect(e.downgrades).toBe(1);
+    expect(e.hardEntries).toBe(2);
+    expect(e.flaps).toBe(1);
+    // #6：悬挂段的直进行进分子与分母 → 1/2；若悬挂段被排除则 0/1 未命中
+    expect(j(r, '6').status).toBe('hit');
+    expect(j(r, '6').detail).toContain('直进 1 / 进入行 2');
+    expect(j(r, '6').detail).toContain('50.0%');
+    // #5a：悬挂段「降级后 5min 再升级」进分子、hard 进入进分母 → 1/2；若悬挂段被排除则无 hard 进入（数据不足）
+    expect(j(r, '5a').status).toBe('hit');
+    expect(j(r, '5a').detail).toContain('再升级 1 / hard 进入 2');
+    // #5b：仅闭合的 10min episode 进时长集 → 100% 命中；若悬挂段（60→300min）被误计入则为 50% 未命中
+    expect(e.shortCount).toBe(1);
+    expect(e.shareUnder15min).toBe(1);
     expect(j(r, '5b').status).toBe('hit');
     expect(j(r, '5b').detail).toContain('100.0%');
   });
-  it('无闭合 hard 进入 → #5a 数据不足；闭合段仅 pressure 进入 → #6 0/1 未命中', () => {
-    const r = run(fixtureD());
-    expect(j(r, '5a').status).toBe('insufficient');
+
+  it('D2：三段悬挂的进入行进 #6 分母 → 1/4=25% 未命中（排除则 1/1 命中）；悬挂段抖动进 #5a 分子 → 1/3 命中', () => {
+    const r = run(fixtureD2());
+    const e = r.episodes;
+    expect(e.resolved).toBe(1);
+    expect(e.unresolved).toBe(3);
+    expect(e.viaPressure).toBe(3);
+    expect(e.directHard).toBe(1);
+    expect(e.upgradedHard).toBe(2); // 330 段两次升级：首次进 hard + 降级后 5min 再升级
+    expect(e.downgrades).toBe(2);
+    expect(e.hardEntries).toBe(3); // 330 段 2 次 + 400 段直进 1 次
+    expect(e.flaps).toBe(1);
     expect(j(r, '6').status).toBe('miss');
+    expect(j(r, '6').detail).toContain('直进 1 / 进入行 4');
+    expect(j(r, '6').detail).toContain('25.0%');
+    // #5a：悬挂段的再升级进分子、两次 hard 进入进分母 → 1/3；若悬挂段被排除则 0/1 未命中
+    expect(j(r, '5a').status).toBe('hit');
+    expect(j(r, '5a').detail).toContain('再升级 1 / hard 进入 3');
+    expect(j(r, '5a').detail).toContain('33.3%');
+    // #5b 只看闭合的 40min 段 → 0% 未命中（三段悬挂不在时长集）
+    expect(e.shortCount).toBe(0);
+    expect(j(r, '5b').status).toBe('miss');
   });
 });
 

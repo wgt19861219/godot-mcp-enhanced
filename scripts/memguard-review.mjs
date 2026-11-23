@@ -212,8 +212,9 @@ function bump(map, key) {
 
 /**
  * pressure episode 按 serverPid 分段重建（多 server 状态机独立时序不可混算）：首个进入行起、
- * to:'normal' 行止；server 重启/文件末尾无闭合行的悬挂 episode 标 unresolved 丢弃（不进
- * #5a/#5b/#6 分母——时长与后续切换均右删失）。直进（normal→hard）与升级（pressure→hard）分计。
+ * to:'normal' 行止；server 重启/文件末尾无闭合行的悬挂 episode 标 unresolved——**只从时长集合
+ * （#5b）剔除**，其切换行照常进行级统计（#5a/#6）：进入行与降级行是完整观测到的事实，未闭合
+ * 只让"时长"不可知（控制器裁定 C3）。直进（normal→hard）与升级（pressure→hard）分计。
  */
 function rebuildEpisodes(rows) {
   const byServer = new Map();
@@ -251,7 +252,8 @@ function rebuildEpisodes(rows) {
   list.sort((a, b) => a.startTs - b.startTs);
   const closed = list.filter((e) => e.resolved);
   const durations = closed.map((e) => e.endTs - e.startTs).sort((a, b) => a - b);
-  const sum = (k) => closed.reduce((s, e) => s + e[k], 0);
+  // 行级统计（#5a/#6）闭合与悬挂段一并计入；时长统计（#5b）只用闭合段
+  const sum = (k) => list.reduce((s, e) => s + e[k], 0);
   const shortCount = closed.filter((e) => e.endTs - e.startTs < JUDGE.shortEpisodeMs).length;
   return {
     list: list.map((e) => ({
@@ -496,20 +498,20 @@ export function analyze(lines, { now = Date.now(), sampleEnv } = {}) {
     advice: `HARD_MIN_RECLAIM_MB（memory-guard.ts 源码常量，当前 ${HARD_MIN_RECLAIM_MB}）或 HARD_MB 调整评估——PRESSURE_RECOVER_MS 只管 pressure→normal 与此无关`,
     ...ratioJudge(
       episodes.flaps, episodes.hardEntries,
-      `已闭合 episode 内无 hard 进入（闭合 ${episodes.resolved} 段 / 悬挂 ${episodes.unresolved} 段）`,
-      `${JUDGE.hardFlapWindowMs / 60_000}min 内再升级 ${episodes.flaps} / hard 进入 ${episodes.hardEntries}（闭合 ${episodes.resolved} 段，降级 ${episodes.downgrades} 次）`,
+      `无 hard 进入（闭合 ${episodes.resolved} 段 / 悬挂 ${episodes.unresolved} 段）`,
+      `${JUDGE.hardFlapWindowMs / 60_000}min 内再升级 ${episodes.flaps} / hard 进入 ${episodes.hardEntries}（闭合 ${episodes.resolved} 段 + 悬挂 ${episodes.unresolved} 段，降级 ${episodes.downgrades} 次）`,
       (rate) => rate > JUDGE.hardFlapRate,
     ),
   });
 
-  // #5b 压力期 episode 时长：<15min（恢复下限 5min 的 3 倍）的 episode 占比 >50%
+  // #5b 压力期 episode 时长：<15min（恢复下限 5min 的 3 倍）的 episode 占比 >50%（只用闭合段）
   judgments.push({
     id: '5b', title: `软阈值边缘抖动：闭合 episode 时长 < ${JUDGE.shortEpisodeMs / 60_000}min（恢复下限 ${PRESSURE_RECOVER_MS / 60_000}min 的 3 倍）的占比 > ${fmtPct(JUDGE.shortEpisodeShare)}`,
     advice: 'SOFT_MB 上调评估',
     ...ratioJudge(
       episodes.shortCount, episodes.resolved,
-      '无已闭合 episode（悬挂段不进分母）',
-      `<${JUDGE.shortEpisodeMs / 60_000}min 的 ${episodes.shortCount} / 闭合 ${episodes.resolved} 段（时长中位 ${fmtNum(episodes.medianMin, 1)}min；悬挂 ${episodes.unresolved} 段已丢弃）`,
+      '无已闭合 episode（悬挂段不进时长集）',
+      `<${JUDGE.shortEpisodeMs / 60_000}min 的 ${episodes.shortCount} / 闭合 ${episodes.resolved} 段（时长中位 ${fmtNum(episodes.medianMin, 1)}min；悬挂 ${episodes.unresolved} 段不进时长集）`,
       (rate) => rate > JUDGE.shortEpisodeShare,
     ),
   });
@@ -522,8 +524,8 @@ export function analyze(lines, { now = Date.now(), sampleEnv } = {}) {
       advice: 'SOFT_MB/HARD_MB 间距拉开（SOFT 上调优先）',
       ...ratioJudge(
         episodes.directHard, entries,
-        `已闭合 episode 内无 from='normal' 的进入行（闭合 ${episodes.resolved} 段）`,
-        `直进 ${episodes.directHard} / 进入行 ${entries}（升级 ${episodes.upgradedHard} 另计不稀释分母）`,
+        `无 from='normal' 的进入行（闭合 ${episodes.resolved} 段 / 悬挂 ${episodes.unresolved} 段）`,
+        `直进 ${episodes.directHard} / 进入行 ${entries}（升级 ${episodes.upgradedHard} 另计不稀释分母；闭合 ${episodes.resolved} 段 + 悬挂 ${episodes.unresolved} 段）`,
         (rate) => rate > JUDGE.directHardShare,
       ),
     });
@@ -652,10 +654,11 @@ export function formatReport(report, { filePath, files } = {}) {
   out.push(`  watchdog_degraded ${ev.watchdogDegraded}  watchdog_recovered ${ev.watchdogRecovered}`);
 
   out.push('');
-  out.push(`pressure episode（按 serverPid 分段）：闭合 ${ep.resolved} / 悬挂 ${ep.unresolved}（丢弃）/ 孤立闭合行 ${ep.orphanCloses}`);
+  out.push(`pressure episode（按 serverPid 分段）：闭合 ${ep.resolved} / 悬挂 ${ep.unresolved}（不进时长集）/ 孤立闭合行 ${ep.orphanCloses}`);
   if (ep.resolved > 0) {
-    out.push(`  闭合段时长：中位 ${fmtNum(ep.medianMin, 1)}min，<${JUDGE.shortEpisodeMs / 60_000}min 占比 ${fmtPct(ep.shareUnder15min)}；hard 进入 ${ep.hardEntries} 次，降级后 ${JUDGE.hardFlapWindowMs / 60_000}min 内再升级 ${ep.flaps} 次`);
+    out.push(`  闭合段时长：中位 ${fmtNum(ep.medianMin, 1)}min，<${JUDGE.shortEpisodeMs / 60_000}min 占比 ${fmtPct(ep.shareUnder15min)}`);
   }
+  out.push(`  切换行（含悬挂段）：经 pressure 进 ${ep.viaPressure} / 直进 hard ${ep.directHard} / 升级 hard ${ep.upgradedHard} / 降级 ${ep.downgrades}；降级后 ${JUDGE.hardFlapWindowMs / 60_000}min 内再升级 ${ep.flaps} 次`);
   for (const e of ep.list.slice(0, 12)) {
     out.push(`  serverPid=${e.serverPid}  ${fmtTs(e.startTs)} ~ ${e.resolved ? fmtTs(e.endTs) : '（无闭合）'}  ${e.resolved ? `${fmtNum(e.durationMin, 1)}min` : '悬挂'}  经pressure进 ${e.viaPressure} / 直进hard ${e.directHard} / 升级 ${e.upgradedHard} / 降级 ${e.downgrades}`);
   }
