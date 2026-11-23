@@ -14,7 +14,8 @@
 //   默认路径同 sampleFilePath()：env GODOT_MCP_MEM_SAMPLE_FILE 优先，否则
 //   ~/.godot-mcp/memory-guard-events.jsonl；同目录 <file>.1–<file>.4 为轮转代际（一并读入，
 //   按 ts 排序合并），<file>.lock 是轮转锁不是代际。
-// 退出码：0=有结论（触发条件满足且至少一条判定有结论）/ 1=数据不足 / 2=读失败
+// 退出码：0=有结论（触发条件满足且至少一条判定有结论）/ 1=数据不足 / 2=读失败（含任一代际
+//   不可读或主文件缺失而代际存在——已读部分照常出报告并在首部提示数据不完整）
 //
 // 结构：parseLines / analyze / formatReport 为纯函数（测试 import 直调），loadSampleFile 接收
 // 路径数组语义（主文件 + 代际）做读取合并，CLI 壳尽量薄。风格同 check-tool-count.mjs。
@@ -142,7 +143,8 @@ export function defaultSamplePath(env = process.env) {
 
 /**
  * 读主文件 + 全部代际（.4 → .1 → 主，旧到新），合并为行数组（analyze 内再按 ts 排序）。
- * 代际文件缺失属常态（未轮转到）不计失败；主文件缺失/不可读记入 failures。
+ * 代际文件缺失属常态（未轮转到）不计失败；主文件缺失、任一已存在文件不可读记入 failures
+ * （CLI 据此把退出码钳为 2——数据不完整不等于有结论）。
  * @returns {{lines:string[], files: Array<{path:string, lines:number}>, failures: Array<{path:string, error:string}>}} */
 export function loadSampleFile(mainPath) {
   const candidates = [];
@@ -374,7 +376,9 @@ export function analyze(lines, { now = Date.now(), sampleEnv } = {}) {
     ks.declared = [...new Set(withReading.map((x) => x.declared))].sort((a, b) => a - b);
     if (ks.n === 0) continue;
     const mb = withReading.map((x) => x.mb);
-    const ratio = withReading.map((x) => x.ratio);
+    // ratio 分位必须按 ratio 自身升序取秩：kind 内声明不一致（回看→上调档位→再采）时 mb 序 ≠ ratio 序，
+    // 沿用 mb 序会让 P50/P95/max(ratio) 全部取错值（审查 Important-1）
+    const ratio = withReading.map((x) => x.ratio).sort((a, b) => a - b);
     ks.maxMB = mb[mb.length - 1];
     ks.maxRatio = ratio[ratio.length - 1];
     if (ks.n >= JUDGE.percentileMinN) {
@@ -598,11 +602,17 @@ function padRight(s, w) {
   return s.length >= w ? s : s + ' '.repeat(w - s.length);
 }
 
-/** 纯函数：报告 → 人读文本（简体中文）。 */
-export function formatReport(report, { filePath, files } = {}) {
+/** 纯函数：报告 → 人读文本（简体中文）。failures 非空 = 部分文件读失败：首部醒目提示数据不完整，
+ *  末行退出码按读失败（2）显示——与 CLI 的钳位口径一致。 */
+export function formatReport(report, { filePath, files, failures } = {}) {
   const { window: w, kinds: ks, events: ev, episodes: ep, trigger } = report;
+  const partial = failures !== undefined && failures.length > 0;
+  const shownExit = partial ? 2 : report.exitCode;
   const out = [];
   out.push('[memguard-review] memory-guard 采样回看（只读分析，不自动调档）');
+  if (partial) {
+    out.push(`⚠ 数据不完整：${failures.length} 个文件读取失败（清单见 stderr）——以下仅基于已读出的部分，观察窗与频次可能失真；退出码按读失败处理`);
+  }
   if (filePath) out.push(`数据源：${filePath}${files && files.length > 1 ? `（含代际，共 ${files.length} 个文件 / ${files.reduce((s, f) => s + f.lines, 0)} 行）` : ''}`);
   const sk = report.parsed.skipped;
   const unknown = Object.entries(sk.unknownEvents).map(([k, v]) => `${k}×${v}`).join(', ');
@@ -685,7 +695,7 @@ export function formatReport(report, { filePath, files } = {}) {
     for (const h of report.hints) out.push(`  - ${h}`);
   }
   out.push('');
-  out.push(`退出码 ${report.exitCode}（0=有结论 / 1=数据不足：触发条件未满足或无判定可下结论 / 2=读失败）`);
+  out.push(`退出码 ${shownExit}${partial ? '（部分读失败钳位；' : '（'}0=有结论 / 1=数据不足：触发条件未满足或无判定可下结论 / 2=读失败）`);
   return out.join('\n');
 }
 
@@ -720,8 +730,10 @@ function main(argv) {
     return 2;
   }
   const report = analyze(loaded.lines, { sampleEnv: process.env.GODOT_MCP_MEM_SAMPLE });
-  console.log(formatReport(report, { filePath, files: loaded.files }));
-  return report.exitCode;
+  console.log(formatReport(report, { filePath, files: loaded.files, failures: loaded.failures }));
+  // 部分读失败（任一代际不可读 / 主文件缺失而代际存在）：已读部分照常出报告，但退出码钳为 2——
+  // 最旧代际丢失会让观察窗缩短、X/天 频次虚高、#8 覆盖窗失真，脚本化调用方不能把 0 当可信信号（审查 Important-2）
+  return loaded.failures.length > 0 ? 2 : report.exitCode;
 }
 
 // 同 check-tool-count.mjs：import 不执行 main，直接运行（argv[1] 与本文件同源）才跑

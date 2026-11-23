@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -602,6 +602,53 @@ describe('fixture F（观察窗）', () => {
 });
 
 // ---------------------------------------------------------------------------
+// fixture G（kind 内声明混合，审查 Important-1）：「回看→上调 DECLARED_MB_<KIND>→继续采→再回看」
+// 是本工具的核心循环，第二轮数据同 kind 的 declared 必然不一致——ratio 分位必须按 ratio 自身
+// 升序取秩，maxRatio 是最大比值而不是 maxMB 那个进程的比值。
+// ---------------------------------------------------------------------------
+/** 20 个 headless 进程铺满 14 天：i<10 低声明高占用（ratio≈0.73），i≥10 高声明低占用（ratio≈0.49）——mb 升序与 ratio 升序相反。 */
+function fixtureG(): string[] {
+  const out = [serverStart(T0)];
+  for (let i = 0; i < 20; i++) {
+    const sampleTs = T0 + MIN + Math.round((i * (14 * DAY - 2 * MIN)) / 19);
+    out.push(...proc(`g${i}`, 'headless', i < 10 ? 2048 : 8192, i < 10 ? 1500 + i : 4000 + (i - 10), sampleTs));
+  }
+  out.push(line('lease_acquired', { kind: 'headless', project: 'p', leaseId: 'tail', declaredMB: 2048 }, { ts: T0 + 14 * DAY }));
+  return out;
+}
+
+describe('fixture G（kind 内声明混合，ratio 按 ratio 排序）', () => {
+  it('审查例：A 3000/2048 与 B 3500/4096 → maxRatio=3000/2048≈1.47，而非 maxMB 进程的比值 0.86', () => {
+    const r = run([serverStart(T0), ...proc('a', 'headless', 2048, 3000, T0 + MIN), ...proc('b', 'headless', 4096, 3500, T0 + 2 * MIN)]);
+    const h = r.kinds.headless!;
+    expect(h.n).toBe(2);
+    expect(h.maxMB).toBe(3500);
+    expect(h.maxRatio).toBeCloseTo(3000 / 2048, 6);
+    expect(h.declared).toEqual([2048, 4096]);
+    expect(jk(r, '8', 'headless').status).toBe('insufficient'); // n=2 样本不足
+  });
+
+  it('20 进程声明混合：P50/P95/max(ratio) 按 ratio 升序的秩取，#8 不被 mb 最大者的低比值误导', () => {
+    const r = run(fixtureG());
+    const h = r.kinds.headless!;
+    expect(h.n).toBe(20);
+    expect(h.windowDays).toBe(14);
+    // mb 升序 = [1500..1509, 4000..4009]：P50MB 第 10 位 1509、P95MB 第 19 位 4008、maxMB 4009（绝对值分位不受影响）
+    expect(h.p50MB).toBe(1509);
+    expect(h.p95MB).toBe(4008);
+    expect(h.maxMB).toBe(4009);
+    // ratio 升序 = [4000/8192 .. 4009/8192, 1500/2048 .. 1509/2048]：P50 第 10 位 4009/8192、P95 第 19 位 1508/2048、max 1509/2048
+    expect(h.p50Ratio).toBeCloseTo(4009 / 8192, 6);
+    expect(h.p95Ratio).toBeCloseTo(1508 / 2048, 6);
+    expect(h.maxRatio).toBeCloseTo(1509 / 2048, 6);
+    // 按错误的 mb 序取值会得到 P95=4008/8192≈0.49 与 max=4009/8192≈0.49 → #8 假命中；正确值下 #8 未命中
+    expect(jk(r, '8', 'headless').status).toBe('miss');
+    expect(jk(r, '1', 'headless').status).toBe('miss');
+    expect(jk(r, '2', 'headless').status).toBe('miss');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 常量机械比对（防漂移）：读源码文本抽取，与 mjs 常量表三方相等。
 // ---------------------------------------------------------------------------
 const CORE = join(__dirname, '..', '..', 'src', 'core');
@@ -680,6 +727,42 @@ describe('CLI 与路径', () => {
       const missing = spawnSync(process.execPath, [script, '--file', join(dir, 'missing.jsonl')], { encoding: 'utf8' });
       expect(missing.status).toBe(2);
       expect(missing.stderr).toContain('missing.jsonl');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // 审查 Important-2：部分读失败不能以 0 退出——最旧代际丢失会让观察窗缩短、频次虚高，脚本化调用方把 0 当可信信号
+  it('部分读失败：代际 .1 不可读（做成目录）→ 已读部分照常出报告，首部提示不完整，退出码 2', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'memguard-review-cli-'));
+    try {
+      const script = join(__dirname, '..', '..', 'scripts', 'memguard-review.mjs');
+      const main = join(dir, 'ev.jsonl');
+      const lines = fixtureA();
+      writeFileSync(main, lines.join('\n') + '\n');
+      mkdirSync(`${main}.1`); // 跨平台手法：readFileSync 对目录抛 EISDIR
+      const r = spawnSync(process.execPath, [script, '--file', main], { encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stdout.split('\n').slice(0, 3).join('\n')).toContain('数据不完整：1 个文件读取失败');
+      expect(r.stdout).toContain(`有效行 ${lines.length}`); // 主文件内容照常分析并打印
+      expect(r.stdout).toContain('退出码 2');
+      expect(r.stderr).toContain('ev.jsonl.1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('部分读失败：主文件缺失而代际存在 → 代际内容照常分析，首部提示不完整，退出码 2', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'memguard-review-cli-'));
+    try {
+      const script = join(__dirname, '..', '..', 'scripts', 'memguard-review.mjs');
+      const main = join(dir, 'ev.jsonl');
+      writeFileSync(`${main}.1`, fixtureA().join('\n') + '\n');
+      const r = spawnSync(process.execPath, [script, '--file', main], { encoding: 'utf8' });
+      expect(r.status, r.stderr).toBe(2);
+      expect(r.stdout.split('\n').slice(0, 3).join('\n')).toContain('数据不完整：1 个文件读取失败');
+      expect(r.stdout).toContain('触发条件：满足'); // 代际内容照常分析
+      expect(r.stderr).toContain(main);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
