@@ -20,24 +20,24 @@
 | 轮转 | 8MB/代 × 4 代（`.1`–`.4`，峰值 40MB）：首条写入前 stat 一次、每 500 次追加查一次大小、轮转失败下一条即重试 |
 | 清空 | 删除文件即清空；`uninstall --purge` 清掉整个 `~/.godot-mcp/` 目录 |
 
-**公共壳**（全部事件）：`ts`（本地毫秒）、`v`（schema 版本，当前 1）、`event`、`serverPid`（pressure 状态机是进程内单例，多 server 共写靠它分段）、`kind`、`project`、`leaseId`（贯穿 spawn→RSS→杀/拒绝 的进程身份）、`pid`（进程 bind 后才有）、`machine`（当时机器水位快照；无现成快照时为 `null`，绝不为此新起采样）、`pressure`（事件生效后的态）。两个例外：`rss_sample` 行无 `machine`，`pressure_change` 行无 `pressure`（只有 `from`/`to`）。
+**公共壳**：每行固定带 `ts`（本地毫秒）、`v`（schema 版本，当前 1）、`event`、`serverPid`（pressure 状态机是进程内单例，多 server 共写靠它分段）、`machine`（当时机器水位快照；无现成快照时为 `null`，绝不为此新起采样）、`pressure`（事件生效后的态）；`kind`/`project`/`leaseId`（贯穿 spawn→RSS→杀/拒绝 的进程身份）/`pid` 四个身份键由调用方按事件传入，**并非每行都有**，在场情况见下表「身份键」列。两个例外：`rss_sample` 行无 `machine`，`pressure_change` 行无 `pressure`（只有 `from`/`to`）。
 
-**事件清单**（13 个，全部进采样通道）：
+**事件清单**（13 个，全部进采样通道；「身份键」列只列在场的 `kind`/`project`/`leaseId`/`pid`，未列即无该键）：
 
-| event | 触发点 | 专有字段 |
-|---|---|---|
-| `server_start` | server 进程首个事件落盘前（惰性首发，每进程一次） | `pkgVersion`、`thresholds{minFreeMB,budgetPct,maxInstances,softMB,hardMB}`、`declaredMB`（四档）、`killFactor`（四档）、`pollSeconds`、`tzOffsetMin`——**历史数据按事件时刻阈值判定，不按分析时的当前 env** |
-| `lease_acquired` | 准入成功（`acquireLease`） | `declaredMB`——准入成功≠进程起来，此时 `pid` 为 null |
-| `spawn_started` | 租约绑定 pid（spawn 成功后） | `pid`——进程身份确立点 |
-| `spawn_reject` | 准入四查任一拒绝 | `check`（⓪压力=`0` / ①水位=`1` / ②预算=`2` / ③实例=`3`）、`reason`（`MEMGUARD_LOW_WATER`/`MEMGUARD_BUDGET`/`MEMGUARD_INSTANCE_CAP`）、`thresholds`（查⓪ `{softMB}` / 查① `{minFreeMB}` / 查② `{budgetPct, usedMB}` / 查③ `{maxInstances}`）。⓪与①共用 LOW_WATER，`check` 是唯一区分；拒绝时尚未建租约则无 `leaseId` |
-| `rss_sample` | 看门狗轮询策略采样 + 租约释放时的 final sample | `pid`、`declaredMB`、`rssBytes`；无 `machine` |
-| `budget_kill` | 单进程超预算杀（`killOverBudget`） | `pid`、`declaredMB`、`rssBytes`（杀时读数）、`budgetBytes`（=声明×系数）、`killFactor` |
-| `evict` | 硬阈值驱逐杀（`killForEviction`） | `pid`、`declaredMB`、`rssBytes`（**推算值** = ratio×声明）、`ratio`、`reason:'hard'` |
-| `evict_exhausted` | 驱逐候选耗尽仍处 hard | `envExempted{preview,editor}`（无租约身份字段） |
-| `pressure_change` | pressure 状态机全部 4 处切换 | `from`、`to`（normal→pressure / 任意→hard / hard→pressure 降级 / pressure→normal） |
-| `watchdog_degraded` / `watchdog_recovered` | 连续 3 轮采样失败退避 / 降级后恢复的首轮 | degraded 带 `consecutiveRounds` |
-| `idle_reap` | IdleTimer 空闲回收 | `kind:'game_window'`、`pid`、`aliveMs`（回收前捕获的存活毫秒）；`machine:null` |
-| `exit_reap` | server 退出链回收 | 同 `idle_reap` 形态；`machine:null` |
+| event | 触发点 | 身份键 | 专有字段 |
+|---|---|---|---|
+| `server_start` | server 进程首个事件落盘前（惰性首发，每进程一次） | 均无 | `pkgVersion`、`thresholds{minFreeMB,budgetPct,maxInstances,softMB,hardMB}`、`declaredMB`（四档）、`killFactor`（四档）、`pollSeconds`、`tzOffsetMin`——**历史数据按事件时刻阈值判定，不按分析时的当前 env** |
+| `lease_acquired` | 准入成功（`acquireLease`） | `kind`、`project`、`leaseId`（**无 `pid` 键**） | `declaredMB`——准入成功≠进程起来 |
+| `spawn_started` | 租约绑定 pid（spawn 成功后） | 四者齐全——`pid` 自此确立（进程身份确立点） | 无 |
+| `spawn_reject` | 准入四查任一拒绝 | `kind`、`project`；拒绝时尚未建租约则无 `leaseId`；**无 `pid` 键** | `check`（⓪压力=`0` / ①水位=`1` / ②预算=`2` / ③实例=`3`）、`reason`（`MEMGUARD_LOW_WATER`/`MEMGUARD_BUDGET`/`MEMGUARD_INSTANCE_CAP`）、`thresholds`（查⓪ `{softMB}` / 查① `{minFreeMB}` / 查② `{budgetPct, usedMB}` / 查③ `{maxInstances}`）。⓪与①共用 LOW_WATER，`check` 是唯一区分 |
+| `rss_sample` | 看门狗轮询策略采样 + 租约释放时的 final sample | 四者齐全 | `declaredMB`、`rssBytes`；无 `machine` |
+| `budget_kill` | 单进程超预算杀（`killOverBudget`） | 四者齐全 | `declaredMB`、`rssBytes`（杀时读数）、`budgetBytes`（=声明×系数）、`killFactor` |
+| `evict` | 硬阈值驱逐杀（`killForEviction`） | 四者齐全 | `declaredMB`、`rssBytes`（**推算值** = ratio×声明）、`ratio`、`reason:'hard'` |
+| `evict_exhausted` | 驱逐候选耗尽仍处 hard | 均无 | `envExempted{preview,editor}` |
+| `pressure_change` | pressure 状态机全部 4 处切换 | 均无 | `from`、`to`（normal→pressure / 任意→hard / hard→pressure 降级 / pressure→normal） |
+| `watchdog_degraded` / `watchdog_recovered` | 连续 3 轮采样失败退避 / 降级后恢复的首轮 | 均无 | degraded 带 `consecutiveRounds` |
+| `idle_reap` | IdleTimer 空闲回收 | `kind`（恒 `game_window`）、`project`、`pid`；**无 `leaseId`** | `aliveMs`（回收前捕获的存活毫秒）；`machine:null` |
+| `exit_reap` | server 退出链回收 | 同 `idle_reap` | 同 `idle_reap`；`machine:null` |
 
 **`rss_sample` 何时落**：首轮必采（租约绑定 pid 后首个拿到读数的轮询，不受节流——几秒结束的作业至少留一行）；此后时间驱动 60s 一行（非轮次计数，`GODOT_MCP_MEM_POLL_SECONDS` 改动不漂）；存活 >1h 的租约降频到 300s；pressure/hard 态收回 60s 档；租约释放时若看门狗最近一轮有读数则补一行 final sample（零采样成本）。被杀进程的读数由 `budget_kill`/`evict` 行携带。**亚 10 秒进程仍可能只有 1 行样本**——数据够不够按 kind 判定，不够报「数据不足」不硬算。
 
@@ -58,13 +58,13 @@
 | 分位 | nearest-rank（升序，1 基秩 = ceil(p·n)）；**n<20 不计算分位，报样本不足**；n=30 时 P95≈max；n<40 时 P95 落在最大两个样本之内 |
 | 比值 | 按各进程**自身**的 `declaredMB` 折算（历史数据按事件时刻档位；kind 内声明混合时也自洽）；ratio 分位按 ratio 自身升序取秩，MB 绝对值分位同时给出 |
 | 观察窗 | `max(1, (末事件 ts − 首事件 ts) / 24h)` 天。不足 1 天按 1 天计（不折 24 倍频次）；≥1 天取小数，所以「≥14 天」是严格判定。所有「X/天」判据共用这个分母 |
-| kind 覆盖窗 | 该 kind 全部带 `kind` 行的首末事件跨度（小数天，不设下限）——#8 的「≥14 天」用它 |
+| kind 覆盖窗 | 该 kind 的 `lease_acquired`/`spawn_started`/`rss_sample`/`budget_kill`/`evict` 五类行（且 `leaseId` 为字符串）的首末事件跨度（小数天，不设下限）；带 `kind` 的 `spawn_reject` 行不计——#8 的「≥14 天」用它 |
 | spawn 失败数 | 无 `spawn_failed` 事件，按 kind 用 `lease_acquired − spawn_started` 差值推导（轮转窗可为负，钳 0） |
 | pressure episode | 按 `serverPid` 分段重建（多 server 状态机独立时序不可混算）：首个进入行起、`to:'normal'` 行止。同一 serverPid 再见 `server_start` = pid 已被新 server 复用，此前未闭合段悬挂 |
 | 悬挂 episode | server 退出前没有 `to:'normal'` 闭合行的段，计为 unresolved：**只从 #5b 的时长集合剔除**；它的切换行在 #5a 与 #6 里**照常计入**（这两条按行定义，未闭合只让时长不可知） |
 | 直进 vs 升级 | `from:'normal'→to:'hard'` 是直进；`from:'pressure'→to:'hard'` 是升级——分别计数不合并 |
 | 孤立闭合行 | 有 `to:'normal'` 却无进入行（进入行已被轮转掉），单独计数不进任何 episode |
-| 历史阈值 | 判定 #4 的前提、各档声明都以 `server_start` 行的快照为准 |
+| 历史阈值 | #4 的前提以 `server_start` 行的阈值快照为准；各档声明取各进程自身事件行的 `declaredMB`（见「比值」行），`server_start` 的 `declaredMB` 仅为展示快照；#2 的 KILL_FACTOR 用脚本硬编码，见第 5 节 |
 
 ## 3. 回看判定标准
 
