@@ -167,6 +167,20 @@ function mockMachinePs(fields: { freePhysMB?: number; commitAvailMB?: number | n
   return spy;
 }
 
+/** 断言事件行的 machine 就是 mockMachinePs 喂入的快照(64GB 物理空闲 / 64GB commit 余量 / 0 个 Godot 进程)
+ *  ——逐字段精确,不止「非空」:Windows 下读数即喂入值换算(KB×1024 → MB 取整);非 Windows 无 psRunner
+ *  通道(物理空闲是 os 真实读数,不可控),只钉确定性字段——commit 恒 null、degraded 恒 true、计数恒 0。 */
+function expectMachineFromFedSnapshot(line: Record<string, unknown>): void {
+  const onWin = process.platform === 'win32';
+  expect(line['machine']).toEqual({
+    freePhysMB: onWin ? 64 * 1024 : expect.any(Number),
+    commitAvailMB: onWin ? 64 * 1024 : null,
+    totalPhysMB: Math.round(os.totalmem() / 1024 / 1024), // 总量恒取自 os.totalmem()(不经 psRunner,两平台同)
+    godotProcCount: 0,
+    degraded: !onWin,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   _resetForTest();
@@ -450,7 +464,7 @@ describe('⑥ Task 2:准入事件接线(lease_acquired/spawn_reject 四查/spawn
     expect(r['thresholds']).toEqual({ softMB: 3072 });
     expect('leaseId' in r).toBe(false);          // 拒绝时租约未生成,字段整个缺席
     expect(r['pressure']).toBe('hard');          // 壳 after-state 佐证拒因形态
-    expect(r['machine']).not.toBeNull();         // 拒绝路径有现成快照,复用落盘
+    expectMachineFromFedSnapshot(r);              // 拒绝路径有现成快照,复用落盘——machine 即准入链取到的那份
     errSpy.mockRestore();
   });
 
@@ -752,7 +766,7 @@ describe('⑨ Task 3:watchdog_degraded/recovered 接线(noteDegrade/恢复点)',
     expect(r['event']).toBe('watchdog_degraded');
     expect(r['consecutiveRounds']).toBe(3);
     expect(r['pressure']).toBe('normal'); // 非 pressure_change 事件壳照带 pressure 键
-    expect(r['machine']).not.toBeNull();  // pollOnce 首行喂快照,缓存暖
+    expectMachineFromFedSnapshot(r);       // pollOnce 首行喂快照,缓存暖——machine 即那份缓存的 mock 读数
     await pollOnce();
     await pollOnce(); // 第 4/5 轮失败:计数 4/5≠3 不再落行(对齐 warn 日志只记一次)
     await settle();
@@ -921,7 +935,7 @@ describe('⑩ Task 4:rss_sample 采样策略 + kill 采样行 + final sample', (
     expect(bk['rssBytes']).toBe(5 * 1024 ** 3);        // 杀时读数=超线峰值证据
     expect(bk['budgetBytes']).toBe(1024 * MB * 2);     // declared×MB×factor
     expect(bk['killFactor']).toBe(2);
-    expect(bk['machine']).not.toBeNull();              // 非 rss_sample 事件:machine 默认(缓存暖)
+    expectMachineFromFedSnapshot(bk);                  // 非 rss_sample 事件:machine 默认(缓存暖)——即 pollOnce 首行喂入的那份
     // 被杀租约不进策略采样循环(证据由 budget_kill 行携带):rss_sample 仅 final 一行
     const final = rssRows();
     expect(final).toHaveLength(1);
