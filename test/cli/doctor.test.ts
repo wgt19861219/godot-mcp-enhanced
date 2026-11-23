@@ -513,6 +513,43 @@ describe('doctor', () => {
       logSpy.mockRestore(); exitSpy.mockRestore();
     }
   });
+
+  it('三期补遗:disabled+豁免非空→不附(guard=0 旁路时豁免无从生效);enabled+空→不附', async () => {
+    const { runDoctor } = await import('../../src/cli/doctor.js');
+    // 真值表补两格:guard&&length>0 合取的两个 false 分支各钉一侧
+    const makePanel = (guard: boolean, exempt: string[]) => ({
+      guard,
+      watchdogExempt: exempt,
+      watermarkMB: 3072,
+      pressure: { state: 'normal', enteredAt: null },
+      machine: {
+        freePhysBytes: 8 * 1024 ** 3, totalPhysBytes: 16 * 1024 ** 3,
+        commitAvailBytes: 10 * 1024 ** 3, commitTotalBytes: 20 * 1024 ** 3,
+        godotProcCount: 0, sampledAt: 0,
+      },
+      budget: { pct: 67, budgetMB: 10922, usedMB: 0, leaseCount: 0 },
+      instances: [],
+    } as never);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit'); }) as never);
+    try {
+      // 格①:disabled + 豁免非空 → 不附(guard=0 旁路时 env 豁免无从生效,附了误导诊断)
+      memguardDoctor.panel.mockReturnValueOnce(makePanel(false, ['preview']));
+      await runDoctor([]).catch(() => {});
+      let guardLine = logSpy.mock.calls.map(c => c.join(' ')).find(l => l.includes('memory-guard:')) ?? '';
+      expect(guardLine).toContain('memory-guard: disabled (budget 67%, leases 0, watermark 3072MB)');
+      expect(guardLine).not.toContain('exempt');
+      // 格②:enabled + 空 → 不附(合取右支为 false)
+      logSpy.mockClear();
+      memguardDoctor.panel.mockReturnValueOnce(makePanel(true, []));
+      await runDoctor([]).catch(() => {});
+      guardLine = logSpy.mock.calls.map(c => c.join(' ')).find(l => l.includes('memory-guard:')) ?? '';
+      expect(guardLine).toContain('memory-guard: enabled (budget 67%, leases 0, watermark 3072MB)');
+      expect(guardLine).not.toContain('exempt');
+    } finally {
+      logSpy.mockRestore(); exitSpy.mockRestore();
+    }
+  });
 });
 
 // ─── Addons 同步检查(项目待办 :150) ──
