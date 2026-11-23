@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - (计划中) memory-guard 二期遗留:多 server 租约读-改-写互斥(Task 1 终审 deferred M-3)、杀事件入 JSONL 审计通道(Task 3 终审 deferred M-3)、树杀异步吞错→失败路径归因虚报+进程失管收口(终审 T3-M-2,triage #9——killPidTree promise 化+杀后验证;杀前探活收窗+60s orphan 扫描双兜底已在一期)、blender 档位扩展(Task 4 终审裁定留档);反馈批 Task 4(挂起)落地后随下版发布。
 - (已收口) 驱逐豁免 env `GODOT_MCP_WATCHDOG_EXEMPT` **三期已实现**(原二期 spec §L2 设计层 deferred 项)——Task 1 候选过滤(commit 0eec3f20)+ Task 2 可见性四件(见 [0.40.0]),移出遗留清单。
 
+## [0.40.1] - 2026-11-23
+
+> memory-guard 三期终审遗留清债批(Minor-1/2 + Deferred #9)+ 四期开题前置:hard 态查⓪ 主旨句分支化、WATCHDOG_EXEMPT 未知 token warn 进程生命周期去重、flaky 2 例追踪档案建立。三项均零行为面变化(报文文案精度/日志频次/纯文档),patch bump。同日四期范围圈定:采样落盘功能 + 档位回看判定标准 spec(design 另档)。≠发版,npm publish/tag 待用户明确指令。
+
+- **fix(core): hard 态查⓪ 拒绝报文主旨句分支化(终审 Minor-1,本笔)**:acquireLease 查⓪ 拒绝报文原对 pressure/hard 两态共用主旨句「整机内存压力(**软阈值**)持续 30s——拒新保旧」——「持续 30s」是软阈值去抖窗的进入条件语义,hard 0s 宽限直进(跌破硬阈值即入),该句对其失真(三期 Task 6 裁定「主旨句保持」时已有后缀「已持续 Ns」降误,终审仍建议迭代分支化)。现 hard 态报「整机内存压力(硬阈值)——拒新保旧」不带持续窗,pressure 主旨句不变——进入条件语义各自成立;时长后缀两态共用不变(enteredAt 单点)。测试:⑫⑨ 补 hard 主旨句正反向断言(含 `not.toContain('软阈值')`——hard 报文不再误述软阈值去抖窗)。
+- **fix(core): WATCHDOG_EXEMPT 未知 token warn 去重——同 token 进程生命周期只警一次(终审 Minor-2,本笔)**:`watchdogExemptGroups()` 每次调用实时读 env 不缓存(三期设计,保证面板与实际生效一致),代价是 hard 态驱逐循环期间每 10s 轮询、每次面板/doctor 查询对同一非法 token 重复打同一 stderr warn。现模块级 `_warnedExemptTokens` Set 记已警 token(trim+lowercase 归一形态为键——同 token 不同大小写/空格形态算一个),第二次起静默;**去重只影响日志不影响解析结果**(与「实时读 env」语义正交),报文展示仍取 `token.trim()` 原大小写(Deferred #2 裁定维持)。`_resetForTest()` 同步清 Set(测试隔离通道,防用例间声明序耦合)。测试:⑭⑥(同 token 三调只警一次/换 token 再警/解析不受去重影响/大小写归一同 token)。
+- **docs(test): flaky 测试观察名单建立(终审 Deferred #9,本笔)**:`docs/flaky-watchlist.md` 活文档——与 defects 体系分工(defects 管源码缺陷防复发断言,本档案管测试基建自身偶发行为,竞态/环境态污染无法稳定断言只能复发计数)。首批登记 FLAKY-001(defects-fixed 复发计数偶发非 0,疑似全量并发污染源码形态扫描输入)/FLAKY-002(vitest worker teardown 竞态,fake timers/PowerShell 子进程/临时句柄撤收时序),均 2026-11-22 三期全量首见、单跑即绿、复发记录空;记录规则:复发先单跑复验,单跑绿=追加计数,连续红=升级缺陷。具体用例名三期 worktree 已清理不可考,复发时补名。
+- **chore(release): 版本四件套 0.40.0→0.40.1(patch)**:package.json + version-sync 六 A 类文件(manifest/plugin.cfg/serverJson/Dockerfile/使用指南/mcp_bridge.gd BRIDGE_SCRIPT_VERSION 机械 bump,GDScript 内容零改动)+ CHANGELOG 本段 + README 版本表 v0.40.1 行(B 类手动)。门禁:vitest 相关三文件 113 passed/1 skipped(既有 skip)、tsc --noEmit 零错。
+
 ## [0.40.0] - 2026-11-22
 
 > memory-guard 三期(WATCHDOG_EXEMPT 收敛 + L3 可见性 + 正交性测试 + static_mem 实测 + 查⓪ 报文时长)六任务合版收口:治「驱逐想保 preview/editor 只能靠殿后排序、整机压力拒新报文缺时长上下文」两缺口。计划 docs/superpowers/plans/2026-11-22-memory-guard-phase3.md。≠发版,npm publish/tag 待用户明确指令;触及工具面(get_context memory 对象/doctor 行)与规则文档双副本,版本 bump 四件套(0.39.0→0.40.0)已随 Task 6 收口执行。

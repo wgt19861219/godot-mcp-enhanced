@@ -462,8 +462,9 @@ export function getPressureEnteredAt(): number | null {
  *  候选(区别于殿后:殿后=排序最后仍可杀,env 豁免=不进候选);单进程硬帽(声明×
  *  KILL_FACTOR)独立于此豁免不受影响(Docker 反模式禁令:无上限豁免被禁止——对齐
  *  mem-watchdog.ts 头注释声明)。未知 token 记一行 stderr warn 并忽略(合法 token
- *  照常生效)。每次调用实时读 env 不缓存(对齐 readPositiveIntEnv 低频惯例——
- *  Task 2 面板/doctor 消费同一读法)。 */
+ *  照常生效;同 token 进程生命周期只警一次,清债批 0.40.1 去重)。每次调用实时读
+ *  env 不缓存(对齐 readPositiveIntEnv 低频惯例——Task 2 面板/doctor 消费同一读法)。 */
+const _warnedExemptTokens = new Set<string>();
 export function watchdogExemptGroups(): ReadonlySet<'preview' | 'editor'> {
   const groups = new Set<'preview' | 'editor'>();
   const raw = process.env.GODOT_MCP_WATCHDOG_EXEMPT;
@@ -472,9 +473,15 @@ export function watchdogExemptGroups(): ReadonlySet<'preview' | 'editor'> {
     const t = token.trim().toLowerCase();
     if (t === 'preview' || t === 'editor') groups.add(t);
     else if (t !== '') {
-      console.error(
-        `MEMGUARD WATCHDOG_EXEMPT 未知 token「${token.trim()}」(合法: preview,editor),已忽略——其余合法 token 照常生效`,
-      );
+      // 清债批 0.40.1(终审 Minor-2):同 token 进程生命周期只警一次——实时读 env 不缓存
+      // 的代价是 hard 态驱逐循环每 10s 轮询/每次面板查询重复打同一 warn;去重只影响
+      // 日志不影响解析结果(与「实时读 env」语义正交)。键为 trim+lowercase 归一形态。
+      if (!_warnedExemptTokens.has(t)) {
+        _warnedExemptTokens.add(t);
+        console.error(
+          `MEMGUARD WATCHDOG_EXEMPT 未知 token「${token.trim()}」(合法: preview,editor),已忽略——其余合法 token 照常生效`,
+        );
+      }
     }
   }
   return groups;
@@ -661,15 +668,20 @@ export function acquireLease(
     // 毛刺由查① 兜住,持续吃紧由本查兜住,在跑任务与既有租约一律不动。
     if (getPressureState() !== 'normal') {
       const ctx = leaseUsageCtx(leases, kind); // 拒绝报文要占用清单与实测(与后续查共享 10s 缓存)
-      // 三期 Task 6:报文附当前已持续时长——主旨句「持续 30s」是进入条件语义(软阈值
-      // 去抖窗),后缀是此刻距 enteredAt 的实际经过(状态可含 hard 态:hard 进入/降级
-      // 同样重置 enteredAt,由其覆盖)。enteredAt 理论非 null(状态机保证非 normal 必有
-      // 进入时刻——三处进入点均同时设值,仅恢复 normal 才清 null),防御性 null 跳过
-      // 后缀不炸(不可达分支,测试钉住可达分支恒有 enteredAt)。
+      // 三期 Task 6:报文附当前已持续时长——后缀是此刻距 enteredAt 的实际经过(状态可含
+      // hard 态:hard 进入/降级同样重置 enteredAt,由其覆盖)。主旨句分支化(清债批
+      // 0.40.1,终审 Minor-1):pressure 主旨句「持续 30s」是软阈值去抖窗的进入条件语义;
+      // hard 0s 宽限直进,该句对其失真——hard 分支报「(硬阈值)」不带持续窗,进入条件
+      // 语义各自成立。enteredAt 理论非 null(状态机保证非 normal 必有进入时刻——三处
+      // 进入点均同时设值,仅恢复 normal 才清 null),防御性 null 跳过后缀不炸(不可达
+      // 分支,测试钉住可达分支恒有 enteredAt)。
       const enteredAt = getPressureEnteredAt();
+      const subject = getPressureState() === 'hard'
+        ? '整机内存压力(硬阈值)'
+        : '整机内存压力(软阈值)持续 30s';
       const reason = enteredAt === null
-        ? '整机内存压力(软阈值)持续 30s——拒新保旧'
-        : `整机内存压力(软阈值)持续 30s——拒新保旧——已持续 ${Math.round((Date.now() - enteredAt) / 1000)}s`;
+        ? `${subject}——拒新保旧`
+        : `${subject}——拒新保旧——已持续 ${Math.round((Date.now() - enteredAt) / 1000)}s`;
       return {
         denial: buildDenial(
           'MEMGUARD_LOW_WATER', reason,
@@ -949,7 +961,8 @@ export function _setLeasesFilePathForTest(p: string | null): void {
   _leasesFilePathOverride = p;
 }
 
-/** 重置模块可变状态(env 开关缓存/快照缓存/RSS 缓存/租约序号/pressure 状态机),测试隔离用。 */
+/** 重置模块可变状态(env 开关缓存/快照缓存/RSS 缓存/租约序号/pressure 状态机/豁免 warn
+ *  去重集),测试隔离用。 */
 export function _resetForTest(): void {
   _enabledCache = null;
   _snapshotCache = null;
@@ -959,4 +972,5 @@ export function _resetForTest(): void {
   _pressureEnteredAt = null;
   _softBreachSince = null;
   _recoverSince = null;
+  _warnedExemptTokens.clear();
 }

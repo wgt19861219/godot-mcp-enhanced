@@ -751,6 +751,10 @@ describe('⑫ 二期 Task 2:整机软阈值 pressure 状态机(拒新保旧+上�
     expect('denial' in res).toBe(true);
     if (!('denial' in res)) return;
     expect(res.denial.code).toBe('MEMGUARD_LOW_WATER');
+    // 清债批(0.40.1,终审 Minor-1):hard 0s 宽限直进,主旨句分支化——hard 报「(硬阈值)」
+    // 不带持续窗(「持续 30s」是软阈值去抖窗语义,对 hard 失真),pressure 主旨句不变。
+    expect(res.denial.message).toContain('整机内存压力(硬阈值)——拒新保旧');
+    expect(res.denial.message).not.toContain('软阈值'); // hard 报文不再误述软阈值去抖窗
     expect(res.denial.message).toContain('已持续 12s'); // 查⓪ 拒新语义 pressure/hard 共用,时长由 enteredAt 覆盖
     errSpy.mockRestore();
   });
@@ -1018,5 +1022,27 @@ describe('⑭ 三期:WATCHDOG_EXEMPT 候选过滤', () => {
     expect(r.candidates.map((c) => c.lease.id)).toEqual(['N', 'P', 'E']);
     expect(r.envExempted).toEqual({ preview: 0, editor: 0 });
     expect(errSpy).not.toHaveBeenCalled(); // 空 token 静默跳过,不产 warn
+  });
+
+  it('⑥ warn 去重(清债批 0.40.1,终审 Minor-2):同 token 进程生命周期只警一次,换 token 再警;解析结果不受影响', () => {
+    // 自包含隔离:_resetForTest 清已警 Set——④ 用例已警过 'prevew',不重置则本用例首调
+    // 不再警(用例间声明序耦合,重排即挂);压力态等被一并归零对本用例无副作用。
+    _resetForTest();
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'prevew');
+    watchdogExemptGroups();
+    watchdogExemptGroups();
+    watchdogExemptGroups();
+    expect(errSpy).toHaveBeenCalledTimes(1); // 同 token 多次调用只警一次(hard 驱逐循环 10s 轮询/面板查询不再重复刷屏)
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'bogus');
+    watchdogExemptGroups();
+    expect(errSpy).toHaveBeenCalledTimes(2); // 换 token 再警(不同 token 各自一次)
+    // 去重只影响日志不影响解析:非法 token 仍忽略、合法 token 照常生效
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', ' PREVEW ,editor');
+    const groups = watchdogExemptGroups();
+    expect(groups.has('editor')).toBe(true); // 合法 token 解析不受去重影响
+    expect(groups.has('preview')).toBe(false);
+    expect(errSpy).toHaveBeenCalledTimes(2); // 'prevew' 大小写归一后同 token,已警过不再警
+    errSpy.mockRestore();
   });
 });
