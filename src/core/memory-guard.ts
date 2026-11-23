@@ -386,6 +386,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
       `MEMGUARD hard exit → pressure 物理空闲 ${fmtGB(snap.freePhysBytes)} ≥ 硬阈值 ${pressureHardMB()}MB` +
       `+minimum-reclaim ${HARD_MIN_RECLAIM_MB}MB——回拒新保旧(恢复 normal 需再连续 ${PRESSURE_RECOVER_MS / 1000}s 健康)`,
     );
+    memSample('pressure_change', { from: 'hard', to: 'pressure' }, snap); // 四期 Task 3
     // 落入下方软阈值机:pressure 态继续按 below 推进恢复计时
   } else if (belowHardEnter) {
     // 任何态(normal/pressure)跌破硬阈值 → 立即 hard(0s 宽限;驱逐由 watchdog 执行)
@@ -399,6 +400,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
       `MEMGUARD hard enter(prev=${prev}) 物理空闲 ${fmtGB(snap.freePhysBytes)}(commit ${commitStr})` +
       ` < 硬阈值 ${pressureHardMB()}MB——0s 宽限立即驱逐 ratio 最高租约(实测÷声明降序,watchdog 执行)`,
     );
+    memSample('pressure_change', { from: prev, to: 'hard' }, snap); // 四期 Task 3
     return;
   }
 
@@ -421,6 +423,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
         `MEMGUARD pressure enter 物理空闲 ${fmtGB(snap.freePhysBytes)}(commit ${commitStr})` +
         ` < 软阈值 ${pressureSoftMB()}MB 持续 ${PRESSURE_ENTER_MS / 1000}s——拒新保旧(在跑租约不动)`,
       );
+      memSample('pressure_change', { from: 'normal', to: 'pressure' }, snap); // 四期 Task 3
     }
     return;
   }
@@ -438,6 +441,7 @@ export function updatePressureState(snap: MachineMemorySnapshot): void {
         `MEMGUARD pressure exit(prev=${prevState}) 连续 ${PRESSURE_RECOVER_MS / 1000}s` +
         ` 高于软阈值 ${pressureSoftMB()}MB,恢复受理新 spawn`,
       );
+      memSample('pressure_change', { from: prevState, to: 'normal' }, snap); // 四期 Task 3
     }
   } else {
     _recoverSince = null; // 再跌破 → 5min 恢复计时重计
@@ -1097,7 +1101,9 @@ function buildServerStartFields(): Record<string, unknown> {
 /** 拼一行 JSONL:公共壳(ts/v/event/serverPid)+ fields 直铺(kind/project/leaseId/pid
  *  等由调用方传入即进壳)+ machine + pressure(after-state)。snap 语义:null 显式
  *  machine:null;undefined 只读快照缓存(_snapshotCache,不触发新采样——同步 2×5s
- *  PowerShell 会打脸「延迟零感知」,设计非功能约束),缓存冷落 null。 */
+ *  PowerShell 会打脸「延迟零感知」,设计非功能约束),缓存冷落 null。
+ *  例外(四期 Task 3):pressure_change 事件壳省略 pressure 键——from/to 即切换前后
+ *  态,第三个「切换后态」键与 to 同值有歧义(分析端接口裁定,Task 6 契约)。 */
 function buildSampleLine(
   event: string,
   fields: Record<string, unknown>,
@@ -1113,7 +1119,7 @@ function buildSampleLine(
     serverPid: process.pid,
     ...fields,
     machine,
-    pressure: getPressureState(),
+    ...(event === 'pressure_change' ? {} : { pressure: getPressureState() }),
   };
   return `${JSON.stringify(line)}\n`;
 }

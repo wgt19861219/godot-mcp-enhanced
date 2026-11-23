@@ -26,6 +26,14 @@ vi.mock('child_process', async (importOriginal) => {
   return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 
+// memory-guard 部分 mock(importOriginal 保真,同 mem-watchdog.test.ts 惯例):⑨ 看门狗
+// 降级/恢复用例需可控 sampleRssBytes(抛错=降级轮/读数=恢复轮)——真实通道在非 Windows
+// 恒空表,恢复路径不经 mock 无法跨平台驱动。其余导出保真直铺,①-⑦ 行为零影响。
+vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/memory-guard.js')>();
+  return { ...actual, sampleRssBytes: vi.fn(actual.sampleRssBytes) };
+});
+
 import { spawn as spawnSpy } from 'child_process';
 import {
   memSample,
@@ -34,11 +42,13 @@ import {
   bindLeasePid,
   declaredMBFor,
   updatePressureState,
+  sampleRssBytes,
   _setLeasesFilePathForTest,
   _resetForTest,
   _setPsRunnerForTest,
   type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
+import { pollOnce, _resetWatchdogForTest } from '../../src/core/mem-watchdog.js';
 import {
   getSession,
   normalizeProjectKey,
@@ -369,8 +379,11 @@ describe('⑥ Task 2:准入事件接线(lease_acquired/spawn_reject 四查/spawn
     });
     const res = acquireLease('headless', 'D:/proj');
     expect('denial' in res).toBe(true);
-    await waitForLineCount(2);
-    const r = row(readLines(), 1);
+    // 四期 Task 3 起 hard enter 先落一行 pressure_change(normal→hard):spawn_reject 行顺移至 2
+    await waitForLineCount(3);
+    const rows = readLines();
+    expect(row(rows, 1)['event']).toBe('pressure_change'); // hard enter 切换行(⑧③ 已详断形态)
+    const r = row(rows, 2);
     expect(r['event']).toBe('spawn_reject');
     expect(r['kind']).toBe('headless');
     expect(r['project']).toBe('D:/proj');
@@ -520,5 +533,199 @@ describe('⑦ Task 2:生命周期回收事件接线(idle_reap/exit_reap)', () =>
     expect(aliveMs).toBeLessThan(60_000);
     expect(r['machine']).toBeNull();
     errSpy.mockRestore();
+  });
+});
+
+// ===========================================================================
+// 四期 Task 3:pressure_change 四切换 + watchdog_degraded/recovered 接线——
+// 接线在 src 侧(updatePressureState 四切换点/noteDegrade 退避点/恢复首轮清零点),
+// 此处经公开 API 真实触发并断言采样行形态(字段名即 Task 6 分析端接口)。
+// 夹具:⑧ 复制 memory-guard.test.ts ⑫ 的 pressureSnap + fake timers(时序全可控);
+// ⑨ 复制 mem-watchdog.test.ts 的租约夹具 + sampleRssBytes 部分 mock(抛错=降级轮/
+// 读数=恢复轮),pollOnce 首行喂状态机的机器快照走 mockMachinePs(恒健康)。
+// ===========================================================================
+
+/** 直调 updatePressureState 的快照构造(不走采样通道,时序全由 fake timers 控制;复制
+ *  memory-guard.test.ts ⑫ 同名夹具):入参单位 MB;commitAvailMB=null 构造降级口径。 */
+function pressureSnap(freePhysMB: number, commitAvailMB: number | null): MachineMemorySnapshot {
+  return {
+    freePhysBytes: freePhysMB * 1024 * 1024,
+    totalPhysBytes: 64 * 1024 * 1024 * 1024,
+    commitAvailBytes: commitAvailMB === null ? null : commitAvailMB * 1024 * 1024,
+    commitTotalBytes: commitAvailMB === null ? null : 64 * 1024 * 1024 * 1024,
+    godotProcCount: 0,
+    sampledAt: Date.now(),
+  };
+}
+
+describe('⑧ Task 3:pressure_change 四切换接线(updatePressureState)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0); // 时间原点归零,30s/5min 去抖算术直观(同 ⑫ 惯例)
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** 持续跌破软阈值(默认 3072MB)满 30s 进 pressure:feeds at t=0..step*3。 */
+  function driveSoftEnter(): void {
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=0 跌破(2GB<3072MB)起算
+    for (let t = 10_000; t <= 30_000; t += 10_000) {
+      vi.advanceTimersByTime(10_000);
+      updatePressureState(pressureSnap(2 * 1024, 64 * 1024)); // t=30s 恰满 30s → 进 pressure
+    }
+  }
+
+  it('① normal→pressure:持续跌破满 30s → 一行 from=normal to=pressure;壳省略 pressure 键;machine=喂入的切换 snap', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // pressure enter stderr 行
+    driveSoftEnter();
+    vi.useRealTimers(); // fire-and-forget append 与 fake timers 无关,先回真实时钟再等落盘
+    await waitForLineCount(2); // server_start + pressure_change
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('pressure_change');
+    expect(r['from']).toBe('normal');
+    expect(r['to']).toBe('pressure');
+    expect('pressure' in r).toBe(false); // 壳省略 pressure 键——from/to 即态,第三键有歧义
+    expect(r['machine']).toEqual({       // machine 用喂入的 snap(t=30 切换轮的跌破读数)
+      freePhysMB: 2048, commitAvailMB: 65536, totalPhysMB: 65536, godotProcCount: 0, degraded: false,
+    });
+    errSpy.mockRestore();
+  });
+
+  it('② pressure→hard:进 pressure 后跌破硬阈值(1MB<1536MB)→ from=pressure to=hard', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    driveSoftEnter();                          // t=30s 进 pressure(row 1:normal→pressure)
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(1, 64 * 1024)); // t=40s 0s 宽限立即 hard(row 2)
+    vi.useRealTimers();
+    await waitForLineCount(3);
+    const r = row(readLines(), 2);
+    expect(r['event']).toBe('pressure_change');
+    expect(r['from']).toBe('pressure');
+    expect(r['to']).toBe('hard');
+    expect('pressure' in r).toBe(false);
+    errSpy.mockRestore();
+  });
+
+  it('③ hard→pressure:1MB 立即 hard(row1 normal→hard)→ 4GB 达硬阈值+2GB 脱离线 → from=hard to=pressure', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    updatePressureState(pressureSnap(1, 64 * 1024));  // t=0 normal→hard(0s 宽限,row 1)
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(4 * 1024, null)); // t=10s 4096MB≥1536+2048 → hard exit(row 2)
+    vi.useRealTimers();
+    await waitForLineCount(3);
+    const rows = readLines();
+    const r1 = row(rows, 1);
+    expect(r1['event']).toBe('pressure_change'); // 垫脚石切换顺带钉住 site② 的 normal 入线
+    expect(r1['from']).toBe('normal');
+    expect(r1['to']).toBe('hard');
+    const r2 = row(rows, 2);
+    expect(r2['event']).toBe('pressure_change');
+    expect(r2['from']).toBe('hard');
+    expect(r2['to']).toBe('pressure');
+    expect('pressure' in r2).toBe(false);
+    errSpy.mockRestore();
+  });
+
+  it('④ pressure→normal:进 pressure 后连续 5min 高于软阈值 → from=pressure to=normal', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    driveSoftEnter();                          // t=30s 进 pressure(row 1)
+    vi.advanceTimersByTime(10_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=40s 回升 → 5min 恢复计时起算
+    vi.advanceTimersByTime(300_000);
+    updatePressureState(pressureSnap(8 * 1024, 64 * 1024)); // t=340s 恰连续 300s → 恢复(row 2)
+    vi.useRealTimers();
+    await waitForLineCount(3);
+    const r = row(readLines(), 2);
+    expect(r['event']).toBe('pressure_change');
+    expect(r['from']).toBe('pressure');
+    expect(r['to']).toBe('normal');
+    expect('pressure' in r).toBe(false);
+    errSpy.mockRestore();
+  });
+
+  it('⑤ guard=0:updatePressureState 早退(状态机旁路在切换判定之前)→ 零行,文件不创建', async () => {
+    vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '0');
+    _resetForTest(); // 开关读一次缓存——重置后首次调用重读 env
+    updatePressureState(pressureSnap(1, 64 * 1024)); // 若未早退必切 normal→hard 落行
+    vi.advanceTimersByTime(40_000);
+    updatePressureState(pressureSnap(2 * 1024, 64 * 1024));
+    vi.useRealTimers();
+    await settle();
+    expect(fs.existsSync(samplePath)).toBe(false);
+  });
+});
+
+describe('⑨ Task 3:watchdog_degraded/recovered 接线(noteDegrade/恢复点)', () => {
+  beforeEach(() => {
+    // 状态机恒健康(软/硬阈值均 1MB,真实 os 读数必高于):pollOnce 首行喂快照零切换,
+    // 行数账本只剩 watchdog 事件;机器快照走 mockMachinePs 免真起 PowerShell。
+    vi.stubEnv('GODOT_MCP_MEM_PRESSURE_SOFT_MB', '1');
+    vi.stubEnv('GODOT_MCP_MEM_PRESSURE_HARD_MB', '1');
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    _resetWatchdogForTest(); // 清 mem-watchdog 降级计数/退避窗
+    _setLeasesFilePathForTest(path.join(tmpDir, 'memory-leases.json'));
+    fs.mkdirSync(path.dirname(path.join(tmpDir, 'memory-leases.json')), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'memory-leases.json'),
+      JSON.stringify({
+        version: 1,
+        leases: [{
+          id: 'W1', serverPid: process.pid, kind: 'headless', declaredMB: 1024,
+          projectPath: 'D:/proj', pid: 4242, startedAt: Date.now(), lastHeartbeat: Date.now(),
+        }],
+      }),
+    );
+    mockKillProbe(new Set([4242])); // listActiveLeases 清理线按 pid 探活,假 pid 须活
+    vi.mocked(sampleRssBytes).mockRejectedValue(new Error('ps down')); // 默认:采样通道抛错
+  });
+
+  afterEach(() => {
+    _setLeasesFilePathForTest(null);
+  });
+
+  it('① 连续 3 轮采样失败 → watchdog_degraded(consecutiveRounds=3);第 4/5 轮仅续退避不重复落行', async () => {
+    await pollOnce();
+    await pollOnce();
+    await pollOnce(); // 第 3 轮达阈值(退避触发点)→ 落行
+    await waitForLineCount(2); // server_start + watchdog_degraded
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('watchdog_degraded');
+    expect(r['consecutiveRounds']).toBe(3);
+    expect(r['pressure']).toBe('normal'); // 非 pressure_change 事件壳照带 pressure 键
+    expect(r['machine']).not.toBeNull();  // pollOnce 首行喂快照,缓存暖
+    await pollOnce();
+    await pollOnce(); // 第 4/5 轮失败:计数 4/5≠3 不再落行(对齐 warn 日志只记一次)
+    await settle();
+    expect(readLines()).toHaveLength(2);
+  });
+
+  it('② 降级后首轮拿到读数 → watchdog_recovered;再失败重新累计,未满 3 轮不落 degraded', async () => {
+    await pollOnce();
+    await pollOnce();
+    await pollOnce(); // 降级(row 1)
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * 1024 * 1024 }); // 恢复轮:读数正常
+    await pollOnce();
+    await waitForLineCount(3); // + watchdog_recovered
+    const r = row(readLines(), 2);
+    expect(r['event']).toBe('watchdog_recovered');
+    expect('consecutiveRounds' in r).toBe(false); // recovered 无专有字段(接口 {})
+    expect(r['pressure']).toBe('normal');
+    vi.mocked(sampleRssBytes).mockRejectedValue(new Error('ps down'));
+    await pollOnce();
+    await pollOnce(); // 恢复后重新累计 1+2=2 轮,未达 3 → 不落 degraded
+    await settle();
+    expect(readLines()).toHaveLength(3);
+  });
+
+  it('③ 未达阈值的失败(2 轮)+ 成功轮:零降级事件也零恢复事件(此前 <3,恢复语义不成立)', async () => {
+    await pollOnce();
+    await pollOnce();
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 512 * 1024 * 1024 });
+    await pollOnce(); // 2 轮失败后成功:计数清零,无 degraded 也无 recovered
+    await settle();
+    // 零事件 → memSample 一次未被调(server_start 也惰性未触发)→ 文件不创建
+    expect(fs.existsSync(samplePath)).toBe(false);
   });
 });

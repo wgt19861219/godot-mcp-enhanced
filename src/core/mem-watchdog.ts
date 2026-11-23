@@ -32,6 +32,7 @@ import {
   getPressureState,
   killPidProbe,
   listActiveLeases,
+  memSample,
   memoryGuardEnabled,
   releaseLease,
   sampleRssBytes,
@@ -78,7 +79,9 @@ function pollIntervalSeconds(): number {
 }
 
 /** 记一轮采样降级:首次达到阈值记一次日志并进入 30s 退避;持续失败持续续期退避窗
- *  (日志不重复——退避期间 tick 跳过,恢复后首轮若又失败即再续期,不刷屏)。 */
+ *  (日志不重复——退避期间 tick 跳过,恢复后首轮若又失败即再续期,不刷屏)。
+ *  四期 Task 3:首次达阈值(退避真正触发点)落一行 watchdog_degraded 采样——后续
+ *  失败仅续期退避不重复落行,与 warn 日志同款只记一次语义。 */
 function noteDegrade(): void {
   _consecutiveDegrades++;
   if (_consecutiveDegrades >= DEGRADE_THRESHOLD) {
@@ -87,6 +90,7 @@ function noteDegrade(): void {
         'mem-watchdog',
         `MEMGUARD degraded: 连续 ${DEGRADE_THRESHOLD} 轮 RSS 采样失败,轮询退避 ${DEGRADE_BACKOFF_MS / 1000}s(采样通道不可用,跳过判杀不误杀)`,
       );
+      memSample('watchdog_degraded', { consecutiveRounds: _consecutiveDegrades });
     }
     _backoffUntil = Date.now() + DEGRADE_BACKOFF_MS;
   }
@@ -119,6 +123,9 @@ export async function pollOnce(): Promise<{ checked: number; killed: number }> {
   if (pids.length > 0 && Object.keys(rssMap).length === 0) {
     noteDegrade(); // 读数全空 = 采样通道失败降级(PowerShell 失败/非 Windows 恒空)
     return { checked: leases.length, killed: 0 };
+  }
+  if (_consecutiveDegrades >= DEGRADE_THRESHOLD) {
+    memSample('watchdog_recovered', {}); // 四期 Task 3:此前已降级(≥3),恢复首轮拿到读数——通道恢复
   }
   _consecutiveDegrades = 0; // 拿到读数(哪怕部分)即视为通道健康,降级计数清零
   let killed = 0;
