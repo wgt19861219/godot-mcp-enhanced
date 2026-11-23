@@ -20,7 +20,7 @@
 | 轮转 | 8MB/代 × 4 代（`.1`–`.4`，峰值 40MB）：首条写入前 stat 一次、每 500 次追加查一次大小、轮转失败下一条即重试 |
 | 清空 | 删除文件即清空；`uninstall --purge` 清掉整个 `~/.godot-mcp/` 目录 |
 
-**公共壳**：每行固定带 `ts`（本地毫秒）、`v`（schema 版本，当前 1）、`event`、`serverPid`（pressure 状态机是进程内单例，多 server 共写靠它分段）、`machine`（当时机器水位快照；无现成快照时为 `null`，绝不为此新起采样）、`pressure`（事件生效后的态）；`kind`/`project`/`leaseId`（贯穿 spawn→RSS→杀/拒绝 的进程身份）/`pid` 四个身份键由调用方按事件传入，**并非每行都有**，在场情况见下表「身份键」列。两个例外：`rss_sample` 行无 `machine`，`pressure_change` 行无 `pressure`（只有 `from`/`to`）。
+**公共壳**：每行固定带 `ts`（本地毫秒）、`v`（schema 版本，当前 1）、`event`、`serverPid`（pressure 状态机是进程内单例，多 server 共写靠它分段）、`machine`（当时机器水位快照；无现成快照时为 `null`，绝不为此新起采样）、`pressure`（事件生效后的态）；`kind`/`project`/`leaseId`（贯穿 spawn→RSS→杀 的租约身份；拒绝行不带）/`pid` 四个身份键由调用方按事件传入，**并非每行都有**，在场情况见下表「身份键」列。两个例外：`rss_sample` 行无 `machine`，`pressure_change` 行无 `pressure`（只有 `from`/`to`）。
 
 **事件清单**（13 个，全部进采样通道；「身份键」列只列在场的 `kind`/`project`/`leaseId`/`pid`，未列即无该键）：
 
@@ -29,7 +29,7 @@
 | `server_start` | server 进程首个事件落盘前（惰性首发，每进程一次） | 均无 | `pkgVersion`、`thresholds{minFreeMB,budgetPct,maxInstances,softMB,hardMB}`、`declaredMB`（四档）、`killFactor`（四档）、`pollSeconds`、`tzOffsetMin`——**历史数据按事件时刻阈值判定，不按分析时的当前 env** |
 | `lease_acquired` | 准入成功（`acquireLease`） | `kind`、`project`、`leaseId`（**无 `pid` 键**） | `declaredMB`——准入成功≠进程起来 |
 | `spawn_started` | 租约绑定 pid（spawn 成功后） | 四者齐全——`pid` 自此确立（进程身份确立点） | 无 |
-| `spawn_reject` | 准入四查任一拒绝 | `kind`、`project`；拒绝时尚未建租约则无 `leaseId`；**无 `pid` 键** | `check`（⓪压力=`0` / ①水位=`1` / ②预算=`2` / ③实例=`3`）、`reason`（`MEMGUARD_LOW_WATER`/`MEMGUARD_BUDGET`/`MEMGUARD_INSTANCE_CAP`）、`thresholds`（查⓪ `{softMB}` / 查① `{minFreeMB}` / 查② `{budgetPct, usedMB}` / 查③ `{maxInstances}`）。⓪与①共用 LOW_WATER，`check` 是唯一区分 |
+| `spawn_reject` | 准入四查任一拒绝 | `kind`、`project`；**无 `leaseId` 键**；**无 `pid` 键** | `check`（⓪压力=`0` / ①水位=`1` / ②预算=`2` / ③实例=`3`）、`reason`（`MEMGUARD_LOW_WATER`/`MEMGUARD_BUDGET`/`MEMGUARD_INSTANCE_CAP`）、`thresholds`（查⓪ `{softMB}` / 查① `{minFreeMB}` / 查② `{budgetPct, usedMB}` / 查③ `{maxInstances}`）。⓪与①共用 LOW_WATER，`check` 是唯一区分 |
 | `rss_sample` | 看门狗轮询策略采样 + 租约释放时的 final sample | 四者齐全 | `declaredMB`、`rssBytes`；无 `machine` |
 | `budget_kill` | 单进程超预算杀（`killOverBudget`） | 四者齐全 | `declaredMB`、`rssBytes`（杀时读数）、`budgetBytes`（=声明×系数）、`killFactor` |
 | `evict` | 硬阈值驱逐杀（`killForEviction`） | 四者齐全 | `declaredMB`、`rssBytes`（**推算值** = ratio×声明）、`ratio`、`reason:'hard'` |
@@ -39,7 +39,7 @@
 | `idle_reap` | IdleTimer 空闲回收 | `kind`（恒 `game_window`）、`project`、`pid`；**无 `leaseId`** | `aliveMs`（回收前捕获的存活毫秒）；`machine:null` |
 | `exit_reap` | server 退出链回收 | 同 `idle_reap` | 同 `idle_reap`；`machine:null` |
 
-**`rss_sample` 何时落**：首轮必采（租约绑定 pid 后首个拿到读数的轮询，不受节流——几秒结束的作业至少留一行）；此后时间驱动 60s 一行（非轮次计数，`GODOT_MCP_MEM_POLL_SECONDS` 改动不漂）；存活 >1h 的租约降频到 300s；pressure/hard 态收回 60s 档；租约释放时若看门狗最近一轮有读数则补一行 final sample（零采样成本）。被杀进程的读数由 `budget_kill`/`evict` 行携带。**亚 10 秒进程仍可能只有 1 行样本**——数据够不够按 kind 判定，不够报「数据不足」不硬算。
+**`rss_sample` 何时落**：首轮必采（租约绑定 pid 后首个拿到读数的轮询，不受节流——几秒结束的作业至少留一行）；此后时间驱动 60s 一行（非轮次计数，`GODOT_MCP_MEM_POLL_SECONDS` 改动不漂）；存活 >1h 的租约降频到 300s；pressure/hard 态收回 60s 档；租约释放时按 leaseId 取看门狗最近一轮读数补一行 final sample（零采样成本；**不依赖租约账本是否已被清理**——自然退出路径进程已死、租约多半已被读时清理移出账本，照样落行；快照读后即删，超 10 分钟无人释放的快照自动回收）。被杀进程的读数由 `budget_kill`/`evict` 行携带。**亚 10 秒进程仍可能只有 1 行样本**——数据够不够按 kind 判定，不够报「数据不足」不硬算。
 
 ### 1.2 审计通道（跨 server 杀可见性）
 
@@ -47,7 +47,7 @@
 - 行形态：`trace_id: 'memguard'`、`tool: 'memory-guard'`、`action`（三类事件名）、`risk: 'process'`；`details` 含 leaseId/pid/kind/declaredMB/rssBytes，另带 `budgetBytes`（budget_kill）/ `ratio`（evict）/ `envExempted`（evict_exhausted，`project_path` 为空）。
 - **不受 `GODOT_MCP_AUDIT` 开关控制**——机器级审计对启动/杀进程类事件的既有契约是「审计关闭仍留痕」。审计写失败只计数（`recordAuditWriteFailure`），kill 与采样不受影响。
 - 该文件自 0.41.0 起有大小轮转：10MB × 3 代（此前只追加无轮转）。
-- 分工：**分析以采样行为准**，审计行用于跨 server 交叉核对；审计行无串行链，同一 tick 连发的多行落盘顺序不保证。
+- 分工：**分析以采样行为准**，审计行用于跨 server 交叉核对；审计行**同一进程内追加串行**（行序 = 调用序，并发追加不触发并发轮转），跨进程（多 server 共写）仍无序。
 
 ## 2. 聚合口径
 
@@ -121,7 +121,8 @@ node scripts/memguard-review.mjs [--file <path>]
 - **非 Windows 没有 RSS 通道**（`sampleRssBytes` 恒空），档位类判定（#1/#2/#8）不适用——工具以提示形式报出，判定本身仍是数据不足。
 - **`GODOT_MCP_MEM_SAMPLE=0` 的「时段」无法从数据反推**（关闭即零写盘）：工具只能结合当前 env 与「最后事件距今 >24h」做启发式提示。
 - **`evict.rssBytes` 是推算值**（ratio×声明）却计入进程 max——evict 多的窗口可能抬高 #2 的 P95。
-- **`evict_exhausted` 在 hard 持续期间每个轮询周期落一行**（无节流），计数偏大，只作「候选耗尽仍 hard 曾发生」的证据。
+- **`evict_exhausted` 在 hard 持续期间每个轮询周期落一行**（无节流），计数偏大，只作「候选耗尽仍 hard 曾发生」的证据；**审计通道同样无节流**——hard 持续且无可杀候选时 `machine-audit.jsonl` 约每 10s 一行。
+- **`exit_reap` 在退出链上是 best-effort**：server 退出时若先走到 `process.exit`，在途的该行可能丢失（回收链上的 stderr 同步行不存在在途丢失问题）。
 - **`project` 字段有两种形态**（租约的项目路径 / 回收行的会话桶 key）：仅展示性字段，工具不据它做任何关联（当前报告也不展示）。
 - **没有 `spawn_failed` 事件**：spawn 失败数按 kind 用 `lease_acquired − spawn_started` 差值推导。
 - **`watchdog_recovered` 在零租约轮次也可能出现**（无读数证据），不宜作为通道健康时长的依据。
