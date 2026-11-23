@@ -146,6 +146,8 @@ AI 改动涉及用户需要看到效果才能验收的内容（\`.tscn\` / UI �
 
 二期生命周期：非 preview 会话 15min 无 bridge 交互自动回收（\`GODOT_MCP_SESSION_IDLE_MINUTES\`，0=关；preview 窗口豁免）；server 退出时优雅回收全部非 preview 会话（10s 有限等待 → 二次触发强杀 → 30s 兜底）。拒绝/驱逐/回收日志可 grep \`MEMGUARD\`。CI 连跑场景 \`GODOT_MCP_MEMORY_GUARD=0\` 一键全关。
 
+四期采样（0.41.0+）：守卫开启时治理事件（准入/拒绝/RSS 采样/杀/pressure 切换/回收）默认追加到 \`~/.godot-mcp/memory-guard-events.jsonl\`（\`GODOT_MCP_MEM_SAMPLE_FILE\` 改路径；权限 0600，含项目路径与 pid，8MB×4 代轮转）；\`GODOT_MCP_MEMORY_GUARD=0\` 或 \`GODOT_MCP_MEM_SAMPLE=0\` 即零写盘，删除文件即清空。回看档位/阈值是否该调的判定标准见 godot-mcp-enhanced 仓库 \`docs/memory-guard-lookback.md\`（只读分析工具 \`scripts/memguard-review.mjs\`，不自动调档）；doctor Memory guard 段末 \`sampling:\` 行可见采样状态。
+
 ## 绑脚本场景（B 轨）结构改动推荐通道
 
 场景绑定的 \`.gd\` 脚本若引用 **autoload 单例或全局 class_name**（跨文件依赖），headless \`load()\` 该场景会因脚本编译失败而返回 null——headless 片段进程缺完整项目上下文，autoload 相关 "Identifier not found" 属已知 headless 限制（\`run_and_verify\` 同源将其标记为 headless_limitation）。此类场景的**结构性改动（加/删/改节点）必须走编辑器 WS 通道**：\`launch_editor\` → 编辑器内打开目标场景 → \`add_node\`/\`edit_node\`/\`remove_node\`（editor 路由操作活动场景）→ \`save_scene\`。编辑器有完整项目上下文（autoload 注册 + 全局类缓存），加载此类场景不失败。
