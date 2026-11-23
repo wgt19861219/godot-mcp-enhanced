@@ -661,8 +661,11 @@ export function acquireLease(
     };
   }
   const leases = listActiveLeases();
+  // 四期 Task 2:hoist 到块外——lease_acquired 的 machine 复用准入链已取的快照(editor
+  // exemptChecks 路径不进本块,snap 保持 null → machine:null,绝不新起采样)。
+  let snap: MachineMemorySnapshot | null = null;
   if (opts?.exemptChecks !== true) {
-    const snap = getMachineMemorySnapshot();
+    snap = getMachineMemorySnapshot();
 
     // 查⓪ 整机软阈值 pressure(二期 Task 2):状态机非 normal(pressure;hard 为 Task 3
     // 占位,进入后同样拒新)→ 拒新保旧。与查① 的区别:水位是即时读数拒,这里是
@@ -684,6 +687,13 @@ export function acquireLease(
       const reason = enteredAt === null
         ? `${subject}——拒新保旧`
         : `${subject}——拒新保旧——已持续 ${Math.round((Date.now() - enteredAt) / 1000)}s`;
+      // 四期 Task 2:spawn_reject 采样,check 序号 查⓪=0/水位=1/预算=2/实例=3——⓪与①
+      // 共用 MEMGUARD_LOW_WATER,check 是唯一区分(leaseId 拒绝时未生成,缺席)。
+      memSample(
+        'spawn_reject',
+        { kind, project: projectPath, check: 0, reason: 'MEMGUARD_LOW_WATER', thresholds: { softMB: pressureSoftMB() } },
+        snap,
+      );
       return {
         denial: buildDenial(
           'MEMGUARD_LOW_WATER', reason,
@@ -702,6 +712,11 @@ export function acquireLease(
       if (physLow) low.push(`物理空闲 ${fmtGB(snap.freePhysBytes)}`);
       if (commitLow) low.push(`commit 余量 ${fmtGB(snap.commitAvailBytes!)}`);
       const ctx = leaseUsageCtx(leases, kind); // 拒绝报文要占用清单与实测,10s 缓存与后续查共享
+      memSample(
+        'spawn_reject',
+        { kind, project: projectPath, check: 1, reason: 'MEMGUARD_LOW_WATER', thresholds: { minFreeMB: minFree } },
+        snap,
+      );
       return {
         denial: buildDenial(
           'MEMGUARD_LOW_WATER', `${low.join(' 与 ')}低于水位线 ${minFree} MB`,
@@ -715,6 +730,11 @@ export function acquireLease(
     const pct = budgetPct();
     const budgetMB = (snap.totalPhysBytes / 1024 / 1024) * (pct / 100);
     if (ctx.usedMB + ctx.needMB > budgetMB) {
+      memSample(
+        'spawn_reject',
+        { kind, project: projectPath, check: 2, reason: 'MEMGUARD_BUDGET', thresholds: { budgetPct: pct, usedMB: ctx.usedMB } },
+        snap,
+      );
       return {
         denial: buildDenial(
           'MEMGUARD_BUDGET',
@@ -728,6 +748,11 @@ export function acquireLease(
     const cap = maxMachineInstances();
     const skipCount = snap.godotProcCount === 0 && snap.degraded === 'non-windows';
     if (!skipCount && snap.godotProcCount > cap) {
+      memSample(
+        'spawn_reject',
+        { kind, project: projectPath, check: 3, reason: 'MEMGUARD_INSTANCE_CAP', thresholds: { maxInstances: cap } },
+        snap,
+      );
       return {
         denial: buildDenial(
           'MEMGUARD_INSTANCE_CAP', `Godot 进程数 ${snap.godotProcCount} 超过机器实例上限 ${cap}`,
@@ -748,6 +773,8 @@ export function acquireLease(
     lastHeartbeat: now,
   };
   writeLeases([...leases, lease]);
+  // 四期 Task 2:准入成功≠进程起来(pid 此时 null);machine 复用准入链快照(豁免路径 null)
+  memSample('lease_acquired', { kind, project: projectPath, leaseId: lease.id, declaredMB: lease.declaredMB }, snap);
   return { lease };
 }
 
@@ -760,6 +787,9 @@ export function bindLeasePid(leaseId: string, pid: number): void {
   if (target === undefined) return; // 租约已被清理/不存在 → 静默(幂等)
   target.pid = pid;
   writeLeases(leases);
+  // 四期 Task 2:进程身份确立点(spawn 失败数=lease_acquired−spawn_started,由分析端
+  // 差值推导——无独立 spawn_failed 事件,计划已裁定);snap 缺省走只读缓存(冷→null)。
+  memSample('spawn_started', { kind: target.kind, project: target.projectPath, leaseId, pid });
 }
 
 /** 从 spawn args 解析 --path 后随值作租约记账的 projectPath(Task 4 漏斗共用——

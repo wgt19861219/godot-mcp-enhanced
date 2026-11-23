@@ -17,13 +17,40 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import type { ChildProcess } from 'child_process';
+
+// child_process spy 包装(importOriginal 保真,同 session-idle-timer/exit-watchdog 测试
+// 惯例):⑥⑦ 接线用例触发的树杀/kill 链绝不真执行。
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
+
+import { spawn as spawnSpy } from 'child_process';
 import {
   memSample,
   getMachineMemorySnapshot,
+  acquireLease,
+  bindLeasePid,
+  declaredMBFor,
+  updatePressureState,
+  _setLeasesFilePathForTest,
   _resetForTest,
   _setPsRunnerForTest,
   type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
+import {
+  getSession,
+  normalizeProjectKey,
+  resetState,
+  setRunSessionProc,
+} from '../../src/core/process-state.js';
+import { scanIdleSessions } from '../../src/core/session-idle-timer.js';
+import {
+  handleExitTrigger,
+  stopExitWatchdog,
+  _resetExitWatchdogForTest,
+} from '../../src/core/exit-watchdog.js';
 
 const IS_LINUX = process.platform === 'linux';
 
@@ -242,5 +269,256 @@ describe('⑤ fail-open:追加失败同因去重 warn', () => {
     await settle(); // 让后续失败的 catch 链也全部跑完再计数
     expect(errSpy).toHaveBeenCalledTimes(1);
     expect(String(errSpy.mock.calls[0]?.[0])).toContain('memSample');
+  });
+});
+
+// ===========================================================================
+// 四期 Task 2:准入/生命周期五事件接线(lease_acquired/spawn_started/spawn_reject/
+// idle_reap/exit_reap)——接线在 src 侧,此处经公开 API 真实触发并断言采样行形态
+//(字段名即 Task 6 分析端接口)。夹具:租约文件 _setLeasesFilePathForTest 重定向
+//(acquireLease 启用路径写租约/回收链读账本,不触真实 ~/.godot-mcp);child_process
+// spawn 纯假(树杀绝不真执行);process-state 会话桶 resetState 隔离;exit-watchdog
+// 经 _resetExitWatchdogForTest 注入 fake exit(绝不真退测试进程)。
+// ===========================================================================
+
+/** mock process.kill:命中 aliveSet 返回 true,否则抛 ESRCH(死)——bindLeasePid 前的
+ *  租约清理线按 pid 探活,不 mock 时假 pid 恒死被清、bind 静默 no-op 无事件。 */
+function mockKillProbe(aliveSet: Set<number>): void {
+  vi.spyOn(process, 'kill').mockImplementation(((pid: number) => {
+    if (aliveSet.has(pid)) return true;
+    const err = new Error('no such process') as NodeJS.ErrnoException;
+    err.code = 'ESRCH';
+    throw err;
+  }) as typeof process.kill);
+}
+
+describe('⑥ Task 2:准入事件接线(lease_acquired/spawn_reject 四查/spawn_started)', () => {
+  const IS_WIN = process.platform === 'win32';
+  let leasePath: string;
+
+  /** 直接写租约文件夹具(绕过被测模块,构造查② 预算占用的初始盘面)。 */
+  function writeLeaseFixture(leases: Array<Record<string, unknown>>): void {
+    fs.mkdirSync(path.dirname(leasePath), { recursive: true });
+    fs.writeFileSync(leasePath, JSON.stringify({ version: 1, leases }));
+  }
+
+  beforeEach(() => {
+    leasePath = path.join(tmpDir, 'memory-leases.json');
+    _setLeasesFilePathForTest(leasePath);
+    // spawn 顶层纯假(⑥ 不触 spawn,兜底防漏网路径真起进程)
+    vi.mocked(spawnSpy).mockImplementation((() => ({ on: vi.fn() })) as unknown as typeof spawnSpy);
+  });
+
+  afterEach(() => {
+    _setLeasesFilePathForTest(null);
+  });
+
+  it('acquireLease 成功 → lease_acquired 行(kind/project/leaseId/declaredMB=declaredMBFor(kind),machine 复用准入链快照)', async () => {
+    vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '1');   // 两平台恒过(对齐 memory-guard.test.ts 惯例)
+    vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '100');
+    mockMachinePs({ freePhysMB: 8192, commitAvailMB: 4096, godotCount: 2 });
+    const res = acquireLease('headless', 'D:/proj');
+    expect('lease' in res).toBe(true);
+    if (!('lease' in res)) return;
+    await waitForLineCount(2);                   // server_start 惰性首发 + 本事件
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('lease_acquired');
+    expect(r['kind']).toBe('headless');
+    expect(r['project']).toBe('D:/proj');
+    expect(r['leaseId']).toBe(res.lease.id);
+    expect(r['declaredMB']).toBe(declaredMBFor('headless'));
+    // machine=与查⓪-③ 同一份快照(复用零新增采样);totalPhys 来自真实 os.totalmem(),
+    // 断言与 getMachineMemorySnapshot() 同源对象逐字段对齐(Windows 加钉 mock 读数 8192)
+    const snap = getMachineMemorySnapshot();
+    expect(r['machine']).toEqual({
+      freePhysMB: Math.round(snap.freePhysBytes / 1024 / 1024),
+      commitAvailMB: snap.commitAvailBytes !== null ? Math.round(snap.commitAvailBytes / 1024 / 1024) : null,
+      totalPhysMB: Math.round(snap.totalPhysBytes / 1024 / 1024),
+      godotProcCount: snap.godotProcCount,
+      degraded: snap.degraded !== undefined,
+    });
+    if (IS_WIN) {
+      expect((r['machine'] as Record<string, unknown>)['freePhysMB']).toBe(8192);
+    }
+  });
+
+  it('editor exemptChecks 路径 → lease_acquired 行 machine:null 且零 PowerShell(豁免分支不取快照)', async () => {
+    const psSpy = mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    const res = acquireLease('editor', 'D:/proj', { exemptChecks: true });
+    expect('lease' in res).toBe(true);
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('lease_acquired');
+    expect(r['kind']).toBe('editor');
+    expect(r['declaredMB']).toBe(declaredMBFor('editor'));
+    expect(r['machine']).toBeNull();             // 设计约束:豁免路径无快照,显式 null
+    expect(psSpy).not.toHaveBeenCalled();        // 连机器快照采样都没起(Review Focus 3)
+  });
+
+  it('查⓪ pressure 拒 → spawn_reject 行 check:0(reason=MEMGUARD_LOW_WATER,thresholds={softMB},无 leaseId)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // hard enter 上报行
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 }); // 机器健康——唯一拒因是状态机
+    // 物理空闲 1MB < 硬阈值 1536MB → 0s 宽限立即 hard(单次调用,免 fake timers 推进 30s)
+    updatePressureState({
+      freePhysBytes: 1 * 1024 * 1024,
+      totalPhysBytes: 64 * 1024 * 1024 * 1024,
+      commitAvailBytes: null,
+      commitTotalBytes: null,
+      godotProcCount: 0,
+      sampledAt: Date.now(),
+    });
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('spawn_reject');
+    expect(r['kind']).toBe('headless');
+    expect(r['project']).toBe('D:/proj');
+    expect(r['check']).toBe(0);                  // 查⓪ 序号
+    expect(r['reason']).toBe('MEMGUARD_LOW_WATER'); // 与查① 同 code——check 字段是唯一区分
+    expect(r['thresholds']).toEqual({ softMB: 3072 });
+    expect('leaseId' in r).toBe(false);          // 拒绝时租约未生成,字段整个缺席
+    expect(r['pressure']).toBe('hard');          // 壳 after-state 佐证拒因形态
+    expect(r['machine']).not.toBeNull();         // 拒绝路径有现成快照,复用落盘
+    errSpy.mockRestore();
+  });
+
+  it('查① 低水位拒 → spawn_reject 行 check:1(与查⓪ 同 reason 不同 check,字段层可分)', async () => {
+    if (IS_WIN) {
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '3072'); // 默认阈值下 mock 物理空闲 2GB 必触发
+      mockMachinePs({ freePhysMB: 2 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    } else {
+      // 非 Windows 快照无 psRunner 通道(os 真实读数不可控)——阈值抬到必超,等价覆盖
+      vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '999999');
+    }
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('spawn_reject');
+    expect(r['check']).toBe(1);
+    expect(r['reason']).toBe('MEMGUARD_LOW_WATER');
+    expect(r['thresholds']).toEqual({ minFreeMB: IS_WIN ? 3072 : 999999 });
+    expect(r['pressure']).toBe('normal');        // 状态机未进压力——区别于查⓪ 行的 hard
+  });
+
+  it('查② 预算拒 → spawn_reject 行 check:2(reason=MEMGUARD_BUDGET,thresholds 含 budgetPct+当时占用)', async () => {
+    vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '1');    // 水位恒过,单查预算
+    vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '1'); // 1% 预算必超(占用 8192+需 1024 MB)
+    writeLeaseFixture([{
+      id: 'L-big', serverPid: 4321, kind: 'gut_shard', declaredMB: 8192,
+      projectPath: 'D:/big', pid: null,          // 无 pid → 纯声明计占用,不触 RSS 采样
+      startedAt: Date.now(), lastHeartbeat: Date.now(),
+    }]);
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('spawn_reject');
+    expect(r['check']).toBe(2);
+    expect(r['reason']).toBe('MEMGUARD_BUDGET');
+    expect(r['thresholds']).toEqual({ budgetPct: 1, usedMB: 8192 });
+  });
+
+  it.skipIf(!IS_WIN)('查③ 实例计数拒 → spawn_reject 行 check:3(reason=MEMGUARD_INSTANCE_CAP,thresholds={maxInstances})', async () => {
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 9 }); // 9 > 默认上限 8
+    const res = acquireLease('headless', 'D:/proj');
+    expect('denial' in res).toBe(true);
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('spawn_reject');
+    expect(r['check']).toBe(3);
+    expect(r['reason']).toBe('MEMGUARD_INSTANCE_CAP');
+    expect(r['thresholds']).toEqual({ maxInstances: 8 });
+  });
+
+  it('bindLeasePid → spawn_started 行(leaseId+pid 非 null,kind/project 从租约回读)', async () => {
+    vi.stubEnv('GODOT_MCP_MIN_FREE_MB', '1');
+    vi.stubEnv('GODOT_MCP_MEM_BUDGET_PCT', '100');
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+    const res = acquireLease('headless', 'D:/proj');
+    if (!('lease' in res)) throw new Error('acquire failed');
+    mockKillProbe(new Set([4242]));              // bind 前清理线按 pid 探活,假 pid 须活
+    bindLeasePid(res.lease.id, 4242);
+    await waitForLineCount(3);                   // server_start + lease_acquired + spawn_started
+    const r = row(readLines(), 2);
+    expect(r['event']).toBe('spawn_started');
+    expect(r['leaseId']).toBe(res.lease.id);
+    expect(r['pid']).toBe(4242);                 // 进程身份确立点,pid 非 null
+    expect(r['kind']).toBe('headless');
+    expect(r['project']).toBe('D:/proj');
+  });
+});
+
+describe('⑦ Task 2:生命周期回收事件接线(idle_reap/exit_reap)', () => {
+  /** 假 ChildProcess:仅含扫描判活与建桶所需字段 + 事件桩(idle 路径,close 不触发)。 */
+  function makeProc(pid: number): ChildProcess {
+    return { pid, killed: false, exitCode: null, on: vi.fn(), kill: vi.fn() } as unknown as ChildProcess;
+  }
+
+  /** 自闭假 ChildProcess:killProcess 注册 close 监听即同步触发——优雅段 kill 链零
+   *  timer 推进完成收尾(免 fake timers 与异步 append 采样的交织)。 */
+  function makeSelfClosingProc(pid: number): ChildProcess {
+    return {
+      pid, killed: false, exitCode: null, kill: vi.fn(),
+      on: vi.fn((ev: string, cb: () => void) => { if (ev === 'close') cb(); }),
+    } as unknown as ChildProcess;
+  }
+
+  beforeEach(() => {
+    resetState();                                 // process-state 会话桶隔离
+    _setLeasesFilePathForTest(path.join(tmpDir, 'memory-leases.json')); // 回收链读账本不触真实 home
+    vi.mocked(spawnSpy).mockImplementation((() => ({ on: vi.fn() })) as unknown as typeof spawnSpy);
+    _resetExitWatchdogForTest(vi.fn());           // exit 注入 fake(绝不真退测试进程)
+  });
+
+  afterEach(() => {
+    stopExitWatchdog();                           // 清 10s/30s timer + 状态复位(幂等)
+    _resetExitWatchdogForTest(null);
+    _setLeasesFilePathForTest(null);
+  });
+
+  it('scanIdleSessions 回收 → idle_reap 行(kind=game_window,aliveMs 非零——processStartTime 在 clearRunSession 前捕获)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // idle-reap stderr 行
+    const proc = makeProc(4242);
+    setRunSessionProc('D:/proj-a', proc, true);
+    const s = getSession('D:/proj-a');
+    if (!s) throw new Error('session missing');
+    s.lastPokeAt = Date.now() - 16 * 60_000;      // 空闲 16min > 15min 阈值(免 fake timers)
+    s.processStartTime = Date.now() - 5_000;      // 进程存活 5s:有界非零锚(见下)
+    expect(scanIdleSessions()).toEqual({ reaped: 1 });
+    await waitForLineCount(2);
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('idle_reap');
+    expect(r['kind']).toBe('game_window');
+    expect(r['project']).toBe(normalizeProjectKey('D:/proj-a')); // 会话桶 key 形态(分析端视为不透明)
+    expect(r['pid']).toBe(4242);
+    const aliveMs = r['aliveMs'] as number;
+    expect(aliveMs).toBeGreaterThanOrEqual(5_000); // 非零(M3 坑:clear 后 processStartTime 恒 0,接线先捕获)
+    expect(aliveMs).toBeLessThan(60_000);          // 有界——防「读了 clear 后的 0」错型(now-0≈1.7e12)
+    expect(r['machine']).toBeNull();               // 设计约束:回收路径不触发新采样
+    errSpy.mockRestore();
+  });
+
+  it('exit-watchdog 优雅回收 → exit_reap 行(同 idle_reap 形态,project/pid/aliveMs 齐)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // exit-watchdog/exit-reap stderr 行
+    const proc = makeSelfClosingProc(4242);
+    setRunSessionProc('D:/proj-a', proc, true);
+    const s = getSession('D:/proj-a');
+    if (!s) throw new Error('session missing');
+    s.processStartTime = Date.now() - 5_000;
+    handleExitTrigger('SIGINT');                  // 第一次触发:优雅回收段(不主动 exit)
+    await waitForLineCount(2);                    // server_start + exit_reap(收尾链跑完)
+    const r = row(readLines(), 1);
+    expect(r['event']).toBe('exit_reap');
+    expect(r['kind']).toBe('game_window');
+    expect(r['project']).toBe(normalizeProjectKey('D:/proj-a'));
+    expect(r['pid']).toBe(4242);
+    const aliveMs = r['aliveMs'] as number;
+    expect(aliveMs).toBeGreaterThanOrEqual(5_000);
+    expect(aliveMs).toBeLessThan(60_000);
+    expect(r['machine']).toBeNull();
+    errSpy.mockRestore();
   });
 });

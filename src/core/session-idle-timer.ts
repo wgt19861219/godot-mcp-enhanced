@@ -25,7 +25,13 @@ import {
   releaseRunSessionBusy,
   unregisterSpawnedGodotPid,
 } from './process-state.js';
-import { listActiveLeases, releaseLease } from './memory-guard.js';
+import { listActiveLeases, memSample, releaseLease } from './memory-guard.js';
+
+/** 透传导出 memSample(四期 Task 2):exit-watchdog 的 exit_reap 采样经本模块中转消费——
+ *  保持「exit 链不直接依赖 memory-guard」源码锚(exit-watchdog.test.ts 三期 Task 3 正交性
+ *  测试钉住 exit-watchdog.ts 不得直接 import memory-guard);本模块本就依赖 memory-guard,
+ *  中转零新增依赖边。 */
+export { memSample };
 
 /** 扫描周期(60s)。 */
 const SCAN_INTERVAL_MS = 60_000;
@@ -71,6 +77,9 @@ export function scanIdleSessions(): { reaped: number } {
     if (!proc?.pid || proc.killed || proc.exitCode !== null) continue;   // 无活进程(同 getActiveRunPids 判据)
     const idleMs = now - s.lastPokeAt;
     if (idleMs <= thresholdMs) continue;              // 恰在阈值不收(严格大于)
+    // 四期 Task 2:idle_reap 采样——clearRunSession 会把 processStartTime 归零(回收链
+    // 之后读恒 0,M3 坑),回收前先捕获;machine 恒 null(回收路径不触发新采样,设计约束)。
+    const reapStartedAt = s.processStartTime;
     // 回收(顺序对齐 runtime autoStop 链):释放 busy → 树杀 → 清桶(快照挪移+状态 exited)
     // → 摘 pid 登记 → 租约反查释放。进程退出时 runtime close 回调守卫(桶内 proc 比对)
     // 因桶已清而跳过重复收尾,其 releaseLease 幂等无冲突。
@@ -79,6 +88,11 @@ export function scanIdleSessions(): { reaped: number } {
     clearRunSession(entry.projectPath);
     unregisterSpawnedGodotPid(proc.pid);
     releaseGameWindowLeases(entry.projectPath);
+    memSample(
+      'idle_reap',
+      { kind: 'game_window', project: entry.projectPath, pid: proc.pid, aliveMs: now - reapStartedAt },
+      null,
+    );
     console.error(`MEMGUARD idle-reap ${proc.pid} idle=${Math.round(idleMs / 1000)}s threshold=${minutes}min project=${entry.displayPath}`);
     reaped++;
   }

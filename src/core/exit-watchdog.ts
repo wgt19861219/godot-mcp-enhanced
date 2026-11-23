@@ -47,7 +47,9 @@ import {
   releaseRunSessionBusy,
   unregisterSpawnedGodotPid,
 } from './process-state.js';
-import { releaseGameWindowLeases } from './session-idle-timer.js';
+// memSample 经 session-idle-timer 中转消费(四期 Task 2)——本模块不直接依赖
+// memory-guard,源码锚语义不变(exit-watchdog.test.ts 三期 Task 3 正交性测试钉住)。
+import { memSample, releaseGameWindowLeases } from './session-idle-timer.js';
 
 /** 优雅回收有限等待窗口(二次触发升级强杀在此窗口内有效;窗口到点仍未收尾则升级树杀)。 */
 const GRACE_WINDOW_MS = 10_000;
@@ -72,6 +74,8 @@ interface ReapTarget {
   displayPath: string;
   pid: number;
   proc: ChildProcess;
+  /** 建桶时刻(clearRunSession 归零前捕获——idle_reap 同款 M3 坑防线,四期 Task 2)。 */
+  processStartTime: number;
 }
 
 function collectReapTargets(): ReapTarget[] {
@@ -82,7 +86,10 @@ function collectReapTargets(): ReapTarget[] {
     if (!isAliveStatus(s.status)) continue;           // 已结束桶保留可查,无需回收
     const proc = s.proc;
     if (!proc?.pid || proc.killed || proc.exitCode !== null) continue;   // 无活进程(同 getActiveRunPids 判据)
-    out.push({ projectPath: entry.projectPath, displayPath: entry.displayPath, pid: proc.pid, proc });
+    out.push({
+      projectPath: entry.projectPath, displayPath: entry.displayPath,
+      pid: proc.pid, proc, processStartTime: s.processStartTime,
+    });
   }
   return out;
 }
@@ -103,6 +110,13 @@ async function gracefulReapSessions(): Promise<void> {
     clearRunSession(t.projectPath);
     unregisterSpawnedGodotPid(t.pid);
     releaseGameWindowLeases(t.projectPath);
+    // 四期 Task 2:exit_reap 采样(与 idle_reap 同形态——两种回收路径分开计数是回看
+    // 判定 #7 的数据基础);machine 恒 null(退出链不触发新采样)。
+    memSample(
+      'exit_reap',
+      { kind: 'game_window', project: t.projectPath, pid: t.pid, aliveMs: Date.now() - t.processStartTime },
+      null,
+    );
     console.error(`MEMGUARD exit-reap ${t.pid} project=${t.displayPath}`);
   }
 }
