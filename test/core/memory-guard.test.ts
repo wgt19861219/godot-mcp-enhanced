@@ -154,6 +154,10 @@ beforeEach(() => {
   // 既有用例(⑭ describe 内用例自行 stubEnv 覆盖)。空串 = 无豁免,与未设等价。
   vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', '');
   mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 });
+  // 四期 Task 5 起 kill 路径真写机器级审计行——本文件 pollOnce 用例(⑫③⑤)名义上零杀,但
+  // ⑤ 走真实 os 空闲读数(软阈值抬到必跌破),真机空闲 < 硬阈值时会进驱逐耗尽分支落
+  // evict_exhausted 审计行——保险重定向到本文件 tmp,绝不写真实 ~/.godot-mcp
+  vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', path.join(tmpDir, 'machine-audit.jsonl'));
 });
 
 afterEach(() => {

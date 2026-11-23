@@ -11,6 +11,9 @@
 // tmp 夹具(覆盖 test/setup.js 全局重定向值,不触真实 ~/.godot-mcp);PowerShell 执行器经
 // _setPsRunnerForTest 注入 spy(④ 验证「只读缓存不触发新采样」);memSample 内部
 // fire-and-forget,经 vi.waitFor 等落盘行数到达后再断言内容。
+// 四期 Task 5 起:杀事件审计行写 machine-audit,路径经 vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE')
+// 逐用例重定向(同样不触真实 ~/.godot-mcp);在途审计 promise 由 audit-log 部分 mock 记录,
+// afterEach 排水后再清 tmpDir。
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
@@ -18,6 +21,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
 import type { ChildProcess } from 'child_process';
+import type { AuditEntry } from '../../src/core/audit-log.js';
 
 // child_process spy 包装(importOriginal 保真,同 session-idle-timer/exit-watchdog 测试
 // 惯例):⑥⑦ 接线用例触发的树杀/kill 链绝不真执行。
@@ -34,7 +38,47 @@ vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
   return { ...actual, sampleRssBytes: vi.fn(actual.sampleRssBytes) };
 });
 
+// fs/promises 部分 mock(importOriginal 保真,同 ToolDispatcher-audit 惯例):⑪ 轮转用例的
+// 可观测点——stat 对采样文件的调用次数=「查了一次 size」(钉首查/每 500 次/重试节奏);
+// mkdir/appendFile 默认透传真实落盘,仅 ⑪② 节奏用例临时打成 no-op(免 500 次真实 fs 写在
+// 并行负载下拖垮同文件后续用例)。轮转失败不靠 mock 注入,用「最老代位置放目录」的文件
+// 系统事实(rm 对目录必抛 EISDIR)。
+vi.mock('fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs/promises')>();
+  return {
+    ...actual,
+    stat: vi.fn(actual.stat),
+    mkdir: vi.fn(actual.mkdir),
+    appendFile: vi.fn(actual.appendFile),
+  };
+});
+
+// logger 全模块 mock(同 mem-watchdog/memory-guard 测试惯例):⑫③ 审计写失败经
+// recordAuditWriteFailure 首次 warn 走 logger——mock 后 stderr 零杂音(失败断言走
+// getAuditFailureStats 计数,不依赖「首次才 warn」的用例顺序)。
+const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+vi.mock('../../src/core/logger.js', () => ({ getLogger: () => mockLogger }));
+
+// audit-log 部分 mock(importOriginal 保真):Task 5 起杀事件审计行在 watchdog 内
+// fire-and-forget(void appendMachineAuditLine(...).catch(recordAuditWriteFailure))——
+// 包一层记录在途 promise,afterEach 等其落定后再清 tmpDir(否则在途 append 与 rmSync
+// 竞态:ENOENT 误计审计失败 + 残留 tmp 目录)。真实现直调,审计行真实落盘可断言。
+const auditInflight = vi.hoisted((): Promise<void>[] => []);
+vi.mock('../../src/core/audit-log.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/audit-log.js')>();
+  return {
+    ...actual,
+    appendMachineAuditLine: vi.fn((entry: Omit<AuditEntry, 'timestamp'>) => {
+      const p = actual.appendMachineAuditLine(entry);
+      auditInflight.push(p.catch(() => {}));
+      return p;
+    }),
+  };
+});
+
+import { stat as statSpy, mkdir as mkdirSpy, appendFile as appendFileSpy } from 'fs/promises';
 import { spawn as spawnSpy } from 'child_process';
+import { getAuditFailureStats, isAuditEnabled } from '../../src/core/audit-log.js';
 import {
   memSample,
   getMachineMemorySnapshot,
@@ -47,6 +91,7 @@ import {
   _setLeasesFilePathForTest,
   _resetForTest,
   _setPsRunnerForTest,
+  _flushSampleChainForTest,
   type MachineMemorySnapshot,
 } from '../../src/core/memory-guard.js';
 import { pollOnce, _resetWatchdogForTest } from '../../src/core/mem-watchdog.js';
@@ -70,6 +115,8 @@ const PKG_VERSION: string = (createRequire(import.meta.url)('../../package.json'
 
 let tmpDir: string;
 let samplePath: string;
+/** 机器级审计文件(逐用例重定向,顶层 beforeEach 置值;⑫ 断言审计行)。 */
+let auditPath: string;
 
 /** 读采样文件按行 parse(空行过滤)。 */
 function readLines(): Array<Record<string, unknown>> {
@@ -127,12 +174,18 @@ beforeEach(() => {
   // (开关缓存已清,首次调用重读 env)。采样文件逐用例重定向,覆盖 setup.js 全局值。
   vi.stubEnv('GODOT_MCP_MEMORY_GUARD', '1');
   vi.stubEnv('GODOT_MCP_MEM_SAMPLE_FILE', samplePath);
+  // 四期 Task 5 起 kill 路径(⑩④ 超杀线/⑩⑤⑥ 驱逐耗尽/⑫)真写机器级审计行——文件级重定向
+  // 到本用例 tmp,绝不落真实 ~/.godot-mcp/machine-audit.jsonl
+  auditPath = path.join(tmpDir, 'machine-audit.jsonl');
+  vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', auditPath);
 });
 
-afterEach(() => {
+afterEach(async () => {
   _setPsRunnerForTest(null);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  await Promise.all(auditInflight.splice(0)); // 在途审计行落定后再清 tmpDir(防与 rmSync 竞态)
+  await _flushSampleChainForTest(); // 采样链同样排空:在途 append 与 rmSync 竞态会重建 tmpDir 残留,且积压会拖慢下一用例
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -742,24 +795,24 @@ describe('⑨ Task 3:watchdog_degraded/recovered 接线(noteDegrade/恢复点)',
 // 喂状态机的机器快照走 mockMachinePs 恒健康(不进 hard 免驱逐污染采样账本)。
 // ===========================================================================
 
+/** 租约夹具模板(⑨ 内联形态抽 helper,⑩⑫ 共用:serverPid 本进程/startedAt 可覆盖)。 */
+function lease(o: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'R1', serverPid: process.pid, kind: 'headless', declaredMB: 1024,
+    projectPath: 'D:/proj', pid: 4242, startedAt: 0, lastHeartbeat: 0,
+    ...o,
+  };
+}
+
+/** 写租约盘面(绕过被测模块,直构造)。 */
+function writeLeases(leases: Array<Record<string, unknown>>): void {
+  fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+  fs.writeFileSync(path.join(path.dirname(samplePath), 'memory-leases.json'),
+    JSON.stringify({ version: 1, leases }));
+}
+
 describe('⑩ Task 4:rss_sample 采样策略 + kill 采样行 + final sample', () => {
   const MB = 1024 * 1024;
-
-  /** 租约夹具模板(⑨ 内联形态抽 helper:serverPid 本进程/startedAt 可覆盖)。 */
-  function lease(o: Record<string, unknown> = {}): Record<string, unknown> {
-    return {
-      id: 'R1', serverPid: process.pid, kind: 'headless', declaredMB: 1024,
-      projectPath: 'D:/proj', pid: 4242, startedAt: 0, lastHeartbeat: 0,
-      ...o,
-    };
-  }
-
-  /** 写租约盘面(绕过被测模块,直构造)。 */
-  function writeLeases(leases: Array<Record<string, unknown>>): void {
-    fs.mkdirSync(path.dirname(samplePath), { recursive: true });
-    fs.writeFileSync(path.join(path.dirname(samplePath), 'memory-leases.json'),
-      JSON.stringify({ version: 1, leases }));
-  }
 
   /** rss_sample 行清单(策略/首采/final 全走本事件;kill 事件另行过滤)。 */
   function rssRows(): Array<Record<string, unknown>> {
@@ -950,5 +1003,249 @@ describe('⑩ Task 4:rss_sample 采样策略 + kill 采样行 + final sample', (
     const rows = rssRows();
     expect(row(rows, 1)['leaseId']).toBe('B1'); // 若空轮误耗首采标志,B1 需等 60s → 只 1 行
     expect(row(rows, 1)['rssBytes']).toBe(256 * MB);
+  });
+});
+
+// ===========================================================================
+// 四期 Task 5:采样文件轮转 + 杀事件审计通道——
+// 轮转复用 audit-log rotateIfNeededWith 参数化(8MB×4 代,链式 .1→.4 + <file>.lock pid 跨进程
+// 锁),检查在采样追加串行链上按序执行:进程首条 append 前 stat 一次(N4)/每 500 次 append/
+// 失败重试标志;采样轮转失败走采样通道口径(warnSampleFailOnce + 重试),不计审计失败。
+// 审计通道:三类杀事件(budget_kill/evict/evict_exhausted)双写 machine-audit(T3-M-3 清偿)
+// ——与采样通道独立(不经 isAuditEnabled;审计写失败不影响杀与采样)。
+// 夹具:⑪ 真实时钟(轮转是纯 fs 操作,无需控时);⑫ 同 ⑩ 的 kill 夹具(mock rss 表 +
+// 机器快照恒健康),审计路径经 GODOT_MCP_MACHINE_AUDIT_FILE 重定向。
+// ===========================================================================
+
+describe('⑪ Task 5:采样文件轮转(8MB×4,复用审计轮转机制)', () => {
+  const MB = 1024 * 1024;
+
+  /** 预置超限采样文件(8MB+,合法 JSONL 行——readLines 可解析)+ 既有代际文件(内容带标记)。 */
+  function seedOversized(gens: number[] = []): void {
+    fs.writeFileSync(samplePath, `${JSON.stringify({ event: 'old-main', pad: 'x'.repeat(8 * MB) })}\n`);
+    for (const g of gens) fs.writeFileSync(`${samplePath}.${g}`, `old-gen${g}\n`);
+  }
+
+  /** stat 对采样文件的调用次数(=轮转检查次数;mock 的 stat 全局透传,其余路径不计)。 */
+  function sizeChecks(): number {
+    return vi.mocked(statSpy).mock.calls.filter((c) => c[0] === samplePath).length;
+  }
+
+  it('① 预置 8MB+ 采样文件 → 首条 append 前即轮转(N4:不等 500 计数):主→.1→.2→.3→.4 链式后移,新行落进重建的主文件', async () => {
+    seedOversized([1, 2, 3]);
+    memSample('lease_acquired', { kind: 'headless' });
+    await waitForLineCount(2); // server_start + 事件(旧行已整体后移到 .1)
+    expect(fs.readFileSync(`${samplePath}.1`, 'utf8')).toContain('old-main');
+    expect(fs.readFileSync(`${samplePath}.2`, 'utf8')).toBe('old-gen1\n');
+    expect(fs.readFileSync(`${samplePath}.3`, 'utf8')).toBe('old-gen2\n');
+    expect(fs.readFileSync(`${samplePath}.4`, 'utf8')).toBe('old-gen3\n');
+    expect(fs.existsSync(`${samplePath}.5`)).toBe(false);   // 保留 4 代
+    expect(fs.existsSync(`${samplePath}.lock`)).toBe(false); // 轮转后锁释放
+    expect(readLines().map((r) => r['event'])).toEqual(['server_start', 'lease_acquired']);
+    expect(sizeChecks()).toBe(1);
+  });
+
+  it('② 检查节奏:进程首条 append 查一次,之后每 500 次 append 查一次(非每次 append 都 stat)', async () => {
+    // 节奏只看 append 计数,与落盘无关——本例把 mkdir/appendFile 打成 no-op,经排水钩子等链排空后
+    // 断言 stat 次数(确定性,无时序依赖)。不可用 500 次真实 fs 写:并行负载下线程池排队,
+    // 实测 497 次 append 5s 仅落 172 行而超时,积压还会拖垮同文件后续用例。
+    vi.mocked(mkdirSpy).mockResolvedValue(undefined);
+    vi.mocked(appendFileSpy).mockResolvedValue(undefined);
+    try {
+      const emit = (n: number): void => { for (let i = 0; i < n; i++) memSample('lease_acquired', { i }); };
+      emit(1); // append #1(server_start,首查)+ #2
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(1);
+      emit(497); // append #3..#499:不查
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(1);
+      emit(1); // append #500:查
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(2);
+      emit(1); // append #501:不查
+      await _flushSampleChainForTest();
+      expect(sizeChecks()).toBe(2);
+    } finally {
+      vi.mocked(mkdirSpy).mockRestore(); // 还原为 vi.fn 捕获的真实现(后续用例真实落盘)
+      vi.mocked(appendFileSpy).mockRestore();
+    }
+  });
+
+  it('③ 轮转失败置重试标志:下一条 append 即重查(不等 500);失败走采样通道口径(console.error 同因一行)且不计审计失败', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    seedOversized();
+    fs.mkdirSync(`${samplePath}.4`); // 最老代位置放目录 → 轮转的 rm 抛(两平台 EISDIR)= 瞬态故障
+    const auditFailuresBefore = getAuditFailureStats().failures;
+    memSample('lease_acquired', { kind: 'headless' }); // server_start(首查失败)+ 事件(链上紧随重查,再失败)
+    await _flushSampleChainForTest(); // 链排空后直接断言(免轮询解析 8MB 旧行)
+    expect(readLines().map((r) => r['event'])) // 旧行仍在主文件(两次轮转均未成功)+ 两新行照常追加(fail-open)
+      .toEqual(['old-main', 'server_start', 'lease_acquired']);
+    expect(fs.existsSync(`${samplePath}.1`)).toBe(false);
+    expect(fs.existsSync(`${samplePath}.lock`)).toBe(false); // 失败路径锁仍释放
+    expect(errSpy).toHaveBeenCalledTimes(1); // 同因去重:两次失败一行
+    expect(String(errSpy.mock.calls[0]?.[0])).toContain('memSample');
+    expect(getAuditFailureStats().failures).toBe(auditFailuresBefore); // 不计审计失败(通道口径独立)
+    expect(sizeChecks()).toBe(2); // 首查 + 失败后的即时重查
+    fs.rmdirSync(`${samplePath}.4`); // 故障消除
+    memSample('lease_acquired', { kind: 'editor' }); // 第 3 次 append:重试标志 → 立即重查
+    await _flushSampleChainForTest();
+    expect(fs.readFileSync(`${samplePath}.1`, 'utf8')).toContain('old-main'); // 旧行整体后移到 .1
+    expect(readLines().map((r) => r['kind'])).toEqual(['editor']); // 重建的主文件仅第 3 行
+    expect(errSpy).toHaveBeenCalledTimes(1); // 重试成功不再 warn
+    expect(sizeChecks()).toBe(3);
+  });
+
+  it('④ 双开关关闭:预置超限采样文件也不被轮转检查触碰(零写盘口径对轮转检查同样成立)', async () => {
+    seedOversized();
+    const sizeBefore = fs.statSync(samplePath).size;
+    for (const [envName, envOff] of [['GODOT_MCP_MEMORY_GUARD', '0'], ['GODOT_MCP_MEM_SAMPLE', 'false']] as const) {
+      vi.stubEnv(envName, envOff);
+      _resetForTest(); // 总开关读一次缓存——重置后重读 env
+      memSample('lease_acquired', { kind: 'headless' });
+      await settle();
+      expect(fs.existsSync(`${samplePath}.1`)).toBe(false);
+      expect(fs.statSync(samplePath).size).toBe(sizeBefore);
+      vi.stubEnv(envName, envName === 'GODOT_MCP_MEMORY_GUARD' ? '1' : ''); // 复位(空串=开)
+    }
+    expect(sizeChecks()).toBe(0); // 开关关闭:连 stat 都没发生
+  });
+});
+
+describe('⑫ Task 5:杀事件审计通道(双写 machine-audit,T3-M-3 清偿)', () => {
+  const MB = 1024 * 1024;
+
+  function readAuditLines(): Array<Record<string, unknown>> {
+    return fs.readFileSync(auditPath, 'utf8')
+      .split('\n').filter((l) => l.trim() !== '')
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+  }
+
+  /** 等两通道落定(确定性,免轮询超时):pollOnce 返回时审计行已全部连发,在途 promise 由
+   *  audit-log 部分 mock 记入 auditInflight,排空即落盘完成;采样行走采样链排水。 */
+  async function settleChannels(): Promise<void> {
+    await Promise.all(auditInflight.splice(0));
+    await _flushSampleChainForTest();
+  }
+
+  /** 采样文件是否已有该 event 行(采样通道照落的证据)。 */
+  function hasSampleEvent(event: string): boolean {
+    return readLines().some((r) => r['event'] === event);
+  }
+
+  beforeEach(() => {
+    _setLeasesFilePathForTest(path.join(tmpDir, 'memory-leases.json'));
+    _resetWatchdogForTest();
+    mockMachinePs({ freePhysMB: 64 * 1024, commitAvailMB: 64 * 1024, godotCount: 0 }); // 机器恒健康:不进 hard
+    vi.mocked(spawnSpy).mockImplementation((() => ({ on: vi.fn() })) as unknown as typeof spawnSpy); // 树杀纯假
+    vi.spyOn(console, 'error').mockImplementation(() => {}); // MEMGUARD kill 行走 stderr,spy 防刷屏
+  });
+
+  afterEach(() => {
+    _setLeasesFilePathForTest(null);
+  });
+
+  /** 超杀线盘面:headless 声明 1024MB(杀线 2048MB),RSS 5GB → killOverBudget。 */
+  function armOverBudgetKill(): void {
+    writeLeases([lease({ pid: 4242 })]);
+    mockKillProbe(new Set([4242]));
+    vi.mocked(sampleRssBytes).mockResolvedValue({ 4242: 5 * 1024 ** 3 });
+  }
+
+  it('① killOverBudget → 审计行(tool=memory-guard/action=budget_kill/risk=process/trace_id=memguard,project_path=租约项目,details 带 leaseId/pid/kind/declaredMB/rssBytes/budgetBytes)+ 采样行照落', async () => {
+    armOverBudgetKill();
+    expect(await pollOnce()).toEqual({ checked: 1, killed: 1 });
+    await settleChannels();
+    expect(readAuditLines()).toHaveLength(1);
+    const a = row(readAuditLines(), 0);
+    expect(a).toMatchObject({
+      trace_id: 'memguard', tool: 'memory-guard', action: 'budget_kill', risk: 'process',
+      ok: true, project_path: 'D:/proj', changed_files: [], duration_ms: 0,
+    });
+    expect(typeof a['timestamp']).toBe('string'); // ISO,appendMachineAuditLine 补
+    expect(a['details']).toEqual({
+      leaseId: 'R1', pid: 4242, kind: 'headless', declaredMB: 1024,
+      rssBytes: 5 * 1024 ** 3, budgetBytes: 1024 * MB * 2,
+    });
+    expect(hasSampleEvent('budget_kill')).toBe(true); // 采样通道同事件照落(分析端以采样行为准)
+  });
+
+  it('② GODOT_MCP_AUDIT=false(isAuditEnabled()===false)→ 审计行仍落且采样行照落(双通道独立:杀类机器级审计恒写,不经项目审计开关)', async () => {
+    vi.stubEnv('GODOT_MCP_AUDIT', 'false');
+    expect(isAuditEnabled()).toBe(false);
+    armOverBudgetKill();
+    expect(await pollOnce()).toEqual({ checked: 1, killed: 1 });
+    await settleChannels();
+    expect(row(readAuditLines(), 0)['action']).toBe('budget_kill');
+    expect(hasSampleEvent('budget_kill')).toBe(true);
+  });
+
+  it('③ 审计写失败 → kill 照常执行、采样行照落、无未处理 rejection、失败经 recordAuditWriteFailure 计数', async () => {
+    fs.mkdirSync(auditPath); // 审计文件路径本身是目录 → appendFile 必拒(EISDIR,不可写路径)
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const failuresBefore = getAuditFailureStats().failures;
+      armOverBudgetKill();
+      expect(await pollOnce()).toEqual({ checked: 1, killed: 1 });
+      expect(spawnSpy).toHaveBeenCalledTimes(1); // 树杀被调——审计失败不影响杀
+      await settleChannels();
+      expect(getAuditFailureStats().failures).toBe(failuresBefore + 1); // 失败经 recordAuditWriteFailure 计数
+      expect(getAuditFailureStats().lastError).toContain('EISDIR');
+      expect(hasSampleEvent('budget_kill')).toBe(true); // 采样行照落
+      await settle();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('④ hard 驱逐 → evict 审计行(ratio/推算读数)+ 候选耗尽 → evict_exhausted 审计行(envExempted,project_path 为空)', async () => {
+    vi.stubEnv('GODOT_MCP_WATCHDOG_EXEMPT', 'editor');
+    writeLeases([
+      lease({ id: 'N', declaredMB: 2048 }),
+      lease({ id: 'E', kind: 'editor', declaredMB: 4096, pid: 4243 }),
+    ]);
+    mockKillProbe(new Set([4242, 4243]));
+    // 夹具同 ⑩⑤⑥:单进程杀走 mock rss(均低于杀线);机器快照恒低压进 hard;候选 ratio 走
+    // psRunner Win32_Process 通道(N 1.5 先杀;E 被豁免剔出 → 耗尽)
+    const rss = { 4242: 3072 * MB, 4243: 6 * 1024 ** 3 };
+    vi.mocked(sampleRssBytes).mockResolvedValue(rss);
+    _setPsRunnerForTest((script) => {
+      if (script.includes('Win32_OperatingSystem')) {
+        return JSON.stringify({
+          FreePhysicalMemory: 1000 * 1024, FreeVirtualMemory: 64 * 1024 * 1024,
+          TotalVirtualMemorySize: 128 * 1024 * 1024,
+        });
+      }
+      if (script.includes('Win32_Process')) {
+        return JSON.stringify(Object.entries(rss).map(([pid, b]) => ({ ProcessId: Number(pid), WorkingSetSize: b })));
+      }
+      return '0';
+    });
+    expect(await pollOnce()).toEqual({ checked: 2, killed: 1 });
+    await settleChannels();
+    expect(readAuditLines()).toHaveLength(2);
+    // 审计通道无串行链:同一 tick 连发的两行(evict → evict_exhausted)落盘先后不保证(机器级
+    // 日志多写者的既有形态,整文件连跑实测会颠倒)——按 action 定位,不以行序为断言;事件时序
+    // 以采样通道为准(串行链保序,⑩⑤⑥ 已钉)
+    const byAction = (action: string): Record<string, unknown> => {
+      const r = readAuditLines().find((x) => x['action'] === action);
+      if (r === undefined) throw new Error(`audit row ${action} missing`);
+      return r;
+    };
+    const ev = byAction('evict');
+    expect(ev).toMatchObject({
+      trace_id: 'memguard', tool: 'memory-guard', action: 'evict', risk: 'process',
+      ok: true, project_path: 'D:/proj', changed_files: [], duration_ms: 0,
+    });
+    expect(ev['details']).toEqual({
+      leaseId: 'N', pid: 4242, kind: 'headless', declaredMB: 2048,
+      rssBytes: Math.round(1.5 * 2048 * MB), ratio: expect.closeTo(1.5, 5), // 推算= ratio×声明
+    });
+    const ex = byAction('evict_exhausted');
+    expect(ex).toMatchObject({
+      action: 'evict_exhausted', risk: 'process', ok: true, project_path: '', // 无受害租约 → 空
+    });
+    expect(ex['details']).toEqual({ envExempted: { preview: 0, editor: 1 } });
   });
 });

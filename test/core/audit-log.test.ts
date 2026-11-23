@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+
+// logger 全模块 mock(同 mem-watchdog/memory-guard 测试惯例):rotateIfNeeded 包装器的失败
+// warn 可断言,stderr 零杂音(既有 1A 用例的首次失败 warn 同走此 mock,断言不依赖 logger)。
+const mockLogger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+vi.mock('../../src/core/logger.js', () => ({ getLogger: () => mockLogger }));
+
 import {
   appendAuditLine,
   readAuditLog,
@@ -433,6 +439,125 @@ describe('批5-T12: 轮转与流式读', () => {
     expect(summary.totalEntries).toBe(1);
     expect(summary.entries[0]!.trace_id).toBe('post-rotate-entry');
     expect(summary.rotatedFiles).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── memory-guard 四期 Task 5: rotateIfNeeded 参数化 + machine-audit 补轮转 ──────
+// 采样通道(~/.godot-mcp/memory-guard-events.jsonl,8MB×4 代)复用审计轮转机制:阈值与
+// 代数从常量抽成参数(rotateIfNeededWith),锁/代际/失败语义逐行保留;原 rotateIfNeeded
+// 委托默认参数,对外行为不变。失败信号经返回值暴露给调用方(采样通道走 warnSampleFailOnce
+// + 重试标志,不计审计失败统计——两通道口径独立)。
+
+describe('rotateIfNeededWith 参数化(四期 Task 5)', () => {
+  let rotDir: string;
+  beforeEach(() => {
+    rotDir = mkdtempSync(join(tmpdir(), 'gme-rotw-'));
+  });
+  afterEach(() => {
+    rmSync(rotDir, { recursive: true, force: true });
+  });
+
+  it('阈值与代数走参数:9MB 文件对 8MB 阈值轮转;同文件经 rotateIfNeeded(默认 10MB 阈值)no-op', async () => {
+    const { rotateIfNeeded, rotateIfNeededWith } = await import('../../src/core/audit-log.js');
+    const main = join(rotDir, 'events.jsonl');
+    writeFileSync(main, 'x'.repeat(9 * 1024 * 1024), 'utf8');
+    // 包装器默认阈值(AUDIT_ROTATE_SIZE=10MB)下 9MB 未超 → no-op(对外行为不变)
+    await rotateIfNeeded(main);
+    expect(existsSync(main)).toBe(true);
+    expect(existsSync(`${main}.1`)).toBe(false);
+    // 参数化阈值 8MB:9MB 超 → 轮转
+    expect(await rotateIfNeededWith(main, 8 * 1024 * 1024, 4)).toEqual({ outcome: 'rotated' });
+    expect(existsSync(main)).toBe(false);
+    expect(existsSync(`${main}.1`)).toBe(true);
+  });
+
+  it('keepGens=4:逐代链式后移(主→.1→.2→.3→.4),第 5 次轮转删除最老一代(gen0 消失,.5 永不出现)', async () => {
+    const { rotateIfNeededWith } = await import('../../src/core/audit-log.js');
+    const main = join(rotDir, 'events.jsonl');
+    const read = (i: number): string => readFileSync(`${main}.${i}`, 'utf8');
+    for (let gen = 0; gen < 5; gen++) {
+      writeFileSync(main, `gen${gen}`, 'utf8');
+      // 阈值 1 字节:每代都超限——用内容标记逐代追踪链式后移,免造 4×8MB 大文件
+      expect(await rotateIfNeededWith(main, 1, 4)).toEqual({ outcome: 'rotated' });
+    }
+    expect(existsSync(main)).toBe(false);  // 主文件已 rename 走
+    expect(read(1)).toBe('gen4');
+    expect(read(2)).toBe('gen3');
+    expect(read(3)).toBe('gen2');
+    expect(read(4)).toBe('gen1');          // 第 5 次轮转先 rm(.4=gen0) 再整体后移
+    expect(existsSync(`${main}.5`)).toBe(false);
+    expect(existsSync(`${main}.lock`)).toBe(false); // 轮转后锁释放
+  });
+
+  it('keepGens=1:退化为单备份——.1 恒为上一代,.2 永不出现', async () => {
+    const { rotateIfNeededWith } = await import('../../src/core/audit-log.js');
+    const main = join(rotDir, 'events.jsonl');
+    for (const gen of ['a', 'b']) {
+      writeFileSync(main, gen, 'utf8');
+      await rotateIfNeededWith(main, 1, 1);
+    }
+    expect(readFileSync(`${main}.1`, 'utf8')).toBe('b');
+    expect(existsSync(`${main}.2`)).toBe(false);
+  });
+
+  it('结果三态:文件缺失/低于阈值 → skipped;活 pid 持锁 → skipped(他人正转,非失败);轮转动作抛错 → failed 并携带 error', async () => {
+    const { rotateIfNeededWith } = await import('../../src/core/audit-log.js');
+    const main = join(rotDir, 'events.jsonl');
+    expect(await rotateIfNeededWith(main, 1, 4)).toEqual({ outcome: 'skipped' }); // 文件不存在(首条)
+    writeFileSync(main, 'x', 'utf8');
+    expect(await rotateIfNeededWith(main, 10, 4)).toEqual({ outcome: 'skipped' }); // 低于阈值
+    writeFileSync(main, 'xxxxxxxx', 'utf8');
+    // 活 pid 持锁:Windows pid 4(System)/POSIX pid 1(init) 恒活(同 L-14 用例取法)
+    const liveForeignPid = process.platform === 'win32' ? 4 : 1;
+    writeFileSync(`${main}.lock`, String(liveForeignPid), 'utf8');
+    expect(await rotateIfNeededWith(main, 1, 4)).toEqual({ outcome: 'skipped' });
+    expect(existsSync(main)).toBe(true);            // 他人持锁 → 本轮不转
+    rmSync(`${main}.lock`);
+    // 轮转动作抛错:最老代位置放一个目录——rm(无 recursive)对目录必抛(两平台 EISDIR)
+    mkdirSync(`${main}.4`);
+    const r = await rotateIfNeededWith(main, 1, 4);
+    expect(r.outcome).toBe('failed');
+    expect(r.error).toBeInstanceOf(Error);
+    expect(existsSync(main)).toBe(true);            // 主文件未被动
+    expect(existsSync(`${main}.lock`)).toBe(false); // 失败路径锁仍释放(finally)
+  });
+
+  it('rotateIfNeeded 包装器:轮转失败不 reject + recordAuditWriteFailure 计数并记 lastError(对外行为不变)', async () => {
+    const { rotateIfNeeded, getAuditFailureStats, AUDIT_ROTATE_SIZE, AUDIT_ROTATE_KEEP } = await import('../../src/core/audit-log.js');
+    const main = join(rotDir, 'audit.jsonl');
+    writeFileSync(main, 'x'.repeat(AUDIT_ROTATE_SIZE + 1), 'utf8'); // 超默认阈值 → 进轮转
+    mkdirSync(`${main}.${AUDIT_ROTATE_KEEP}`); // 最老代位置放目录 → rm 抛 → 轮转失败
+    const before = getAuditFailureStats().failures;
+    await expect(rotateIfNeeded(main)).resolves.toBeUndefined(); // 不 reject(best-effort)
+    expect(getAuditFailureStats().failures).toBe(before + 1);
+    expect(getAuditFailureStats().lastError).not.toBe('');
+    expect(mockLogger.warn).toHaveBeenCalledWith('audit', expect.stringContaining('rotate failed for')); // warn 照旧
+  });
+});
+
+describe('appendMachineAuditLine 轮转(四期 Task 5 补轮转债)', () => {
+  it('GODOT_MCP_MACHINE_AUDIT_FILE 覆盖路径;追加前超 10MB 触发轮转(旧内容→.1,新行进重建的主文件)', async () => {
+    const { appendMachineAuditLine, getMachineAuditFile, AUDIT_ROTATE_SIZE } = await import('../../src/core/audit-log.js');
+    const auditPath = join(tmpDir, 'machine-audit.jsonl');
+    vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', auditPath);
+    try {
+      expect(getMachineAuditFile()).toBe(auditPath);
+      // 造超阈值主文件(旧内容,一行大 JSON 撑过 10MB)
+      const oldBig = JSON.stringify({ marker: 'old-era-entry', pad: 'x'.repeat(AUDIT_ROTATE_SIZE) });
+      writeFileSync(auditPath, oldBig + '\n', 'utf8');
+      await appendMachineAuditLine({
+        trace_id: 'memguard', tool: 'memory-guard', action: 'budget_kill', risk: 'process',
+        ok: true, project_path: 'D:/proj', changed_files: [], duration_ms: 0,
+        details: { leaseId: 'L1' },
+      });
+      expect(existsSync(`${auditPath}.1`)).toBe(true);
+      expect(readFileSync(`${auditPath}.1`, 'utf8')).toContain('old-era-entry');
+      const lines = readFileSync(auditPath, 'utf8').trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({ tool: 'memory-guard', action: 'budget_kill', details: { leaseId: 'L1' } });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

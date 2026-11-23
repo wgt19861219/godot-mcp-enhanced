@@ -55,6 +55,23 @@ vi.mock('../../src/core/memory-guard.js', async (importOriginal) => {
   };
 });
 
+// audit-log 部分 mock(importOriginal 保真):四期 Task 5 起杀事件审计行在 watchdog 内
+// fire-and-forget(void appendMachineAuditLine(...).catch(recordAuditWriteFailure))——
+// 包一层记录在途 promise,afterEach 等其落定后再清 tmpDir(否则在途 append 与 rmSync
+// 竞态:ENOENT 误计审计失败 + 残留 tmp 目录)。真实现直调,落本文件 tmp 的重定向路径。
+const auditInflight = vi.hoisted((): Promise<void>[] => []);
+vi.mock('../../src/core/audit-log.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/audit-log.js')>();
+  return {
+    ...actual,
+    appendMachineAuditLine: vi.fn((entry: Omit<AuditEntry, 'timestamp'>) => {
+      const p = actual.appendMachineAuditLine(entry);
+      auditInflight.push(p.catch(() => {}));
+      return p;
+    }),
+  };
+});
+
 import { spawn as spawnSpy } from 'child_process';
 import {
   KILL_FACTOR,
@@ -81,6 +98,7 @@ import {
   normalizeProjectKey,
   resetState,
 } from '../../src/core/process-state.js';
+import type { AuditEntry } from '../../src/core/audit-log.js';
 
 const IS_WIN = process.platform === 'win32';
 const GB = 1024 * 1024 * 1024;
@@ -153,6 +171,8 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-watchdog-test-'));
   leasePath = path.join(tmpDir, '.godot-mcp', 'memory-leases.json');
   _setLeasesFilePathForTest(leasePath);
+  // 四期 Task 5 起 kill 路径真写机器级审计行——重定向到本文件 tmp(不触真实 ~/.godot-mcp)
+  vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', path.join(tmpDir, 'machine-audit.jsonl'));
   vi.mocked(sampleRssBytes).mockResolvedValue({}); // 安全默认:无读数不判杀
   // spawn 顶层纯假:返回带 on() 的假 child,树杀绝不真执行
   vi.mocked(spawnSpy).mockImplementation((() => ({ on: vi.fn() })) as unknown as typeof spawnSpy);
@@ -160,7 +180,7 @@ beforeEach(() => {
   stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
-afterEach(() => {
+afterEach(async () => {
   _resetWatchdogForTest();
   resetState(); // 清 process-state 会话桶(Task 3 preview 桥接夹具隔离)
   vi.useRealTimers();
@@ -168,6 +188,7 @@ afterEach(() => {
   _setPsRunnerForTest(null);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  await Promise.all(auditInflight.splice(0)); // 在途审计行落定后再清 tmpDir(防与 rmSync 竞态)
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 

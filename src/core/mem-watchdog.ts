@@ -19,6 +19,10 @@
 //    force 重采样再判,杀到脱离硬阈值+minimum-reclaim 2GB 即停;租约耗尽仍低压诚实上报。
 //  - 三期 Task 1:GODOT_MCP_WATCHDOG_EXEMPT 命中组(preview/editor)剔出驱逐候选
 //    (过滤在 memory-guard 的 getEvictionCandidates 单点);候选耗尽报文附豁免计数。
+//  - 四期 Task 5(T3-M-3 清偿):三类杀事件(budget_kill/evict/evict_exhausted)在采样行
+//    之外双写机器级审计 ~/.godot-mcp/machine-audit.jsonl(跨 server 杀可见性)。两通道
+//    独立:审计不经 isAuditEnabled(「杀」类事件机器级恒写的既有契约),审计写失败不影响
+//    杀与采样。
 //
 // 驱逐边界声明(Docker 反模式禁令,设计 §L2):preview/editor 殿后≠永不杀;单进程硬帽
 // (声明×KILL_FACTOR,一期)独立于驱逐豁免——env 显式豁免驱逐(GODOT_MCP_WATCHDOG_EXEMPT,
@@ -26,6 +30,7 @@
 
 import { killPidTree } from './process-state.js';
 import { getLogger } from './logger.js';
+import { appendMachineAuditLine, recordAuditWriteFailure } from './audit-log.js';
 import {
   getEvictionCandidates,
   getMachineMemorySnapshot,
@@ -202,6 +207,24 @@ function sampleRssRows(leases: MemLease[], rssMap: Record<number, number>, relea
   for (const id of _lastSampleAt.keys()) if (!liveIds.has(id)) _lastSampleAt.delete(id);
 }
 
+/** 杀事件审计行(四期 Task 5,T3-M-3 清偿):与采样行同点双写机器级审计——采样通道是
+ *  分析端主数据(本 server 视角),审计通道给跨 server 的杀可见性。形态对齐 cli/daemon.ts
+ *  defaultAuditKill(AuditEntry 既有 9 必填字段 + 自由载荷进 details);恒写不经
+ *  isAuditEnabled(机器级「杀」类事件既有契约,同 GodotServer startup / daemon kill 先例)。
+ *  fire-and-forget:看门狗主循环不 await 落盘;失败经 recordAuditWriteFailure 计数
+ *  (审计通道可观测面),kill 与采样不受影响。 */
+function auditKill(
+  action: 'budget_kill' | 'evict' | 'evict_exhausted',
+  projectPath: string,
+  details: Record<string, unknown>,
+): void {
+  void appendMachineAuditLine({
+    trace_id: 'memguard', tool: 'memory-guard', action, risk: 'process',
+    ok: true, project_path: projectPath, changed_files: [], duration_ms: 0,
+    details,
+  }).catch(recordAuditWriteFailure);
+}
+
 /** 整机硬阈值驱逐循环(二期 Task 3;三期 Task 1 候选增 env 豁免过滤;watchdog 只消费
  *  memory-guard 导出,不拥有状态):每轮 force 刷新快照喂状态机(绕过 10s 缓存——杀一个
  *  后重采样读缓存旧值会反复多杀,审查二期)→ 仍 hard(未达「硬阈值+2GB」脱离线)→ 取驱逐
@@ -234,6 +257,7 @@ function evictForHardThreshold(releasedIds: Set<string>): number {
         console.error(msg);
       }
       memSample('evict_exhausted', { envExempted }); // 四期 Task 4:候选耗尽仍 hard 的诚实证据行
+      auditKill('evict_exhausted', '', { envExempted }); // 四期 Task 5:无受害租约 → project_path 空
       break;
     }
     attempted.add(victim.lease.id);
@@ -257,6 +281,9 @@ function killForEviction(lease: MemLease, ratio: number): boolean {
   memSample('evict', { // 四期 Task 4:驱逐杀采样行(rssBytes=推算读数,与候选 ratio 同源)
     kind: lease.kind, project: lease.projectPath, leaseId: lease.id, pid,
     declaredMB: lease.declaredMB, rssBytes: readingBytes, ratio, reason: 'hard',
+  });
+  auditKill('evict', lease.projectPath, { // 四期 Task 5:同事件审计行(ratio 进 details)
+    leaseId: lease.id, pid, kind: lease.kind, declaredMB: lease.declaredMB, rssBytes: readingBytes, ratio,
   });
   releaseLease(lease.id);
   _attributions.set(pid, { readingBytes, declaredMB: lease.declaredMB, kind: lease.kind, at: Date.now() });
@@ -284,6 +311,9 @@ function killOverBudget(lease: MemLease, readingBytes: number): boolean {
   memSample('budget_kill', { // 四期 Task 4:超预算杀采样行(杀时读数=超线峰值证据,喂 per-process max)
     kind: lease.kind, project: lease.projectPath, leaseId: lease.id, pid,
     declaredMB: lease.declaredMB, rssBytes: readingBytes, budgetBytes, killFactor: factor,
+  });
+  auditKill('budget_kill', lease.projectPath, { // 四期 Task 5:同事件审计行(budgetBytes 进 details)
+    leaseId: lease.id, pid, kind: lease.kind, declaredMB: lease.declaredMB, rssBytes: readingBytes, budgetBytes,
   });
   releaseLease(lease.id);
   _attributions.set(pid, { readingBytes, declaredMB: lease.declaredMB, kind: lease.kind, at: Date.now() });

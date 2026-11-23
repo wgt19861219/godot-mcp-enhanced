@@ -186,23 +186,28 @@ function isPidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
 
-/** 超 AUDIT_ROTATE_SIZE 时链式轮转:.3 删(最老)→.2→.3→.1→.2→主文件→.1。
- *  文件不存在/小于阈值 no-op;轮转失败不阻断追加(best-effort——追加是主路径,
- *  轮转失败仅意味着继续增长,下次再试)。
- *  L-14(2026-10-22 审查):stat+rm/rename 无跨进程锁——多 server 实例并发轮转同一
- *  文件(同项目多实例的项目内副本 / home 外置副本)可交错 rename 丢审计行。补 per-file
- *  轮转锁(`<file>.lock`,内容=持有 pid):wx 独占创建获锁;已存在且持有者存活则本轮
- *  跳过(他人正转,下次 append 再试——丢失的只是轮转时机不是审计行);持有者死亡视为
- *  陈旧锁覆盖抢占。[诚实残余]陈旧锁覆盖的 check-then-write 窗口仍存在极窄交错面,
- *  fs 级无原子 CAS,发生前提=同机多实例同时轮转同一文件且旧持有者恰在窗口内死亡。 */
-export async function rotateIfNeeded(filePath: string): Promise<void> {
+/** 轮转结果(四期 Task 5 参数化,采样通道复用时暴露给调用方):
+ *  rotated=本次完成链式轮转;skipped=未轮转(文件不存在/低于阈值/他人持活锁——正常 no-op,
+ *  不是失败);failed=轮转动作抛错(error 携带原始异常,由调用方按各自通道口径处置)。 */
+export type RotateOutcome = 'rotated' | 'skipped' | 'failed';
+export interface RotateResult {
+  outcome: RotateOutcome;
+  error?: unknown;
+}
+
+/** 参数化轮转(四期 Task 5:自原 rotateIfNeeded 抽出 sizeBytes/keepGens,供采样文件
+ *  ~/.godot-mcp/memory-guard-events.jsonl(8MB×4 代)复用同一套锁与代际机制——不重写
+ *  轮转逻辑)。锁/代际/跳过语义逐行保留;唯一差异是失败不再在本函数内处置,而是经
+ *  返回值 failed+error 交调用方(审计通道 → rotateIfNeeded 包装器照旧 recordAuditWriteFailure
+ *  + warn;采样通道 → warnSampleFailOnce + 重试标志,不计审计失败统计)。本函数不 reject。 */
+export async function rotateIfNeededWith(filePath: string, sizeBytes: number, keepGens: number): Promise<RotateResult> {
   let size: number;
   try {
     size = (await stat(filePath)).size;
   } catch {
-    return; // 文件不存在(首条)——无轮转对象
+    return { outcome: 'skipped' }; // 文件不存在(首条)——无轮转对象
   }
-  if (size < AUDIT_ROTATE_SIZE) return;
+  if (size < sizeBytes) return { outcome: 'skipped' };
   const lockPath = `${filePath}.lock`;
   let locked = false;
   try {
@@ -213,25 +218,45 @@ export async function rotateIfNeeded(filePath: string): Promise<void> {
       // 锁已存在:持有者存活→跳过本轮;死亡/非整数→陈旧锁,覆盖抢占
       try {
         const holder = Number((await readFile(lockPath, 'utf8')).trim());
-        if (Number.isInteger(holder) && holder !== process.pid && isPidAlive(holder)) return;
+        if (Number.isInteger(holder) && holder !== process.pid && isPidAlive(holder)) return { outcome: 'skipped' };
       } catch { /* 锁文件不可读(半写)——按陈旧处理 */ }
       await writeFile(lockPath, String(process.pid), 'utf8');
       locked = true;
     }
-    await rm(`${filePath}.${AUDIT_ROTATE_KEEP}`, { force: true });
-    for (let i = AUDIT_ROTATE_KEEP - 1; i >= 1; i--) {
+    await rm(`${filePath}.${keepGens}`, { force: true });
+    for (let i = keepGens - 1; i >= 1; i--) {
       try {
         await rename(`${filePath}.${i}`, `${filePath}.${i + 1}`);
       } catch { /* 该代不存在(未攒满)——跳过继续 */ }
     }
     await rename(filePath, `${filePath}.1`);
+    return { outcome: 'rotated' };
   } catch (e) {
-    recordAuditWriteFailure(e);
-    getLogger().warn('audit', `rotate failed for ${relative(homedir(), filePath) || filePath}: ${e instanceof Error ? e.message : e}`);
+    return { outcome: 'failed', error: e };
   } finally {
     if (locked) {
       try { await rm(lockPath, { force: true }); } catch { /* best-effort */ }
     }
+  }
+}
+
+/** 超 AUDIT_ROTATE_SIZE 时链式轮转:.3 删(最老)→.2→.3→.1→.2→主文件→.1。
+ *  文件不存在/小于阈值 no-op;轮转失败不阻断追加(best-effort——追加是主路径,
+ *  轮转失败仅意味着继续增长,下次再试)。
+ *  L-14(2026-10-22 审查):stat+rm/rename 无跨进程锁——多 server 实例并发轮转同一
+ *  文件(同项目多实例的项目内副本 / home 外置副本)可交错 rename 丢审计行。补 per-file
+ *  轮转锁(`<file>.lock`,内容=持有 pid):wx 独占创建获锁;已存在且持有者存活则本轮
+ *  跳过(他人正转,下次 append 再试——丢失的只是轮转时机不是审计行);持有者死亡视为
+ *  陈旧锁覆盖抢占。[诚实残余]陈旧锁覆盖的 check-then-write 窗口仍存在极窄交错面,
+ *  fs 级无原子 CAS,发生前提=同机多实例同时轮转同一文件且旧持有者恰在窗口内死亡。
+ *  四期 Task 5:机制本体抽到 rotateIfNeededWith(阈值/代数参数化),本函数委托默认
+ *  参数并保留审计通道的失败处置(不 reject、recordAuditWriteFailure + warn)——对外
+ *  行为不变。 */
+export async function rotateIfNeeded(filePath: string): Promise<void> {
+  const r = await rotateIfNeededWith(filePath, AUDIT_ROTATE_SIZE, AUDIT_ROTATE_KEEP);
+  if (r.outcome === 'failed') {
+    recordAuditWriteFailure(r.error);
+    getLogger().warn('audit', `rotate failed for ${relative(homedir(), filePath) || filePath}: ${r.error instanceof Error ? r.error.message : r.error}`);
   }
 }
 
@@ -481,14 +506,21 @@ export function suggestRollback(entry: AuditEntry): RollbackSuggestion {
 // 结构与 appendFile 原子追加模式,便于同一套回放/统计工具消费。
 // (homedir 已在文件顶部 import)
 
-/** 机器级审计文件:~/.godot-mcp/machine-audit.jsonl(机器级目录惯例)。 */
+/** 机器级审计文件:~/.godot-mcp/machine-audit.jsonl(机器级目录惯例)。env
+ *  GODOT_MCP_MACHINE_AUDIT_FILE 可覆盖(四期 Task 5:测试隔离重定向——触达 kill 路径的
+ *  测试逐文件 stubEnv,既有 FAKE_HOME 隔离用例不受影响;读法同 getExternalAuditDir 的
+ *  `??` 先例,未设回落默认路径)。 */
 export function getMachineAuditFile(): string {
-  return join(homedir(), '.godot-mcp', 'machine-audit.jsonl');
+  return process.env.GODOT_MCP_MACHINE_AUDIT_FILE ?? join(homedir(), '.godot-mcp', 'machine-audit.jsonl');
 }
 
-/** 追加一条机器级审计行(timestamp 由本函数补)。 */
+/** 追加一条机器级审计行(timestamp 由本函数补)。四期 Task 5 补接大小轮转(此前只 append
+ *  无轮转——随 T3-M-3 清偿):追加前 rotateIfNeeded,时机对齐 appendAuditLine;审计通道
+ *  口径 10MB×3 代,失败 best-effort 不阻断追加。 */
 export async function appendMachineAuditLine(entry: Omit<AuditEntry, 'timestamp'>): Promise<void> {
   const full: AuditEntry = { ...entry, timestamp: new Date().toISOString() };
-  await mkdir(dirname(getMachineAuditFile()), { recursive: true });
-  await appendFile(getMachineAuditFile(), JSON.stringify(full) + '\n', 'utf-8');
+  const file = getMachineAuditFile();
+  await mkdir(dirname(file), { recursive: true });
+  await rotateIfNeeded(file);
+  await appendFile(file, JSON.stringify(full) + '\n', 'utf-8');
 }

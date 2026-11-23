@@ -21,6 +21,7 @@ import { createRequire } from 'module';
 import { freemem, homedir, totalmem } from 'os';
 import { dirname, join } from 'path';
 import { getLogger } from './logger.js';
+import { rotateIfNeededWith } from './audit-log.js';
 import { ensureDir, writeFileAtomic } from './fs-atomic.js';
 import { getSession } from './process-state.js';
 
@@ -1016,11 +1017,19 @@ export function _setLeasesFilePathForTest(p: string | null): void {
 // 事件采样落盘(四期 Task 1)——memSample 单点:公共壳自动拼装 + server_start 惰性首发
 // + 双开关短路 + fail-open appendFile(0600)。事件 schema/采样策略/轮转见
 // docs/superpowers/specs/2026-11-23-memory-guard-p4-design.md「事件 schema」节;
-// 各事件点接线(Task 2-4)与轮转(Task 5)后续任务落在本区之上。
+// 各事件点接线(Task 2-4)与采样文件轮转(Task 5,复用 audit-log rotateIfNeededWith)均落在本区之上。
 // ---------------------------------------------------------------------------
 
 /** 采样 schema 版本(公共壳 v 字段;升版=不兼容变更,分析端 memguard-review 按 v 过滤)。 */
 const SAMPLE_SCHEMA_V = 1;
+
+/** 采样文件轮转参数(设计「旋转与保留」):8MB/代 × 保留 4 代(=40MB 峰值,对齐 audit
+ *  10MB×3 量级)。机制复用 audit-log rotateIfNeededWith(链式代际 + <file>.lock pid 跨进程
+ *  锁 + 持有者存活跳过),不重写轮转逻辑。 */
+export const SAMPLE_ROTATE_SIZE = 8 * 1024 * 1024;
+export const SAMPLE_ROTATE_KEEP = 4;
+/** 轮转检查节奏:每 N 次 append stat 一次 size(另:进程首条 append 前必查 + 失败重试)。 */
+const SAMPLE_ROTATE_CHECK_EVERY = 500;
 
 /** server_start 的 pkgVersion:createRequire idiom 同 web-gui/server.ts PKG_VERSION——
  *  本模块在 src/core/,包根 package.json 上两级;vitest 从 src 跑与 node 从 build 跑的
@@ -1047,13 +1056,14 @@ const _sampleWarnedOnce = new Set<string>();
 /** server_start 惰性首发标志:进程内首个事件 append 前置一行,只发一次(含失败——重试
  *  会在每次事件前双写,刷屏弊大于补一行首发行)。 */
 let _serverStartLogged = false;
-/** append 计数:Task 5 轮转用(每 500 次查一次 size),Task 1 先占位递增。
- *  读取方在 Task 5 接线——no-unused-vars 定向豁免(scene-commit.ts C-02 同款先例),接线后删。 */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/** append 计数:轮转检查节奏——每 500 次 append 查一次 size(内存计数,免每次 append 都 stat)。 */
 let _sampleAppendCount = 0;
-/** 上次 size 检查时刻:Task 5 轮转用占位(0=进程启动后未查过,Task 5 接线启动 stat 一次)。 */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/** 上次 size 检查时刻(0=进程启动后未查过:首条 append 前 stat 一次,防已有大文件时
+ *  「500 次后检查」形同虚设,设计 N4)。 */
 let _lastSizeCheckAt = 0;
+/** 轮转失败重试标志:置位后下一条 append 即重查(不等下个 500 计数);重查成功即清。
+ *  「他人持活锁跳过」不算失败不置位(对方正在转,下个 500 边界再看)。 */
+let _sampleRotateRetry = false;
 
 /** watchdog 轮询读数表(pid → 最近一轮 RSS 字节,四期 Task 4):releaseLease final
  *  sample 的查表源(短命进程的末值,零 PowerShell 成本)。表本体在本模块而非
@@ -1083,12 +1093,16 @@ export function sampleFilePath(): string {
 }
 
 /** fail-open warn:同 error message 归一形态首次一行 console.error、后续静默(采样通道
- *  故障刷屏无益;stderr 惯例同 MEMGUARD 其余上报)。治理判定不经采样通道,降级不影响守卫。 */
-function warnSampleFailOnce(e: unknown): void {
-  const key = (e instanceof Error ? e.message : String(e)).trim();
+ *  故障刷屏无益;stderr 惯例同 MEMGUARD 其余上报)。治理判定不经采样通道,降级不影响守卫。
+ *  what 区分故障点(追加失败=本行丢弃 / 轮转失败=文件暂继续增长、下条 append 重试),
+ *  同因去重键含 what——两类故障互不去重。 */
+function warnSampleFailOnce(e: unknown, what: '追加失败' | '轮转失败' = '追加失败'): void {
+  const detail = (e instanceof Error ? e.message : String(e)).trim();
+  const key = `${what}(${detail})`;
   if (_sampleWarnedOnce.has(key)) return;
   _sampleWarnedOnce.add(key);
-  console.error(`MEMGUARD memSample 采样降级: 追加失败(${key})——本行丢弃,治理不受影响`);
+  const consequence = what === '追加失败' ? '本行丢弃' : '文件暂继续增长,下条 append 重试';
+  console.error(`MEMGUARD memSample 采样降级: ${what}(${detail})——${consequence},治理不受影响`);
 }
 
 /** 快照 → machine 壳字段:bytes→MB 取整序列化(commitAvailBytes null 透传 null;
@@ -1164,17 +1178,47 @@ function buildSampleLine(
  *  不进 _resetForTest:重置会另起并行链重现竞态,旧链自然排空(跨测试行序无断言依赖)。 */
 let _sampleAppendChain: Promise<void> = Promise.resolve();
 
-/** fire-and-forget 追加:mkdir(recursive) → appendFile(0600,mode 仅首建生效——正是
- *  想要的语义:已有文件不重设权限,新文件收紧);任一步失败同因去重 warn,绝不抛
- *  (未处理 rejection 崩进程是红线)。Task 5 在此挂钩轮转检查。 */
+/** 采样追加链排水(测试隔离用,生产代码不调用):等待全部已排队 append 落定——测试清
+ *  tmpDir 前调用,防在途 append 与 rmSync 竞态(ENOENT 误报/目录被 mkdir 重建残留);
+ *  节奏类断言(只看 append 计数)借此免受真实 fs 吞吐影响。 */
+export function _flushSampleChainForTest(): Promise<void> {
+  return _sampleAppendChain;
+}
+
+/** fire-and-forget 追加:mkdir(recursive) → 轮转检查 → appendFile(0600,mode 仅首建生效
+ *  ——正是想要的语义:已有文件不重设权限,新文件收紧);任一步失败同因去重 warn,绝不抛
+ *  (未处理 rejection 崩进程是红线)。
+ *  轮转检查(Task 5)是链上的一环,排在对应 append 之前——检查与轮转必须在串行链上按序
+ *  执行,不得另起并行链(并行链与 append 竞态:rename 走主文件的瞬间 append 落到已后移
+ *  的旧代,或交错 rename 丢行)。 */
 function appendSampleLine(filePath: string, line: string): void {
   _sampleAppendCount++;
   _sampleAppendChain = _sampleAppendChain
     .then(() => mkdir(dirname(filePath), { recursive: true }))
+    .then(() => rotateSampleIfNeeded(filePath))
     .then(() => appendFile(filePath, line, { mode: 0o600 }))
     .catch((e: unknown) => {
       warnSampleFailOnce(e);
     });
+}
+
+/** 采样文件轮转检查(串行链上的一环):复用审计轮转机制(8MB×4 代)。检查时机三选一,
+ *  在链上**执行时**读状态(非入链时快照)——同一批排队的 append 共享最新检查结果,
+ *  启动突发(server_start+首事件)不重复 stat。失败走采样通道口径:同因去重 warn +
+ *  置重试标志(下一条 append 即重查,不等下个 500 计数),**不计**审计失败统计
+ *  (recordAuditWriteFailure 是审计通道的可观测面,两通道口径独立);轮转失败不阻断本次
+ *  append(继续追加到超限文件,下次再转)。「他人持活锁跳过」(skipped)非失败不置位。 */
+async function rotateSampleIfNeeded(filePath: string): Promise<void> {
+  const due = _sampleRotateRetry || _lastSizeCheckAt === 0 || _sampleAppendCount % SAMPLE_ROTATE_CHECK_EVERY === 0;
+  if (!due) return;
+  _lastSizeCheckAt = Date.now();
+  const r = await rotateIfNeededWith(filePath, SAMPLE_ROTATE_SIZE, SAMPLE_ROTATE_KEEP);
+  if (r.outcome === 'failed') {
+    _sampleRotateRetry = true;
+    warnSampleFailOnce(r.error, '轮转失败');
+  } else {
+    _sampleRotateRetry = false;
+  }
 }
 
 /** 采样单点(四期 Task 1):同步签名、内部 fire-and-forget——调用点零 await 负担。
@@ -1211,5 +1255,6 @@ export function _resetForTest(): void {
   _serverStartLogged = false;
   _sampleAppendCount = 0;
   _lastSizeCheckAt = 0;
+  _sampleRotateRetry = false;
   _lastRssByPid.clear();
 }

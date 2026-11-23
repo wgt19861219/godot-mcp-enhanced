@@ -32,6 +32,22 @@ vi.mock('child_process', async (importOriginal) => {
   return { ...actual, spawn: vi.fn(actual.spawn) };
 });
 
+// audit-log 部分 mock(importOriginal 保真):四期 Task 5 起杀事件审计行在 watchdog 内
+// fire-and-forget——三期 Task 3 驱逐 describe 触达 evict/evict_exhausted 审计点,包一层
+// 记录在途 promise,afterEach 等其落定后再清 tmpDir(否则在途 append 与 rmSync 竞态)。
+const auditInflight = vi.hoisted((): Promise<void>[] => []);
+vi.mock('../../src/core/audit-log.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/audit-log.js')>();
+  return {
+    ...actual,
+    appendMachineAuditLine: vi.fn((entry: Omit<AuditEntry, 'timestamp'>) => {
+      const p = actual.appendMachineAuditLine(entry);
+      auditInflight.push(p.catch(() => {}));
+      return p;
+    }),
+  };
+});
+
 import { spawn as spawnSpy } from 'child_process';
 import {
   getSession,
@@ -53,6 +69,7 @@ import {
   startIdleTimer,
   stopIdleTimer,
 } from '../../src/core/session-idle-timer.js';
+import type { AuditEntry } from '../../src/core/audit-log.js';
 
 const IS_WIN = process.platform === 'win32';
 const MIN = 60_000;
@@ -114,6 +131,9 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'idle-timer-test-'));
   leasePath = path.join(tmpDir, '.godot-mcp', 'memory-leases.json');
   _setLeasesFilePathForTest(leasePath);
+  // 四期 Task 5 起 kill 路径真写机器级审计行(三期 Task 3 驱逐 describe 触达)——重定向到
+  // 本文件 tmp(不触真实 ~/.godot-mcp)
+  vi.stubEnv('GODOT_MCP_MACHINE_AUDIT_FILE', path.join(tmpDir, 'machine-audit.jsonl'));
   // spawn 顶层纯假:返回带 on() 的假 child,树杀绝不真执行
   vi.mocked(spawnSpy).mockImplementation((() => ({ on: vi.fn() })) as unknown as typeof spawnSpy);
   // 回收行 console 一路走 stderr(stdout 是 stdio 模式 JSON-RPC 独占通道,mem-watchdog
@@ -121,7 +141,7 @@ beforeEach(() => {
   stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
-afterEach(() => {
+afterEach(async () => {
   resetState();
   stopIdleTimer();
   vi.useRealTimers();
@@ -129,6 +149,7 @@ afterEach(() => {
   _setPsRunnerForTest(null);
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  await Promise.all(auditInflight.splice(0)); // 在途审计行落定后再清 tmpDir(防与 rmSync 竞态)
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
