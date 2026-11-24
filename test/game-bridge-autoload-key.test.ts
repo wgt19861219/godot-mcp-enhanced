@@ -14,6 +14,7 @@ import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, utimesSync,
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { handleTool, resetBridgeState, setBridgeProjectDir } from '../src/tools/game-bridge.js';
+import { requireProjectPath } from '../src/core/args-validation.js';
 import { _resetAutoloadCache } from '../src/gdscript-executor.js';
 import { asUnrestrictedPath } from './helpers/path-isolation.js';
 
@@ -172,5 +173,27 @@ describe('反馈批 20261122 Task 3: install 内容相同跳过重写 + 决策�
     } finally {
       errSpy.mockRestore();
     }
+  });
+
+  it('kept / overwritten / identical 三种决策各恰好一行,整行精确相等', async () => {
+    const tail = ` project_path=${requireProjectPath({ project_path: projectDir })}`;
+    /** 跑一次 install,只收集它打出的 BRIDGE-INSTALL 行(spy 用完即还原,逐次计数) */
+    const installLines = async (extra: Record<string, unknown>): Promise<string[]> => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, ...extra }, ctx());
+        return errSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('BRIDGE-INSTALL '));
+      } finally {
+        errSpy.mockRestore();
+      }
+    };
+    writeFileSync(dest(), 'extends Node\nconst BRIDGE_SCRIPT_VERSION := "0.36.2"\n# local edit\n', 'utf-8');
+    const kept = await installLines({});
+    const overwritten = await installLines({ force: true });
+    const identical = await installLines({});
+    expect(kept).toEqual([`BRIDGE-INSTALL decision=kept force=false bundled=none project=0.36.2${tail}`]);
+    expect(overwritten).toEqual([`BRIDGE-INSTALL decision=overwritten force=true bundled=none project=0.36.2${tail}`]);
+    expect(identical).toEqual([`BRIDGE-INSTALL decision=identical force=false bundled=none project=none${tail}`]);
+    expect(readFileSync(dest(), 'utf-8')).toBe('extends Node\n');
   });
 });

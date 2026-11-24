@@ -52,7 +52,7 @@ describe('A2: game_bridge_install 内容比对守卫', () => {
     expect(resultText(r)).toContain('differs from bundled version');
   });
 
-  it('目标 mcp_bridge.gd 内容与自带版本一致(工具托管)→ 覆盖刷新,无警告(升级场景)', async () => {
+  it('目标 mcp_bridge.gd 内容与自带版本一致(工具托管)→ 不重写(mtime 保留),无警告', async () => {
     writeFileSync(join(projectDir, 'mcp_bridge.gd'), BUNDLED_CONTENT, 'utf-8');
     const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
     expect(r?.isError).toBeFalsy();
