@@ -275,7 +275,7 @@ describe('extract_tree handler 前置校验(批4 Task 3)', () => {
     expect(body.error_code).toBe('INVALID_PARAMS');
   });
 
-  it('draft_path 非 res:// 形态 → INVALID_PARAMS', async () => {
+  it('draft_path 穿越不带前缀(../evil.tres)→ INVALID_PARAMS', async () => {
     const r = await run({ scene_path: 'res://main.tscn', draft_path: '../evil.tres' });
     expect(r.isError).toBe(true);
     const body = JSON.parse((r.content?.[0] as { text?: string }).text ?? '{}');

@@ -415,6 +415,46 @@ offset_bottom = 460.0
     expect(plan.skippedUnresolvedParent).toEqual(['BaseLayer', 'BaseLayer/Bg']);
     expect(plan.toWrite).toEqual([]);
   });
+
+  // 审查前修订:继承只对「按构造即视口尺寸的根」生效(「父尺寸不可解/非正」是必要条件而非
+  // 充分条件——根自身内缩锚定时它也成立,继承会把诚实 skip 变成会偏移的写盘计划:真实根尺寸
+  // ≠ viewport,以视口求解子树写盘即偏移,计划 Review Focus 第 4 条)。
+  const page = (root: string) => parseAuthoredGeometry(`[gd_scene format=3]
+
+[node name="Root" type="Control"]
+${root}
+[node name="BaseLayer" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Bg" type="Panel" parent="BaseLayer"]
+offset_left = 10.0
+offset_top = 20.0
+offset_right = 790.0
+offset_bottom = 460.0
+`);
+  const ROOT_FORMS: Array<[string, string, boolean]> = [
+    ['根自身内缩锚 0.1..0.9', 'anchor_left = 0.1\nanchor_top = 0.1\nanchor_right = 0.9\nanchor_bottom = 0.9\n', false],
+    ['根全锚带非零 offset(四边 10)', 'anchors_preset = 15\noffset_left = 10.0\noffset_top = 10.0\noffset_right = 10.0\noffset_bottom = 10.0\n', false],
+    ['根全锚且 offsets 全 0', 'anchors_preset = 15\n', true],
+    ['根显式 0×0 offset 行', 'offset_right = 0.0\noffset_bottom = 0.0\n', true],
+  ];
+  for (const [label, root, inherit] of ROOT_FORMS) {
+    it(`根形态「${label}」: 继承=${inherit}(传 viewport)`, () => {
+      const plan = planRebase(page(root), undefined, VP);
+      const written = plan.toWrite.map((e) => e.path);
+      if (inherit) {
+        expect(written).toEqual(expect.arrayContaining(['BaseLayer', 'BaseLayer/Bg']));
+        expect(plan.skippedUnresolvedParent).not.toContain('BaseLayer');
+        expect(plan.skippedUnresolvedParent).not.toContain('BaseLayer/Bg');
+      } else {
+        // 与改动前相同:全锚一级子与其子均诚实 skip,不产出写盘计划
+        expect(plan.skippedUnresolvedParent).toEqual(expect.arrayContaining(['BaseLayer', 'BaseLayer/Bg']));
+        expect(written).toEqual([]);
+      }
+    });
+  }
 });
 
 describe('applyRebasePatch', () => {

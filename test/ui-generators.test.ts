@@ -266,4 +266,7 @@ describe('genThemeCreateScript(scene_path 依赖按 action 分支,反馈 2026-11
     const s = genThemeCreateScript('res://a.tscn', 'extract', '/root/Panel', 'res://ui/theme.tres');
     expect(s).toContain('if not _mcp_load_scene("res://a.tscn")');
   });
+  it('extract: scenePath 为 null → 抛 scene_path is required for extract action(生成器层契约,与 source_node_path 守卫同构)', () => {
+    expect(() => genThemeCreateScript(null, 'extract', '/root/Panel', 'res://ui/theme.tres')).toThrow('scene_path is required for extract action');
+  });
 });

@@ -25,9 +25,10 @@
 // 【全锚继承(反馈 2026-11-18)】viewport 为正时,「父=根形态」的全锚(0,1,0,1)零 offset 节点在
 // 根尺寸不可解/非正时以 viewport 作父尺寸(simulate 内,判据同 planRebase ⑤)——根无布局行的
 // 场景此前会把这类节点按退化边距 {0,0,0,0} 求解成全零锚点落盘(静默错写),其子进 skip。
-// 该规则假定根运行时尺寸 = viewport(主场景/被宿主铺满的页):根运行时尺寸 ≠ viewport 时
-// (根自身内缩锚定如 anchor 0.1..0.9,或被宿主赋予非视口尺寸),其子树按视口求解的条目写盘后
-// 偏移——与上条同款暴露面,靠 compareBaseline 0 容差门暴露,不静默。
+// 继承只对「按构造即视口尺寸的根」生效:根 offsets 全 0 且 anchors 全 0 或全锚(含根无布局行、
+// 显式 0×0 行)。根非视口尺寸形态(自身内缩锚定如 anchor 0.1..0.9、全锚带非零 offset、其他
+// 非零锚)不继承——其运行时尺寸 ≠ viewport,以视口求解子树写盘即偏移(计划 Review Focus 第 4
+// 条),保持诚实 skip。
 
 import { parseTscn } from '../../tscn/tscn-parser.js';
 import type { ParsedNode } from '../../tscn/tscn-parser.js';
@@ -131,12 +132,29 @@ export function simulateMargins(parsed: AuthoredNode[]): Map<string, SimMargins>
   return simulate(parsed).margins;
 }
 
+/** 四边是否全 0(float32 语义,与 simulate 的 fr 口径一致)。 */
+function isZeroSides(s: SideRecord): boolean {
+  return fr(s.left) === 0 && fr(s.right) === 0 && fr(s.top) === 0 && fr(s.bottom) === 0;
+}
+
+/** anchors 是否全锚 (0,1,0,1)(铺满父)。 */
+function isFullRectSides(s: SideRecord): boolean {
+  return fr(s.left) === 0 && fr(s.right) === 1 && fr(s.top) === 0 && fr(s.bottom) === 1;
+}
+
 function simulate(parsed: AuthoredNode[], viewport?: { w: number; h: number }): {
   margins: Map<string, SimMargins>;
   sizes: Map<string, { w: number; h: number }>;
 } {
   const margins = new Map<string, SimMargins>();
   const sizes = new Map<string, { w: number; h: number }>();
+  // 继承的根形态前提(审查前修订):只对「按构造即视口尺寸的根」生效——根 offsets 全 0 且
+  // anchors 全 0 或全锚(根无布局行时 anchors/offsets 均为缺省 0,天然落在「全 0」内;显式 0×0
+  // 行等价看待)。「父尺寸不可解/非正」只是必要条件:根自身内缩锚定时它同样成立,若据此继承,
+  // 真实根尺寸 ≠ viewport,以视口求解子树写盘即偏移(计划 Review Focus 第 4 条)——不继承。
+  const root = parsed.find((n) => n.parentPath === '');
+  const rootIsViewportForm = root !== undefined
+    && isZeroSides(root.offsets) && (isZeroSides(root.anchors) || isFullRectSides(root.anchors));
   for (const n of parsed) {
     const a = { l: fr(n.anchors.left), r: fr(n.anchors.right), t: fr(n.anchors.top), b: fr(n.anchors.bottom) };
     const o = { l: fr(n.offsets.left), r: fr(n.offsets.right), t: fr(n.offsets.top), b: fr(n.offsets.bottom) };
@@ -153,7 +171,8 @@ function simulate(parsed: AuthoredNode[], viewport?: { w: number; h: number }): 
       const fullRectZeroOffset = n.parentPath === '.'
         && a.l === 0 && a.r === 1 && a.t === 0 && a.b === 1
         && o.l === 0 && o.r === 0 && o.t === 0 && o.b === 0;
-      if (parentUnresolved && fullRectZeroOffset && viewport && viewport.w > 0 && viewport.h > 0) {
+      if (parentUnresolved && fullRectZeroOffset && rootIsViewportForm
+        && viewport && viewport.w > 0 && viewport.h > 0) {
         ps = viewport;
       }
       if (ps) {
@@ -209,8 +228,9 @@ export interface RebasePlan {
  * 零锚)父尺寸无法从 tscn 解析时的正数视口兜底——以视口为父尺寸继续既有求解。深层链断
  * 节点(父≠根)不兜底:真实父尺寸≠视口,以视口求解写盘即偏移(Task1 审查 Important 收紧)。
  * 同一个 viewport 也传给 simulate(反馈 2026-11-18):全锚(0,1,0,1)零 offset 的一级子在根尺寸
- * 不可解/非正时继承视口尺寸(头注「全锚继承」),其子树因父尺寸已解而直接进求解——这不是对
- * 「深层链断不兜底」的放宽:该链上的父尺寸就是视口,不属于「真实父尺寸≠视口」。
+ * 不可解/非正时继承视口尺寸(头注「全锚继承」;仅限按构造即视口尺寸的根——根非视口尺寸形态
+ * 不继承,保持诚实 skip),其子树因父尺寸已解而直接进求解——这不是对「深层链断不兜底」的
+ * 放宽:该链上的父尺寸就是视口,不属于「真实父尺寸≠视口」。
  * 语义严格限定:已解析父的节点求解结果与不传 viewport 逐字节相同(求解路径零改动);
  * 不传 viewport 时整体结果与引入继承规则前逐字节相同。 */
 export function planRebase(
