@@ -1,5 +1,5 @@
 import { expect, it, beforeEach, afterEach, describe, vi } from 'vitest';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { mockSuccessResult } from './helpers/mock-results.js';
 
@@ -404,7 +404,50 @@ describe('Level B: Script editing', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.error_code).toBe('EDIT_REVERTED');
     expect(parsed.error).toContain('CRITICAL: rollback write mismatch');
+    expect(parsed.error).toContain('Parse errors:');
     expect(parsed.error).not.toContain('Original file restored');
+  });
+
+  // 控制器裁定(2026-11-24): 补简报四用例未覆盖的三处行为,作为回归防线。
+  // 字节数括注以落盘后 statSync(文件).size 为断言(UTF-8 字节),不手算。
+
+  it('replace-all(occurrence=0) no-change: 替换结果与原文一致 → No change 文案且不写盘', async () => {
+    vi.mocked(fsAtomic.writeFileAtomic).mockClear();
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tpass', occurrence: 0 },
+    }, ctx);
+    expect(result.content?.[0]?.text || '').toContain('No change made');
+    expect(vi.mocked(fsAtomic.writeFileAtomic).mock.calls.length).toBe(0);
+  });
+
+  it('replace-all 成功文案字节数 = 落盘后文件实际大小(statSync)', async () => {
+    await script.handleTool('script', {
+      project_path: dirRef.path, action: 'write_script', script_path: 'scripts/cn_all.gd',
+      content: 'extends Node\n# 中文\n# 中文\n',
+    }, ctx);
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/cn_all.gd',
+      search_and_replace: { search: '# 中文', replace: '# 中文注释', occurrence: 0 },
+    }, ctx);
+    const firstLine = (result.content?.[0]?.text || '').split('\n')[0];
+    expect(firstLine).toContain('replaced all 2 occurrences');
+    const sizeOnDisk = statSync(join(dirRef.path, 'scripts', 'cn_all.gd')).size;
+    const reportedBytes = /\((\d+) bytes written\)/.exec(firstLine)?.[1];
+    expect(reportedBytes).toBe(String(sizeOnDisk));
+  });
+
+  it('行号路径成功文案字节数 = 落盘后文件实际大小,且 > 字符串长度(UTF-8 字节非 UTF-16 码元)', async () => {
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/main.gd',
+      start_line: 4, end_line: 4, new_content: '\tprint("中文")',
+    }, ctx);
+    const header = (result.content?.[0]?.text || '').split('\n')[0];
+    const scriptFile = join(dirRef.path, 'scripts', 'main.gd');
+    const sizeOnDisk = statSync(scriptFile).size;
+    const reportedBytes = /\((\d+) bytes written\)/.exec(header)?.[1];
+    expect(reportedBytes).toBe(String(sizeOnDisk));
+    expect(sizeOnDisk).toBeGreaterThan(readFileSync(scriptFile, 'utf-8').length);
   });
 
   // ─── Task D2 (2026-11-12): MCP_LOAD_NULL 降级警告不触发回滚 ───

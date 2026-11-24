@@ -96,7 +96,12 @@ async function validateAndRevert(
             `File may be in a corrupted state: ${fullPath}`,
         };
       }
-      const rollbackMismatch = rollbackReadbackMessage(fullPath, rawFile);
+      // 控制器裁定(2026-11-24): mismatch 文案带成因(parse error 明细),与上方「回滚失败」分支信息量一致
+      const rollbackMismatch = rollbackReadbackMessage(
+        fullPath,
+        rawFile,
+        `Parse errors:\n  ${valResult[0]!.errors.join('\n  ')}`,
+      );
       if (rollbackMismatch) return { reverted: true, message: rollbackMismatch };
       // 尝试解析结构化错误信息
       const parsed = parseGodotErrors(valResult[0]!.errors);
@@ -159,9 +164,11 @@ function verifyWriteResult(fullPath: string, expectedContent: string): ToolResul
  * (对齐 verifyWriteResult 的写后回读)。此前两处回滚写(GD writeFileAtomic / C# tmp+rename)
  * 落盘后无回读:回滚写静默失效时响应仍称 "Original file restored",盘上却留着被拒的
  * 新内容——与「回执成功但盘没变」互为反向错位。
+ * @param cause 可选成因段(已格式化),插在说明句与结尾行之间——GD 路径传 parse error 明细,
+ *   与同函数既有「回滚失败」分支的信息量一致;C# 路径不传(对齐其既有回滚失败分支,不附 build 输出)。
  * @returns null = 盘上内容等于原文;不一致或读盘失败返回 CRITICAL mismatch 文案
  *   (读不到就无法确认回滚生效,同样不得声称已恢复),调用方经 { reverted: true, message } 上抛。 */
-function rollbackReadbackMessage(fullPath: string, rawFile: string): string | null {
+function rollbackReadbackMessage(fullPath: string, rawFile: string, cause?: string): string | null {
   let detail: string;
   try {
     const onDisk = readFileSync(fullPath, 'utf-8');
@@ -171,7 +178,9 @@ function rollbackReadbackMessage(fullPath: string, rawFile: string): string | nu
   } catch (readErr) {
     detail = `Rollback could not be confirmed: reading ${basename(fullPath)} back failed (${(readErr as Error).message}).`;
   }
-  return `⚠️ CRITICAL: rollback write mismatch!\n${detail}\nFile may be in a corrupted state: ${fullPath}`;
+  return `⚠️ CRITICAL: rollback write mismatch!\n${detail}\n` +
+    (cause ? `${cause}\n` : '') +
+    `File may be in a corrupted state: ${fullPath}`;
 }
 
 /**
