@@ -116,7 +116,8 @@ import { captureScreenshot } from '../../src/screenshot.js';
 import { spawnGodot } from '../../src/tools/spawn-helper.js';
 import { batchValidateScripts } from '../../src/tools/validation.js';
 import { runGodotHeadless } from '../../src/core/godot-spawn.js';
-import { resetState } from '../../src/core/process-state.js';
+import { resetState, acquireProcessSlot } from '../../src/core/process-state.js';
+import { DebuggerProfiler } from '../../src/core/function-profiler.js';
 import type { ToolContext } from '../../src/types.js';
 
 // ── 真实 tmp 夹具(不 mock fs):project.godot + test/*.gd 供分片枚举;假 godot 二进制 ──
@@ -578,6 +579,85 @@ describe('⑥ run_project 成功前缀文本契约', () => {
     const r = await runtimeHandleTool('runtime', args, makeCtx());
     expect(textOf(r!)).toMatch(/^Preview mode: game window is now open at /);
     expect(textOf(r!)).not.toContain('killed previous');
+  });
+
+  // ── 终审 M-3:被杀尾注覆盖「杀旧之后失败」的出口 ──
+  // executeRunProject 停旧段杀掉旧实例之后的五个失败出口(槽位 busy / 内存守卫拒绝 / profiler
+  // 端口绑定失败 / spawn 同步抛 / bridge 未就绪)此前看不到这件事——用户的上一个窗口已被本次
+  // 调用杀掉,错误响应里却没说(正是 11-22「窗口消失」反馈的形态)。尾注只追加在响应最尾部:
+  // `Error:` 前缀与 isError 判定不受影响。
+  describe('先停旧后失败 → 尾部附被杀 pid(终审 M-3)', () => {
+    const KILLED = /\(killed previous instance pid: 5401\)$/;
+    type Res = { content: Array<{ type: string; text?: string }>; isError?: boolean } | null;
+    /** 首跑让旧实例(pid 5401)入桶;beforeSecond 在第二轮之前执行(注入第二轮的失败条件)。 */
+    async function runTwice(secondArgs: Record<string, unknown> = {}, beforeSecond: () => void = () => {}): Promise<Res> {
+      spawnMock.mockImplementationOnce(() => fakeProc(5401));
+      const args = { action: 'run_project', project_path: TMP_PROJECT };
+      await runtimeHandleTool('runtime', args, makeCtx());
+      beforeSecond();
+      return runtimeHandleTool('runtime', { ...args, ...secondArgs }, makeCtx());
+    }
+
+    it('内存守卫拒绝(acquireLease 返回 denial)→ isError,拒绝码在位,文案以被杀 pid 尾注结尾', async () => {
+      const r = await runTwice({}, () => {
+        memguard.acquireLease.mockImplementationOnce(() => makeDenial('MEMGUARD_BUDGET'));
+      });
+      expect((r as { isError?: boolean }).isError).toBe(true);
+      const body = JSON.parse(textOf(r!)) as { error: string; error_code: string };
+      expect(body.error_code).toBe('MEMGUARD_BUDGET');
+      expect(body.error).toMatch(KILLED);
+    });
+
+    it('bridge 未就绪(wait_for_bridge)→ 错误文案同时含 Bridge not ready 与被杀 pid 尾注', async () => {
+      const r = await runTwice({ wait_for_bridge: true, timeout: 30 }, () => {
+        bridgeReadyMock.mockResolvedValueOnce({ ready: false, reason: 'timeout' });
+        spawnMock.mockImplementationOnce(() => fakeProc(5403));
+      });
+      expect((r as { isError?: boolean }).isError).toBe(true);
+      expect(textOf(r!)).toMatch(/^Bridge not ready \(timeout\)\. Game stopped\./);
+      expect(textOf(r!)).toMatch(KILLED);
+    });
+
+    it('spawn 同步抛 → Error: 前缀在位,尾部附被杀 pid', async () => {
+      const r = await runTwice({}, () => {
+        spawnMock.mockImplementationOnce(() => { throw new Error('sync spawn boom'); });
+      });
+      expect(textOf(r!)).toMatch(/^Error: failed to spawn Godot: sync spawn boom \(killed previous instance pid: 5401\)$/);
+    });
+
+    it('profiler 端口绑定失败(profiling=true)→ Error: 前缀在位,尾部附被杀 pid', async () => {
+      let spy: { mockRestore: () => void } | undefined;
+      const r = await runTwice({ profiling: true }, () => {
+        spy = vi.spyOn(DebuggerProfiler, 'create').mockRejectedValueOnce(new Error('EADDRINUSE'));
+      });
+      spy?.mockRestore();
+      expect(textOf(r!)).toMatch(/^Error: failed to bind profiler debugger port: EADDRINUSE \(killed previous instance pid: 5401\)$/);
+    });
+
+    // 停旧段释放 busy 与重新获取槽位之间没有 await,生产代码里这个竞态当前不可达;本例只为
+    // 钉住该出口的尾注接线(与其余四个出口一致):借「归还旧租约」这个停旧段里最后的可注入点,
+    // 让一次排队的 acquireProcessSlot 抢先占住刚被释放的槽位(串行队列保证它先于本次 run 入队)。
+    it('槽位 busy(acquireProcessSlot 返回 false)→ Error: 前缀在位,尾部附被杀 pid', async () => {
+      const r = await runTwice({}, () => {
+        memguard.releaseLease.mockImplementationOnce(() => { void acquireProcessSlot('run_project', TMP_PROJECT); });
+      });
+      expect(textOf(r!)).toMatch(/^Error: another Godot process is running .*\. Use stop_project to release it\. \(killed previous instance pid: 5401\)$/);
+    });
+
+    // 对照(修复前后都绿):没杀旧实例时(首跑)同一批失败出口的文案零变化
+    it.each<[string, Record<string, unknown>, () => void, RegExp]>([
+      ['内存守卫拒绝', {}, () => { memguard.acquireLease.mockImplementation(() => makeDenial('MEMGUARD_BUDGET')); }, /MEMGUARD_BUDGET/],
+      ['bridge 未就绪', { wait_for_bridge: true, timeout: 30 }, () => {
+        bridgeReadyMock.mockResolvedValue({ ready: false, reason: 'timeout' });
+        spawnMock.mockImplementation(() => fakeProc(5409));
+      }, /^Bridge not ready/],
+      ['spawn 同步抛', {}, () => { spawnMock.mockImplementation(() => { throw new Error('sync spawn boom'); }); }, /^Error: failed to spawn Godot/],
+    ])('对照:首跑(无旧实例)%s → 失败文案零变化,不附尾注', async (_label, extra, setup, marker) => {
+      setup();
+      const r = await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT, ...extra }, makeCtx());
+      expect(textOf(r!)).toMatch(marker);
+      expect(textOf(r!)).not.toContain('killed previous');
+    });
   });
 });
 

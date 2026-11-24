@@ -212,8 +212,8 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
 
   // Stop existing:只杀 X 桶旧进程(设计 §4.3)——活跃是 A 时 run_project(B)
   // 只杀 B 桶旧进程,A 不动(单项目场景 X=活跃,语义与改造前一致)。
-  // 反馈批 20261122 Task 4:本次 run 真的发信号去杀的旧实例才记 pid,成功响应尾部附注(此前
-  // 「先停旧」完全静默,用户无从知道哪个窗口被换掉;见下方 sessionNote)。桶里有 proc ≠ 进程
+  // 反馈批 20261122 Task 4:本次 run 真的发信号去杀的旧实例才记 pid,响应尾部附注(此前
+  // 「先停旧」完全静默,用户无从知道哪个窗口被换掉;见下方 killedNote)。桶里有 proc ≠ 进程
   // 还活着:close 事件送达前(用户刚关窗、stop_project 的 kill 在途、exit 已到而 close 被残留
   // stdio 句柄拖住)旧 proc 仍在桶里,但 killProcess 对已 killed / 已退出的进程直接 resolve
   // 不发信号——那种情况本次 run 什么都没杀,记成被杀会把用户自己关掉的窗口归因给 MCP。
@@ -228,6 +228,14 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     await killProcess(existingProc);
     clearRunSession(p);
   }
+  // 被杀尾注(终审 M-3):紧跟停旧段算好,供下方**全部**出口共用——四条成功响应(经 sessionNote)
+  // 与杀旧之后的五个失败出口(槽位 busy / 内存守卫拒绝 / profiler 端口绑定失败 / spawn 同步抛 /
+  // bridge 未就绪)。旧窗口已被本次调用杀掉时,失败响应同样必须说出来(否则就是 11-22「窗口
+  // 消失」反馈的形态:窗口没了,错误里却没提)。没杀旧实例时为空串,拼接后文案零变化;只追加
+  // 在响应最尾部,`Error:` 前缀与 isError 判定不受影响。
+  const killedNote = killedPreviousPids.length > 0
+    ? ` (killed previous instance pid: ${killedPreviousPids.join(',')})`
+    : '';
 
   // 内存治理 Task 4:被停会话的 game_window 租约立即归还(不等旧进程 close 事件——
   // kill 后 close 可能延迟,旧租约挂账会让下方 acquireLease 被自家历史占预算)。
@@ -246,7 +254,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   // Atomically acquire the process slot after clearing any existing process
   // (显式传 p 锁目标桶——acquire 先于 setProjectDir,按活跃桶锁会锁错桶,设计 §4.2)
   if (!await acquireProcessSlot('run_project', p)) {
-    return textResult(buildBusyErrorMessage(sessionKey));
+    return textResult(buildBusyErrorMessage(sessionKey) + killedNote);
   }
 
   // 内存治理 Task 4:spawn 前准入(game_window 档,3GB)。拒则不 spawn,释放 busy 槽
@@ -255,7 +263,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   if ('denial' in admit) {
     releaseRunSessionBusy(sessionKey);
     setSessionStatus(sessionKey, 'errored');
-    return opsErrorResult(admit.denial.code, admit.denial.message);
+    return opsErrorResult(admit.denial.code, admit.denial.message + killedNote);
   }
   const gameLeaseId = admit.lease.id;
   gameWindowLeases.set(sessionKey, gameLeaseId);
@@ -305,7 +313,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
       setSessionStatus(sessionKey, 'errored');
       releaseGameLease();   // Task 4: spawn 未成,租约无 close 兜底,主动归还
       const msg = err instanceof Error ? err.message : String(err);
-      return textResult(`Error: failed to bind profiler debugger port: ${msg}`);
+      return textResult(`Error: failed to bind profiler debugger port: ${msg}` + killedNote);
     }
   } else {
   // P1.1: spawn() 同步抛异常时,'error' handler 尚未注册 → 必须主动释放槽,
@@ -323,7 +331,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
     releaseGameLease();   // Task 4: spawn 未成,租约无 close 兜底,主动归还
     const msg = err instanceof Error ? err.message : String(err);
     appendOutput([`Spawn error: ${msg}`], sessionKey);
-    return textResult(`Error: failed to spawn Godot: ${msg}`);
+    return textResult(`Error: failed to spawn Godot: ${msg}` + killedNote);
   }
   }
   // 坑 1(设计 §4.3):输出流 handler 闭包捕获 sessionKey——活跃指针切走后
@@ -420,12 +428,10 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
 
   // 多项目提示(设计 §4.3):成功消息附当前在跑会话数(N>1 时)
   const running = listRunSessions().filter(x => isAliveStatus(x.status)).length;
-  // 反馈批 20261122 Task 4:先停旧杀掉的实例 pid 附在尾注末尾(四条成功响应共用本尾注,
-  // 没杀过旧实例不追加——首跑文案零变化)。做成文本尾注而非结构化字段:四条响应是纯文本
-  // 前缀契约(web 面板/QA runner 按前缀/子串匹配),新信息只能追加在尾部。
-  const killedNote = killedPreviousPids.length > 0
-    ? ` (killed previous instance pid: ${killedPreviousPids.join(',')})`
-    : '';
+  // 反馈批 20261122 Task 4:被杀旧实例 pid 的尾注(killedNote 在停旧段之后算好)接在会话数提示
+  // 之后——四条成功响应共用本 sessionNote,没杀过旧实例不追加(首跑文案零变化)。做成文本尾注
+  // 而非结构化字段:四条响应是纯文本前缀契约(web 面板/QA runner 按前缀/子串匹配),新信息只能
+  // 追加在尾部;杀旧之后的失败出口各自直接拼 killedNote(见上方各 return)。
   const sessionNote = (running > 1 ? ` (${running} sessions running)` : '') + killedNote;
 
   if (waitForBridge) {
@@ -444,7 +450,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
         void killProcess(proc);
         clearRunSession(sessionKey);
       }
-      return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. ${timeoutNote}, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.`);
+      return errorResult(`${warnPrefix}Bridge not ready (${r.reason}). Game stopped. ${timeoutNote}, bridge_timeout=${bridgeTimeout}s. 确认已 game_bridge_install 且游戏运行.` + killedNote);
     }
     // P1-6 关联修复(2026-08-21 七维度审核): "Bridge ready." 是 bridge-session.ts /
     // qa/runner.ts 的 load-bearing 判据(子串匹配),仅在真的探测过 isBridgeReady 后
