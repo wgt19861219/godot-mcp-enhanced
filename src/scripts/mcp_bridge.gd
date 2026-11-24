@@ -22,7 +22,7 @@ const PROTOCOL_VERSION := "1.0"
 # A2 (2026-09-16 反馈批): 脚本分发版本指纹 —— 与 package.json version 同步(由
 # scripts/version-sync.mjs 的 bridgeGd target 管理,勿手改)。ping 响应与 registry entry
 # 均回传,MCP server 侧与 bundled 版本比对,项目内旧版拷贝未同步一眼可辨(send_drag 五踩根因)。
-const BRIDGE_SCRIPT_VERSION := "0.41.0"
+const BRIDGE_SCRIPT_VERSION := "0.41.1"
 const INACTIVITY_TIMEOUT := 60.0
 # 批次2(2026-10-04 幂等层,对齐 unity-mcp-server queue-transport):requestId 去重表 ——
 # 客户端超时后按原 requestId 重试(而非按命令重试),命中缓存直接回首次响应,杜绝
@@ -3011,9 +3011,20 @@ func _cmd_get_performance() -> Dictionary:
 
 func _cmd_get_viewport_info() -> Dictionary:
 	var vp := get_viewport()
-	return {
+	var info: Dictionary = {
 		"size": {"x": vp.get_visible_rect().size.x, "y": vp.get_visible_rect().size.y},
+		"content_scale_factor": vp.content_scale_factor,
 	}
+	# 反馈 2026-11-12:DPI 缩放窗口下注入坐标按物理像素解释——透出窗口与视口双尺寸供调用方换算
+	var win := get_window()
+	if win == null:
+		return info
+	info["window_size"] = {"x": win.size.x, "y": win.size.y}
+	var vsz: Vector2 = vp.get_visible_rect().size
+	if vsz.x > 0.0 and vsz.y > 0.0:
+		info["scale_hint"] = "window %dx%dpx / viewport %dx%d → inject coords = logical * window_size/size (%.3f)" % [
+			int(win.size.x), int(win.size.y), int(vsz.x), int(vsz.y), win.size.x / vsz.x]
+	return info
 
 
 # ─── CMP-2: runtime error 捕获 (2026-08-08) ──────────────────────────────────

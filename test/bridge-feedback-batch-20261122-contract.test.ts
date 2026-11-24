@@ -35,3 +35,13 @@ describe('反馈批 20261122 Task 4: bridge 归属 ownerPid', () => {
     expect(funcSlice('_owner_pid')).toContain('OS.get_environment("GODOT_MCP_BRIDGE_OWNER_PID")');
   });
 });
+
+describe('反馈批 20261122 Task 6: get_viewport_info DPI 诊断字段', () => {
+  it('响应含 content_scale_factor/window_size/scale_hint,get_window() 判空降级', () => {
+    const s = funcSlice('_cmd_get_viewport_info');
+    expect(s).toContain('"content_scale_factor"');
+    expect(s).toContain('"window_size"');
+    expect(s).toContain('"scale_hint"');
+    expect(s).toContain('if win == null:');
+  });
+});
