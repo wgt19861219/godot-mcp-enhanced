@@ -30,6 +30,9 @@ describe('反馈批 20261122 Task 4: bridge 归属 ownerPid', () => {
     const s = funcSlice('_cmd_ping');
     expect(s).toContain('"ownerPid"');
     expect(s).toContain('_owner_pid()');
+    // 终审 triage-2:这道「>0 才写」门控此前唯一的自动化防线只是标题里的括注——
+    // 门控被删掉(恒写 ownerPid=0)时上面两条断言照样绿,这里钉住门控本身
+    expect(s).toMatch(/if owner_pid > 0:/);
   });
   it('_owner_pid: 读 GODOT_MCP_BRIDGE_OWNER_PID', () => {
     expect(funcSlice('_owner_pid')).toContain('OS.get_environment("GODOT_MCP_BRIDGE_OWNER_PID")');
