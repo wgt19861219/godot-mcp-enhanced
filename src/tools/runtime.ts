@@ -212,12 +212,17 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
 
   // Stop existing:只杀 X 桶旧进程(设计 §4.3)——活跃是 A 时 run_project(B)
   // 只杀 B 桶旧进程,A 不动(单项目场景 X=活跃,语义与改造前一致)。
-  // 反馈批 20261122 Task 4:记下真杀旧实例的 pid,成功响应尾部附注(此前「先停旧」完全
-  // 静默,用户无从知道哪个窗口被换掉;见下方 sessionNote)。
+  // 反馈批 20261122 Task 4:本次 run 真的发信号去杀的旧实例才记 pid,成功响应尾部附注(此前
+  // 「先停旧」完全静默,用户无从知道哪个窗口被换掉;见下方 sessionNote)。桶里有 proc ≠ 进程
+  // 还活着:close 事件送达前(用户刚关窗、stop_project 的 kill 在途、exit 已到而 close 被残留
+  // stdio 句柄拖住)旧 proc 仍在桶里,但 killProcess 对已 killed / 已退出的进程直接 resolve
+  // 不发信号——那种情况本次 run 什么都没杀,记成被杀会把用户自己关掉的窗口归因给 MCP。
   const killedPreviousPids: number[] = [];
   const existingProc = getRunSessionProc(p);
   if (existingProc) {
-    if (existingProc.pid) killedPreviousPids.push(existingProc.pid);
+    // 与 killProcess 的早退同款判据(严格 === null:活进程的 exitCode 恒为 null)
+    const willSignal = !existingProc.killed && existingProc.exitCode === null;
+    if (existingProc.pid && willSignal) killedPreviousPids.push(existingProc.pid);
     markSessionStopping(p);
     releaseRunSessionBusy(p);
     await killProcess(existingProc);

@@ -133,16 +133,19 @@ afterAll(() => {
   rmSync(TMP_ROOT, { recursive: true, force: true });
 });
 
-/** 假子进程(EventEmitter 形态,对齐 gdscript-executor-timeout.test.ts 范式)。 */
+/** 假子进程(EventEmitter 形态,对齐 gdscript-executor-timeout.test.ts 范式)。
+ *  exitCode 显式置 null:真 ChildProcess 的初值就是 null,killProcess / acquireProcessSlot /
+ *  run_project 停旧段判活都按 `=== null` 严格比较——夹具留 undefined 会被当成「已退出」。 */
 function fakeProc(pid: number) {
   const proc = new EventEmitter() as EventEmitter & {
-    pid: number; killed: boolean;
+    pid: number; killed: boolean; exitCode: number | null;
     stdout: EventEmitter; stderr: EventEmitter;
     unref: ReturnType<typeof vi.fn>;
     kill: () => boolean;
   };
   proc.pid = pid;
   proc.killed = false;
+  proc.exitCode = null;
   proc.stdout = new EventEmitter();
   proc.stderr = new EventEmitter();
   proc.unref = vi.fn();
@@ -523,13 +526,58 @@ describe('⑥ run_project 成功前缀文本契约', () => {
     procs.forEach((p) => spawnMock.mockImplementationOnce(() => p));
     for (const [i, v] of variants.entries()) {
       const r = await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT, ...v.args }, makeCtx());
-      expect(textOf(r), `第 ${i} 轮`).toMatch(v.prefix);
+      expect(textOf(r!), `第 ${i} 轮`).toMatch(v.prefix);
       if (i === 0) {
-        expect(textOf(r)).not.toContain('killed previous');
+        expect(textOf(r!)).not.toContain('killed previous');
       } else {
-        expect(textOf(r), `第 ${i} 轮`).toMatch(new RegExp(`\\(killed previous instance pid: ${5200 + i - 1}\\)$`));
+        expect(textOf(r!), `第 ${i} 轮`).toMatch(new RegExp(`\\(killed previous instance pid: ${5200 + i - 1}\\)$`));
       }
     }
+  });
+
+  // 审查 Important-1(修复轮 1):旧实例已退出但 close 事件尚未送达(用户刚关窗 / stop_project 的
+  // kill 在途 / 残留 stdio 句柄拖住 close)——旧 proc 仍在桶里,killProcess 对它直接 resolve 不发
+  // 信号,本次 run 什么都没杀,不得记成被杀。两种形态 = killProcess 早退的两个条件。
+  it.each<[string, (p: ReturnType<typeof fakeProc>) => void]>([
+    ['exitCode 已置(进程已退出)', (p) => { p.exitCode = 0; }],
+    ['killed 已置(stop_project 的 kill 在途)', (p) => { p.killed = true; }],
+  ])('旧实例已退出(%s)但 close 未送达 → 再 run 四条前缀照旧,不含 killed previous', async (_name, mutate) => {
+    bridgeReadyMock.mockImplementation(async () => ({ ready: true }));
+    memguard.acquireLease.mockImplementation(() => ({ lease: { id: 'lease-run' } }));
+    const variants: Array<{ args: Record<string, unknown>; prefix: RegExp }> = [
+      { args: {}, prefix: /^Running project at / },
+      { args: { preview: true }, prefix: /^Preview mode: game window is now open at / },
+      { args: { wait_for_bridge: true, timeout: 30 }, prefix: /^Bridge ready\. Running project at / },
+      { args: { preview: true, wait_for_bridge: true, timeout: 30 }, prefix: /^Preview mode: bridge ready/ },
+    ];
+    for (const [i, v] of variants.entries()) {
+      // 每个变体独立成场景:resetState 清桶,上一场景的旧进程不带入
+      resetState();
+      const oldProc = fakeProc(5301);
+      const newProc = fakeProc(5302);
+      spawnMock.mockReset();
+      spawnMock.mockImplementationOnce(() => oldProc).mockImplementationOnce(() => newProc);
+      await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());   // 首跑:旧实例入桶
+      mutate(oldProc);                                                                                       // 随后退出/被杀,close 未送达
+      const r = await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT, ...v.args }, makeCtx());
+      expect(textOf(r!), `第 ${i} 个变体`).toMatch(v.prefix);
+      expect(textOf(r!), `第 ${i} 个变体`).not.toContain('killed previous');
+    }
+  });
+
+  // 对照(修复前后都绿,钉住最常见的那条路径):用户关窗且 close 已送达——close handler 里的
+  // clearRunSession 已把桶里的 proc 清掉,再 run 根本不进停旧段,无从记被杀。
+  it('旧实例 close 已送达(用户关窗后)→ 桶已清,再 run 无尾注', async () => {
+    const oldProc = fakeProc(5351);
+    const newProc = fakeProc(5352);
+    spawnMock.mockReset();
+    spawnMock.mockImplementationOnce(() => oldProc).mockImplementationOnce(() => newProc);
+    const args = { action: 'run_project', project_path: TMP_PROJECT, preview: true };
+    await runtimeHandleTool('runtime', args, makeCtx());
+    oldProc.emit('close', 0);   // 用户关窗,close 事件送达
+    const r = await runtimeHandleTool('runtime', args, makeCtx());
+    expect(textOf(r!)).toMatch(/^Preview mode: game window is now open at /);
+    expect(textOf(r!)).not.toContain('killed previous');
   });
 });
 
