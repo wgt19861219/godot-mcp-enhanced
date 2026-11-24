@@ -18,7 +18,7 @@ import { genUiMeasureScript, checkViewportEffect } from './ui-measure.js';
 import { genUiImportSingleScript } from './ui-import-single.js';
 import { flattenTargets, flattenStyleTargets, styleExpectList, diffLayout, diffStyles, diffFlow, detectOverlaps, detectOutOfBounds, compactDiffEntries, compactStyleEntries } from './layout-diff.js';
 import type { MeasuredNode } from './layout-diff.js';
-import { buildQualityReport, compactReportSections } from './quality-check.js';
+import { buildQualityReport, compactReportSections, isCollapsedMeasure } from './quality-check.js';
 import { parseAuthoredGeometry, planRebase, applyRebasePatch } from './anchor-rebase.js';
 import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs } from './prototype-import.js';
 import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
@@ -672,12 +672,19 @@ export async function handleTool(
           // 字段,null 语义);stalled 时不出判定只报 stalled(调用方契约,buildQualityReport
           // 注释同款)。视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/
           // 容器化。批2 Task2:measure 输出带 theme_constants 时提取 space_* 档位传入
-          // (无声明跳过)。
+          // (无声明跳过)。塌 0(反馈 2026-11-18):isCollapsedMeasure 为真同样不挂,非
+          // stalled 时追加 warning 点明挂载父尺寸成因。
           if (!r.isError && parsed.data?.measure) {
             try {
               const m = parsed.data.measure;
               const spacingScale = spacingScaleFromTheme(m.theme_constants);
-              const report = m.stalled === true ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
+              const collapsed = isCollapsedMeasure(m.nodes ?? []);
+              const report = m.stalled === true || collapsed ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
+              // stalled 时不出判定、只报 stalled 的既有语义不变——塌 0 行仅非 stalled 时追加
+              if (m.stalled !== true && collapsed) {
+                parsed.warnings = [...(parsed.warnings ?? []), 'measure collapsed (all measured nodes are 0-sized) — order/quality reports suppressed; check the mount parent size'];
+                mutated = true;
+              }
               if (report?.quality || report?.order) {
                 // 批4 Task2:compact 分支内列表字段对象化(报告序截断),extended 逐字节一致
                 const compacted = detailCompact && report ? compactReportSections(report) : null;
@@ -1104,6 +1111,14 @@ async function handleUiImportPrototype(
   try {
     const measure = out.data?.measure;
     const measured = measure?.nodes ?? [];
+    // 塌 0 守卫(反馈 2026-11-18):挂载父尺寸 0(空的 Control 根)时量出的导入节点全 0×0,
+    // 等距/对齐线检测器把「全叠在原点」误读为真发现——build_warnings 点明成因与修法,
+    // quality/order 不挂;layout_verify 等事实字段照常输出(只压制推导,不压制事实)。
+    // stalled 时不出判定、只报 stalled 的既有语义不变——本行仅非 stalled 时追加。
+    const collapsed = isCollapsedMeasure(measured);
+    if (measure?.stalled !== true && collapsed) {
+      buildWarnings.push('measure collapsed: all imported nodes measured 0-sized — the mount parent likely has zero size (empty Control root). Fix the parent size (e.g. offset_right/offset_bottom = viewport) or import under a sized parent; layout_verify is unreliable for this run');
+    }
     const targets = flattenTargets(translated.tree);
     const diffAll = diffLayout(measured, targets, tolerance);
     const layoutVerify = {
@@ -1124,13 +1139,13 @@ async function handleUiImportPrototype(
       ...translated.coverage,
       _note: 'targets 为受 layout_verify 几何覆盖的节点数(含合成根 _PrototypeRoot,无 flow 时 = 输入节点数+1);flow 直接子节点丢 rect 不在 layout_verify 覆盖内,由 flow_verify 数字覆盖(期望=输入视口 rect);孙层由 layout_verify 近似覆盖(期望相对输入父原点,容器排布后天然带偏移)',
     };
-    // Task 4(批1 1c):quality/order 报告节(D8:stalled !== true 且有发现才挂;
+    // Task 4(批1 1c):quality/order 报告节(D8:stalled !== true 且非塌 0 且有发现才挂;
     // 视口溢出以 measure.viewport 为参照系;建议文案指向 solve_from_current/容器化)。
     // 批2 Task2:import 链 GD 侧暂不导出 theme_constants(ui-import-single 不向
     // genUiMeasureScript 传 themePath,_emit 无导出段)→ spacingScale 恒 undefined
     // 跳过档位检测;接线与 measure 链对称,将来打通数据源即自动生效。
     const importScale = spacingScaleFromTheme(measure?.theme_constants);
-    const qualityReport = measure?.stalled === true
+    const qualityReport = measure?.stalled === true || collapsed
       ? null
       : buildQualityReport(measured, { viewport: measure?.viewport, ...(importScale ? { spacingScale: importScale } : {}) });
     const compacted = detailCompact && qualityReport ? compactReportSections(qualityReport) : null;

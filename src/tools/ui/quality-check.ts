@@ -9,7 +9,9 @@
 // 依赖、纯检测只读(不改场景不写盘)。判据只用 anchors/offsets + 类型 + rect + styles
 // (N2;layout_mode 不是判据——measure 不回读它)。输出纪律(D8):无发现时调用方省略
 // quality/order 节;measure.stalled === true(布局未收敛,rect 不可信)时调用方**不调用**
-// buildQualityReport、不出判定、只报 stalled(P1-4)——本契约由 index.ts 两处调用方实现。
+// buildQualityReport、不出判定、只报 stalled(P1-4)——本契约由 index.ts 两处调用方实现;
+// 塌 0(全部节点 0 尺寸,isCollapsedMeasure)同属调用方契约(反馈 2026-11-18),此时另追加
+// 一行 warning 点明挂载父尺寸成因。
 //
 // NaN 语义(Task 3 review ledger 指针的处置):本文件的检测比较全部是 `<=`/`>` 形态,
 // NaN 参与比较恒为 false → 诚实不命中,不引入"双侧同 NaN 判等"的新语义,故无需为
@@ -378,10 +380,23 @@ export interface OrderSection {
 }
 
 /** 质量报告(Task 3 空壳,本任务填充):quality/order 两节各自独立省略(D8)。
- * stalled 抑制是调用方契约——measure.stalled === true 时调用方不调用本函数。 */
+ * stalled 抑制是调用方契约——measure.stalled === true 时调用方不调用本函数;
+ * 塌 0(isCollapsedMeasure)同属调用方契约(反馈 2026-11-18)。 */
 export interface QualityReport {
   quality: QualitySection | null;
   order: OrderSection | null;
+}
+
+/** 塌 0 守卫(反馈 2026-11-18):被测节点非空且**每个**节点 rect 宽或高 ≤0 → true。
+ * 为 true 时调用方不调用 buildQualityReport——挂载父尺寸为 0(空的 Control 根)时量出
+ * 的节点全是 0×0,等距/对齐线等检测器把「全叠在原点」误读为间距 0 的等距组等真发现;
+ * rect 不可信时只压制推导,rect 清单/layout_verify 等事实照常输出。
+ * 口径:比反馈建议的「整树全 0(或根 size 0)」更严——根 0×0 而树内另有显式尺寸的
+ * 节点时不触发(此时至少有节点的读数可信,属诚实降级)。空数组 → false(无可判:
+ * 沿用既有 stalled / null 语义,空集 buildQualityReport 本就返回 null,不发噪音)。
+ * NaN rect 参与比较恒 false → 不判塌 0(与本文件「NaN 诚实不命中」纪律一致)。 */
+export function isCollapsedMeasure(nodes: MeasuredNode[]): boolean {
+  return nodes.length > 0 && nodes.every(n => n.rect.w <= 0 || n.rect.h <= 0);
 }
 
 /** 聚合四类检测 + 既有 detectOutOfBounds(父级越界)。opts.viewport 缺省 → 跳过

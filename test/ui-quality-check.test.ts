@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } 
 import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, detectSpacingScale, detectAlignmentLanes, detectVisualGroups, buildQualityReport } from '../src/tools/ui/quality-check.js';
+import { compareBaseline, detectBareShell, detectShouldFollow, detectViewportOverflow, detectEquidistant, detectSpacingScale, detectAlignmentLanes, detectVisualGroups, buildQualityReport, isCollapsedMeasure } from '../src/tools/ui/quality-check.js';
 import { handleTool } from '../src/tools/ui/index.js';
 import type { MeasuredNode } from '../src/tools/ui/layout-diff.js';
 import type { ToolContext, ToolResult } from '../src/types.js';
@@ -493,6 +493,25 @@ describe('buildQualityReport', () => {
   });
 });
 
+describe('isCollapsedMeasure(反馈 2026-11-18: 塌 0 守卫)', () => {
+  const z = (path: string): MeasuredNode => ({ path, type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } });
+  it('全树 0 尺寸 → true', () => {
+    expect(isCollapsedMeasure([z('_PrototypeRoot'), z('_PrototypeRoot/A'), z('_PrototypeRoot/B')])).toBe(true);
+  });
+  it('正常树 → false', () => {
+    expect(isCollapsedMeasure([{ path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 800, h: 480 } }])).toBe(false);
+  });
+  it('个别节点 0 尺寸(合法隐藏层) → false', () => {
+    expect(isCollapsedMeasure([
+      { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 800, h: 480 } },
+      z('P/Hidden'),
+    ])).toBe(false);
+  });
+  it('空数组 → false(无可判)', () => {
+    expect(isCollapsedMeasure([])).toBe(false);
+  });
+});
+
 // ─── Step 5: index.ts 挂节接线(mock executor,不出 Godot)──────────────────
 
 function fakeCtx(): ToolContext {
@@ -522,7 +541,8 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     }));
   }
 
-  async function runMeasure(): Promise<{ data: Record<string, unknown> }> {
+  // warnings 恒为数组(opsSuccess 第二参缺省 []),顶层通道承载塌 0 守卫的 suppressed 行
+  async function runMeasure(): Promise<{ data: Record<string, unknown>; warnings: string[] }> {
     const r = await handleTool('ui', {
       action: 'ui_measure_layout', project_path: tmpProj, scene_path: 'res://main.tscn',
     }, fakeCtx()) as ToolResult;
@@ -591,6 +611,31 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     expect(body.data.quality).toBeUndefined();
     expect(body.data.order).toBeUndefined();
   });
+  it('塌 0 → quality/order 不挂 + warnings 含 suppressed 行; measure 原始 rect 清单仍在', async () => {
+    mockMeasureOutput([
+      { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/A', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/B', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/C', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+    ]);
+    const body = await runMeasure();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    expect(body.warnings.join('\n')).toContain('measure collapsed');
+    expect((body.data.measure as { nodes: MeasuredNode[] }).nodes.map((n) => n.path)).toEqual(['P', 'P/A', 'P/B', 'P/C']);
+  });
+  it('塌 0 叠加 stalled=true → 只报 stalled(既有语义不变),不追加 collapsed 行', async () => {
+    mockMeasureOutput([
+      { path: 'P', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/A', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/B', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+      { path: 'P/C', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 } },
+    ], true);
+    const body = await runMeasure();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    expect(body.warnings.join('\n')).not.toContain('measure collapsed');
+  });
 });
 
 describe('ui_import_prototype quality/order 挂节(mock executor)', () => {
@@ -619,7 +664,8 @@ describe('ui_import_prototype quality/order 挂节(mock executor)', () => {
   }
   beforeEach(() => { vi.clearAllMocks(); });
 
-  async function runImport(): Promise<{ data: Record<string, unknown> }> {
+  // build_warnings 恒为数组(翻译 warnings + 使用提示 + 生成器 warnings),承载塌 0 提示行
+  async function runImport(): Promise<{ data: Record<string, unknown> & { build_warnings: string[] } }> {
     const r = await handleTool('ui', {
       action: 'ui_import_prototype', project_path: '/fake/p', scene_path: 'res://scene.tscn',
       geometry: GEO_MIN,
@@ -644,6 +690,23 @@ describe('ui_import_prototype quality/order 挂节(mock executor)', () => {
     const body = await runImport();
     expect(body.data.quality).toBeUndefined();
     expect(body.data.order).toBeUndefined();
+  });
+  it('塌 0 → build_warnings 含 collapsed 行, quality/order 省略, layout_verify 照常', async () => {
+    mockImportSingle(importMeasureNodes().map((n) => ({ ...n, rect: { x: 0, y: 0, w: 0, h: 0 } })));
+    const body = await runImport();
+    expect(body.data.build_warnings.join('\n')).toContain('measure collapsed');
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    const lv = body.data.layout_verify as { diff: Array<{ actual: { w: number; h: number } }> };
+    expect(lv.diff.length).toBeGreaterThan(0);
+    expect(lv.diff.every((d) => d.actual.w === 0 && d.actual.h === 0)).toBe(true);
+  });
+  it('塌 0 叠加 stalled=true → 只报 stalled(既有语义不变),不追加 collapsed 行', async () => {
+    mockImportSingle(importMeasureNodes().map((n) => ({ ...n, rect: { x: 0, y: 0, w: 0, h: 0 } })), true);
+    const body = await runImport();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    expect(body.data.build_warnings.join('\n')).not.toContain('measure collapsed');
   });
 });
 
