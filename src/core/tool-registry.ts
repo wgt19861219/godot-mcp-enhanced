@@ -356,6 +356,9 @@ export const NO_PROJECT_PATH_TOOLS = new Set([
   'godot_select_instance', // Multi-instance selection — 可用 instance_id 代替 project_path
   'load_skill',          // 读用户本地知识库路径(libraries 参数),不操作 Godot 项目
   'godot_get_context',   // 会话全景元工具 — project_path 可选，字段降级（r3 修正 r2-N1）
+  'help',                // 工具自文档——读包内 docs/tools,不操作 Godot 项目(反馈 2026-11-18)
+  'debug',               // 断点管理——handler 与 editor 转发都不读 project_path(与 help 同类击穿)
+  'engine',              // ClassDB 内省——同上
 ]);
 
 /** Check if a tool should skip project_path validation. */

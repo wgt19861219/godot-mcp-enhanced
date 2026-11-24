@@ -24,4 +24,10 @@ describe('godot_get_context registration', () => {
     expect(NO_PROJECT_PATH_TOOLS.has('godot_get_context')).toBe(true);
     expect(skipProjectPath('godot_get_context')).toBe(true);
   });
+
+  it('help/debug/engine 免注入(反馈 2026-11-18:schema 未声明 project_path,dispatcher 注入即被未知参数检查拒)', () => {
+    for (const t of ['help', 'debug', 'engine']) {
+      expect(skipProjectPath(t), t).toBe(true);
+    }
+  });
 });

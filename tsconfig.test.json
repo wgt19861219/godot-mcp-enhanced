@@ -4,6 +4,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["test/helpers/**/*"],
+  "include": ["test/helpers/**/*", "test/core/project-path-injection-invariant.test.ts"],
   "exclude": ["node_modules", "build"]
 }
