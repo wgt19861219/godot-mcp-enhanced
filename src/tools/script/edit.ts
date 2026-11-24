@@ -96,6 +96,8 @@ async function validateAndRevert(
             `File may be in a corrupted state: ${fullPath}`,
         };
       }
+      const rollbackMismatch = rollbackReadbackMessage(fullPath, rawFile);
+      if (rollbackMismatch) return { reverted: true, message: rollbackMismatch };
       // 尝试解析结构化错误信息
       const parsed = parseGodotErrors(valResult[0]!.errors);
       let errorLines: string;
@@ -151,6 +153,25 @@ function verifyWriteResult(fullPath: string, expectedContent: string): ToolResul
     );
   }
   return null;
+}
+
+/** 反馈 11-20 复发条(2026-11-24): 回滚写回读校验——回滚写返回后读盘与原文比对
+ * (对齐 verifyWriteResult 的写后回读)。此前两处回滚写(GD writeFileAtomic / C# tmp+rename)
+ * 落盘后无回读:回滚写静默失效时响应仍称 "Original file restored",盘上却留着被拒的
+ * 新内容——与「回执成功但盘没变」互为反向错位。
+ * @returns null = 盘上内容等于原文;不一致或读盘失败返回 CRITICAL mismatch 文案
+ *   (读不到就无法确认回滚生效,同样不得声称已恢复),调用方经 { reverted: true, message } 上抛。 */
+function rollbackReadbackMessage(fullPath: string, rawFile: string): string | null {
+  let detail: string;
+  try {
+    const onDisk = readFileSync(fullPath, 'utf-8');
+    if (onDisk === rawFile) return null;
+    detail = `Rollback write did not take effect: on-disk content of ${basename(fullPath)} is not the original content ` +
+      `(expected ${rawFile.length} chars, found ${onDisk.length}).`;
+  } catch (readErr) {
+    detail = `Rollback could not be confirmed: reading ${basename(fullPath)} back failed (${(readErr as Error).message}).`;
+  }
+  return `⚠️ CRITICAL: rollback write mismatch!\n${detail}\nFile may be in a corrupted state: ${fullPath}`;
 }
 
 /**
@@ -211,6 +232,8 @@ async function csharpValidateAndRevert(
           `Rollback error: ${rollbackErr}\nFile may be in a corrupted state: ${fullPath}`,
       };
     }
+    const rollbackMismatch = rollbackReadbackMessage(fullPath, rawFile);
+    if (rollbackMismatch) return { reverted: true, message: rollbackMismatch };
     const output = result.output;
     // 截取关键错误行(MSBuild error/warning 行),保留前 1500 字符
     const errorSection = output.split('\n').filter(l => /error|Error|FAILED/.test(l)).join('\n');
@@ -410,6 +433,12 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
       }
       const newFileContent = normalizedContent.replaceAll(normalizedSearch, normalizedReplace);
       const finalContent = joinWithLineEnding(newFileContent, hasCRLF);
+      // 反馈 11-20 复发条(2026-11-24): no-change 守卫——落盘内容与原文逐字相同时不写盘、
+      // 不校验,显式回 "No change made"(此前照常写盘并回 "replaced …",调用方分不清
+      // 「改了」与「没改」,复发时与 git diff 对账失真)。三条成功路径同款。
+      if (finalContent === rawFile) {
+        return textResult(`No change made to ${fullPath}: the edit result is identical to the existing content (nothing written).`);
+      }
       // SEC-P1-1 / Task D3(2026-11-12 反馈批次): edit_script 沙箱扫描收窄到增量——只扫
       // replace 段。既有文件的合法敏感代码(FileAccess.WRITE 存档/load(常量) 等)不再阻断
       // 无关编辑(它们已在盘上,编辑行为不改变其存在);replace 段新引入的危险模式
@@ -449,7 +478,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
       // M6 (Imp-8): class_name 新增/变化时重建 cache(与 write_script 一致)
       const importSection = await ensureClassNameImport(projectPath, fullPath, rawFile, finalContent, ctx);
 
-      return textResult(`Edited ${fullPath}: replaced all ${count} occurrences of search text.${dw}${editLintSection}${importSection}`);
+      // 反馈 11-20 复发条: 成功回执附落盘内容的 UTF-8 字节数(Buffer.byteLength,非 .length
+      // 的 UTF-16 码元)——复发时拿它与 git diff 对账,即可区分「没写」与「写了又被盖」。
+      const bytesWritten = Buffer.byteLength(finalContent, 'utf8');
+      return textResult(`Edited ${fullPath}: replaced all ${count} occurrences of search text (${bytesWritten} bytes written).${dw}${editLintSection}${importSection}`);
     }
 
     let pos = 0;
@@ -472,6 +504,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
     const after = normalizedContent.substring(searchIndex + normalizedSearch.length);
     const newFileContent = before + normalizedReplace + after;
     const finalContent = joinWithLineEnding(newFileContent, hasCRLF);
+    // 反馈 11-20 复发条: no-change 守卫,同上 occurrence=0 路径
+    if (finalContent === rawFile) {
+      return textResult(`No change made to ${fullPath}: the edit result is identical to the existing content (nothing written).`);
+    }
     // SEC-P1-1 / Task D3(2026-11-12 反馈批次): 同上 occurrence=0 路径——单次替换只扫
     // replace 段增量,既有文件敏感代码不阻断无关编辑;replace 段新引入危险模式仍拦。
     const sandboxGuard = scanScriptSandboxOrThrow(normalizedReplace, fullPath);
@@ -505,7 +541,9 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
     // M6 (Imp-8): class_name 新增/变化时重建 cache(与 write_script 一致)
     const importSection = await ensureClassNameImport(projectPath, fullPath, rawFile, finalContent, ctx);
 
-    return textResult(`Edited ${fullPath}: replaced occurrence ${occurrence} of search text (${foundCount} total matches found).${dw}${editLintSection}${importSection}`);
+    // 反馈 11-20 复发条: 字节数括注,同上
+    const bytesWritten = Buffer.byteLength(finalContent, 'utf8');
+    return textResult(`Edited ${fullPath}: replaced occurrence ${occurrence} of search text (${foundCount} total matches found) (${bytesWritten} bytes written).${dw}${editLintSection}${importSection}`);
   }
 
   // Line-number mode
@@ -611,6 +649,10 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
   lines.splice(startLine - 1, endLine - startLine + 1, ...adjustedLines);
 
   const result = joinWithLineEnding(lines.join('\n'), hasCRLF);
+  // 反馈 11-20 复发条: no-change 守卫,同上 search_and_replace 路径(文案点明行号区间)
+  if (result === rawFile) {
+    return textResult(`No change made to ${fullPath}: lines ${startLine}-${endLine} replaced with identical content (nothing written).`);
+  }
   // SEC-P1-1 / Task D3(2026-11-12 反馈批次): 行号模式沙箱扫描收窄到增量——只扫实际插入的
   // 新行(adjustedLines,smart 缩进调整后的最终落盘增量)。既有文件敏感代码不阻断无关编辑;
   // 新行引入的危险模式(Phase 1/2/3,含字符串拼接绕过)仍拦。
@@ -635,7 +677,9 @@ export async function editScript(args: Record<string, unknown>, ctx: ToolContext
   }
 
   const afterLines = adjustedLines;
-  const diffHeader = `Edited ${fullPath}: replaced lines ${startLine}-${endLine} (${beforeLines.length} lines → ${afterLines.length} lines)`;
+  // 反馈 11-20 复发条: 字节数括注,同上(拼在 header 行)
+  const bytesWritten = Buffer.byteLength(result, 'utf8');
+  const diffHeader = `Edited ${fullPath}: replaced lines ${startLine}-${endLine} (${beforeLines.length} lines → ${afterLines.length} lines) (${bytesWritten} bytes written)`;
   const diffBody = `--- Before ---\n${beforeLines.join('\n')}\n--- After ---\n${afterLines.join('\n')}`;
 
   const contextBefore = lines.slice(Math.max(0, startLine - 3), startLine - 1);

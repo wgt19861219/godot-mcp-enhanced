@@ -344,6 +344,69 @@ describe('Level B: Script editing', () => {
     }
   });
 
+  // ─── 反馈 11-20 复发条(2026-11-22 批 Task 2): edit_script 假成功守卫三件套 ───
+  // no-change 显式文案 / 成功文案附 UTF-8 bytes written / 回滚写补回读校验。
+
+  it('edit_script no-change: 替换结果与原文一致 → 不写盘 + 明确 No change 文案', async () => {
+    vi.mocked(fsAtomic.writeFileAtomic).mockClear();
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tpass' },
+    }, ctx);
+    const text = result.content?.[0]?.text || '';
+    expect(text).toContain('No change made');
+    expect(text).not.toContain('replaced');
+    expect(vi.mocked(fsAtomic.writeFileAtomic).mock.calls.length).toBe(0);
+    expect(readFileSync(join(dirRef.path, 'scripts', 'main.gd'), 'utf-8')).toBe('extends Node2D\n\nfunc _ready():\n\tpass\n');
+  });
+
+  it('行号模式: 替换行与原行相同 → No change 文案且不写盘', async () => {
+    vi.mocked(fsAtomic.writeFileAtomic).mockClear();
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/main.gd',
+      start_line: 4, end_line: 4, new_content: '\tpass',
+    }, ctx);
+    expect(result.content?.[0]?.text || '').toContain('No change made');
+    expect(vi.mocked(fsAtomic.writeFileAtomic).mock.calls.length).toBe(0);
+  });
+
+  it('edit_script 成功文案附 UTF-8 字节数(中文按字节计,非 UTF-16 码元)', async () => {
+    await script.handleTool('script', {
+      project_path: dirRef.path, action: 'write_script', script_path: 'scripts/cn.gd',
+      content: 'extends Node\n# 中文注释\n',
+    }, ctx);
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/cn.gd',
+      search_and_replace: { search: '# 中文注释', replace: '# 中文注释2' },
+    }, ctx);
+    const expected = 'extends Node\n# 中文注释2\n';
+    const bytes = Buffer.byteLength(expected, 'utf8');
+    expect(result.content?.[0]?.text || '').toContain(`(${bytes} bytes written)`);
+    expect(bytes).toBeGreaterThan(expected.length);
+  });
+
+  it('edit_script 回滚写静默失效 → 回读比对报 CRITICAL rollback write mismatch(EDIT_REVERTED 通道)', async () => {
+    vi.mocked(fsAtomic.writeFileAtomic).mockClear();
+    vi.mocked(validation.batchValidateScripts).mockResolvedValueOnce([{
+      file: 'scripts/main.gd',
+      errors: ['scripts/main.gd:5 - Parse Error: identifier "oops" not declared in current scope'],
+      warnings: [],
+    }]);
+    const passThrough = vi.mocked(fsAtomic.writeFileAtomic).getMockImplementation();
+    vi.mocked(fsAtomic.writeFileAtomic)
+      .mockImplementationOnce(passThrough)   // 编辑落盘: 真实写
+      .mockImplementationOnce(() => {});      // 回滚写: 静默失效(不抛错,盘上仍是新内容)
+    const result = await script.handleTool('script', {
+      project_path: dirRef.path, action: 'edit_script', script_path: 'scripts/main.gd',
+      search_and_replace: { search: '\tpass', replace: '\tprint("edited")' },
+    }, ctx);
+    expect(result.isError).toBe(true);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.error_code).toBe('EDIT_REVERTED');
+    expect(parsed.error).toContain('CRITICAL: rollback write mismatch');
+    expect(parsed.error).not.toContain('Original file restored');
+  });
+
   // ─── Task D2 (2026-11-12): MCP_LOAD_NULL 降级警告不触发回滚 ───
   // headless load() 返 null 归 headless_limitations 警告通道(errors 为空)——
   // edit_script 保留编辑(D1 回滚条件 errors.length>0 不触发),警告透传到响应。
