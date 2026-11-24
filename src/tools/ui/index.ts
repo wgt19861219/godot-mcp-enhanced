@@ -684,7 +684,7 @@ export async function handleTool(
               const report = m.stalled === true || collapsed ? null : buildQualityReport(m.nodes ?? [], { viewport: m.viewport, ...(spacingScale ? { spacingScale } : {}) });
               // stalled 时不出判定、只报 stalled 的既有语义不变——塌 0 行仅非 stalled 时追加
               if (m.stalled !== true && collapsed) {
-                parsed.warnings = [...(parsed.warnings ?? []), 'measure collapsed (all measured nodes are 0-sized) — order/quality reports suppressed; check the mount parent size'];
+                parsed.warnings = [...(parsed.warnings ?? []), 'measure collapsed (every node is 0-sized, or the measured root has zero size so anchored nodes lose their proportional geometry) — order/quality reports suppressed; check the mount parent size'];
                 mutated = true;
               }
               if (report?.quality || report?.order) {
@@ -1113,13 +1113,14 @@ async function handleUiImportPrototype(
   try {
     const measure = out.data?.measure;
     const measured = measure?.nodes ?? [];
-    // 塌 0 守卫(反馈 2026-11-18):挂载父尺寸 0(空的 Control 根)时量出的导入节点全 0×0,
-    // 等距/对齐线检测器把「全叠在原点」误读为真发现——build_warnings 点明成因与修法,
-    // quality/order 不挂;layout_verify 等事实字段照常输出(只压制推导,不压制事实)。
+    // 塌 0 守卫(反馈 2026-11-18):挂载父尺寸 0(空的 Control 根)时带锚点的导入节点丢掉比例几何
+    // (尺寸为 0 或只剩 minimum_size 钳制值,位置只剩 offset——带文字的 Label/Button 并不塌 0),
+    // 等距/对齐线检测器把这些读数误读为真发现——build_warnings 点明成因与修法,quality/order
+    // 不挂;layout_verify 等事实字段照常输出(只压制推导,不压制事实)。判据两支见 isCollapsedMeasure。
     // stalled 时不出判定、只报 stalled 的既有语义不变——本行仅非 stalled 时追加。
     const collapsed = isCollapsedMeasure(measured);
     if (measure?.stalled !== true && collapsed) {
-      buildWarnings.push('measure collapsed: all imported nodes measured 0-sized — the mount parent likely has zero size (empty Control root). Fix the parent size (e.g. offset_right/offset_bottom = viewport) or import under a sized parent; layout_verify is unreliable for this run');
+      buildWarnings.push('measure collapsed: the mount parent measured zero-sized (or all imported nodes measured 0-sized) — anchored nodes cannot be laid out (empty Control root). Fix the parent size (e.g. offset_right/offset_bottom = viewport) or import under a sized parent; layout_verify is unreliable for this run');
     }
     const targets = flattenTargets(translated.tree);
     const diffAll = diffLayout(measured, targets, tolerance);

@@ -510,6 +510,41 @@ describe('isCollapsedMeasure(反馈 2026-11-18: 塌 0 守卫)', () => {
   it('空数组 → false(无可判)', () => {
     expect(isCollapsedMeasure([])).toBe(false);
   });
+
+  // ── 终审 Important-1(2026-11-24):零尺寸根一支 ──
+  // 引擎对 Control 有 minimum_size 钳制:空根(0×0)下带文字的 Label / Button 不塌 0
+  // (Godot 4.7.2 实测 64×23 / 31×31),上面「每个节点都退化」的判据在目标场景的常见
+  // 形态(空根 + 原型里有文字或按钮)下不触发。新判据加第二支:首节点(被测子树根)
+  // 退化 且 存在带非零锚点的非根节点。
+  const zeroRoot = (path: string, type = 'Control'): MeasuredNode =>
+    ({ path, type, rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { ...A0 } });
+  it('零尺寸根 + 带锚点的混合尺寸后代(含一个非 0 尺寸节点,模拟被最小尺寸撑开的 Label)→ true', () => {
+    expect(isCollapsedMeasure([
+      zeroRoot('.'),
+      { path: 'Bg', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: 'Name', type: 'Label', rect: { x: 0, y: 0, w: 64, h: 23 }, anchors: { left: 0.5, right: 0.5, top: 0, bottom: 0 }, text: '英雄名称' },
+      { path: 'Ok', type: 'Button', rect: { x: 0, y: 0, w: 31, h: 31 }, anchors: { ...A0 }, text: 'OK' },
+    ])).toBe(true);
+  });
+  it('零尺寸根 + 纯 offset 绝对定位(锚点全 0)的有尺寸子节点 → false(读数即 offset,可信,不压制)', () => {
+    expect(isCollapsedMeasure([
+      zeroRoot('.'),
+      { path: 'Name', type: 'Label', rect: { x: 0, y: 0, w: 64, h: 23 }, anchors: { ...A0 }, text: '英雄名称' },
+      { path: 'Ok', type: 'Button', rect: { x: 64, y: 0, w: 31, h: 31 }, anchors: { ...A0 }, text: 'OK' },
+    ])).toBe(false);
+  });
+  it('零尺寸根 + anchors 缺失的非根节点 → true(缺失保守视为带锚点)', () => {
+    expect(isCollapsedMeasure([
+      zeroRoot('.'),
+      { path: 'Name', type: 'Label', rect: { x: 0, y: 0, w: 64, h: 23 } },
+    ])).toBe(true);
+  });
+  it('首节点有尺寸、仅后代退化(合法的零尺寸中间层)→ false(锚点合取只认首节点退化)', () => {
+    expect(isCollapsedMeasure([
+      { path: '.', type: 'Control', rect: { x: 0, y: 0, w: 800, h: 480 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: 'Group', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5 } },
+    ])).toBe(false);
+  });
 });
 
 // ─── Step 5: index.ts 挂节接线(mock executor,不出 Godot)──────────────────
@@ -636,6 +671,29 @@ describe('ui_measure_layout quality/order 挂节(mock executor)', () => {
     expect(body.data.order).toBeUndefined();
     expect(body.warnings.join('\n')).not.toContain('measure collapsed');
   });
+  it('终审 Important-1:零尺寸根 + 混合尺寸带锚点后代(被最小尺寸撑开的 Label 不塌 0)→ warnings 含 collapsed 行,quality/order 不挂,rect 清单仍在', async () => {
+    // 空根下:两个全锚 Panel 塌成 0×0,带文字的 Label(64×23)/ Button(31×31)被 minimum_size
+    // 撑开不塌 0——旧判据(每个节点都退化)不成立;此时 lane 0 的「多数派共享 right/bottom/
+    // center 对齐线」正是假发现,必须压制
+    const zeroRootNodes: MeasuredNode[] = [
+      { path: '.', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { ...A0 } },
+      { path: 'Bg', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: 'Frame', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: 'Name', type: 'Label', rect: { x: 0, y: 0, w: 64, h: 23 }, anchors: { left: 0.5, right: 0.5, top: 0, bottom: 0 }, text: '英雄名称' },
+      { path: 'Ok', type: 'Button', rect: { x: 0, y: 0, w: 31, h: 31 }, anchors: { ...A0 }, text: 'OK' },
+    ];
+    // 夹具自证:同一份读数直接喂 buildQualityReport 会产出 lane 0 的假对齐线(压制对象真实存在)
+    const raw = buildQualityReport(zeroRootNodes, { viewport: { w: 960, h: 540 } });
+    expect(raw!.order!.alignment_lanes.map(l => `${l.kind}@${l.lane}`).sort())
+      .toEqual(['bottom@0', 'center@0', 'right@0', 'vc@0']);
+    mockMeasureOutput(zeroRootNodes);
+    const body = await runMeasure();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    expect(body.warnings.join('\n')).toContain('measure collapsed');
+    expect((body.data.measure as { nodes: MeasuredNode[] }).nodes.map((n) => `${n.path}:${n.rect.w}x${n.rect.h}`))
+      .toEqual(['.:0x0', 'Bg:0x0', 'Frame:0x0', 'Name:64x23', 'Ok:31x31']);
+  });
 });
 
 describe('ui_import_prototype quality/order 挂节(mock executor)', () => {
@@ -707,6 +765,29 @@ describe('ui_import_prototype quality/order 挂节(mock executor)', () => {
     expect(body.data.quality).toBeUndefined();
     expect(body.data.order).toBeUndefined();
     expect(body.data.build_warnings.join('\n')).not.toContain('measure collapsed');
+  });
+  it('终审 Important-1:挂载父零尺寸 + 混合尺寸带锚点导入节点(被最小尺寸撑开的 Label 不塌 0)→ build_warnings 含 collapsed 行,quality/order 不挂,layout_verify 照常', async () => {
+    // 真实 measure 的文档序:首节点是被测子树根(此处 = 空 Control 场景根),其后才是合成根
+    // _PrototypeRoot(全锚,随空根塌成 0×0)与导入节点;带文字的 Label / Button 被撑开不塌 0
+    const zeroRootImport: MeasuredNode[] = [
+      { path: '.', type: 'Control', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { ...A0 } },
+      { path: '_PrototypeRoot', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: '_PrototypeRoot/A', type: 'Label', rect: { x: 0, y: 0, w: 64, h: 23 }, anchors: { left: 0.5, right: 0.5, top: 0, bottom: 0 }, text: '英雄名称' },
+      { path: '_PrototypeRoot/Bg', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: '_PrototypeRoot/Frame', type: 'Panel', rect: { x: 0, y: 0, w: 0, h: 0 }, anchors: { left: 0, right: 1, top: 0, bottom: 1 } },
+      { path: '_PrototypeRoot/Ok', type: 'Button', rect: { x: 0, y: 0, w: 31, h: 31 }, anchors: { ...A0 }, text: 'OK' },
+    ];
+    // 夹具自证:同一份读数直接喂 buildQualityReport 会产出 lane 0 的假对齐线
+    const raw = buildQualityReport(zeroRootImport, { viewport: { w: 800, h: 600 } });
+    expect(raw!.order!.alignment_lanes.map(l => l.lane)).toEqual([0, 0, 0, 0]);
+    mockImportSingle(zeroRootImport);
+    const body = await runImport();
+    expect(body.data.quality).toBeUndefined();
+    expect(body.data.order).toBeUndefined();
+    expect(body.data.build_warnings.join('\n')).toContain('measure collapsed');
+    const lv = body.data.layout_verify as { diff: Array<{ path: string; actual: { w: number; h: number } }> };
+    // layout_verify 照常输出事实(diff 含合成根与其子 A;非全 0:Label 被最小尺寸撑开的读数原样可见)
+    expect(lv.diff.map((d) => `${d.path}:${d.actual.w}x${d.actual.h}`)).toEqual(['_PrototypeRoot:0x0', '_PrototypeRoot/A:64x23']);
   });
 });
 

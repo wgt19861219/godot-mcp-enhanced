@@ -10,8 +10,8 @@
 // (N2;layout_mode 不是判据——measure 不回读它)。输出纪律(D8):无发现时调用方省略
 // quality/order 节;measure.stalled === true(布局未收敛,rect 不可信)时调用方**不调用**
 // buildQualityReport、不出判定、只报 stalled(P1-4)——本契约由 index.ts 两处调用方实现;
-// 塌 0(全部节点 0 尺寸,isCollapsedMeasure)同属调用方契约(反馈 2026-11-18),此时另追加
-// 一行 warning 点明挂载父尺寸成因。
+// 塌 0(整树退化,或被测根零尺寸且树内有带锚点节点——isCollapsedMeasure)同属调用方契约
+// (反馈 2026-11-18),此时另追加一行 warning 点明挂载父尺寸成因。
 //
 // NaN 语义(Task 3 review ledger 指针的处置):本文件的检测比较全部是 `<=`/`>` 形态,
 // NaN 参与比较恒为 false → 诚实不命中,不引入"双侧同 NaN 判等"的新语义,故无需为
@@ -387,16 +387,43 @@ export interface QualityReport {
   order: OrderSection | null;
 }
 
-/** 塌 0 守卫(反馈 2026-11-18):被测节点非空且**每个**节点 rect 宽或高 ≤0 → true。
- * 为 true 时调用方不调用 buildQualityReport——挂载父尺寸为 0(空的 Control 根)时量出
- * 的节点全是 0×0,等距/对齐线等检测器把「全叠在原点」误读为间距 0 的等距组等真发现;
- * rect 不可信时只压制推导,rect 清单/layout_verify 等事实照常输出。
- * 口径:比反馈建议的「整树全 0(或根 size 0)」更严——根 0×0 而树内另有显式尺寸的
- * 节点时不触发(此时至少有节点的读数可信,属诚实降级)。空数组 → false(无可判:
- * 沿用既有 stalled / null 语义,空集 buildQualityReport 本就返回 null,不发噪音)。
- * NaN rect 参与比较恒 false → 不判塌 0(与本文件「NaN 诚实不命中」纪律一致)。 */
+// 非零锚点判定:anchors 的 left/right/top/bottom 任一 ≠ 0。anchors 字段缺失 → 保守视为「带」
+// (缺失方向与上方 anchorsAllZero 相反,各有其理:那边缺失不报裸壳是防误报,这边缺失判
+// 「带」是防漏报塌 0——压制的只是推导,事实字段照常输出且有 warning 可见)。
+function hasNonZeroAnchors(n: MeasuredNode): boolean {
+  const a = n.anchors;
+  if (!a) return true;
+  return a.left !== 0 || a.right !== 0 || a.top !== 0 || a.bottom !== 0;
+}
+
+/** 塌 0 守卫(反馈 2026-11-18;判据经全分支终审 Important-1 修订,2026-11-24):被测节点非空
+ * 且满足任一 → true:
+ *  ① 每个节点 rect 宽或高 ≤0(整树退化);
+ *  ② 被测清单的**首节点**(被测子树根;measure 输出是文档序前序遍历,nodes[0] 即它)宽或高
+ *     ≤0,且存在任一非根节点带非零锚点(anchors 的 left/right/top/bottom 任一 ≠ 0;anchors
+ *     字段缺失时保守视为「带」)。
+ * 为 true 时调用方不调用 buildQualityReport——挂载父尺寸为 0(空的 Control 根)时的读数被
+ * 等距/对齐线等检测器读成「同父 N 子沿 x/y 轴等距(间距≈0px)」、lane 0 的对齐线等假发现。
+ *
+ * 为什么单靠 ① 不够(引擎事实,Godot 4.7.2 无窗口探针实测):Control 有 minimum_size 钳制——
+ * 空根下带文字的 `Label("英雄名称")` 是 64×23、`Button("OK")` 是 31×31,并不塌 0。于是
+ * 「空根 + 原型里有文字或按钮」(两条反馈的常见形态)下 ① 不成立:既没有 collapsed 提示,
+ * buildQualityReport 照旧产出假发现。零尺寸根下带锚点的节点丢掉了比例几何(尺寸要么是 0、
+ * 要么只是最小尺寸钳制的值,位置只剩 offset),读数不可信——② 据此补上这一支。
+ *
+ * ② 的锚点合取是为了不误伤:纯 offset 绝对定位(锚点全 0)的子节点在零尺寸根下读数仍然
+ * 可信(位置与尺寸就是 offset,不依赖父尺寸),不该被压制;根自己有尺寸时后代退化是合法的
+ * 零尺寸中间层,同样不触发(② 只认首节点退化)。
+ *
+ * 其余口径不变:空数组 → false(无可判:沿用既有 stalled / null 语义,空集 buildQualityReport
+ * 本就返回 null,不发噪音)。NaN rect 参与比较恒 false → NaN 尺寸的节点不计退化、首节点
+ * NaN 尺寸不走 ②(与本文件「NaN 诚实不命中」纪律一致)。 */
 export function isCollapsedMeasure(nodes: MeasuredNode[]): boolean {
-  return nodes.length > 0 && nodes.every(n => n.rect.w <= 0 || n.rect.h <= 0);
+  if (nodes.length === 0) return false;
+  if (nodes.every(n => n.rect.w <= 0 || n.rect.h <= 0)) return true;
+  const root = nodes[0]!;
+  if (!(root.rect.w <= 0 || root.rect.h <= 0)) return false;
+  return nodes.slice(1).some(hasNonZeroAnchors);
 }
 
 /** 聚合四类检测 + 既有 detectOutOfBounds(父级越界)。opts.viewport 缺省 → 跳过
