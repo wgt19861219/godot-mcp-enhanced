@@ -25,10 +25,14 @@
 // 【全锚继承(反馈 2026-11-18)】viewport 为正时,「父=根形态」的全锚(0,1,0,1)零 offset 节点在
 // 根尺寸不可解/非正时以 viewport 作父尺寸(simulate 内,判据同 planRebase ⑤)——根无布局行的
 // 场景此前会把这类节点按退化边距 {0,0,0,0} 求解成全零锚点落盘(静默错写),其子进 skip。
-// 继承只对「按构造即视口尺寸的根」生效:根 offsets 全 0 且 anchors 全 0 或全锚(含根无布局行、
-// 显式 0×0 行)。根非视口尺寸形态(自身内缩锚定如 anchor 0.1..0.9、全锚带非零 offset、其他
-// 非零锚)不继承——其运行时尺寸 ≠ viewport,以视口求解子树写盘即偏移(计划 Review Focus 第 4
-// 条),保持诚实 skip。
+// 继承的根形态条件(根 offsets 全 0 且 anchors 全 0 或全锚)覆盖两类根:①未授权自身尺寸(无布局行
+// / 显式 0×0 行)——Godot 4 的 Control 缺省 anchors/offsets 全 0,构造尺寸 0×0(不等于视口),运行时
+// 尺寸由宿主/脚本决定;②构造尺寸即视口(全锚零 offset)。对第 ① 类,继承是把调用方传入的 viewport
+// 当作根的运行时尺寸——这是调用方的断言而非几何事实:viewport ≠ 根运行时尺寸时,其子树按视口
+// 求解的条目写盘后偏移,靠 compareBaseline 0 容差门暴露(与上段同款暴露面,不静默);全锚节点
+// 自身的解与父尺寸无关,不会被写成全零锚。根自身内缩锚定(如 anchor 0.1..0.9)、全锚带非零
+// offset、其他非零锚不继承——其尺寸已由授权几何确定且 ≠ 视口,以视口求解子树写盘即偏移(计划
+// Review Focus 第 4 条),保持诚实 skip。
 
 import { parseTscn } from '../../tscn/tscn-parser.js';
 import type { ParsedNode } from '../../tscn/tscn-parser.js';
@@ -148,10 +152,12 @@ function simulate(parsed: AuthoredNode[], viewport?: { w: number; h: number }): 
 } {
   const margins = new Map<string, SimMargins>();
   const sizes = new Map<string, { w: number; h: number }>();
-  // 继承的根形态前提(审查前修订):只对「按构造即视口尺寸的根」生效——根 offsets 全 0 且
-  // anchors 全 0 或全锚(根无布局行时 anchors/offsets 均为缺省 0,天然落在「全 0」内;显式 0×0
-  // 行等价看待)。「父尺寸不可解/非正」只是必要条件:根自身内缩锚定时它同样成立,若据此继承,
-  // 真实根尺寸 ≠ viewport,以视口求解子树写盘即偏移(计划 Review Focus 第 4 条)——不继承。
+  // 继承的根形态前提(审查前修订):根 offsets 全 0 且 anchors 全 0 或全锚才继承——前者是未授权
+  // 自身尺寸的根(无布局行时 anchors/offsets 均为缺省 0;显式 0×0 行同属此类,构造尺寸 0×0,
+  // 运行时尺寸由宿主/脚本决定),后者构造尺寸即视口。对前者,viewport 是调用方对根运行时尺寸的
+  // 断言而非几何事实(不等于时子树偏移,暴露面见头注)。「父尺寸不可解/非正」只是必要条件:根自身
+  // 内缩锚定时它同样成立,若据此继承,真实根尺寸 ≠ viewport,以视口求解子树写盘即偏移(计划
+  // Review Focus 第 4 条)——不继承。
   const root = parsed.find((n) => n.parentPath === '');
   const rootIsViewportForm = root !== undefined
     && isZeroSides(root.offsets) && (isZeroSides(root.anchors) || isFullRectSides(root.anchors));
@@ -228,9 +234,10 @@ export interface RebasePlan {
  * 零锚)父尺寸无法从 tscn 解析时的正数视口兜底——以视口为父尺寸继续既有求解。深层链断
  * 节点(父≠根)不兜底:真实父尺寸≠视口,以视口求解写盘即偏移(Task1 审查 Important 收紧)。
  * 同一个 viewport 也传给 simulate(反馈 2026-11-18):全锚(0,1,0,1)零 offset 的一级子在根尺寸
- * 不可解/非正时继承视口尺寸(头注「全锚继承」;仅限按构造即视口尺寸的根——根非视口尺寸形态
- * 不继承,保持诚实 skip),其子树因父尺寸已解而直接进求解——这不是对「深层链断不兜底」的
- * 放宽:该链上的父尺寸就是视口,不属于「真实父尺寸≠视口」。
+ * 不可解/非正时继承视口尺寸(头注「全锚继承」;仅限根 offsets 全 0 且 anchors 全 0 或全锚——
+ * 根内缩锚定 / 全锚带非零 offset / 其他非零锚不继承,保持诚实 skip),其子树因父尺寸已解而
+ * 直接进求解。「深层链断不兜底」不因此放宽:根未授权自身尺寸时,viewport 是调用方对根运行时
+ * 尺寸的断言(不等于时子树偏移,暴露面见头注),并非把「真实父尺寸≠视口」的链拿来求解。
  * 语义严格限定:已解析父的节点求解结果与不传 viewport 逐字节相同(求解路径零改动);
  * 不传 viewport 时整体结果与引入继承规则前逐字节相同。 */
 export function planRebase(

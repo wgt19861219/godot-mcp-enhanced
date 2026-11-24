@@ -416,9 +416,11 @@ offset_bottom = 460.0
     expect(plan.toWrite).toEqual([]);
   });
 
-  // 审查前修订:继承只对「按构造即视口尺寸的根」生效(「父尺寸不可解/非正」是必要条件而非
-  // 充分条件——根自身内缩锚定时它也成立,继承会把诚实 skip 变成会偏移的写盘计划:真实根尺寸
-  // ≠ viewport,以视口求解子树写盘即偏移,计划 Review Focus 第 4 条)。
+  // 审查前修订:继承只对「根 offsets 全 0 且 anchors 全 0 或全锚」生效——两类根:①未授权自身
+  // 尺寸(无布局行 / 显式 0×0 行,构造尺寸 0×0:viewport 是调用方对根运行时尺寸的断言,不等于时
+  // 子树偏移,见 anchor-rebase.ts 头注暴露面);②构造尺寸即视口(全锚零 offset)。「父尺寸不可解/
+  // 非正」只是必要条件:根自身内缩锚定时它也成立,据此继承会把诚实 skip 变成会偏移的写盘计划
+  // (真实根尺寸 ≠ viewport,以视口求解子树写盘即偏移,计划 Review Focus 第 4 条)。
   const page = (root: string) => parseAuthoredGeometry(`[gd_scene format=3]
 
 [node name="Root" type="Control"]

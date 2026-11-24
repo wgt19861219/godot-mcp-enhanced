@@ -546,7 +546,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       project_path: '/fake/p', action: 'theme_create', theme_create_action: 'extract', source_node_path: '/root/Panel',
     }, createMockCtx() as never);
     expect(result!.isError).toBe(true);
-    expect(textOf(result, 0)).toContain('scene_path is required');
+    expect(textOf(result, 0)).toContain('scene_path is required for theme_create (extract)');
   });
 
   it('theme_set_property（theme）: 返回不含 ⚠', async () => {

@@ -261,6 +261,7 @@ describe('genThemeCreateScript(scene_path 依赖按 action 分支,反馈 2026-11
     const s = genThemeCreateScript(null, 'create', undefined, 'res://ui/theme.tres');
     expect(s).toContain('Theme.new()');
     expect(s).not.toContain('if not _mcp_load_scene(');
+    expect(s).toContain('func _initialize():\n\tvar theme = Theme.new()');
   });
   it('extract: 仍加载场景', () => {
     const s = genThemeCreateScript('res://a.tscn', 'extract', '/root/Panel', 'res://ui/theme.tres');
