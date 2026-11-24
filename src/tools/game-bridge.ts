@@ -87,6 +87,14 @@ function bundledBridgeVersion(ctx: ToolContext): string | null {
   } catch { return null; }
 }
 
+/** 反馈批 20261122 Task 3: install 决策日志用——按路径读脚本提取 BRIDGE_SCRIPT_VERSION;
+ *  文件不存在/读取失败/无版本常量一律 'none'(日志口径:取不到就是 none,不抛)。 */
+function bridgeScriptVersionOrNone(scriptPath: string): string {
+  try {
+    return extractBridgeScriptVersion(readFileSync(scriptPath, 'utf-8')) ?? 'none';
+  } catch { return 'none'; }
+}
+
 /** 批次3(2026-10-04): 读 bundled mcp_bridge.gd 原始字节算 SHA-256(hex)——与 GD 侧
  *  _script_fingerprint(HashingContext HASH_SHA256,读 res:// 字节后 hex_encode;注:
  * PackedByteArray 无 sha256() 方法,4.6.3 探针实测 Parse Error)同源;
@@ -658,14 +666,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
         // A2 (2026-08-18 反馈): mcp_bridge.gd 托管语义 —— 目标已存在且内容与工具自带版本不同
         // (项目自管/git tracked + 本地修改)时**不覆盖**,保留现有文件并明确告知;内容一致
-        // (工具拷贝的原样)才覆盖刷新(升级场景)。拷贝放在幂等检查前只做一次,已注册同样遵守。
+        // (工具拷贝的原样)不重写(反馈批 20261122 Task 3:同内容重拷贝只刷新 mtime,无意义)。
+        // 拷贝放在幂等检查前只做一次,已注册同样遵守。
         // A1 (2026-09-16 反馈批): drift 场景加 force 刷新入口 —— 项目内旧版未同步是 send_drag
         // 五踩/registry 断链/button_mask 复踩的共同根源,kept-as-is 无刷新路径迫使用户手删。
         // force=true 显式覆盖;默认 false 保留项目内版本但指引可操作(旧文案"delete it manually"
         // 藏在括号里且无精确路径)。
         const destScript = join(projectPath, BRIDGE_SCRIPT_NAME);
         const forceRefresh = args.force === true;
+        // 决策日志的 project= 取 install 动手**前**项目内的版本(覆盖/新装之后盘上只剩 bundled 版本)
+        const projectVersionBefore = bridgeScriptVersionOrNone(destScript);
         let scriptNote = '';
+        let installDecision: 'installed' | 'overwritten' | 'kept' | 'identical';
         if (existsSync(destScript)) {
           if (readFileSync(bridgeSrc, 'utf-8') !== readFileSync(destScript, 'utf-8')) {
             if (forceRefresh) {
@@ -673,15 +685,24 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
               // B4 (2026-11-12 反馈批次 / 2026-09-16 反馈): force 覆盖只改磁盘,编辑器内存的
               // 旧版本会在保存场景/脚本时写回(编辑器不受 MCP 控制)——响应须提示 reload/关闭。
               scriptNote = `existing ${BRIDGE_SCRIPT_NAME} was outdated and has been overwritten (force: true) — restart the game to load the new version. If the project is currently open in the Godot editor, reload the script there (or close the editor) to prevent the old version being written back.`;
+              installDecision = 'overwritten';
             } else {
               scriptNote = `existing ${BRIDGE_SCRIPT_NAME} at ${destScript} differs from bundled version — kept as-is (project may manage its own copy). To refresh to the bundled version: re-run with force: true, or delete that file and re-run game_bridge_install.`;
+              installDecision = 'kept';
             }
           } else {
-            copyFileSync(bridgeSrc, destScript);
+            scriptNote = `existing ${BRIDGE_SCRIPT_NAME} identical to bundled version — skipped write (mtime preserved)`;
+            installDecision = 'identical';
           }
         } else {
           copyFileSync(bridgeSrc, destScript);
+          installDecision = 'installed';
         }
+        // 反馈批 20261122 Task 3(11-14 条): 决策日志 —— 每次 install 向 stderr 输出恰好一行,供
+        // 项目内 mcp_bridge.gd「被莫名回写」复发时定谳写入者与时间。有意直接 console.error 而不走
+        // getLogger():logger 双写 ~/.godot-mcp/logs 下的 JSONL 且受日志级别过滤,决策日志既不该
+        // 扩大对真实 home 的写入,也不该被级别滤掉;不进审计通道。
+        console.error(`BRIDGE-INSTALL decision=${installDecision} force=${forceRefresh} bundled=${bridgeScriptVersionOrNone(bridgeSrc)} project=${projectVersionBefore} project_path=${projectPath}`);
 
         // A4 (2026-09-16 反馈批): 陈旧 secret 检测/清理入口 —— 多实例端口避让后死实例的
         // mcp_bridge_*.secret 残留会误导端口解析(mtime 语义)与 auth(连错/删错)。判活依据 =

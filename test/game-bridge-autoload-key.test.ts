@@ -9,8 +9,8 @@
 //
 // 范式: 真实 fs + tmp 项目(对齐 overrides.test.ts,绕开 game-bridge.test.ts 的 mock fs 互斥)。
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync, utimesSync, statSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { handleTool, resetBridgeState, setBridgeProjectDir } from '../src/tools/game-bridge.js';
@@ -127,5 +127,50 @@ describe('G-5: game_bridge_install/uninstall autoload 键名', () => {
     config = readFileSync(join(projectDir, 'project.godot'), 'utf-8');
     expect(config).not.toContain('MCPBridge=');  // 新键被清
     expect(existsSync(join(projectDir, 'mcp_bridge.gd'))).toBe(false);  // 脚本一并删除
+  });
+});
+
+describe('反馈批 20261122 Task 3: install 内容相同跳过重写 + 决策日志', () => {
+  const ctx = () => ({ opsScript: join(scriptsDir, 'ops.gd'), projectDir } as never);
+  const dest = () => join(projectDir, 'mcp_bridge.gd');
+  /** 把 mtime 钉到 2 分钟前——跳过写盘则不变,重写则必变(无秒级粒度歧义,范式同 web-gui/portal.test.ts)。 */
+  const pinOldMtime = (p: string) => {
+    const past = new Date(Date.now() - 120_000);
+    utimesSync(p, past, past);
+    return statSync(p).mtimeMs;
+  };
+
+  it('内容相同: 第二次 install 不重写(mtime 不变)且 scriptNote 含 skipped write', async () => {
+    await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+    const pinned = pinOldMtime(dest());
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+    expect(statSync(dest()).mtimeMs).toBe(pinned);
+    expect((r?.content?.[0] as { text: string }).text).toContain('skipped write');
+  });
+
+  it('内容不同 + 无 force: 保持原样(回归锚)', async () => {
+    writeFileSync(dest(), 'extends Node\n# local edit\n', 'utf-8');
+    const r = await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+    expect(readFileSync(dest(), 'utf-8')).toBe('extends Node\n# local edit\n');
+    expect((r?.content?.[0] as { text: string }).text).toContain('kept as-is');
+  });
+
+  it('内容不同 + force=true: 覆盖(回归锚)', async () => {
+    writeFileSync(dest(), 'extends Node\n# local edit\n', 'utf-8');
+    await handleTool('game', { action: 'game_bridge_install', project_path: projectDir, force: true }, ctx());
+    expect(readFileSync(dest(), 'utf-8')).toBe('extends Node\n');
+  });
+
+  it('每次 install 向 stderr 输出恰好一行 BRIDGE-INSTALL 决策日志', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await handleTool('game', { action: 'game_bridge_install', project_path: projectDir }, ctx());
+      const lines = errSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith('BRIDGE-INSTALL '));
+      expect(lines.length).toBe(1);
+      expect(lines[0]).toContain('decision=installed');
+      expect(lines[0]).toContain('force=false');
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });
