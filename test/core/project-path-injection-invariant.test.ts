@@ -7,6 +7,7 @@ describe('project_path 注入不变量(反馈 2026-11-18)', () => {
   beforeAll(() => { registerAllModules(); });
 
   it('名单外工具必须在 inputSchema 声明 project_path——否则 dispatcher 注入键被未知参数检查拒掉', () => {
+    expect(getAllToolNames().length).toBeGreaterThan(0);
     const offenders = getAllToolNames()
       .filter((name) => !skipProjectPath(name))
       .filter((name) => !Object.keys(getToolDefinition(name)?.inputSchema?.properties ?? {}).includes('project_path'));
