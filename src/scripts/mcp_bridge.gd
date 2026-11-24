@@ -954,6 +954,15 @@ func _start_registry_heartbeat() -> void:
 	add_child(_registry_heartbeat_timer)
 
 
+# 反馈批 20261122 Task 4(实例归属): 读 TS 侧 run_project spawn 注入的 GODOT_MCP_BRIDGE_OWNER_PID
+# (= MCP server 的 process.pid;GODOT_MCP_BRIDGE_ 前缀是 buildSafeEnv 的透传域)。心跳条目与
+# ping 响应回传 ownerPid,TS 侧 resolveBridgePort 据此偏好本 server 起的实例——多会话并行时
+# 不再被「最新心跳胜出」吸到别的会话起的游戏。未注入(手动起的游戏/旧 server)返回 0,
+# 调用方按 >0 才写键,条目/响应形态不变。
+func _owner_pid() -> int:
+	return OS.get_environment("GODOT_MCP_BRIDGE_OWNER_PID").to_int()
+
+
 func _write_registry_entry() -> void:
 	if _registry_files.is_empty():
 		return
@@ -969,6 +978,10 @@ func _write_registry_entry() -> void:
 		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
 		"capabilities": ["registry-heartbeat"],
 	}
+	# 反馈批 20261122 Task 4: 归属 —— >0 才写键(未注入=0 时省略,旧 server/手动起的游戏的条目形态不变)。
+	var owner_pid: int = _owner_pid()
+	if owner_pid > 0:
+		entry["ownerPid"] = owner_pid
 	var json: String = JSON.stringify(entry, "	")
 	for registry_file in _registry_files:
 		# Atomic write: temp file -> rename
@@ -1383,7 +1396,7 @@ func _cmd_ping() -> Dictionary:
 		scene_path = get_tree().current_scene.scene_file_path
 	# A1 (2026-08-19 反馈): pid + project 指纹 —— 多实例并存时客户端可校验响应来自目标实例
 	# (9081 曾被先占旧实例劫持,返回的数据属于另一项目,无任何迹象)。
-	return {
+	var result: Dictionary = {
 		"pong": true,
 		"version": PROTOCOL_VERSION,
 		"bridgeVersion": BRIDGE_SCRIPT_VERSION,
@@ -1394,6 +1407,11 @@ func _cmd_ping() -> Dictionary:
 		"pid": OS.get_process_id(),
 		"project": ProjectSettings.globalize_path("res://"),
 	}
+	# 反馈批 20261122 Task 4: 归属指纹 —— TS 侧 annotatePingOwner 据此对他人实例告警(>0 才写键)。
+	var owner_pid: int = _owner_pid()
+	if owner_pid > 0:
+		result["ownerPid"] = owner_pid
+	return result
 
 
 func _cmd_get_tree(params: Dictionary) -> Variant:

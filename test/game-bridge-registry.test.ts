@@ -131,6 +131,18 @@ describe('A1: resolveBridgePort', () => {
     }), 'utf-8');
     expect(resolveBridgePort(proj, registryDir)).toBe(9081);  // 不被 9090 劫走
   });
+
+  it('owner 偏好:本 server 条目(较旧)与他人条目(较新)并存 → 选本 server 条目端口(反馈 2026-11-22)', () => {
+    writeEntry('111_1.json', proj, 9082, 30_000, { ownerPid: process.pid });
+    writeEntry('222_2.json', proj, 9083, 0, { ownerPid: process.pid + 1 });
+    expect(resolveBridgePort(proj, registryDir)).toBe(9082);
+  });
+
+  it('owner 缺省兼容:全部条目无 ownerPid → 回落 lastSeen 最新(现行为)', () => {
+    writeEntry('111_1.json', proj, 9082, 30_000);
+    writeEntry('222_2.json', proj, 9083, 0);
+    expect(resolveBridgePort(proj, registryDir)).toBe(9083);
+  });
 });
 
 // ── 回落窗口扫描(2026-08-21 PR#57 CI 实测暴露):缓解批起始候选随机化后,GD 大概率 ──
@@ -207,6 +219,13 @@ describe('A3: 失败端口记忆与降级', () => {
   it('registry 命中端口刚失败 → 跳过,取次新心跳条目', () => {
     writeEntry('111_1.json', projDir, 9082, 1_000);   // 最新心跳
     writeEntry('222_2.json', projDir, 9084, 60_000);  // 次新
+    _markPortFailed(9082);
+    expect(resolveBridgePort(projDir, registryDir)).toBe(9084);
+  });
+
+  it('本 server 条目端口刚失败 → 不落窗口扫描,回落他人条目', () => {
+    writeEntry('111_1.json', projDir, 9082, 1_000, { ownerPid: process.pid });
+    writeEntry('222_2.json', projDir, 9084, 60_000, { ownerPid: process.pid + 1 });
     _markPortFailed(9082);
     expect(resolveBridgePort(projDir, registryDir)).toBe(9084);
   });

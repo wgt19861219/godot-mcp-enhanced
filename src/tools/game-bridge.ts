@@ -165,6 +165,26 @@ export function annotatePingWithVersion(
   return annotated;
 }
 
+/** 反馈批 20261122 Task 4: ping 归属注解(纯函数,单测直测)。GD 侧把 spawn 注入的
+ *  GODOT_MCP_BRIDGE_OWNER_PID(runtime.ts 两处 spawn 点)经 ping 响应 ownerPid 透出;为正整数
+ *  且 ≠ 本 server pid = 连到了别的 MCP server 会话起的实例 → 附 ownerNote 点名对方 pid
+ *  (多会话并行时 ping 被「最新心跳」吸走的可见化;resolveBridgePort 已偏好本 server 条目,
+ *  本实例首个心跳落地前/手动起的游戏仍可能命中他人实例)。ownerPid 缺省/0(手动起的游戏、
+ *  旧 GD)或等于本 server → 原样返回入参(引用不变)。 */
+export function annotatePingOwner(
+  result: Record<string, unknown>,
+  serverPid: number = process.pid,
+): Record<string, unknown> {
+  const ownerPid = result.ownerPid;
+  if (typeof ownerPid === 'number' && Number.isInteger(ownerPid) && ownerPid > 0 && ownerPid !== serverPid) {
+    return {
+      ...result,
+      ownerNote: `instance owned by another MCP server (pid ${ownerPid}) — this server did not start it; queries may hit a game another session launched`,
+    };
+  }
+  return result;
+}
+
 // 首次连接成功自动拉起 Dashboard 的装配已迁往 GodotServer.run()(O2 归位,2026-09-17
 // 审查 H-3):模块顶层副作用不受 close() 管辖,迁入控制面后 close() 可对称置 null 清理;
 // dashboard⇄game-bridge 的 import 链在控制面汇合,方向不变(core/bridge-client 仍不依赖 dashboard)。
@@ -968,7 +988,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         // 批次3: 同一注解顺带做内容指纹比对(版本一致但字节被手改时 fingerprintWarning)。
         if (method === 'ping' && response.result !== null && typeof response.result === 'object' && !Array.isArray(response.result)) {
           const annotated = annotatePingWithVersion(response.result as Record<string, unknown>, bundledBridgeVersion(ctx), bundledBridgeSha256(ctx));
-          return textResult(JSON.stringify(annotated, null, 2));
+          // 反馈批 20261122 Task 4: 版本注解之后再套一层归属注解(他人实例 → ownerNote)。
+          return textResult(JSON.stringify(annotatePingOwner(annotated), null, 2));
         }
         return textResult(JSON.stringify(response.result, null, 2));
       }

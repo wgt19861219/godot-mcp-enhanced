@@ -9,7 +9,7 @@
 //
 // 模式参考:game-bridge-wait.test.ts / game-bridge-playtest.test.ts(同目录"按职责切片 + 不 mock net")。
 import { describe, it, expect } from 'vitest';
-import { validateBridgePath, validateWaitPropertyParams, clampTimeoutMs, extractBridgeScriptVersion, annotatePingWithVersion } from '../src/tools/game-bridge.js';
+import { validateBridgePath, validateWaitPropertyParams, clampTimeoutMs, extractBridgeScriptVersion, annotatePingWithVersion, annotatePingOwner } from '../src/tools/game-bridge.js';
 
 describe('validateBridgePath (T-1/I-1: /root/ 绝对路径校验)', () => {
   describe('T-1: game_write/wait/query 的 path 参数', () => {
@@ -261,5 +261,23 @@ describe('annotatePingWithVersion (A2: ping 响应版本比对注解)', () => {
     expect(annotated.versionWarning).toContain('unknown (old GD without version fingerprint)');
     expect(annotated.versionWarning).toContain('outdated copy');
     expect(annotated.versionWarning).not.toContain('newer than bundled');
+  });
+});
+
+describe('annotatePingOwner (反馈 2026-11-22: 实例归属注解)', () => {
+  it('他人实例 → 附 ownerNote 点名对方 pid', () => {
+    const out = annotatePingOwner({ pong: true, ownerPid: 4242 }, 1000);
+    expect(out.ownerPid).toBe(4242);
+    expect(out.ownerNote).toContain('another MCP server (pid 4242)');
+  });
+  it('本 server 实例 → 原样返回(引用相等)', () => {
+    const result = { pong: true, ownerPid: 1000 };
+    expect(annotatePingOwner(result, 1000)).toBe(result);
+  });
+  it('无 ownerPid / ownerPid 为 0 → 原样返回(手动起的游戏、旧 GD)', () => {
+    const a = { pong: true };
+    const b = { pong: true, ownerPid: 0 };
+    expect(annotatePingOwner(a, 1000)).toBe(a);
+    expect(annotatePingOwner(b, 1000)).toBe(b);
   });
 });

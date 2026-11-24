@@ -212,8 +212,12 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
 
   // Stop existing:只杀 X 桶旧进程(设计 §4.3)——活跃是 A 时 run_project(B)
   // 只杀 B 桶旧进程,A 不动(单项目场景 X=活跃,语义与改造前一致)。
+  // 反馈批 20261122 Task 4:记下真杀旧实例的 pid,成功响应尾部附注(此前「先停旧」完全
+  // 静默,用户无从知道哪个窗口被换掉;见下方 sessionNote)。
+  const killedPreviousPids: number[] = [];
   const existingProc = getRunSessionProc(p);
   if (existingProc) {
+    if (existingProc.pid) killedPreviousPids.push(existingProc.pid);
     markSessionStopping(p);
     releaseRunSessionBusy(p);
     await killProcess(existingProc);
@@ -265,6 +269,12 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   // 进程 close 时清理),profiler 工具 capture_functions 从 ctx 读。
   // I-1(设计 §4.5):仅当现有 profiler 的属主 key === 本次 key 才关闭——
   // A(profiling)运行中 run B 不得销毁 A 的 profiler(单选跟随 ≠ 可被非属主销毁)。
+  // 反馈批 20261122 Task 4(实例归属):spawn 注入 GODOT_MCP_BRIDGE_OWNER_PID = 本 server pid。
+  // GODOT_MCP_BRIDGE_ 前缀本就是 buildSafeEnv 的透传域(该函数不改),在下面两个 spawn 点
+  // 显式叠加,且置于展开之后(本 server 进程自身若带着上游注入的同名 env,以本进程 pid
+  // 为准)。GD 侧 _owner_pid() 读它写进 registry 心跳与 ping 响应(ownerPid),TS 侧
+  // resolveBridgePort 偏好本 server 起的实例、annotatePingOwner 对他人实例告警——多会话
+  // 并行时不再被「最新心跳胜出」吸到别的会话起的游戏。手动起的游戏无此 env,行为不变。
   const profiling = args.profiling === true;
   if (ctx.functionProfiler && profilerOwnerKey === sessionKey) {
     ctx.functionProfiler.close();
@@ -279,7 +289,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
       const dbgArgs = ['--path', p, '--debug', '--remote-debug', `tcp://127.0.0.1:${profiler.port}`];
       proc = spawn(godot, dbgArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: buildSafeEnv(),
+        env: { ...buildSafeEnv(), GODOT_MCP_BRIDGE_OWNER_PID: String(process.pid) },
       });
     } catch (err) {
       releaseRunSessionBusy(sessionKey);   // C-1:按 key 释放(不落活跃桶)
@@ -300,7 +310,7 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
   try {
     proc = spawn(godot, ['--path', p, '--debug'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: buildSafeEnv(),
+      env: { ...buildSafeEnv(), GODOT_MCP_BRIDGE_OWNER_PID: String(process.pid) },
     });
   } catch (err) {
     releaseRunSessionBusy(sessionKey);
@@ -405,7 +415,13 @@ export async function executeRunProject(args: Record<string, unknown>, ctx: Tool
 
   // 多项目提示(设计 §4.3):成功消息附当前在跑会话数(N>1 时)
   const running = listRunSessions().filter(x => isAliveStatus(x.status)).length;
-  const sessionNote = running > 1 ? ` (${running} sessions running)` : '';
+  // 反馈批 20261122 Task 4:先停旧杀掉的实例 pid 附在尾注末尾(四条成功响应共用本尾注,
+  // 没杀过旧实例不追加——首跑文案零变化)。做成文本尾注而非结构化字段:四条响应是纯文本
+  // 前缀契约(web 面板/QA runner 按前缀/子串匹配),新信息只能追加在尾部。
+  const killedNote = killedPreviousPids.length > 0
+    ? ` (killed previous instance pid: ${killedPreviousPids.join(',')})`
+    : '';
+  const sessionNote = (running > 1 ? ` (${running} sessions running)` : '') + killedNote;
 
   if (waitForBridge) {
     // M3: 显式命名 ms(isBridgeReady 接收 ms;bridgeTimeout 是秒)

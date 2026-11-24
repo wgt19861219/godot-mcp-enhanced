@@ -145,10 +145,22 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
     const dir = registryDir;
     const want = normalizeProjectKey(projectPath);
     const now = Date.now();
-    let best: { port: number; lastSeen: number; pid: number } | null = null;
+    // Task 4.4(2026-09-17 审查 Low): 比较规则——lastSeen 新者胜,lastSeen 相同(旧串同秒/
+    // 同毫秒双开)→ pid 决胜:高 pid=后起进程;此前平票靠 readdir 目录顺序摇摆取胜利者
+    // (非确定,Windows/Linux 顺序不同),现平票语义固定。pid 缺失(旧条目)按 0 参与,不改变
+    // 先后判定。
+    type Candidate = { port: number; lastSeen: number; pid: number };
+    const isNewer = (cand: Candidate, incumbent: Candidate): boolean =>
+      cand.lastSeen > incumbent.lastSeen || (cand.lastSeen === incumbent.lastSeen && cand.pid > incumbent.pid);
+    let best: Candidate | null = null;
+    // 反馈批 20261122 Task 4(实例归属):同时维护「本 server 起的实例」子集的最优 ownBest
+    // ——ownerPid === 本 server pid(GD 侧由 spawn 注入的 GODOT_MCP_BRIDGE_OWNER_PID 写入
+    // 心跳;手动起的游戏/旧 server 无此键,不进子集)。两轨走同一份 isNewer:owner 只决定
+    // 优先级,不改变「谁更新」的判定。
+    let ownBest: Candidate | null = null;
     for (const name of readdirSync(dir)) {
       if (!name.endsWith('.json')) continue;
-      let entry: { projectPath?: unknown; port?: unknown; lastSeen?: unknown; lastSeenMs?: unknown; pid?: unknown; capabilities?: unknown };
+      let entry: { projectPath?: unknown; port?: unknown; lastSeen?: unknown; lastSeenMs?: unknown; pid?: unknown; capabilities?: unknown; ownerPid?: unknown };
       try {
         entry = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as typeof entry;
       } catch { continue; }  // 损坏条目(崩溃 .tmp 残留等)容错跳过
@@ -160,14 +172,15 @@ export function resolveBridgePort(projectPath: string, registryDir: string = mac
       if (!Number.isFinite(lastSeen) || now - lastSeen > BRIDGE_REGISTRY_MAX_AGE_MS) continue;
       // A3: 失败记忆期内的端口跳过(刚 ECONNREFUSED 过的实例条目仍可能新鲜),降级次新心跳。
       if (_isPortFailed(entry.port)) continue;
-      // Task 4.4(2026-09-17 审查 Low): lastSeen 相同(旧串同秒/同毫秒双开)→ pid 决胜——
-      // 高 pid=后起进程;此前平票靠 readdir 目录顺序摇摆取胜利者(非确定,Windows/Linux
-      // 顺序不同),现平票语义固定。pid 缺失(旧条目)按 0 参与,不改变先后判定。
       const pid = typeof entry.pid === 'number' && Number.isFinite(entry.pid) ? entry.pid : 0;
-      if (!best || lastSeen > best.lastSeen || (lastSeen === best.lastSeen && pid > best.pid)) {
-        best = { port: entry.port, lastSeen, pid };
-      }
+      const cand: Candidate = { port: entry.port, lastSeen, pid };
+      if (!best || isNewer(cand, best)) best = cand;
+      if (entry.ownerPid === process.pid && (!ownBest || isNewer(cand, ownBest))) ownBest = cand;
     }
+    // 返回顺序(反馈批 20261122 Task 4):本 server 的实例 → 全部新鲜条目的最优 → 窗口扫描。
+    // 失败记忆/新鲜度过滤在入轨前已做——本 server 条目全部失败时 ownBest 为空,自然回落
+    // 他人条目(不落窗口扫描)。
+    if (ownBest) return ownBest.port;
     if (best) return best.port;
     return scanSecretWindow(projectPath);
   } catch {

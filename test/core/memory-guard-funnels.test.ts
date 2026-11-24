@@ -286,6 +286,14 @@ describe('② run_project 漏斗(game_window)', () => {
     // 新租约正常绑定新进程
     expect(memguard.bindLeasePid).toHaveBeenCalledWith('lease-run2', 4302);
   });
+
+  it('spawn 游戏 env 注入 GODOT_MCP_BRIDGE_OWNER_PID=本 server pid(默认 spawn 分支)', async () => {
+    const proc = fakeProc(4221);
+    spawnMock.mockImplementation(() => proc);
+    await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT }, makeCtx());
+    const env = spawnMock.mock.calls[0]![2]!.env as Record<string, string>;
+    expect(env.GODOT_MCP_BRIDGE_OWNER_PID).toBe(String(process.pid));
+  });
 });
 
 // ─── ③ launch_editor 双入口(editor 豁免检查必记账)──────────────────────────
@@ -497,6 +505,31 @@ describe('⑥ run_project 成功前缀文本契约', () => {
       action: 'run_project', project_path: TMP_PROJECT, wait_for_bridge: true, timeout: 30,
     }, makeCtx());
     expect(textOf(r!)).toMatch(/^Bridge ready\. /);
+  });
+
+  // 同一项目连续五轮 run:第 2 轮起每轮都会「先停旧」杀掉上一轮的进程。
+  it('四条成功响应前缀原样;先停旧时尾部附被杀 pid,首跑(无旧实例)不附', async () => {
+    bridgeReadyMock.mockImplementation(async () => ({ ready: true }));
+    memguard.acquireLease.mockImplementation(() => ({ lease: { id: 'lease-run' } }));
+    const variants: Array<{ args: Record<string, unknown>; prefix: RegExp }> = [
+      { args: {}, prefix: /^Running project at / },
+      { args: {}, prefix: /^Running project at / },
+      { args: { preview: true }, prefix: /^Preview mode: game window is now open at / },
+      { args: { wait_for_bridge: true, timeout: 30 }, prefix: /^Bridge ready\. Running project at / },
+      { args: { preview: true, wait_for_bridge: true, timeout: 30 }, prefix: /^Preview mode: bridge ready/ },
+    ];
+    const procs = variants.map((_, i) => fakeProc(5200 + i));
+    spawnMock.mockReset();
+    procs.forEach((p) => spawnMock.mockImplementationOnce(() => p));
+    for (const [i, v] of variants.entries()) {
+      const r = await runtimeHandleTool('runtime', { action: 'run_project', project_path: TMP_PROJECT, ...v.args }, makeCtx());
+      expect(textOf(r), `第 ${i} 轮`).toMatch(v.prefix);
+      if (i === 0) {
+        expect(textOf(r)).not.toContain('killed previous');
+      } else {
+        expect(textOf(r), `第 ${i} 轮`).toMatch(new RegExp(`\\(killed previous instance pid: ${5200 + i - 1}\\)$`));
+      }
+    }
   });
 });
 

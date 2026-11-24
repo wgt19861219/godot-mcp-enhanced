@@ -83,6 +83,28 @@ function bridgeSocket(kind: 'error' | 'result'): EventEmitter {
   return sock;
 }
 
+/** mock socket 形态(反馈批 20261122 Task 4):EventEmitter + bridge-client 实际触碰的三个成员。 */
+type ResultSocket = EventEmitter & { write: (data: string) => void; destroy: () => void; writable: boolean };
+
+/** 同 bridgeSocket 的 result 形态,但 method 请求的 result 换成入参(ping 夹具:带 ownerPid 的
+ *  响应,验证 annotatePingOwner 接线)。 */
+function resultSocket(result: unknown): EventEmitter {
+  const sock = new EventEmitter() as ResultSocket;
+  sock.write = vi.fn((data: string) => {
+    let req: { id?: number };
+    try { req = JSON.parse(data); } catch { return; }
+    queueMicrotask(() => {
+      const resp = req.id === 0
+        ? { id: 0, result: { authenticated: true } }
+        : { id: req.id, result };
+      sock.emit('data', Buffer.from(JSON.stringify(resp) + '\n'));
+    });
+  });
+  sock.destroy = vi.fn();
+  sock.writable = true;
+  return sock;
+}
+
 /** createConnection(opts, connectListener):返回 mock sock 并触发 connectListener(模拟连接建立,
  *  否则 _doConnect :141 的 auth write 永不执行→timeout)。 */
 function setupBridgeSocket(kind: 'error' | 'result'): void {
@@ -149,6 +171,20 @@ describe('game-bridge error & path validation', () => {
       const ctx = { projectDir: '/p' } as any;
       const result = await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
       expect(result.isError).not.toBe(true);
+    });
+
+    it('ping 响应带他人 ownerPid → ownerNote 点名对方 pid(反馈 2026-11-22 接线)', async () => {
+      mockCreate.mockImplementation((_opts: unknown, cb?: () => void) => {
+        const sock = resultSocket({ pong: true, pid: 4242, ownerPid: 999999 });
+        queueMicrotask(() => { if (typeof cb === 'function') cb(); });
+        return sock;
+      });
+      const ctx = { projectDir: '/p' } as never;
+      const result = await handleTool('game', { action: 'game_query', method: 'ping' }, ctx);
+      expect(result.isError).not.toBe(true);
+      const body = JSON.parse((result.content?.[0] as { text: string }).text);
+      expect(body.ownerPid).toBe(999999);
+      expect(body.ownerNote).toContain('another MCP server (pid 999999)');
     });
   });
 

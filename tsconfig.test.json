@@ -4,6 +4,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["test/helpers/**/*", "test/core/project-path-injection-invariant.test.ts"],
+  "include": ["test/helpers/**/*", "test/core/project-path-injection-invariant.test.ts", "test/bridge-feedback-batch-20261122-contract.test.ts"],
   "exclude": ["node_modules", "build"]
 }
