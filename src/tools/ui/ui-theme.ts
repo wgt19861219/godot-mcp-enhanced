@@ -113,22 +113,25 @@ func _initialize():
 
 // ─── theme_create ──────────────────────────────────────────────────────────
 
+/** scenePath 依赖按 action 分支(反馈 2026-11-18):create 只新建空 Theme(可选直接落盘),
+ * 不依赖场景——scenePath 为 null 时脚本不加载场景;extract 读节点上的 Theme,场景必填。
+ * 场景守卫与 actionBlock 各自自足(守卫带尾换行、actionBlock 无前导换行):守卫缺席时
+ * 函数体首行紧贴 `func _initialize():`,不留空行;守卫在场时产物与分支前逐字节相同。 */
 export function genThemeCreateScript(
-  scenePath: string,
+  scenePath: string | null,
   action: 'create' | 'extract',
   sourceNodePath?: string,
   savePath?: string,
 ): string {
+  if (action === 'extract' && scenePath === null) throw new Error('scene_path is required for extract action');
   let actionBlock: string;
 
   if (action === 'create') {
-    actionBlock = `
-\tvar theme = Theme.new()`;
+    actionBlock = `\tvar theme = Theme.new()`;
   } else {
     // extract
     if (!sourceNodePath) throw new Error('source_node_path is required for extract action');
-    actionBlock = `
-\tvar source = _mcp_get_scene_node("${escapeForGdLiteral(sourceNodePath)}")
+    actionBlock = `\tvar source = _mcp_get_scene_node("${escapeForGdLiteral(sourceNodePath)}")
 \tif source == null:
 \t\t_mcp_output("error", "Source node not found: ${escapeForGdLiteral(sourceNodePath)}")
 \t\t_mcp_done()
@@ -172,11 +175,12 @@ export function genThemeCreateScript(
 \treturn`;
   }
 
+  const sceneGuard = scenePath === null ? '' :
+    `\tif not _mcp_load_scene("${escapeForGdLiteral(scenePath)}"):\n\t\t_mcp_done()\n\t\treturn\n`;
+
   return `${SCENE_TREE_HEADER}
 func _initialize():
-\tif not _mcp_load_scene("${escapeForGdLiteral(scenePath)}"):
-\t\t_mcp_done()
-\t\treturn${actionBlock}${saveBlock}
+${sceneGuard}${actionBlock}${saveBlock}
 \t_mcp_output("theme_created", {"action": "${action}"})
 \t_mcp_done()
 `;

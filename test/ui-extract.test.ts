@@ -282,6 +282,14 @@ describe('extract_tree handler 前置校验(批4 Task 3)', () => {
     expect(body.error_code).toBe('INVALID_PARAMS');
   });
 
+  it('draft_path 归一后的拒绝面: .. 段/编码穿越/反斜杠/绝对路径仍 INVALID_PARAMS(不触达 executor)', async () => {
+    for (const bad of ['../evil.tres', 'a/../b.tres', 'res://a/../b.tres', 'tmp/%2e%2e/x.tres', 'tmp\\x.tres', '/abs/x.tres', 'C:/abs/x.tres']) {
+      const r = await run({ scene_path: 'res://main.tscn', draft_path: bad });
+      expect(r.isError, bad).toBe(true);
+      expect(JSON.parse((r.content?.[0] as { text: string }).text).error_code, bad).toBe('INVALID_PARAMS');
+    }
+  });
+
   it('ACTIONS 含 extract_tree;actionRisks extract_tree=write', () => {
     expect(ACTIONS).toContain('extract_tree');
     expect(TOOL_META.ui!.actionRisks!.extract_tree).toBe('write');

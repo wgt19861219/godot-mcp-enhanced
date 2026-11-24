@@ -33,6 +33,7 @@ import { handleTool as physicsHandle } from '../src/tools/physics-ops.js';
 import { handleTool as navHandle } from '../src/tools/navigation.js';
 import { handleTool as materialHandle } from '../src/tools/material-ops.js';
 import { handleTool as uiHandle } from '../src/tools/ui/index.js';
+import { executeGdscriptTrusted } from '../src/gdscript-executor.js';
 
 // Minor4: 收窄 content 元素 union 到 text 类型，消除 .text 在非 text 元素上的 undefined 访问
 function isTextContent(el: ToolResult['content'][number]): el is { type: 'text'; text: string } {
@@ -527,6 +528,25 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
     expect(result!.isError).toBeFalsy();
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
+  });
+
+  // 反馈 2026-11-18:scene_path 依赖按 action 分支——create 免 scene_path,extract 仍必填
+  it('theme_create create 不传 scene_path: 不再 INVALID_PARAMS,生成脚本不加载场景', async () => {
+    const result = await uiHandle('ui', {
+      project_path: '/fake/p', action: 'theme_create', theme_create_action: 'create', save_path: 'res://ui/theme.tres',
+    }, createMockCtx() as never);
+    expect(result!.isError).toBeFalsy();
+    const code = vi.mocked(executeGdscriptTrusted).mock.calls.at(-1)![0].code;
+    expect(code).toContain('Theme.new()');
+    expect(code).not.toContain('if not _mcp_load_scene(');
+  });
+
+  it('theme_create extract 不传 scene_path → INVALID_PARAMS', async () => {
+    const result = await uiHandle('ui', {
+      project_path: '/fake/p', action: 'theme_create', theme_create_action: 'extract', source_node_path: '/root/Panel',
+    }, createMockCtx() as never);
+    expect(result!.isError).toBe(true);
+    expect(textOf(result, 0)).toContain('scene_path is required');
   });
 
   it('theme_set_property（theme）: 返回不含 ⚠', async () => {

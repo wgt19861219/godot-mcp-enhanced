@@ -38,7 +38,7 @@
 |------|------|------|------|
 | `action` | enum (18 项) | ✓ | 操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token, extract_tree=整树样式逆向(可选草稿), export_doc=设计文档导出 |
 | `project_path` | string |  | 项目目录（默认 GODOT_PROJECT_PATH 或当前目录） |
-| `scene_path` | string |  | 场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://) |
+| `scene_path` | string |  | 场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://);theme_create 仅 extract 必填 |
 | `node_path` | string |  | 节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)） |
 | `node_type` | enum (31 项) |  | ui_create_control/ui_container_add: Control 子类类型 |
 | `node_name` | string |  | ui_create_control: 新节点名称 |

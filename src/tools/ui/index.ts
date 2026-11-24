@@ -24,7 +24,7 @@ import { parseGeometry, translateGeometry, resolveGeometryTokens, hasTokenRefs }
 import type { PrototypeGeometry, TranslateResult, TokenColorMap } from './prototype-import.js';
 import { runPixelVerify } from './pixel-verify.js';
 import { genTokenPrefetchScript, genTokenSetScript, genTokenListScript } from './ui-tokens.js';
-import { genExtractTreeScript, extractTreeReport, genDraftSaveScript } from './ui-extract.js';
+import { genExtractTreeScript, extractTreeReport, genDraftSaveScript, normalizeDraftResPath } from './ui-extract.js';
 import type { ExtractScanNode } from './ui-extract.js';
 import { genThemeInspectScript, buildDesignDoc } from './ui-export.js';
 import type { ThemeInspect } from './ui-export.js';
@@ -47,7 +47,7 @@ export function getToolDefinitions(): Tool[] {
             enum: [...ACTIONS],
             description: '操作类型。build_layout=CSS 布局翻译构建(推荐), import_prototype=原型导入, pixel_verify=像素验证, create_control/container_add/anchor_preset=控件, set/get/measure_layout=布局, solve_from_current=既有场景锚点改造, draw_recipe=绘制, theme_*=主题, token_set/token_list=设计 token, extract_tree=整树样式逆向(可选草稿), export_doc=设计文档导出',
           },
-          scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)' },
+          scene_path: { type: 'string', description: '场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://);theme_create 仅 extract 必填' },
           node_path: { type: 'string', description: '节点路径（set/get_layout/anchor_preset/set_theme/container_add/draw_recipe;solve_from_current 可选(子树)）' },
           node_type: {
             type: 'string',
@@ -393,12 +393,14 @@ export async function handleTool(
         if (themeCreateAction === 'extract' && !sourceNodePath) {
           return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'source_node_path is required for extract action');
         }
+        // 反馈 2026-11-18:scene_path 依赖按 action 分支——create 只新建空 Theme(可选直接
+        // 落盘),不依赖场景,免 scene_path;extract 要读节点上的 Theme,场景必填
         const scenePath = args.scene_path as string | undefined;
         const resolvedScenePath = scenePath
           ? resolveWithinRoot(projectPath, normalizeUserProjectPath(scenePath))
-          : '';
-        if (!resolvedScenePath) {
-          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'scene_path is required for theme_create');
+          : null;
+        if (!resolvedScenePath && themeCreateAction === 'extract') {
+          return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'scene_path is required for theme_create (extract)');
         }
         const normalizedSourcePath = sourceNodePath ? normalizeNodePath(sourceNodePath) : undefined;
         script = genThemeCreateScript(resolvedScenePath, themeCreateAction as 'create' | 'extract', normalizedSourcePath, savePath);
@@ -1241,7 +1243,7 @@ function parseExtractScan(parsed: ToolResult): ExtractScanNode[] | null {
 
 /**
  * extract_tree(批4 Task 3):scene_path 必填;node_path/max_depth 可选(默认 16/cap 64,
- * 同 measure);draft_path 可选(sanitize 防穿越)。链路:spawn1 扫描(extract_scan)→
+ * 同 measure);draft_path 可选(相对路径归一补 res:// 后 sanitize 防穿越)。链路:spawn1 扫描(extract_scan)→
  * extractTreeReport 聚类(纯函数)→ draft_path 且 draft 非空 → spawn2 落草稿(原子写)。
  * 响应 {report, draft, notes, persist?};空扫描 draft=null 且不落盘(Review Focus 4)。
  */
@@ -1266,9 +1268,16 @@ async function handleExtractTree(
     ? normalizeNodePath(String(npRaw)) : undefined;
   const maxDepth = typeof args.max_depth === 'number' ? args.max_depth : 16;
   const draftRaw = args.draft_path as string | undefined;
+  let draftPath: string | undefined;
   if (draftRaw !== undefined && draftRaw !== null && String(draftRaw).trim() !== '') {
-    try { sanitizeResPath(String(draftRaw), 'draft_path'); } catch {
-      return opsErrorResult(ERROR_CODES.INVALID_PARAMS, 'draft_path contains path traversal');
+    // 反馈 2026-11-18:相对路径先归一补 res://(normalizeDraftResPath,拒绝面见其 docstring),
+    // 再过 sanitizeResPath(URL 编码的穿越由它迭代解码后拦);归一值同时用于落盘脚本与
+    // persist.path 回执——两处同源,不各算各的
+    try {
+      draftPath = normalizeDraftResPath(String(draftRaw));
+      sanitizeResPath(draftPath, 'draft_path');
+    } catch (err) {
+      return opsErrorResult(ERROR_CODES.INVALID_PARAMS, `draft_path 非法: ${getErrorMessage(err)}`);
     }
   }
 
@@ -1287,16 +1296,16 @@ async function handleExtractTree(
   const { report, draft, notes } = extractTreeReport(scan);
   const payload: Record<string, unknown> = { report, draft, notes };
   // 草稿落盘:draft_path 提供**且** draft 非空才 spawn2(空扫描零写盘,诚实不落空文件)
-  if (draftRaw && draft) {
+  if (draftPath && draft) {
     const saveResult = await executeGdscriptTrusted({
       godotPath: godot, projectPath,
-      code: genDraftSaveScript(String(draftRaw), draft),
+      code: genDraftSaveScript(draftPath, draft),
       timeout: 30, loadAutoloads,
     });
     const saved = parseGdscriptResult(saveResult, [], uiErrorMapper);
     if (saved.isError) return saved;
-    payload.persist = { path: String(draftRaw) };
-  } else if (draftRaw && !draft) {
+    payload.persist = { path: draftPath };
+  } else if (draftPath && !draft) {
     notes.push('draft_path 已提供但扫描无可映射草稿(空扫描/全不可映射类型),未落盘');
   }
   return textResult(JSON.stringify(opsSuccess(payload)));

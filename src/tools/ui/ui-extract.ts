@@ -310,6 +310,34 @@ function topSlot(slots: Map<string, number>): string {
   return best;
 }
 
+// ─── normalizeDraftResPath ──────────────────────────────────────────────────
+
+/**
+ * draft_path 归一(反馈 2026-11-18):schema 一直写「相对项目」,但 handler 只认 res:// 形态——
+ * 多级相对路径(tmp/a/b/_draft.tres)被拒「path traversal」。纯函数,检查顺序即拒绝优先级:
+ *   ① trim 后以 res:// 开头 → 原样返回(其后的 `..` 段/URL 编码穿越/反斜杠交给调用处的
+ *      sanitizeResPath 迭代解码后拦,本函数不重复判);
+ *   ② 以 / 或盘符开头、含反斜杠 → 抛(绝对路径与 Windows 分隔符都不是项目相对路径);
+ *   ③ 剥掉 res:// 与首部 ./ 后为空 → 抛(没有点名文件);
+ *   ④ 任一路径段为 `..` → 抛(path traversal;编码形态如 %2e%2e 由 sanitizeResPath 解码后拦);
+ *   ⑤ 其余补 res:// 前缀返回。归一值同时用于落盘脚本与 persist.path 回执(调用处保证)。
+ */
+export function normalizeDraftResPath(raw: string): string {
+  const t = raw.trim();
+  if (t.startsWith('res://')) return t;
+  if (t.startsWith('/') || /^[A-Za-z]:/.test(t) || t.includes('\\')) {
+    throw new Error('draft_path must be a project-relative path (absolute paths and backslashes are not allowed)');
+  }
+  const rel = t.replace(/^(?:res:\/\/|\.\/)+/, '');
+  if (rel === '') {
+    throw new Error('draft_path must name a file under res://');
+  }
+  if (rel.split('/').includes('..')) {
+    throw new Error('draft_path contains path traversal');
+  }
+  return `res://${rel}`;
+}
+
 // ─── genDraftSaveScript ─────────────────────────────────────────────────────
 
 /**

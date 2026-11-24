@@ -6131,7 +6131,7 @@
           },
           "scene_path": {
             "type": "string",
-            "description": "场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://)"
+            "description": "场景路径（相对项目）。ui_set_theme/theme_set_property 可选;ui_pixel_verify 必填(已构建场景);solve_from_current 必填(res://);theme_create 仅 extract 必填"
           },
           "node_path": {
             "type": "string",
@@ -6867,8 +6867,8 @@
       },
       "size": {
         "descBytes": 1035,
-        "schemaBytes": 13242,
-        "totalBytes": 14277
+        "schemaBytes": 13274,
+        "totalBytes": 14309
       },
       "annotations": {
         "readOnlyHint": false,

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { genUiCreateControlScript, genUiContainerAddScript, genUiAnchorPresetScript } from '../src/tools/ui/ui-create.js';
 import { genUiSetLayoutScript } from '../src/tools/ui/ui-layout.js';
 import { genTokenPrefetchScript, genTokenSetScript, genTokenListScript } from '../src/tools/ui/ui-tokens.js';
+import { genThemeCreateScript } from '../src/tools/ui/ui-theme.js';
 import { DESIGN_TOKENS_TYPE } from '../src/tools/ui/types.js';
 
 describe('P2-E: genUiCreateControlScript', () => {
@@ -250,5 +251,19 @@ describe('批3 Task 4: genTokenListScript', () => {
     const script = genTokenListScript('res://themes/t.tres');
     expect(script).toContain('theme file not found: res://themes/t.tres');
     expect(script).toContain('先 theme_create(scene_path+save_path) 或 ui_set_theme create+save 建主题');
+  });
+});
+
+// ─── 反馈 2026-11-18:theme_create 的 scene_path 依赖按 action 分支 ─────────────
+
+describe('genThemeCreateScript(scene_path 依赖按 action 分支,反馈 2026-11-18)', () => {
+  it('create: scenePath 为 null 也生成,脚本不调用 _mcp_load_scene', () => {
+    const s = genThemeCreateScript(null, 'create', undefined, 'res://ui/theme.tres');
+    expect(s).toContain('Theme.new()');
+    expect(s).not.toContain('if not _mcp_load_scene(');
+  });
+  it('extract: 仍加载场景', () => {
+    const s = genThemeCreateScript('res://a.tscn', 'extract', '/root/Panel', 'res://ui/theme.tres');
+    expect(s).toContain('if not _mcp_load_scene("res://a.tscn")');
   });
 });

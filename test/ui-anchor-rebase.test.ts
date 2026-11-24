@@ -374,6 +374,49 @@ offset_bottom = 80.0
   });
 });
 
+// ─── 反馈 2026-11-18:全锚继承中间层按 viewport 推导 ────────────────────────────
+// 根无布局行 + 一级子全锚(0,1,0,1)零 offset 形态:simulate 按零锚给根写入真值的 0×0 尺寸
+// 条目,该子节点边距被算成 {0,0,0,0} 进 margins → planRebase ⑤ 以视口求解出全零锚点并
+// 落盘(静默错写),其子(真实尺寸≠0)进 skip。继承规则:该形态在根尺寸不可解/非正且
+// viewport 为正时以 viewport 作父尺寸(边距 {0,0,W,H}),子树随之可解。
+describe('全锚继承中间层按 viewport 推导(反馈 2026-11-18)', () => {
+  const INHERIT = parseAuthoredGeometry(`[gd_scene format=3]
+
+[node name="HeroDetailContent" type="Control"]
+
+[node name="BaseLayer" type="Control" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+
+[node name="Bg" type="Panel" parent="BaseLayer"]
+offset_left = 10.0
+offset_top = 20.0
+offset_right = 790.0
+offset_bottom = 460.0
+`);
+  const VP = { viewport: { w: 800, h: 480 } };
+
+  it('传 viewport → Bg 进 toWrite 且 float32 位级还原目标边距; BaseLayer 不得被写成全零锚(改动前现状即如此)', () => {
+    const plan = planRebase(INHERIT, undefined, VP);
+    expect(plan.skippedUnresolvedParent).toEqual([]);
+    const base = plan.toWrite.find((e) => e.path === 'BaseLayer')!;
+    expect(base.anchors).toEqual({ anchor_left: 0, anchor_right: 1, anchor_top: 0, anchor_bottom: 1, offset_left: 0, offset_right: 0, offset_top: 0, offset_bottom: 0 });
+    const bg = plan.toWrite.find((e) => e.path === 'BaseLayer/Bg')!;
+    const restore = (a: number, o: number, p: number) => fr(fr(a * p) + o);
+    expect(restore(bg.anchors.anchor_left, bg.anchors.offset_left, 800)).toBe(10);
+    expect(restore(bg.anchors.anchor_top, bg.anchors.offset_top, 480)).toBe(20);
+    expect(restore(bg.anchors.anchor_right, bg.anchors.offset_right, 800)).toBe(790);
+    expect(restore(bg.anchors.anchor_bottom, bg.anchors.offset_bottom, 480)).toBe(460);
+  });
+
+  it('不传 viewport → 与改动前相同: BaseLayer 与 Bg 均诚实 skip', () => {
+    const plan = planRebase(INHERIT);
+    expect(plan.skippedUnresolvedParent).toEqual(['BaseLayer', 'BaseLayer/Bg']);
+    expect(plan.toWrite).toEqual([]);
+  });
+});
+
 describe('applyRebasePatch', () => {
   const parsed = parseAuthoredGeometry(FIXTURE);
   const plan = planRebase(parsed, { subtree: 'Panel/MoneyLay' });
