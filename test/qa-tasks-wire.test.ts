@@ -369,14 +369,17 @@ describe('taskAugmented 自动 async（PR-2 Task 4）', () => {
 
   it('声明 tasks 能力的客户端：qa run → 立即返回 + _meta.relatedTask.taskId = run_id；tasks/get 轮询到终态', async () => {
     vi.mocked(runQaSuite).mockImplementation(async (suite, _pp, _ctx, _src, _ctl, runIdOverride) => {
-      await sleep(150); // 模拟慢套件：async 分流应在完成前返回
+      await sleep(2000); // 模拟慢套件：async 分流应在完成前返回
       return fakeReport(runIdOverride!, suite.name, tmpDir, 'PASSED');
     });
     const { gs, tc } = await startServer({ tasks: { listChanged: true } });
     try {
       const t0 = Date.now();
       const result = await runQaViaConfirm(tc.request, { name: 'task4-auto', steps: [{ type: 'sleep', ms: 100 }] });
-      expect(Date.now() - t0).toBeLessThan(150); // 未等后台 150ms，立即返回
+      // 未等后台套件完成就返回。阈值要明显小于上面模拟的套件时长才有区分力(实现若改成等套件
+      // 完成再返回,耗时 ≥ 套件时长);同时要给机器负载留余量——原阈值与套件时长同为 150ms,
+      // 零余量,全量并发下事件循环停顿一次就误报(2026-11-25 全量实测 159ms,超订阅复现 403ms)。
+      expect(Date.now() - t0).toBeLessThan(1000);
 
       const j = firstJson(result);
       expect(j.success).toBe(true);
