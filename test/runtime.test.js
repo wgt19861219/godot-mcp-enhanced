@@ -177,9 +177,11 @@ describe('runtime getToolDefinitions', () => {
   it('definition has name, description, and inputSchema', () => {
     const defs = getToolDefinitions();
     const def = defs[0];
-    expect(def.name).toBeTruthy();
-    expect(def.description).toBeTruthy();
-    expect(def.inputSchema).toBeDefined();
+    expect(def).toMatchObject({
+      name: expect.stringMatching(/\S/),
+      description: expect.stringMatching(/\S/),
+      inputSchema: expect.any(Object),
+    });
     expect(def.inputSchema.type).toBe('object');
   });
 
@@ -196,7 +198,7 @@ describe('runtime getToolDefinitions', () => {
 describe('runtime TOOL_META', () => {
   it('has single entry for "runtime"', () => {
     expect(Object.keys(TOOL_META).length).toBe(1);
-    expect(TOOL_META.runtime).toBeDefined();
+    expect(Object.hasOwn(TOOL_META, 'runtime')).toBe(true);
   });
 
   it('marks runtime as long_running', () => {
@@ -233,8 +235,7 @@ describe('runtime handleTool — launch_editor', () => {
       project_path: '/fake/project',
     }, ctx);
 
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('Launched Godot editor');
+    expect(result?.content?.[0]?.text).toContain('Launched Godot editor');
     expect(spawn).toHaveBeenCalledTimes(1);
     const spawnArgs = spawn.mock.calls[0];
     expect(spawnArgs[1]).toContain('--editor');
@@ -286,8 +287,7 @@ describe('runtime handleTool — run_project', () => {
       timeout: 30,
     }, ctx);
 
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('Running project');
+    expect(result?.content?.[0]?.text).toContain('Running project');
     expect(spawn).toHaveBeenCalledTimes(1);
     const spawnArgs = spawn.mock.calls[0];
     expect(spawnArgs[1]).toContain('--debug');
@@ -337,8 +337,7 @@ describe('runtime handleTool — run_project', () => {
     }, ctx);
 
     // 不应抛出,应返回错误文本
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('failed to spawn');
+    expect(result?.content?.[0]?.text).toContain('failed to spawn');
     // 槽已释放(per-key busy 真实验证)+ 桶终态 errored(proc 未注册不滞留 starting)
     const s = getSession('/fake/project');
     expect(s.busy).toBe(false);
@@ -369,8 +368,7 @@ describe('runtime handleTool — stop_project', () => {
     const ctx = createMockCtx({ runningProcess: null });
     const result = await handleTool('runtime', { action: 'stop_project' }, ctx);
 
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('No project is currently running');
+    expect(result?.content?.[0]?.text).toContain('No project is currently running');
   });
 
   // ─── Task 4 审查 Minor 修正:多项目提示文案(已传参不引导再传;未传参消除矛盾) ───
@@ -418,7 +416,7 @@ describe('runtime handleTool — stop_project', () => {
 
     const result = await handleTool('runtime', { action: 'stop_project' }, ctx);
 
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     expect(killProcess).toHaveBeenCalledWith(proc);
 
     const parsed = JSON.parse(stripEnvelope(result.content[0].text));
@@ -438,8 +436,7 @@ describe('runtime handleTool — get_debug_output', () => {
     });
 
     const result = await handleTool('runtime', { action: 'get_debug_output' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('No debug output available');
+    expect(result?.content?.[0]?.text).toContain('No debug output available');
   });
 
   it('returns classified debug output', async () => {
@@ -451,7 +448,7 @@ describe('runtime handleTool — get_debug_output', () => {
     proc.stdout.emit('data', Buffer.from('ERROR: something broke\nWARNING: deprecated\nhello world\n'));
 
     const result = await handleTool('runtime', { action: 'get_debug_output' }, ctx);
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     const parsed = JSON.parse(stripEnvelope(result.content[0].text));
     expect(parsed.running).toBe(true);
     expect(parsed.errors.length).toBeGreaterThan(0);
@@ -466,7 +463,7 @@ describe('runtime handleTool — get_debug_output', () => {
     await handleTool('runtime', { action: 'run_project', project_path: '/fake/project' }, ctx);
     proc.stdout.emit('data', Buffer.from('hello from game print\n'));
     const result = await handleTool('runtime', { action: 'stop_project' }, ctx);
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     const text = result.content[0].text;
     expect(text.startsWith('<untrusted-'), 'stop 输出须信封包裹(游戏 print 是注入载体)').toBe(true);
     const parsed = JSON.parse(stripEnvelope(text));
@@ -493,7 +490,7 @@ describe('runtime handleTool — run_tests', () => {
     emitProcessEvents(proc, 'Tests: 5 Passed');
 
     const result = await resultPromise;
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     const text = result.content[0].text;
     const parsed = JSON.parse(text);
     expect(parsed.exit_code).toBe(0);
@@ -518,7 +515,7 @@ describe('runtime handleTool — run_tests', () => {
     emitProcessEvents(proc, 'Tests: 5 Passed');
 
     const result = await resultPromise;
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     const spawnArgs = spawn.mock.calls[0];
     expect(spawnArgs[1]).toContain('-gexit');
     expect(spawnArgs[1]).not.toContain('-gquit');
@@ -568,7 +565,7 @@ describe('runtime handleTool — run_tests', () => {
     emitProcessEvents(proc, 'Tests: 5 Passed');
 
     const result = await resultPromise;
-    expect(result).not.toBeNull();
+    expect(result !== null).toBe(true);
     const spawnArgs = spawn.mock.calls[0];
     expect(spawnArgs[1]).toContain('-gquit');
     expect(spawnArgs[1]).not.toContain('--evil-flag');
@@ -739,7 +736,7 @@ describe('runtime handleTool — run_tests 分片模式(D6)', () => {
     expect(spawn).toHaveBeenCalledTimes(2);
     for (const call of spawn.mock.calls) {
       const gconfigArg = call[1].find(a => typeof a === 'string' && a.startsWith('-gconfig='));
-      expect(gconfigArg, '每片 spawn 须传 -gconfig=<临时文件>').toBeTruthy();
+      expect(gconfigArg, '每片 spawn 须传 -gconfig=<临时文件>').toMatch(/^-gconfig=.+/);
       // cmd 层 -gdir 优先级最高会覆盖 config 的 dirs(反馈坑③:防 dirs 附加合并)——分片禁传
       expect(call[1]).not.toContain('-gdir');
     }
@@ -949,8 +946,7 @@ describe('runtime handleTool — get_godot_version', () => {
   it('returns Godot version via detectGodotVersion', async () => {
     const ctx = createMockCtx();
     const result = await handleTool('runtime', { action: 'get_godot_version' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result.content[0].text).toContain('4.6');
+    expect(result?.content?.[0]?.text).toContain('4.6');
   });
 });
 

@@ -13,7 +13,7 @@ import { tmpdir } from 'os';
 describe('batch-tools getToolDefinitions', () => {
   it('returns non-empty array', () => {
     const defs = getToolDefinitions();
-    expect(Array.isArray(defs)).toBeTruthy();
+    expect(Array.isArray(defs)).toBe(true);
     expect(defs.length).toBeGreaterThan(0);
   });
   it('includes batch tool', () => {
@@ -36,8 +36,7 @@ describe('batch-tools getToolDefinitions', () => {
   });
   it('each definition has name and inputSchema', () => {
     for (const def of getToolDefinitions()) {
-      expect(def.name).toBeTruthy();
-      expect(def.inputSchema).toBeTruthy();
+      expect(def).toMatchObject({ name: expect.stringMatching(/\S/), inputSchema: expect.any(Object) });
       expect(def.inputSchema.type).toBe('object');
     }
   });
@@ -47,7 +46,7 @@ describe('batch-tools getToolDefinitions', () => {
 
 describe('batch-tools TOOL_META', () => {
   it('has entry for merged batch tool', () => {
-    expect('batch' in TOOL_META).toBeTruthy();
+    expect('batch' in TOOL_META).toBe(true);
   });
   it('batch is non-readonly and not long_running', () => {
     expect(TOOL_META.batch.readonly).toBe(false);
@@ -74,8 +73,7 @@ describe('batch-tools handleTool', () => {
       action: 'create_files',
       files: [],
     }, {});
-    expect(result).toBeTruthy();
-    expect(result.content[0].text).toContain('error');
+    expect(result?.content?.[0]?.text).toContain('error');
   });
 
   it('batch create_files rejects missing files', async () => {
@@ -83,8 +81,7 @@ describe('batch-tools handleTool', () => {
       project_path: '/fake/project',
       action: 'create_files',
     }, {});
-    expect(result).toBeTruthy();
-    expect(result.content[0].text).toContain('error');
+    expect(result?.content?.[0]?.text).toContain('error');
   });
 
   it('batch create_files rejects too many files (>50, H-06 OOM guard)', async () => {
@@ -96,8 +93,7 @@ describe('batch-tools handleTool', () => {
       action: 'create_files',
       files,
     }, {});
-    expect(result).toBeTruthy();
-    expect(result.content[0].text).toContain('Too many files');
+    expect(result?.content?.[0]?.text).toContain('Too many files');
     expect(result.content[0].text).toContain('Maximum is 50');
   });
 
@@ -109,8 +105,7 @@ describe('batch-tools handleTool', () => {
       action: 'create_files',
       files: [{ path: 'big.txt', content: big }],
     }, {});
-    expect(result).toBeTruthy();
-    expect(result.content[0].text).toContain('exceeds maximum size');
+    expect(result?.content?.[0]?.text).toContain('exceeds maximum size');
   });
 
   it('batch run_verify rejects empty scenes array', async () => {
@@ -119,8 +114,7 @@ describe('batch-tools handleTool', () => {
       action: 'run_verify',
       scenes: [],
     }, { findGodot: async () => '/fake/godot' });
-    expect(result).toBeTruthy();
-    expect(result.content[0].text).toContain('error');
+    expect(result?.content?.[0]?.text).toContain('error');
   });
 
   it('batch diff_scenes rejects non-existent scene files', async () => {
@@ -133,8 +127,7 @@ describe('batch-tools handleTool', () => {
         scene_a: 'nonexistent_a.tscn',
         scene_b: 'nonexistent_b.tscn',
       }, {});
-      expect(result).toBeTruthy();
-      expect(result.content[0].text).toContain('not found');
+      expect(result?.content?.[0]?.text).toContain('not found');
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -165,13 +158,13 @@ describe('batch_create_files real file creation', () => {
       ],
       validate: false,
     }, ctx);
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.created).toBe(1);
     expect(parsed.skipped).toBe(0);
     expect(parsed.failed).toBe(0);
     // Verify file actually exists
-    expect(existsSync(join(tmpDir, 'test.txt'))).toBeTruthy();
+    expect(existsSync(join(tmpDir, 'test.txt'))).toBe(true);
   });
 
   it('creates multiple files', async () => {
@@ -185,11 +178,11 @@ describe('batch_create_files real file creation', () => {
       ],
       validate: false,
     }, ctx);
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.created).toBe(2);
-    expect(existsSync(join(tmpDir, 'a.txt'))).toBeTruthy();
-    expect(existsSync(join(tmpDir, 'sub', 'b.txt'))).toBeTruthy();
+    expect(existsSync(join(tmpDir, 'a.txt'))).toBe(true);
+    expect(existsSync(join(tmpDir, 'sub', 'b.txt'))).toBe(true);
   });
 
   it('skips existing files without overwrite', async () => {
@@ -204,7 +197,7 @@ describe('batch_create_files real file creation', () => {
       ],
       validate: false,
     }, ctx);
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.skipped).toBe(1);
     expect(parsed.created).toBe(0);
@@ -221,7 +214,7 @@ describe('batch_create_files real file creation', () => {
       ],
       validate: false,
     }, ctx);
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.created).toBe(1);
     expect(parsed.skipped).toBe(0);
@@ -283,9 +276,9 @@ describe('runSingleVerify settled guard', () => {
     if (closeHandler) closeHandler(0);
 
     const result = await resultPromise;
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results).toBeDefined();
+    expect(Array.isArray(parsed.results)).toBe(true);
     // Should be timed_out (timeout won the race), not passed (close was ignored)
     const scene = parsed.results[0];
     expect(scene.status).toBe('timed_out');
@@ -316,9 +309,9 @@ describe('runSingleVerify settled guard', () => {
     if (errorHandler) errorHandler(new Error('spawn ENOENT'));
 
     const result = await resultPromise;
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results).toBeDefined();
+    expect(Array.isArray(parsed.results)).toBe(true);
     const scene = parsed.results[0];
     // Should be 'passed' from close, NOT 'error' from error handler
     expect(scene.status).toBe('passed');
@@ -347,7 +340,7 @@ describe('runSingleVerify settled guard', () => {
     if (errorHandler) errorHandler(new Error('late error'));
 
     const result = await resultPromise;
-    expect(result).toBeTruthy();
+    expect(result).toBeInstanceOf(Object);
     const parsed = JSON.parse(result.content[0].text);
     const scene = parsed.results[0];
     expect(scene.status).toBe('timed_out');
