@@ -143,15 +143,16 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
     expect(r.output).toContain('均已登记');
   });
 
-  it('正文只有署名尾行的短提交,同样不把型号字样当追踪号', () => {
+  it('正文只有署名尾行的短提交,尾行里的追踪号形态字样不算(主题与正文须按行拼接)', () => {
     const repo = makeRepo();
     commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
-    // 最常见的短提交形态:主题之后正文只有尾行,没有别的行把它挤到第二行去
+    // 最常见的短提交形态:主题之后正文只有尾行,没有别的行把它挤到第二行去。
+    // 尾行里特意放一个白名单形态的追踪号:用空格拼接时尾行不在行首、剥不掉,这笔就会被点名
     commit(
       repo,
       'fix(core): tweak three',
       '2026-01-03T10:00:00',
-      'Co-Authored-By: ZCode (GLM-5.4) <noreply@localhost>',
+      'Co-Authored-By: ZCode (GLM-5.4) <noreply@localhost> (SEC-13)',
     );
     writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
 
@@ -189,17 +190,19 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
     const r = runSync(repo);
 
     expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
     expect(r.output).not.toContain('SEC-21');
   });
 
-  it('署名尾行(Co-Authored-By 等)是元数据,其中的型号字样不按追踪号要求登记', () => {
+  it('署名尾行(Co-Authored-By 等)是元数据,落在行首时不参与追踪号识别', () => {
     const repo = makeRepo();
     commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    // 第二条尾行在行首且带白名单形态的追踪号:不剥掉它,这笔就会被点名
     commit(
       repo,
       'fix(core): tweak two',
       '2026-01-03T10:00:00',
-      '说明正文\n\nCo-Authored-By: ZCode (GLM-5.4) <noreply@localhost>',
+      '说明正文\n\nCo-Authored-By: ZCode (GLM-5.4) <noreply@localhost>\nHelped-by: CMP-12-reviewer <noreply@localhost>',
     );
     writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
 
@@ -245,5 +248,47 @@ describe('check-changelog-sync: 追踪号规则未被放宽', () => {
 
     expect(r.status).toBe(1);
     expect(r.output).toContain(fix);
+  });
+
+  // 登记键族里容易漏的词形:SEC 族的类别前缀 / 阶段复合写法在全史出现里占多数,
+  // 首版白名单只认 `SEC-数字`,对它们反而看不见(独立复审第二轮 I-1)
+  it.each(['C-SEC-01', 'I-SEC-08', 'SEC-P2-1', 'GHSA-jm63'])(
+    '登记键 %s 未登记 → 阻断并列出该提交',
+    (id) => {
+      const repo = makeRepo();
+      commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+      const fix = commit(repo, `fix(security): ${id} harden`, '2026-01-03T10:00:00');
+      writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+      const r = runSync(repo);
+
+      expect(r.status).toBe(1);
+      expect(r.output).toContain(fix);
+    },
+  );
+
+  it.each(['XSEC-1', 'SEC-12abc'])('「%s」不是完整的追踪号(不从更长的标识里截半截)→ 不报', (token) => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    commit(repo, `fix(core): tweak ${token}`, '2026-01-03T10:00:00');
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
+  });
+
+  // 与上面「SEC-12 未登记 → 阻断」成对:同一形态,追踪号写进 CHANGELOG 文本(不靠哈希)就放行
+  it('追踪号写进 CHANGELOG 文本(不靠哈希)也算已登记', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    commit(repo, 'fix(security): SEC-31 harden login', '2026-01-03T10:00:00');
+    writeChangelog(repo, `- fix: **SEC-31** 登录路径加固\n- ${UNRELEASED_FILLER}`, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
   });
 });
