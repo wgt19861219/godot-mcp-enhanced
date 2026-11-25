@@ -27,13 +27,16 @@
 //   c. (同日追加,在真实仓库自测时暴露)git log 记录的前导换行会混进哈希——除首条外的
 //      记录取前 7 位只剩 6 位哈希,b 的哈希引用规则对它们失效;现剥掉前导换行。
 //      另:署名尾行(Co-Authored-By 等)里的型号字样(如 GLM-5.4)不再当追踪号。
+//   d. (同日独立复审 I-1/I-2 追加)c 的尾行剥离对「正文只有尾行」的短提交失效:主题与正文
+//      原用空格拼接,尾行不在行首,行首锚点命不中——现改用换行拼接。另:追踪号由「全大写
+//      字母-数字」泛匹配收窄为登记键族白名单——泛匹配仍把全大写评审发现编号
+//      (CRITICAL-1 / NIT-2 / IMP-4)与技术词(UTF-8 / SHA-256)当追踪号要求登记。
 //
 // 用法: node scripts/check-changelog-sync.mjs
 // 退出码: 0=通过或 advisory warn / 1=有漏登且 STRICT=1
 
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
-import { pathToFileURL } from 'node:url';
 
 /**
  * 从 CHANGELOG 取 [Unreleased] 段内容(## [Unreleased] 到下一个 ## [ 之间)。
@@ -71,7 +74,7 @@ function extractRecentVersion(changelog) {
  * 版本日期 → git --since 参数。必须显式带零点:
  * git 把裸日期 "YYYY-MM-DD" 解释成「该日的当前时刻」,窗口会随一天里的时间漂移。
  */
-export function toSinceDateTime(sinceDate) {
+function toSinceDateTime(sinceDate) {
   return `${sinceDate} 00:00:00`;
 }
 
@@ -123,11 +126,16 @@ function isChangelogWorthy(subject, body) {
 }
 
 /**
- * 追踪号:全大写族(SEC-x / CMP-x / Pn-x / L-n / T3-x …)。
- * 2026-11-25 收窄:原正则 `[A-Za-z]{2,}-[A-Za-z]*\d+[\w-]*` 连混排的评审标签
- * (Important-1 / Minor-1 / Nit-2)也当成追踪号。本仓的追踪号前缀全大写。
+ * 追踪号:只认本仓 CHANGELOG 当登记键用的族(2026-11-25 按全史提交与 CHANGELOG 实测)——
+ * 安全/提案公告号 SEC-x / CMP-x / SEP-x / CVE-x / GHSA-xxxx-xxxx-xxxx,计划阶段号 Pn-x。
+ * 不认的:评审发现编号(Important-1 / CRITICAL-1 / NIT-2 / IMP-4 …每次审查自成一套,全史数十族)
+ * 与技术词(UTF-8 / SHA-256)——它们是否登记由哈希引用规则管,不在这里要求。
+ * 2026-11-25 之前的泛匹配正则 `[A-Za-z]{2,}-[A-Za-z]*\d+[\w-]*` 把上述一律当成追踪号,
+ * 对已按哈希登记的修复提交误报;中间版本收窄为「全大写字母-数字」,只挡住了混排大小写。
+ * 前后各留一个环视:不从更长的标识里截半截(如 XSEC-1 里截出 SEC-1)。
  */
-const IDENTIFIER_RE = /[A-Z][A-Z0-9]{1,}-[A-Z0-9]*\d[A-Z0-9_-]*/g;
+const IDENTIFIER_RE =
+  /(?<![A-Za-z0-9-])(?:(?:SEC|CMP|SEP)-\d+|P\d+-\d+|CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})(?![A-Za-z0-9])/g;
 
 /**
  * git 署名类尾行(Co-Authored-By / Signed-off-by …):是元数据不是变更描述,
@@ -139,13 +147,15 @@ const TRAILER_RE = /^(?:co-authored-by|signed-off-by|reviewed-by|acked-by|tested
  * 检查 commit 是否已被 CHANGELOG 覆盖。
  * 查 [Unreleased] 段 + 最近版本段(因 --since=版本日零点 取了整天,含发版前 commit,
  * 这些 commit 登记在版本段是合法的,不应误报)。
+ * text 是主题与正文按「换行」拼接的结果——尾行剥离按行首锚定,用空格拼接时
+ * 「正文只有尾行」的短提交剥不掉(2026-11-25 独立复审 I-1)。
  * 匹配策略(由严到宽,advisory 模式不追求精确):
  * 0. commit 哈希已被引用(本仓条目惯例写「commits a+b」)→ 已登记。哈希引用是权威信号,
  *    先于下面的关键词规则——否则带评审标签的已登记提交仍会被误报。
  * 1. 有追踪号 → 严格匹配追踪号是否在 changelog 出现
  * 2. 无追踪号的 feat/fix commit → 只要 [Unreleased] 段非空(有实质内容)就视为已覆盖
  */
-export function isMentionedInChangelog(text, unreleasedContent, recentVersionContent, hash) {
+function isMentionedInChangelog(text, unreleasedContent, recentVersionContent, hash) {
   const combined = unreleasedContent + recentVersionContent;
   if (hash && combined.includes(hash)) return true;
   const identifiers = text.replace(TRAILER_RE, '').match(IDENTIFIER_RE) || [];
@@ -178,7 +188,7 @@ function main() {
   }
 
   const missing = worthy.filter(
-    c => !isMentionedInChangelog(c.subject + ' ' + c.body, unreleased, recentVersion, c.hash),
+    c => !isMentionedInChangelog(`${c.subject}\n${c.body}`, unreleased, recentVersion, c.hash),
   );
 
   if (missing.length === 0) {
@@ -194,7 +204,7 @@ function main() {
   if (missing.length > 10) {
     console.warn('    ... 其余 %d 条省略', missing.length - 10);
   }
-  console.warn('[changelog-sync] 修复:在 CHANGELOG.md ## [Unreleased] 段登记上述 commit(安全修复/新功能按惯例必进)');
+  console.warn('[changelog-sync] 修复:在 CHANGELOG.md ## [Unreleased] 段登记上述 commit(写明 commit 哈希;fix/feat 按惯例必进)');
 
   if (STRICT) {
     console.error('[changelog-sync] STRICT=1,漏登阻断(exit 1)');
@@ -203,6 +213,6 @@ function main() {
   console.warn('[changelog-sync] 当前 advisory 模式(恒 exit 0);STRICT=1 升 error');
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
-}
+// 无条件执行:本脚本只以子进程方式运行,没有模块导入它。曾经的「仅直接执行时才跑」
+// 判断在路径含符号链接/junction 时不成立,脚本会不输出、exit 0——门禁静默空转。
+main();

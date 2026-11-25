@@ -1,7 +1,9 @@
 // test/scripts/check-changelog-sync.test.ts
-// check-changelog-sync.mjs 的端到端回归:在临时 git 仓库里起子进程跑脚本本体,
-// 钉住 2026-11-25 修的两处根因——① --since 裸日期是「该日当前时刻」而非零点;
-// ② 哈希已被 CHANGELOG 引用的提交应视为已登记,评审标签(Important-1 之类)不是追踪号。
+// check-changelog-sync.mjs 的端到端回归:在临时 git 仓库里起子进程跑脚本本体。
+// 钉住 2026-11-25 修的根因——① --since 裸日期是「该日当前时刻」而非零点;
+// ② git log 记录的前导换行会混进哈希;③ 哈希已被 CHANGELOG 引用的提交应视为已登记,
+// 追踪号只认登记键族(SEC / CMP / SEP / CVE / GHSA / Pn-x),评审标签与技术词不算;
+// ④ 署名尾行(Co-Authored-By 等)是元数据,落在正文哪一行都不参与追踪号识别。
 // 脚本读 cwd 下的 CHANGELOG.md 并调 git log,所以按黑盒方式验证退出码与输出。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
@@ -30,7 +32,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(tmpRoot, { recursive: true, force: true });
+  // beforeAll 抛错时 tmpRoot 还没赋值,此时没有东西可清
+  if (tmpRoot) rmSync(tmpRoot, { recursive: true, force: true });
 });
 
 /** 每个用例一个独立仓库。 */
@@ -125,6 +128,7 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
     const r = runSync(repo);
 
     expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
   });
 
   it('说明里的 Minor-1 是评审标签,不按追踪号要求登记', () => {
@@ -136,6 +140,42 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
     const r = runSync(repo);
 
     expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
+  });
+
+  it('正文只有署名尾行的短提交,同样不把型号字样当追踪号', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    // 最常见的短提交形态:主题之后正文只有尾行,没有别的行把它挤到第二行去
+    commit(
+      repo,
+      'fix(core): tweak three',
+      '2026-01-03T10:00:00',
+      'Co-Authored-By: ZCode (GLM-5.4) <noreply@localhost>',
+    );
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
+  });
+
+  it('全大写评审发现编号(CRITICAL-1 / NIT-2)与技术词(UTF-8 / SHA-256)不是登记键', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    commit(
+      repo,
+      'fix(executor): CRITICAL-1 null-safe NIT-2',
+      '2026-01-03T10:00:00',
+      '输出统一 UTF-8;摘要改用 SHA-256',
+    );
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
   });
 
   it('窗口内不是最新的一笔,哈希引用同样算已登记(git log 记录的前导换行不得混进哈希)', () => {
@@ -166,6 +206,7 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
     const r = runSync(repo);
 
     expect(r.status).toBe(0);
+    expect(r.output).toContain('均已登记');
   });
 });
 
@@ -174,6 +215,30 @@ describe('check-changelog-sync: 追踪号规则未被放宽', () => {
     const repo = makeRepo();
     commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
     const fix = commit(repo, 'fix(security): SEC-12 harden', '2026-01-03T10:00:00');
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(1);
+    expect(r.output).toContain(fix);
+  });
+
+  it('安全公告号 GHSA(段内含小写)未登记 → 阻断并列出该提交', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    const fix = commit(repo, 'fix(deps): bump ws (GHSA-46jr-59jr-2xj3)', '2026-01-03T10:00:00');
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(1);
+    expect(r.output).toContain(fix);
+  });
+
+  it('计划阶段号 P2-17 未登记 → 阻断并列出该提交', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    const fix = commit(repo, 'fix(qa): P2-17 残留点补修', '2026-01-03T10:00:00');
     writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
 
     const r = runSync(repo);
