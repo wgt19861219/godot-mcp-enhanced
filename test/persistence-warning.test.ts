@@ -199,12 +199,11 @@ describe('5 工具 handleTool 成功路径：content[0] 仍是合法 JSON + cont
   for (const c of cases) {
     it(`${c.label}: content[0] 可 JSON.parse，content[1] 含 ⚠ + ${c.expectAction}`, async () => {
       const result = await c.handle(c.toolName, c.args, createMockCtx() as any);
-      expect(result).not.toBeNull();
-      expect(result!.isError).toBeFalsy();
+      expect(result !== null && !result.isError).toBe(true);
       // 关键断言 1：content[0].text 必须是合法 JSON
       expect(typeof result!.content[0].text).toBe('string');
       const parsed = JSON.parse(result!.content[0].text); // 抛 SyntaxError 即测试失败
-      expect(parsed).toBeTruthy();
+      expect(parsed).toBeInstanceOf(Object);
       // 关键断言 2：content[0].text 不含 warning 标记（未被 mutate）
       expect(result!.content[0].text).not.toContain('⚠');
       expect(result!.content[0].text).not.toContain(c.expectAction);
@@ -213,8 +212,7 @@ describe('5 工具 handleTool 成功路径：content[0] 仍是合法 JSON + cont
       const warning = result!.content.find(
         (el, i) => i > 0 && el.type === 'text' && el.text.includes('⚠'),
       );
-      expect(warning).toBeDefined();
-      expect(warning!.text).toContain(c.expectAction);
+      expect(warning?.text).toContain(c.expectAction);
     });
   }
 });
@@ -230,8 +228,7 @@ describe('follow-up: node-3d node_create_3d 包装', () => {
       { project_path: '/fake/p', type: 'Node3D', name: 'TestNode' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     // content[0] 仍是合法 JSON，未被 mutate（用 textOf 收窄类型）
     expect(() => JSON.parse(textOf(result, 0))).not.toThrow();
     expect(textOf(result, 0)).not.toContain('⚠');
@@ -240,8 +237,7 @@ describe('follow-up: node-3d node_create_3d 包装', () => {
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('node_create_3d');
+    expect(warning?.text).toContain('node_create_3d');
   });
 });
 
@@ -256,16 +252,14 @@ describe('follow-up: physics collision_overlay 包装 + 只读 action 不加', (
       { project_path: '/fake/p', action: 'collision_overlay', parent_path: 'root' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     expect(() => JSON.parse(textOf(result, 0))).not.toThrow();
     expect(textOf(result, 0)).not.toContain('⚠');
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('physics_collision_overlay');
+    expect(warning?.text).toContain('physics_collision_overlay');
   });
 
   // 反向（A3：只读 action 每 Set ≥2，防误加 Set 漏抓）
@@ -275,8 +269,7 @@ describe('follow-up: physics collision_overlay 包装 + 只读 action 不加', (
       { project_path: '/fake/p', action: 'raycast', from: { x: 0, y: 0, z: 0 }, to: { x: 0, y: -1, z: 0 } },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -287,8 +280,7 @@ describe('follow-up: physics collision_overlay 包装 + 只读 action 不加', (
       { project_path: '/fake/p', action: 'query_spatial', center: { x: 0, y: 0, z: 0 } },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -305,15 +297,13 @@ describe('follow-up: navigation 创造 action 包装 + query_path 不加', () =>
       { project_path: '/fake/p', action: 'create_region', name: 'TestRegion' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     expect(() => JSON.parse(textOf(result, 0))).not.toThrow();
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('nav_create_region');
+    expect(warning?.text).toContain('nav_create_region');
   });
 
   it('nav create_link（非主 action，防 Set 写漏）: content[1] 含 ⚠ + nav_create_link', async () => {
@@ -325,14 +315,12 @@ describe('follow-up: navigation 创造 action 包装 + query_path 不加', () =>
       },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('nav_create_link');
+    expect(warning?.text).toContain('nav_create_link');
   });
 
   it('nav query_path（只读）: 返回不含 ⚠', async () => {
@@ -344,8 +332,7 @@ describe('follow-up: navigation 创造 action 包装 + query_path 不加', () =>
       },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -362,15 +349,13 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'create', node_path: 'root/Mesh', material_type: 'StandardMaterial3D' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     expect(() => JSON.parse(textOf(result, 0))).not.toThrow();
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('material_create');
+    expect(warning?.text).toContain('material_create');
   });
 
   it('material load（eng-review 修正）: content[1] 含 ⚠ + material_load', async () => {
@@ -379,14 +364,12 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'load', node_path: 'root/Mesh', resource_path: 'res://m.tres' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } =>
         i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('material_load');
+    expect(warning?.text).toContain('material_load');
   });
 
   // 反向（A3：落盘 + 只读 ≥2）
@@ -396,8 +379,7 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'save', node_path: 'root/Mesh', resource_path: 'res://m.tres' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -408,8 +390,7 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'read', node_path: 'root/Mesh' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -420,8 +401,7 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'shader_read', node_path: 'root/Mesh' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -432,8 +412,7 @@ describe('follow-up: material 6 action 包装 + 落盘/只读不加', () => {
       { project_path: '/fake/p', action: 'shader_list_templates' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -460,15 +439,13 @@ describe('follow-up: ui Control action 包装 + 正向', () => {
       { project_path: '/fake/p', action: 'ui_create_control', scene_path: 'res://scene.tscn', node_type: 'Label', node_name: 'TestLabel' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     expect(() => JSON.parse(textOf(result, 0))).not.toThrow();
     expect(textOf(result, 0)).not.toContain('⚠');
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } => i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('ui_create_control');
+    expect(warning?.text).toContain('ui_create_control');
   });
 
   it('ui_build_layout（批量，非主 action 防 Set 写漏）: content[1] 含 ⚠ + ui_build_layout', async () => {
@@ -477,13 +454,11 @@ describe('follow-up: ui Control action 包装 + 正向', () => {
       { project_path: '/fake/p', action: 'ui_build_layout', scene_path: 'res://scene.tscn', parent_path: 'root', tree: { type: 'VBoxContainer', name: 'TestVBox' } },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const warning = result!.content.find(
       (el, i): el is { type: 'text'; text: string } => i > 0 && isTextContent(el) && el.text.includes('⚠'),
     );
-    expect(warning).toBeDefined();
-    expect(warning!.text).toContain('ui_build_layout');
+    expect(warning?.text).toContain('ui_build_layout');
   });
 });
 
@@ -499,8 +474,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'ui_get_layout', scene_path: 'res://scene.tscn', node_path: 'root/X' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -512,8 +486,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'ui_set_theme', scene_path: 'res://scene.tscn', node_path: 'root/X', theme_action: 'create' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -524,8 +497,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'theme_create', scene_path: 'res://scene.tscn', theme_create_action: 'create' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -555,8 +527,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'theme_set_property', theme_node_path: 'root/X', item_type: 'color', prop_name: 'font_color', value: [1, 0, 0] },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -568,8 +539,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'ui_set_theme', scene_path: 'res://scene.tscn', node_path: 'root/X', theme_action: 'save', theme_path: 'res://t.tres' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });
@@ -580,8 +550,7 @@ describe('follow-up: ui theme/query/落盘 action 不加提示', () => {
       { project_path: '/fake/p', action: 'theme_create', scene_path: 'res://scene.tscn', theme_create_action: 'create', save_path: 'res://t.tres' },
       createMockCtx() as any,
     );
-    expect(result).not.toBeNull();
-    expect(result!.isError).toBeFalsy();
+    expect(result !== null && !result.isError).toBe(true);
     const allText = result!.content.map((el) => (isTextContent(el) ? el.text : '')).join('');
     expect(allText).not.toContain('⚠');
   });

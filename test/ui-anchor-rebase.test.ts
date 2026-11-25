@@ -141,7 +141,7 @@ describe('parseAuthoredGeometry', () => {
 
   it('靶子真实片段:MoneyLay 路径/类型/offset/父信息正确', () => {
     const ml = byPath.get('Panel/MoneyLay')!;
-    expect(ml).toBeDefined();
+    expect(byPath.has('Panel/MoneyLay')).toBe(true);
     expect(ml.type).toBe('Control');
     expect(ml.parentPath).toBe('Panel');
     expect(ml.parentType).toBe('Control');
@@ -152,7 +152,7 @@ describe('parseAuthoredGeometry', () => {
 
   it('场景根 path="." 无父;Panel 一级路径正确', () => {
     const root = byPath.get('.')!;
-    expect(root).toBeDefined();
+    expect(byPath.has('.')).toBe(true);
     expect(root.parentPath).toBe('');
     expect(root.parentType).toBe('');
     expect(root.anchors).toEqual({ left: 0, right: 1, top: 0, bottom: 1 });  // preset 15 + 显式行
@@ -162,7 +162,7 @@ describe('parseAuthoredGeometry', () => {
 
   it('变体①:无任何 offset 行的节点 → 全缺省 0(Review Focus 5)', () => {
     const n = byPath.get('Panel/MoneyLay/NoOffsetNode')!;
-    expect(n).toBeDefined();
+    expect(byPath.has('Panel/MoneyLay/NoOffsetNode')).toBe(true);
     expect(n.offsets).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
     expect(n.anchors).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
     expect(n.hasLayout).toBe(false);
@@ -177,10 +177,10 @@ describe('parseAuthoredGeometry', () => {
 
   it('变体③:多 ext_resource 交错段不影响节点解析(MonthNum 完整)', () => {
     const n = byPath.get('Panel/MoneyLay/MonthNum')!;
-    expect(n).toBeDefined();
+    expect(byPath.has('Panel/MoneyLay/MonthNum')).toBe(true);
     expect(n.offsets).toEqual({ left: 43.75, top: 8.25, right: 90.25, bottom: 44.75 });
     // 交错 ext_resource 后的深层节点也在(RuleMark)
-    expect(byPath.get('Panel/MoneyLay/RuleButt/RuleMark')).toBeDefined();
+    expect(byPath.has('Panel/MoneyLay/RuleButt/RuleMark')).toBe(true);
   });
 
   // ─── 表驱动:全部 16 项 LayoutPreset 缺边填充(Task5 审查 Important#1 盲区)───
@@ -198,7 +198,7 @@ describe('parseAuthoredGeometry', () => {
       `[gd_scene format=3]\n\n[node name="Root" type="Control"]\n\n${sections}`);
     for (let n = 0; n < 16; n++) {
       const node = parsed.find(p => p.name === `P${n}`)!;
-      expect(node, `preset ${n} 节点已解析`).toBeDefined();
+      expect(parsed.some(p => p.name === `P${n}`), `preset ${n} 节点已解析`).toBe(true);
       const [l, r, t, b] = expected[n]!;
       expect(node.anchors, `preset ${n} 缺边填充`).toEqual({ left: l, right: r, top: t, bottom: b });
       expect(node.hasLayout, `preset ${n} 计为布局节点`).toBe(true);
@@ -216,7 +216,7 @@ anchor_top = 1.0
 anchor_bottom = 1.0
 `);
     const n = parsed.find(p => p.name === 'BlNode')!;
-    expect(n).toBeDefined();
+    expect(parsed.some(p => p.name === 'BlNode')).toBe(true);
     expect(n.anchors).toEqual({ left: 0, right: 0, top: 1, bottom: 1 });
     expect(n.offsets).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
   });
@@ -306,7 +306,7 @@ describe('planRebase viewport 兜底(批2 Task1)', () => {
   it('② 同节点传 {viewport:{w:960,h:540}} → 进 toWrite,四 anchor 按视口比例、offset 浮点、f32 位级恒等', () => {
     const plan = planRebase(parsed, undefined, VP);
     const e = plan.toWrite.find(x => x.path === 'Panel')!;
-    expect(e).toBeDefined();
+    expect(plan.toWrite.some(x => x.path === 'Panel')).toBe(true);
     expect(plan.skippedUnresolvedParent).not.toContain('Panel');
     // 零锚 Panel 的当前边距 = offsets(静态已知,与父尺寸无关);引擎 float32 重算位级还原
     const ml = fr(100.75), mt = fr(36.25), mr = fr(859.25), mb = fr(529.75);
@@ -497,7 +497,7 @@ describe('applyRebasePatch', () => {
     expect(simAfter.size).toBe(simBefore.size);
     for (const [path, m] of simBefore) {
       const a = simAfter.get(path);
-      expect(a, `patch 后边距缺失: ${path}`).toBeDefined();
+      expect(simAfter.has(path), `patch 后边距缺失: ${path}`).toBe(true);
       expect(a!.l).toBe(m.l);
       expect(a!.t).toBe(m.t);
       expect(a!.r).toBe(m.r);
@@ -533,8 +533,7 @@ describe('solve_from_current handler', () => {
   function ctx(): ToolContext { return {} as ToolContext; }
 
   function parseBody(r: ToolResult | null) {
-    expect(r).not.toBeNull();
-    expect(r!.isError).toBeFalsy();
+    expect(r !== null && !r.isError).toBe(true);
     return JSON.parse((r!.content?.[0] as { text?: string }).text ?? '{}') as {
       success: boolean;
       data: {
@@ -579,7 +578,7 @@ describe('solve_from_current handler', () => {
       const r = await handleTool('ui', {
         action: 'solve_from_current', project_path: dir, scene_path: bad,
       }, ctx());
-      expect(r?.isError).toBeTruthy();
+      expect(r?.isError).toBe(true);
       expect((r!.content?.[0] as { text?: string }).text).toContain('INVALID_PARAMS');
     }
   });
@@ -589,12 +588,12 @@ describe('solve_from_current handler', () => {
       action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
       include: ['bad name!'],
     }, ctx());
-    expect(r?.isError).toBeTruthy();
+    expect(r?.isError).toBe(true);
     const r2 = await handleTool('ui', {
       action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
       exclude: ['x;rm'],
     }, ctx());
-    expect(r2?.isError).toBeTruthy();
+    expect(r2?.isError).toBe(true);
   });
 
   it('node_path 不存在 → NODE_NOT_FOUND', async () => {
@@ -602,7 +601,7 @@ describe('solve_from_current handler', () => {
       action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
       node_path: '/root/Panel/Nope',
     }, ctx());
-    expect(r?.isError).toBeTruthy();
+    expect(r?.isError).toBe(true);
     expect((r!.content?.[0] as { text?: string }).text).toContain('NODE_NOT_FOUND');
   });
 
@@ -610,7 +609,7 @@ describe('solve_from_current handler', () => {
     const r = await handleTool('ui', {
       action: 'solve_from_current', project_path: dir,
     }, ctx());
-    expect(r?.isError).toBeTruthy();
+    expect(r?.isError).toBe(true);
   });
 
   it('viewport 形参:正整数透传生效(一级子 Panel 兜底进 toWrite);非正整数/非整数拒(批2 Task1)', async () => {
@@ -628,7 +627,7 @@ describe('solve_from_current handler', () => {
         action: 'solve_from_current', project_path: dir, scene_path: 'res://main.tscn',
         viewport: bad,
       }, ctx());
-      expect(r?.isError).toBeTruthy();
+      expect(r?.isError).toBe(true);
       expect((r!.content?.[0] as { text?: string }).text).toContain('INVALID_PARAMS');
     }
   });
@@ -653,7 +652,7 @@ describe.skipIf(!hasE2e)('solve_from_current 靶子 e2e(0 容差闭环)', () => 
     expect(res.compile_success, res.compile_error).toBe(true);
     expect(res.run_success, res.run_error).toBe(true);
     const raw = res.outputs.find(o => o.key === 'measure');
-    expect(raw, 'measure 输出存在').toBeDefined();
+    expect(res.outputs.some(o => o.key === 'measure'), 'measure 输出存在').toBe(true);
     return (JSON.parse(String(raw!.value)) as { nodes: MeasuredNode[] }).nodes;
   }
 
@@ -672,7 +671,7 @@ describe.skipIf(!hasE2e)('solve_from_current 靶子 e2e(0 容差闭环)', () => 
       // 交叉验证:授权几何的 float32 模拟与引擎实测一致(dyadic 链节点抽检;两态下引擎
       // rect 相同——改造保 g960 位级不变)
       const di = baseline.find(n => n.path === 'Panel/MoneyLay/DataImg2')!;
-      expect(di).toBeDefined();
+      expect(baseline.some(n => n.path === 'Panel/MoneyLay/DataImg2')).toBe(true);
       expect(di.rect.x).toBe(112.25 + 8.5);   // Panel.global.x 100.75 + MoneyLay 11.5 + DataImg2 8.5
       expect(di.rect.y).toBe(36.25 + 8.5 + 3.5);
 
@@ -709,7 +708,7 @@ describe.skipIf(!hasE2e)('solve_from_current 靶子 e2e(0 容差闭环)', () => 
       expect(simAfter.size).toBe(simBefore.size);
       for (const [path, m] of simBefore) {
         const a = simAfter.get(path);
-        expect(a, `patch 后边距缺失: ${path}`).toBeDefined();
+        expect(simAfter.has(path), `patch 后边距缺失: ${path}`).toBe(true);
         expect(a!.l).toBe(m.l);
         expect(a!.t).toBe(m.t);
         expect(a!.r).toBe(m.r);
