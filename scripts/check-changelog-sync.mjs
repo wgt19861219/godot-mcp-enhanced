@@ -24,6 +24,9 @@
 //      已登记信号,优先于关键词匹配。原标识符正则 [A-Za-z]{2,}-[A-Za-z]*\d+ 把评审标签
 //      Important-1 / Minor-1 当成追踪号,要求它们出现在 CHANGELOG 里——对已按哈希登记的
 //      修复提交必然误报。追踪号收窄为全大写族(SEC-x / CMP-x / Pn-x / L-n …)。
+//   c. (同日追加,在真实仓库自测时暴露)git log 记录的前导换行会混进哈希——除首条外的
+//      记录取前 7 位只剩 6 位哈希,b 的哈希引用规则对它们失效;现剥掉前导换行。
+//      另:署名尾行(Co-Authored-By 等)里的型号字样(如 GLM-5.4)不再当追踪号。
 //
 // 用法: node scripts/check-changelog-sync.mjs
 // 退出码: 0=通过或 advisory warn / 1=有漏登且 STRICT=1
@@ -86,10 +89,16 @@ function getCommitsSince(sinceDate) {
     { encoding: 'utf-8' },
   );
   if (!log.trim()) return [];
-  return log.split('\x00').filter(Boolean).map(record => {
-    const [hash, subject, ...bodyParts] = record.split('\t');
-    return { hash: hash.slice(0, 7), subject: subject ?? '', body: bodyParts.join('\t') };
-  });
+  // git 在每条记录后输出一个换行,按 NUL 切分后除首条外每条都以 "\n" 开头。
+  // 不剥掉它,取前 7 位时换行会占掉一位——2026-11-25 实测:非首条记录的短哈希只剩
+  // 6 位、输出里多出一个空行,新增的哈希引用规则对非首条记录全部失效。
+  return log.split('\x00')
+    .map(record => record.replace(/^\n/, ''))
+    .filter(record => record.trim())
+    .map(record => {
+      const [hash, subject, ...bodyParts] = record.split('\t');
+      return { hash: hash.slice(0, 7), subject: subject ?? '', body: bodyParts.join('\t') };
+    });
 }
 
 /**
@@ -121,6 +130,12 @@ function isChangelogWorthy(subject, body) {
 const IDENTIFIER_RE = /[A-Z][A-Z0-9]{1,}-[A-Z0-9]*\d[A-Z0-9_-]*/g;
 
 /**
+ * git 署名类尾行(Co-Authored-By / Signed-off-by …):是元数据不是变更描述,
+ * 其中的型号、版本字样(如 GLM-5.4)不参与追踪号识别。
+ */
+const TRAILER_RE = /^(?:co-authored-by|signed-off-by|reviewed-by|acked-by|tested-by|helped-by|suggested-by):[^\n]*\n?/gim;
+
+/**
  * 检查 commit 是否已被 CHANGELOG 覆盖。
  * 查 [Unreleased] 段 + 最近版本段(因 --since=版本日零点 取了整天,含发版前 commit,
  * 这些 commit 登记在版本段是合法的,不应误报)。
@@ -133,7 +148,7 @@ const IDENTIFIER_RE = /[A-Z][A-Z0-9]{1,}-[A-Z0-9]*\d[A-Z0-9_-]*/g;
 export function isMentionedInChangelog(text, unreleasedContent, recentVersionContent, hash) {
   const combined = unreleasedContent + recentVersionContent;
   if (hash && combined.includes(hash)) return true;
-  const identifiers = text.match(IDENTIFIER_RE) || [];
+  const identifiers = text.replace(TRAILER_RE, '').match(IDENTIFIER_RE) || [];
   if (identifiers.length > 0) {
     return identifiers.some(id => combined.includes(id));
   }

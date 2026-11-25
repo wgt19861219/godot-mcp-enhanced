@@ -137,6 +137,36 @@ describe('check-changelog-sync: 哈希引用即已登记,评审标签不是追�
 
     expect(r.status).toBe(0);
   });
+
+  it('窗口内不是最新的一笔,哈希引用同样算已登记(git log 记录的前导换行不得混进哈希)', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    const cited = commit(repo, 'fix(security): SEC-21 x', '2026-01-03T10:00:00');
+    // 再提交一笔更新的,让被引用的那笔不是 git log 输出的第一条记录
+    commit(repo, 'fix(core): later tweak', '2026-01-03T11:00:00');
+    writeChangelog(repo, `- fix: harden path (commits ${cited})\n- ${UNRELEASED_FILLER}`, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+    expect(r.output).not.toContain('SEC-21');
+  });
+
+  it('署名尾行(Co-Authored-By 等)是元数据,其中的型号字样不按追踪号要求登记', () => {
+    const repo = makeRepo();
+    commit(repo, 'fix(core): release prep', `${VERSION_DATE}T00:30:00`);
+    commit(
+      repo,
+      'fix(core): tweak two',
+      '2026-01-03T10:00:00',
+      '说明正文\n\nCo-Authored-By: ZCode (GLM-5.4) <noreply@localhost>',
+    );
+    writeChangelog(repo, UNRELEASED_FILLER, '- fix: release prep');
+
+    const r = runSync(repo);
+
+    expect(r.status).toBe(0);
+  });
 });
 
 describe('check-changelog-sync: 追踪号规则未被放宽', () => {
