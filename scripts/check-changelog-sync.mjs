@@ -7,22 +7,30 @@
 //
 // 检测逻辑:
 // 1. 从 CHANGELOG 取最近版本段日期([Unreleased] 之上那个 ## [X.Y.Z] - YYYY-MM-DD)
-// 2. git log --since=<日期> 取待发版 commit
-// 3. 筛 ^(feat|fix\(security\)|fix\(reliability\)|fix\(correctness\)|BREAKING) 前缀
-//    (纯 test/docs/refactor/chore 不检测——按 CHANGELOG 惯例本就不进)
-// 4. 若待检 commit > 0 且 [Unreleased] 段为空或不含对应关键词 → warn 列出漏登 commit
+// 2. git log --since=<日期 00:00:00> 取待发版 commit
+// 3. 筛 ^(feat|fix|BREAKING) 前缀(纯 test/docs/refactor/chore 不检测——按 CHANGELOG 惯例本就不进)
+// 4. 若待检 commit > 0 且未被 CHANGELOG 覆盖 → warn 列出漏登 commit
 //
 // 模式:advisory(恒 exit 0 + console.warn),仿 check-env-isolation.mjs。
 // STRICT=1 时升 error(仿 check-rules-content-sync.mjs 双模式)。
+//
+// 2026-11-25 两处根因修订(回归测试 test/scripts/check-changelog-sync.test.ts):
+//   a. --since 裸日期不是零点:git approxidate 把 "YYYY-MM-DD" 解释成「该日的当前时刻」。
+//      后果:发版当天窗口为空(空转过门);次日起窗口起点是「发版日的此刻」,
+//      只框进发版日当晚的提交——它们多半已登记在最近版本段里,再被下面的关键词规则误报。
+//      现显式补 00:00:00。
+//   b. 「已登记」的判定补哈希引用,追踪号只认全大写族:
+//      本仓 CHANGELOG 惯例在条目里直接写 commit 哈希(「commits a+b」),哈希被引用即权威的
+//      已登记信号,优先于关键词匹配。原标识符正则 [A-Za-z]{2,}-[A-Za-z]*\d+ 把评审标签
+//      Important-1 / Minor-1 当成追踪号,要求它们出现在 CHANGELOG 里——对已按哈希登记的
+//      修复提交必然误报。追踪号收窄为全大写族(SEC-x / CMP-x / Pn-x / L-n …)。
 //
 // 用法: node scripts/check-changelog-sync.mjs
 // 退出码: 0=通过或 advisory warn / 1=有漏登且 STRICT=1
 
 import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
-
-const CHANGELOG = readFileSync('CHANGELOG.md', 'utf-8');
-const STRICT = process.env.STRICT === '1';
+import { pathToFileURL } from 'node:url';
 
 /**
  * 从 CHANGELOG 取 [Unreleased] 段内容(## [Unreleased] 到下一个 ## [ 之间)。
@@ -57,16 +65,24 @@ function extractRecentVersion(changelog) {
 }
 
 /**
- * git log 取待发版 commit(最近版本日期之后)。
+ * 版本日期 → git --since 参数。必须显式带零点:
+ * git 把裸日期 "YYYY-MM-DD" 解释成「该日的当前时刻」,窗口会随一天里的时间漂移。
+ */
+export function toSinceDateTime(sinceDate) {
+  return `${sinceDate} 00:00:00`;
+}
+
+/**
+ * git log 取待发版 commit(最近版本日期零点之后)。
  * 返回 [{ hash, subject, body }] 数组。body 含完整 message(subject + footer),
  * 用于检测 BREAKING CHANGE: footer 形态(Conventional Commits)。
  */
 function getCommitsSince(sinceDate) {
-  // --since 用日期(含当天),取当天及之后的 commit
+  // --since 取版本日零点(含当天),发版前 commit 登记在版本段是合法的,由 isMentionedInChangelog 识别
   // 用 NUL(%x00)做 commit 记录分隔(因 body 含换行,不能按 \n split);
   // subject(%s) 与 body(%b) 用 tab(%x09) 分隔
   const log = execSync(
-    `git log --since="${sinceDate}" --format="%H%x09%s%x09%b%x00" --no-merges`,
+    `git log --since="${toSinceDateTime(sinceDate)}" --format="%H%x09%s%x09%b%x00" --no-merges`,
     { encoding: 'utf-8' },
   );
   if (!log.trim()) return [];
@@ -98,27 +114,37 @@ function isChangelogWorthy(subject, body) {
 }
 
 /**
- * 检查 commit subject 的关键词是否出现在 CHANGELOG 中。
- * 查 [Unreleased] 段 + 最近版本段(因 --since=版本日期 取了整天,含发版前 commit,
+ * 追踪号:全大写族(SEC-x / CMP-x / Pn-x / L-n / T3-x …)。
+ * 2026-11-25 收窄:原正则 `[A-Za-z]{2,}-[A-Za-z]*\d+[\w-]*` 连混排的评审标签
+ * (Important-1 / Minor-1 / Nit-2)也当成追踪号。本仓的追踪号前缀全大写。
+ */
+const IDENTIFIER_RE = /[A-Z][A-Z0-9]{1,}-[A-Z0-9]*\d[A-Z0-9_-]*/g;
+
+/**
+ * 检查 commit 是否已被 CHANGELOG 覆盖。
+ * 查 [Unreleased] 段 + 最近版本段(因 --since=版本日零点 取了整天,含发版前 commit,
  * 这些 commit 登记在版本段是合法的,不应误报)。
  * 匹配策略(由严到宽,advisory 模式不追求精确):
- * 1. 有明确标识符(SEC-x / CMP-x / Pn-x)→ 严格匹配标识符是否在 changelog 出现
- * 2. 无标识符的 feat/fix commit → 只要 [Unreleased] 段非空(有实质内容)就视为已覆盖
+ * 0. commit 哈希已被引用(本仓条目惯例写「commits a+b」)→ 已登记。哈希引用是权威信号,
+ *    先于下面的关键词规则——否则带评审标签的已登记提交仍会被误报。
+ * 1. 有追踪号 → 严格匹配追踪号是否在 changelog 出现
+ * 2. 无追踪号的 feat/fix commit → 只要 [Unreleased] 段非空(有实质内容)就视为已覆盖
  */
-function isMentionedInChangelog(subject, unreleasedContent, recentVersionContent) {
-  // 标识符:SEC-x / CMP-x / Tier1-x / P2-x 等(前缀 2+ 字母数字混合,后接数字)
-  const identifiers = subject.match(/[A-Za-z]{2,}-[A-Za-z]*\d+[\w-]*/g) || [];
-  // 有明确标识符:严格匹配(查 unreleased + 最近版本段)
+export function isMentionedInChangelog(text, unreleasedContent, recentVersionContent, hash) {
+  const combined = unreleasedContent + recentVersionContent;
+  if (hash && combined.includes(hash)) return true;
+  const identifiers = text.match(IDENTIFIER_RE) || [];
   if (identifiers.length > 0) {
-    const combined = unreleasedContent + recentVersionContent;
     return identifiers.some(id => combined.includes(id));
   }
-  // 无标识符:只要 unreleased 有实质内容(>50 字符,排除空白/标题)就视为已覆盖
+  // 无追踪号:只要 unreleased 有实质内容(>50 字符,排除空白/标题)就视为已覆盖
   const stripped = unreleasedContent.replace(/[#\-*\s]/g, '');
   return stripped.length > 50;
 }
 
 function main() {
+  const CHANGELOG = readFileSync('CHANGELOG.md', 'utf-8');
+  const STRICT = process.env.STRICT === '1';
   const { content: unreleased } = extractUnreleased(CHANGELOG);
   const recentVersion = extractRecentVersion(CHANGELOG);
   const sinceDate = getLatestVersionDate(CHANGELOG);
@@ -136,15 +162,17 @@ function main() {
     return;
   }
 
-  const missing = worthy.filter(c => !isMentionedInChangelog(c.subject + ' ' + c.body, unreleased, recentVersion));
+  const missing = worthy.filter(
+    c => !isMentionedInChangelog(c.subject + ' ' + c.body, unreleased, recentVersion, c.hash),
+  );
 
   if (missing.length === 0) {
-    console.log('[changelog-sync] ✓ %d 个待检 commit 均已在 [Unreleased] 登记', worthy.length);
+    console.log('[changelog-sync] ✓ %d 个待检 commit 均已登记', worthy.length);
     return;
   }
 
-  console.warn('[changelog-sync] ⚠ %d 个 fix(security)/feat/BREAKING commit 漏登 CHANGELOG [Unreleased]:', missing.length);
-  console.warn('  最近版本段日期: %s(此日期后的 commit 应进 [Unreleased])', sinceDate);
+  console.warn('[changelog-sync] ⚠ %d 个 fix/feat/BREAKING commit 漏登 CHANGELOG [Unreleased]:', missing.length);
+  console.warn('  最近版本段日期: %s(此日期后的 commit 应进 [Unreleased];发版前的登记在版本段也可)', sinceDate);
   for (const c of missing.slice(0, 10)) {
     console.warn('    %s  %s', c.hash, c.subject);
   }
@@ -160,4 +188,6 @@ function main() {
   console.warn('[changelog-sync] 当前 advisory 模式(恒 exit 0);STRICT=1 升 error');
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

@@ -4,6 +4,6 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["test/helpers/**/*", "test/core/project-path-injection-invariant.test.ts", "test/bridge-feedback-batch-20261122-contract.test.ts", "test/ui-extract-draft-path.test.ts", "test/core/ToolDispatcher.no-project-path.test.ts"],
+  "include": ["test/helpers/**/*", "test/core/project-path-injection-invariant.test.ts", "test/bridge-feedback-batch-20261122-contract.test.ts", "test/ui-extract-draft-path.test.ts", "test/core/ToolDispatcher.no-project-path.test.ts", "test/scripts/check-changelog-sync.test.ts"],
   "exclude": ["node_modules", "build"]
 }
