@@ -13,7 +13,10 @@ describe('init', () => {
   });
 
   afterEach(() => {
-    rmSync(testDir, { recursive: true, force: true });
+    // 带重试:删除进行时目录里仍有(或又出现)目录项,rmSync 会报 ENOTEMPTY / EPERM——刚写完的
+    // 文件可能被其它进程(杀软扫描、索引器)短暂占用。默认不重试,全量并发下偶发失败
+    // (2026-11-25 全量实测 ENOTEMPTY);重试按 100/200/300/400/500ms 线性退避,合计 1.5s。
+    rmSync(testDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it('creates project directory with project.godot', async () => {
