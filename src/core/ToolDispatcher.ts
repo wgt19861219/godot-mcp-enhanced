@@ -4,7 +4,7 @@ import { format } from 'node:util';
 import type { ChildProcess } from 'child_process';
 import type { ReadOnlyGuard } from './ReadOnlyGuard.js';
 import type { Tool, ServerContext } from "@modelcontextprotocol/server";
-import { inputRequired, acceptedContent } from "@modelcontextprotocol/server";
+import { inputRequired, acceptedContent, inputResponse } from "@modelcontextprotocol/server";
 import type { EditorToolExecutor } from './EditorToolExecutor.js';
 import { executeMiddleware, createRateLimitMiddleware, createElicitationMiddleware } from './middleware.js';
 import { createCircuitBreakerMiddleware } from './tool-circuit-breaker.js';
@@ -76,6 +76,16 @@ const DEBUG = process.env.DEBUG === 'true';
 // join(' '),三处 %s/%d 调用(MINIMAL/PROFILE/activeGroups)原样输出占位符到面板日志流
 function log(...args: unknown[]): void {
   if (DEBUG) getLogger().debug('dispatcher', format(...args));
+}
+
+/** elicitation 应答的 action(MCP ElicitResult)。 */
+type ElicitationAction = 'accept' | 'decline' | 'cancel';
+
+/** M-1:ELICITATION_DENIED 文案里的原因短句(模型据此判断不要重试)。 */
+function elicitationOutcomeLabel(action: ElicitationAction): string {
+  if (action === 'decline') return '用户拒绝 decline';
+  if (action === 'cancel') return '用户取消 cancel';
+  return '客户端 accept 但未携带有效确认内容';
 }
 
 export interface DispatcherOptions {
@@ -491,10 +501,19 @@ export class ToolDispatcher {
       }
 
       // P0-2 MRTR：读第二轮的用户响应（SDK LegacyInputRequiredShim 在 2025-era 自动收集）。
-      // confirmed === undefined 表示第一轮（无 inputResponses）；非 undefined 表示第二轮。
-      const confirmed = srvCtx?.mcpReq?.inputResponses
-        ? acceptedContent<{ confirm: boolean }>(srvCtx.mcpReq.inputResponses, 'confirm')
+      // confirmed 非 undefined 表示「accept 且带内容」；acceptedContent 对 decline / cancel /
+      // accept-无内容一律返回 undefined，故 confirmed === undefined 不能单独当作「第一轮」。
+      const responses = srvCtx?.mcpReq?.inputResponses;
+      const confirmed = responses
+        ? acceptedContent<{ confirm: boolean }>(responses, 'confirm')
         : undefined;
+      // M-1(2026-11-26 MCP 安全与协议审查)：区分「尚无响应」与「已响应但未确认」。
+      // inputResponse 是 SDK 为 decline/cancel 检测提供的判别视图——kind==='elicit' 即该键已有
+      // 合法的 elicitation 应答（任意 action）。此前只看 confirmed===undefined 就当第一轮，
+      // 用户拒绝后再次返回 inputRequired，legacy shim 再发一轮 elicitation 直到
+      // inputRequired.maxRounds（实测一次拒绝 8 个弹窗、5 并发 40 个），token 始终不消费。
+      const answer = inputResponse(responses, 'confirm');
+      const answered = answer.kind === 'elicit';
 
       // opt-in 降级 — GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 时跳过 elicitation（保留现有语义）。
       // 降级路径在第一轮就消费 token + 执行，不走 MRTR。
@@ -517,7 +536,7 @@ export class ToolDispatcher {
         return __audit.result;  // 批4-T3: 剥离 _audit 后的结果
       }
 
-      if (confirmed === undefined) {
+      if (confirmed === undefined && !answered) {
         // ── 第一轮：peek token + 返回 InputRequiredResult ──
         const pending = peekToken(token);
         if (!pending) return opsErrorResult('INVALID_TOKEN', 'Invalid or expired confirmation token');
@@ -542,11 +561,14 @@ export class ToolDispatcher {
         });
       }
 
-      // ── 第二轮：用户已响应 ──
-      if (!confirmed || confirmed.confirm !== true) {
-        consumeToken(token);  // 消费掉防止重放
+      // ── 第二轮：用户已响应，但未给出有效确认（decline / cancel / accept 但 confirm 不为 true）──
+      if (confirmed === undefined || confirmed.confirm !== true) {
+        // (控制流上此处 answer.kind 恒为 'elicit';三元仅为类型收窄)
+        const elicitation: ElicitationAction = answer.kind === 'elicit' ? answer.action : 'accept';
+        const denied = consumeToken(token);  // 消费掉防止重放(未执行的操作不落审计——既有契约,见 ToolDispatcher-audit 场景③b)
+        log('[CONFIRM] elicitation %s — refusing confirmed execution: %s', elicitation, denied?.toolName ?? '(token gone)');
         return opsErrorResult('ELICITATION_DENIED',
-          `执行需用户经 elicitation out-of-band 确认。Elicitation 被 decline/cancel/不支持或返回非确认,中止(堵 AI 自确认)。可信环境可设 GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 降级。`);
+          `执行需用户经 elicitation out-of-band 确认。Elicitation 被 decline/cancel/不支持或返回非确认(本次:${elicitationOutcomeLabel(elicitation)}),中止(堵 AI 自确认);token 已作废,请勿重试。可信环境可设 GODOT_MCP_ALLOW_UNSAFE_CONFIRM=true 降级。`);
       }
 
       const pending = consumeToken(token);

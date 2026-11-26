@@ -378,10 +378,10 @@ describe('ToolDispatcher.handleCall', () => {
     return new ToolDispatcher(createOptions(overrides));
   }
 
-  // P0-2 MRTR: 构造第二轮 srvCtx（模拟用户已 accept）。
-  // acceptedContent 只在 action='accept' 时返回 content；decline/cancel 返 undefined
-  // 会被源码 :321 误判为第一轮，故拒绝场景用 accept + confirm:false（acceptedContent 返
-  // {confirm:false}，源码 :347 !confirmed || confirmed.confirm !== true → ELICITATION_DENIED）。
+  // P0-2 MRTR: 构造第二轮 srvCtx（模拟用户已响应）。
+  // accepted=false 构造 accept + confirm:false（acceptedContent 返 {confirm:false} → 源码拒绝分支）。
+  // 注: decline / cancel action 曾因 acceptedContent 返 undefined 被源码误判为第一轮,拒绝场景只能
+  // 用本形态绕开;M-1(2026-11-26)已修,真正的 decline/cancel 由下方 M-1 用例直接构造 action 覆盖。
   function mkSrvCtx(accepted: boolean = true) {
     return {
       mcpReq: {
@@ -611,9 +611,10 @@ describe('ToolDispatcher.handleCall', () => {
     expect(mockModule.handleTool).toHaveBeenCalledWith('scene', { action: 'read_scene' }, expect.anything());
   });
 
-  // P0-2 MRTR: 原 null/declined 语义（elicitFn 返 null）现已迁移到 MRTR 第二轮
-  // acceptedContent 返回 {confirm:false}（accept 但用户拒绝）→ ELICITATION_DENIED。
-  // 真正的 cancel/decline action 由 SDK 直接拦在 client 侧（不发第二轮 tools/call）。
+  // P0-2 MRTR: 原 null/declined 语义（elicitFn 返 null）现已迁移到 MRTR 第二轮。
+  // 本用例构造的是 accept + confirm:false → acceptedContent 返 {confirm:false} → ELICITATION_DENIED。
+  // 真正的 decline / cancel action 会到达第二轮（legacy shim 以 {action} 重入 handler），由下方
+  // M-1 用例覆盖；此前注释称「由 SDK 直接拦在 client 侧（不发第二轮 tools/call）」，实测不成立。
   it('refuses confirmed execution when elicitation unsupported/declined/cancel (null) (T11)', async () => {
     const elicitFn = vi.fn().mockResolvedValue(null);
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
@@ -621,7 +622,7 @@ describe('ToolDispatcher.handleCall', () => {
     mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
     mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
     const dispatcher = createDispatcherForHandleCall({ elicitFn });
-    // 第二轮：inputResponses.confirm 缺失（decline）→ acceptedContent 返 undefined → ELICITATION_DENIED
+    // 第二轮：accept 但 content.confirm=false → acceptedContent 返 {confirm:false} → ELICITATION_DENIED
     const result = await dispatcher.handleCall(
       { params: { name: 'confirm_and_execute', arguments: { token: 'valid' } } },
       mkSrvCtx(false),
@@ -629,6 +630,28 @@ describe('ToolDispatcher.handleCall', () => {
     expect(result.isError).toBe(true);
     const text = (result.content[0] as { text: string }).text;
     expect(text).toContain('ELICITATION_DENIED');
+    expect(mockModule.handleTool).not.toHaveBeenCalled();
+  });
+
+  // M-1(2026-11-26 MCP 安全与协议审查): 真正的 decline / cancel action 到达第二轮时必须终止——
+  // acceptedContent 对非 accept 一律返回 undefined,须由 inputResponse 判别;修复前被当回第一轮,
+  // 再次要求确认直到 inputRequired.maxRounds,token 不消费。handler 级最小覆盖;wire 级回归
+  // (真实 SDK + legacy shim)见 test/confirm-gate-wire.test.ts。
+  it.each(['decline', 'cancel'] as const)('terminates and consumes token when user %s reaches round 2 (T11)', async (action) => {
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
+    mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
+    const dispatcher = createDispatcherForHandleCall();
+    const srvCtxDenied = { mcpReq: { inputResponses: { confirm: { action } } } } as unknown as Parameters<ToolDispatcher['handleCall']>[1];
+    const result = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 'valid' } } },
+      srvCtxDenied,
+    );
+    expect((result as { resultType?: string }).resultType, '不得再次要求确认').not.toBe('input_required');
+    expect(result.isError).toBe(true);
+    expect((result as { content?: Array<{ text: string }> }).content?.[0]?.text).toContain('ELICITATION_DENIED');
+    expect(mockConsumeToken).toHaveBeenCalledWith('valid');
     expect(mockModule.handleTool).not.toHaveBeenCalled();
   });
 
