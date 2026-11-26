@@ -94,7 +94,7 @@ describe('dev_loop progress 推送（Task 4）', () => {
     (sendToBridge as any).mockResolvedValue({ result: {} });
     // verify 路径走 runVerification → spawnGodot（已 mock）
     const { spawnGodot } = await import('../../src/tools/spawn-helper.js');
-    (spawnGodot as any).mockResolvedValue({ timedOut: false, exitCode: 0, stdout: '' });
+    (spawnGodot as any).mockResolvedValue({ timedOut: false, exitCode: 0, stdout: '', stderr: '' });
     const { handleTool } = await import('../../src/tools/workflow.js');
     const progress = vi.fn();
     await handleTool('workflow', {
@@ -109,6 +109,25 @@ describe('dev_loop progress 推送（Task 4）', () => {
     expect(calls).toContainEqual([3, 4, 'bridge queries/screenshot']);
     expect(calls).toContainEqual([4, 4, 'acceptance assertions']);
     expect(progress).toHaveBeenCalledTimes(4);
+  });
+
+  // C-1 同族(2026-11-26):runVerification 此前只筛 stdout,运行期错误(写在 stderr)不计数
+  it('verify 步两路都筛:错误只在 stderr 时 step2_verify.error_count 计入', async () => {
+    const { executeGdscript } = await import('../../src/gdscript-executor.js');
+    (executeGdscript as unknown as Mock).mockResolvedValue({ compile_success: true, run_success: true, outputs: [] });
+    const { spawnGodot } = await import('../../src/tools/spawn-helper.js');
+    (spawnGodot as unknown as Mock).mockResolvedValue({
+      timedOut: false, exitCode: 0, stdout: 'Godot Engine v4.7.2.stable\n',
+      stderr: "SCRIPT ERROR: Invalid access to property or key 'foo' on a base object of type 'Nil'.\n",
+    });
+    const { handleTool } = await import('../../src/tools/workflow.js');
+    const result = await handleTool('workflow', {
+      action: 'dev_loop', code: 'pass', project_path: '/p', verify: true,
+    }, makeCtx() as unknown as Parameters<typeof handleTool>[2]);
+    const text = (result?.content?.[0] as { text?: string } | undefined)?.text ?? '';
+    const parsed = JSON.parse(text.split('\n_duration_ms')[0]) as { step2_verify: { error_count: number; errors: string[] } };
+    expect(parsed.step2_verify.error_count).toBe(1);
+    expect(parsed.step2_verify.errors).toEqual(["SCRIPT ERROR: Invalid access to property or key 'foo' on a base object of type 'Nil'."]);
   });
 
   it('execute compile_error early-return → 仅 [(1,total)]，不推假完成', async () => {

@@ -71,3 +71,13 @@
 - **处置倾向**：给用例显式的超时预算，或减少构造簿记超限所需的请求次数；归入 flaky 清理批。未动手
 - **核查**：请求次数与默认超时 `grep -n "i <= 257" test/dap.test.ts`、`grep -n "testTimeout" vitest.config.ts`；超时现场是当日不限 worker 的全量日志（`test-output/full-run-98384820.log`，在 ignored 目录里，可能已清；其中 `ECONNRESET` 相关行为每个错误两行）
 - **复发记录**：2026-11-25 不限 worker 的全量 1 次
+
+## FLAKY-007 · gdscript-executor 审计回填两例在不限 worker 的全量下偶发失败（未修复）
+
+- **首见**：2026-11-26（分支 `fix/validate-scripts-stderr-20261126` 的工作区，不限 worker 的全量；同一代码前后另两轮全量通过）
+- **位置**：`test/gdscript-executor-audit-runtime.test.js`，用例「backfills executionId on crash with Parse Error (path :1323)」与「backfills executionId on RID-leak exit (path :1306)」
+- **现象**：两例各跑约 5 秒后失败（5087ms / 5289ms）；失败报错文本未捕获（当轮输出只留了用例名）。单跑本文件 3 passed，用例合计 195ms。被测的是 `executeGdscript` 的审计回填，与本批改动的三个文件（`src/tools/validation.ts`、`src/tools/batch-tools.ts`、`src/tools/workflow.ts`）没有代码路径关联
+- **疑似机理**：两例耗时都贴近 5 秒整数，推断是等待审计事件落盘的轮询在高并发下越过了 5 秒期限；没有读 `runAndEmit` 与 `extractAuditEvent` 的实现核实，属推断
+- **处置倾向**：先读这两个辅助函数的等待期限与余量；若确为固定期限，按 FLAKY-003 的先例给显式的超时预算或改用条件等待。未动手
+- **核查**：单跑 `npx vitest run test/gdscript-executor-audit-runtime.test.js`；全量复现时用 `grep -E "^ FAIL |AssertionError|^\s+Error:"` 抓现场——只匹配 `timed out` 会把 web-gui 测试的预期日志（`Import warmup timed out after 120000ms`）也带进来
+- **复发记录**：2026-11-26 不限 worker 的全量 1 次

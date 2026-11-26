@@ -19,7 +19,8 @@ vi.mock('../src/gdscript-executor.js', async (importOriginal) => {
   };
 });
 
-// Mock batchValidateScripts so validate_scripts doesn't spawn Godot
+// Mock validation.js 导出的 batchValidateScripts(对 script/edit.ts 的自动验证生效)。注意:它管不到
+// validate_scripts 在 validation.ts 模块内部的直接调用——那一层由下方的 spawnGodot 替身兜住。
 vi.mock('../src/tools/validation.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
@@ -29,6 +30,16 @@ vi.mock('../src/tools/validation.js', async (importOriginal) => {
     ])),
   };
 });
+
+// C-2(2026-11-26):上方模块替身只对「其它模块 import 的 batchValidateScripts」生效(如 script/edit.ts 的
+// 自动验证);validate_scripts 在 validation.ts 模块内部直接调用真函数,此前用例 3 实际会去拉起不存在的
+// Godot 并得到 <validator:spawn> 条目——旧实现把它静默丢弃,用例才显示通过。现把替身下沉到 spawnGodot:
+// 默认形态与「Godot 不存在」一致,用例 3 单独注入「校验器正常跑完」。
+vi.mock('../src/tools/spawn-helper.js', () => ({
+  spawnGodot: vi.fn(() => Promise.resolve({
+    stdout: 'SPAWN_FAILED: spawn godot ENOENT', stderr: '', output: 'SPAWN_FAILED: spawn godot ENOENT', exitCode: -1, timedOut: false,
+  })),
+}));
 
 // Task D1 (2026-11-12): spy fs-atomic.writeFileAtomic(透传真实实现,行为零变化)——
 // 断言 parse error 回滚写走原子写(原裸 writeFileSync)
@@ -58,6 +69,7 @@ vi.mock('fs', async (importOriginal) => {
 import { executeGdscript } from '../src/gdscript-executor.js';
 import * as script from '../src/tools/script.js';
 import * as validation from '../src/tools/validation.js';
+import { spawnGodot } from '../src/tools/spawn-helper.js';
 import * as fsAtomic from '../src/core/fs-atomic.js';
 import { createToolContext, createTempProject } from './helpers/tool-context.js';
 import { MINIMAL_PROJECT } from './helpers/fixtures.js';
@@ -111,9 +123,9 @@ describe('Level B: Script editing', () => {
 
   // 用例 3: validate_scripts — 合法脚本应通过验证
   it('validate scripts', async () => {
-    vi.mocked(validation.batchValidateScripts).mockResolvedValueOnce([
-      { file: 'scripts/main.gd', errors: [], warnings: [] },
-    ]);
+    // 校验器正常跑完(等价于真实 Godot 只打印横幅与 MCP_VALIDATE_DONE)
+    const done = 'Godot Engine v4.7.2.stable\nMCP_VALIDATE_DONE\n';
+    vi.mocked(spawnGodot).mockResolvedValueOnce({ stdout: done, stderr: '', output: done, exitCode: 0, timedOut: false });
 
     const result = await validation.handleTool('validation', {
       project_path: dirRef.path,
@@ -125,6 +137,7 @@ describe('Level B: Script editing', () => {
     const parsed = JSON.parse(text);
     expect(parsed.validated > 0).toBe(true);
     expect(parsed.total_errors === 0 || parsed.total_errors === undefined).toBe(true);
+    expect(parsed.incomplete).toBeUndefined();
   });
 
   // 用例 4: edit_script — 不存在的文件应返回错误
