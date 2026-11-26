@@ -824,7 +824,9 @@ async function runVerification(godot: string, projectPath: string): Promise<Reco
     return { status: 'error', message: result.stdout.split('\n').pop()!.replace('Error: ', '') };
   }
 
-  const errors = result.stdout.split('\n').filter(l => l.includes('ERROR') || l.includes('SCRIPT ERROR'));
+  // C-1 同族(2026-11-26):两路都筛——运行期错误写在 stderr,只看 stdout 时 error_count 恒为 0。
+  const errors = [...result.stdout.split('\n'), ...result.stderr.split('\n')]
+    .filter(l => l.includes('ERROR') || l.includes('SCRIPT ERROR'));
   return {
     status: result.exitCode === 0 ? 'passed' : 'failed',
     exit_code: result.exitCode,

@@ -309,9 +309,13 @@ export async function batchValidateScripts(
     '--headless', '--path', projectPath, '--script', validatorPath,
   ], { timeoutMs: globalTimeoutMs });
 
+  // C-1(2026-11-26):Godot 的 SCRIPT ERROR / Parse Error 全部写在 stderr(A-04 起 stderr 单独返回),
+  // 只读 stdout 一条都归因不到(6177ddfc 回归,validate_scripts 因此对真实语法错误恒报 0 errors)。
+  // 两路都读(同 run_and_verify 与 gdscript-executor 的做法,写法各异:前者按行数组拼,后者按字符串拼);
+  // 补换行兜住 stdout 末尾无换行时的行粘连(Parse Error 行与其 at: 行同在 stderr,拼接不影响归因)。
   const output = spawnResult.exitCode === -1 && !spawnResult.timedOut && spawnResult.stdout.startsWith('SPAWN_FAILED:')
     ? 'SPAWN_ERROR: ' + spawnResult.stdout.replace('SPAWN_FAILED: ', '')
-    : spawnResult.stdout;
+    : spawnResult.stdout + '\n' + spawnResult.stderr;
 
   if (output.startsWith('SPAWN_ERROR:')) {
     try { rmSync(listPath, { force: true }); } catch (e) { getLogger().debug('validation', `cleanup list file: ${e instanceof Error ? e.message : e}`); }
@@ -391,7 +395,9 @@ export async function batchValidateScripts(
   const finalResults: BatchValidateResult[] = [];
   for (const [file, errors] of results.entries()) {
     const entry: BatchValidateResult = { file, errors };
-    const warning = loadNullWarnings.get(file);
+    // errors 优先:同一脚本已归因到 Parse Error 时不再挂 load-null 警告(其文案「编辑已保留」只适用于无错
+    // 脚本)。原先在上方按「当时是否已有 errors」判断,但归因在其后进行,那个守卫从未生效。
+    const warning = errors.length === 0 ? loadNullWarnings.get(file) : undefined;
     if (warning) entry.headless_limitations = [warning];
     finalResults.push(entry);
   }
@@ -914,20 +920,32 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       // Batch Godot parser validation
       const BATCH_SIZE = 20;
       const allBatchResults: BatchValidateResult[] = [];
+      // C-2(2026-11-26):<validator…> 条目 = 这一批的校验器没拉起 / 没跑完,批内脚本等于没校验。
+      // 下方组装输出只遍历脚本清单,此前这两类条目被静默丢弃,报成「found 0 errors」。
+      const validatorFailures: Array<{ file: string; errors: string[]; not_validated: string[] }> = [];
       for (let i = 0; i < scriptsToValidate.length; i += BATCH_SIZE) {
         const batch = scriptsToValidate.slice(i, i + BATCH_SIZE);
         const batchResults = await batchValidateScripts(godot, p, batch, Math.min(perScriptTimeout * Math.max(batch.length, 5), 60) * 1000);
+        for (const r of batchResults) {
+          if (r.file.startsWith('<validator')) {
+            validatorFailures.push({ file: r.file, errors: r.errors, not_validated: batch.map(relOf) });
+          }
+        }
         allBatchResults.push(...batchResults);
       }
 
-      const errorMap = new Map(allBatchResults.map(r => [r.file, r.errors]));
+      // 键归一(审查 B-1,2026-11-26):batchValidateScripts 的结果键恒正斜杠(stripProjectPrefix),
+      // 而 win32 上 relOf(relPathOf)恒反斜杠——两侧不归一时,Windows 上子目录脚本的错误在输出层查不到。
+      const normKey = (s: string) => s.replace(/\\/g, '/');
+      const notValidatedKeys = new Set(validatorFailures.flatMap(f => f.not_validated.map(normKey)));
+      const errorMap = new Map(allBatchResults.map(r => [normKey(r.file), r.errors]));
       // Task D2 (2026-11-12): headless_limitations(load-null 警告)并入 warnings 呈现——
       // 降级出 errors 后若不透传,validate_scripts 用户将完全看不到 load null 信号(静默丢失)。
       const limitMap = new Map(
         allBatchResults.filter(r => r.headless_limitations && r.headless_limitations.length > 0)
-          .map(r => [r.file, r.headless_limitations!])
+          .map(r => [normKey(r.file), r.headless_limitations!])
       );
-      const results: Array<{ file: string; has_errors: boolean; errors: string[]; warnings?: string[] }> = [];
+      const results: Array<{ file: string; has_errors: boolean; errors: string[]; warnings?: string[]; validated?: boolean }> = [];
       let totalErrors = 0;
       let totalWarnings = 0;
       let totalFiltered = 0;
@@ -936,11 +954,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
       for (const sf of scriptsToValidate) {
         const rel = relOf(sf);
-        const errs = errorMap.get(rel) || [];
+        const errs = errorMap.get(normKey(rel)) || [];
         totalErrors += errs.length;
 
         // API pitfall scan
-        const loadNullWarnings = limitMap.get(rel) ?? [];
+        const loadNullWarnings = limitMap.get(normKey(rel)) ?? [];
         let warnings: string[] = [...loadNullWarnings];
         totalWarnings += loadNullWarnings.length;
         let hasLintErrors = false;
@@ -965,7 +983,8 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           }
         } catch (err) { getLogger().debug('validation', `scan for pitfalls: ${err instanceof Error ? err.message : err}`); }
 
-        results.push({ file: rel, has_errors: errs.length > 0 || hasLintErrors, errors: errs, warnings: warnings.length > 0 ? warnings : undefined });
+        const unvalidated = notValidatedKeys.has(normKey(rel));
+        results.push({ file: rel, has_errors: errs.length > 0 || hasLintErrors, errors: errs, warnings: warnings.length > 0 ? warnings : undefined, ...(unvalidated ? { validated: false } : {}) });
       }
 
       // Shader validation
@@ -981,7 +1000,18 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         }
       }
 
-      let summaryMsg = `Validated ${scriptsToValidate.length} scripts, found ${totalErrors} errors in ${results.filter(r => r.has_errors).length} files.`;
+      // C-2(2026-11-26):校验器失败的批次 = 批内脚本没被校验。summary 置顶标注 INCOMPLETE,validated 只数
+      // 真正校验过的脚本;校验器错误单独成句并计入 total_errors(不得再报 0 errors)。
+      const validatorErrorCount = validatorFailures.reduce((n, f) => n + f.errors.length, 0);
+      const notValidatedCount = notValidatedKeys.size;
+      const incompletePrefix = validatorFailures.length > 0
+        ? `VALIDATION INCOMPLETE: the validator failed for ${validatorFailures.length} batch(es), so ${notValidatedCount} script(s) were NOT validated (see validator_failures). `
+        : '';
+      let summaryMsg = incompletePrefix + `Validated ${scriptsToValidate.length - notValidatedCount} scripts, found ${totalErrors} errors in ${results.filter(r => r.has_errors).length} files.`;
+      if (validatorFailures.length > 0) {
+        summaryMsg += ` Plus ${validatorErrorCount} validator failure(s).`;
+        totalErrors += validatorErrorCount;
+      }
       if (totalWarnings > 0) {
         summaryMsg += ` ${totalWarnings} API warning(s) detected.`;
       }
@@ -993,7 +1023,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       }
 
       const scriptsSummary: Record<string, unknown> = {
-        validated: scriptsToValidate.length,
+        validated: scriptsToValidate.length - notValidatedCount,
         total_scanned: totalFound,
         total_errors: totalErrors,
         scripts_with_errors: results.filter(r => r.has_errors).length,
@@ -1003,6 +1033,11 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
 
       if (totalFiltered > 0) {
         scriptsSummary.filtered_count = totalFiltered;
+      }
+
+      if (validatorFailures.length > 0) {
+        scriptsSummary.validator_failures = validatorFailures;
+        scriptsSummary.incomplete = true;
       }
 
       if (shaderResults.length > 0) {

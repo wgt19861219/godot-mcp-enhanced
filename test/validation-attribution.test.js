@@ -93,6 +93,62 @@ describe('batchValidateScripts 归因 (Godot 4.6.2 单行 at: 格式)', () => {
   });
 });
 
+// C-1(2026-11-26) 真实流布局:A-04(6177ddfc)起 spawnGodot 把 stderr 单独返回,而 Godot 的 Parse Error
+// 全部写在 stderr(4.7.2 / 4.6.3 实测一致)。上方 godotOutput 是拆分之前的布局,保留以兼容 stdout 形态。
+function godotOutputStderr(errors) {
+  const stdout = ['Godot Engine v4.7.2.stable.official - https://godotengine.org', '', 'MCP_VALIDATE_DONE'].join('\n');
+  const errLines = [];
+  for (const e of errors) {
+    errLines.push(`SCRIPT ERROR: Parse Error: ${e.msg}`);
+    errLines.push(`   at: GDScript::reload (res://${e.rel}:${e.line})`);
+    errLines.push('   GDScript backtrace (most recent call first):');
+    errLines.push('       [0] _initialize (C:/tmp/godot-mcp-exec/validate-abcd1234.gd:19)');
+    errLines.push(`ERROR: Failed to load script "res://${e.rel}" with error "Parse error".`);
+    errLines.push('   at: load (modules/gdscript/gdscript_resource_format.cpp:46)');
+    errLines.push('   GDScript backtrace (most recent call first):');
+    errLines.push('       [0] _initialize (C:/tmp/godot-mcp-exec/validate-abcd1234.gd:19)');
+  }
+  const stderr = errLines.join('\n');
+  return { stdout, stderr, output: stdout + stderr, exitCode: 0, timedOut: false };
+}
+
+describe('batchValidateScripts 归因 (C-1:错误行在 stderr 的真实流布局)', () => {
+  beforeEach(() => { vi.mocked(spawnGodot).mockReset(); });
+
+  it('Parse Error 与 at: 行只在 stderr 时归因到文件(修复前返回 [])', async () => {
+    vi.mocked(spawnGodot).mockResolvedValue(godotOutputStderr([
+      { rel: 'scripts/bad_paren.gd', line: 3, msg: 'Expected expression as the function argument.' },
+    ]));
+    const results = await batchValidateScripts('godot', PROJECT, [f('scripts/bad_paren.gd')], 5000);
+    const entry = results.find(r => r.file.includes('bad_paren'));
+    expect(entry?.errors).toEqual(['SCRIPT ERROR: Parse Error: Expected expression as the function argument.']);
+  });
+
+  it('带回溯行与第二处 at: 时每个错误只归因一次,且校验器完成不产生 <validator> 条目', async () => {
+    vi.mocked(spawnGodot).mockResolvedValue(godotOutputStderr([
+      { rel: 'scripts/bad_indent.gd', line: 5, msg: 'Expected indented block after "else" block.' },
+      { rel: 'scripts/bad_undeclared.gd', line: 6, msg: 'Identifier "j" not declared in the current scope.' },
+    ]));
+    const results = await batchValidateScripts('godot', PROJECT, [f('scripts/bad_indent.gd'), f('scripts/bad_undeclared.gd')], 5000);
+    const indent = results.find(r => r.file.includes('bad_indent'));
+    const undeclared = results.find(r => r.file.includes('bad_undeclared'));
+    expect(indent?.errors).toEqual(['SCRIPT ERROR: Parse Error: Expected indented block after "else" block.']);
+    expect(undeclared?.errors).toEqual(['SCRIPT ERROR: Parse Error: Identifier "j" not declared in the current scope.']);
+    expect(results.filter(r => r.file.startsWith('<validator')).map(r => r.file)).toEqual([]);
+  });
+
+  it('同一脚本既有 Parse Error 又打印 MCP_LOAD_NULL 时 errors 优先,不再挂「编辑已保留」的 load-null 警告', async () => {
+    const run = godotOutputStderr([{ rel: 'scripts/bad_paren.gd', line: 3, msg: 'Expected expression as the function argument.' }]);
+    run.stdout = run.stdout.replace('MCP_VALIDATE_DONE', 'MCP_LOAD_NULL: res://scripts/bad_paren.gd\nMCP_VALIDATE_DONE');
+    vi.mocked(spawnGodot).mockResolvedValue(run);
+    const results = await batchValidateScripts('godot', PROJECT, [f('scripts/bad_paren.gd')], 5000);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].errors).toEqual(['SCRIPT ERROR: Parse Error: Expected expression as the function argument.']);
+    expect(results[0].headless_limitations).toBeUndefined();
+  });
+});
+
 describe('isErrorFalsePositive 收窄 (signature 不再误杀真实错误)', () => {
   // 回归锁: Edit A 之前,含 _process + signature 的真实错误被规则2误过滤 → 漏报
   it('_process 签名不匹配的真实错误不再被过滤', () => {

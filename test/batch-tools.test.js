@@ -345,4 +345,33 @@ describe('runSingleVerify settled guard', () => {
     const scene = parsed.results[0];
     expect(scene.status).toBe('timed_out');
   });
+
+  // C-1 同族(2026-11-26):场景脚本的运行期错误写在 stderr,退出码仍为 0——
+  // 此前只分析 stdout,误判 passed(真实 server 实测:修复前 passed: 1, error_count: 0)。
+  it('运行期错误写在 stderr、退出码 0 时判 failed', async () => {
+    const dataHandlers = {};
+    const procHandlers = {};
+    mockProc.stdout.on.mockImplementation((event, cb) => { if (event === 'data') dataHandlers.stdout = cb; });
+    mockProc.stderr.on.mockImplementation((event, cb) => { if (event === 'data') dataHandlers.stderr = cb; });
+    mockProc.on.mockImplementation((event, cb) => { procHandlers[event] = cb; });
+
+    const mod = await import('../src/tools/batch-tools.js');
+    const resultPromise = mod.handleTool('batch', {
+      project_path: tmpDir,
+      action: 'run_verify',
+      scenes: ['test.tscn'],
+      timeout: 30,
+    }, { findGodot: async () => '/fake/godot' });
+
+    await new Promise(r => setTimeout(r, 20));
+    dataHandlers.stdout(Buffer.from('Godot Engine v4.7.2.stable\n'));
+    dataHandlers.stderr(Buffer.from("SCRIPT ERROR: Invalid access to property or key 'foo' on a base object of type 'Nil'.\n   at: main.gd:5\n"));
+    procHandlers.close(0);
+
+    const result = await resultPromise;
+    const scene = JSON.parse(result.content[0].text).results[0];
+    expect(scene.status).toBe('failed');
+    expect(scene.error_count).toBe(1);
+    expect(scene.errors[0]).toBe("Invalid access to property or key 'foo' on a base object of type 'Nil'.");
+  });
 });

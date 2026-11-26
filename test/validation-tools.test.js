@@ -242,6 +242,51 @@ describe('batchValidateScripts: autoload 误报过滤 + MCP_LOAD_NULL 降级 (Ta
     }
   });
 
+  // C-1(2026-11-26):真实流布局——Godot 的错误行在 stderr,校验器自己的 print(MCP_VALIDATE_DONE 等)在 stdout。
+  function godotSpawnResultSplit(lines) {
+    const isErr = (l) => /^(SCRIPT ERROR:|ERROR:|USER ERROR:)|^\s+at:/.test(l);
+    const stdout = ['Godot Engine v4.7.2.stable.official - https://godotengine.org', ''];
+    const stderr = [];
+    for (const l of lines) (isErr(l) ? stderr : stdout).push(l);
+    return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode: 0, timedOut: false };
+  }
+
+  it('真实流布局(错误行在 stderr):autoload Identifier 误报仍被过滤', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const { spawnGodot } = await import('../src/tools/spawn-helper.js');
+      vi.mocked(spawnGodot).mockResolvedValueOnce(godotSpawnResultSplit([
+        'SCRIPT ERROR: Parse Error: Identifier "GameData" not declared in the current scope.',
+        '   at: GDScript::reload (res://scripts/main.gd:7)',
+        'MCP_VALIDATE_DONE',
+      ]));
+      const results = await batchValidateScripts('/usr/bin/godot', dir, [join(dir, 'scripts', 'main.gd')], 5000);
+      // 须是「读到并过滤」,而不是「根本没读到」:<filtered> 条目 + filtered_count
+      expect(results.map(r => r.file)).toEqual(['<filtered>']);
+      expect(results[0].filtered_count).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('真实流布局(错误行在 stderr):未知 Identifier 仍计入 errors(修复前恒为空)', async () => {
+    const dir = makeSymbolFixture();
+    try {
+      const { spawnGodot } = await import('../src/tools/spawn-helper.js');
+      vi.mocked(spawnGodot).mockResolvedValueOnce(godotSpawnResultSplit([
+        'SCRIPT ERROR: Parse Error: Identifier "typo_var" not declared in the current scope.',
+        '   at: GDScript::reload (res://scripts/main.gd:7)',
+        'MCP_VALIDATE_DONE',
+      ]));
+      const results = await batchValidateScripts('/usr/bin/godot', dir, [join(dir, 'scripts', 'main.gd')], 5000);
+      expect(results.flatMap(r => r.errors)).toEqual([
+        'SCRIPT ERROR: Parse Error: Identifier "typo_var" not declared in the current scope.',
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('MCP_LOAD_NULL 归入 headless_limitations 警告而非 errors(不触发 D1 回滚)', async () => {
     const dir = makeSymbolFixture();
     try {

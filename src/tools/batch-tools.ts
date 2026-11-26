@@ -4,7 +4,7 @@ import type { ToolContext, ToolResult } from '../types.js';
 import { textResult } from '../types.js';
 import { opsErrorResult, validateTimeout } from './shared.js';
 import { requireProjectPath } from '../core/args-validation.js';
-import { resolveWithinRoot, normalizeUserProjectPath, relPathOf } from '../core/path-utils.js';
+import { resolveWithinRoot, normalizeUserProjectPath } from '../core/path-utils.js';
 import { ensureDir } from '../core/fs-atomic.js';
 import { analyzeOutput } from '../error-analyzer.js';
 import { batchValidateScripts } from './validation.js';
@@ -115,6 +115,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
       const skipped: string[] = [];
       const failed: Array<{ path: string; error: string }> = [];
       const gdFiles: string[] = [];
+      const gdRels: string[] = [];
 
       for (const f of files) {
         if (!f.path || typeof f.path !== 'string') {
@@ -151,6 +152,7 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
           created.push(relPath);
           if (relPath.endsWith('.gd')) {
             gdFiles.push(absPath);
+            gdRels.push(relPath);
           }
         } catch (e: unknown) {
           failed.push({ path: relPath, error: (e as Error).message });
@@ -168,15 +170,24 @@ export async function handleTool(name: string, args: Record<string, unknown>, ct
         const godot = await ctx.findGodot();
         const batchResults = await batchValidateScripts(godot, projectPath, gdFiles, 15000);
         const validationErrors: Record<string, string[]> = {};
+        // 形状与 validate_scripts 的同名字段保持一致(含 not_validated、顶层 incomplete)
+        const validatorFailures: Array<{ file: string; errors: string[]; not_validated: string[] }> = [];
         for (const r of batchResults) {
-          if (r.errors.length > 0) {
-            // R3-tools: relPathOf 公共实现(归一分隔符/盘符,防正斜杠形态失配)
-            const rel = relPathOf(r.file, projectPath);
-            validationErrors[rel] = r.errors;
+          if (r.file.startsWith('<validator')) {
+            // 校验器没拉起 / 没跑完:文件已落盘但没被校验,显式暴露(不计入 validation_errors)
+            validatorFailures.push({ file: r.file, errors: r.errors, not_validated: gdRels });
+          } else if (r.errors.length > 0) {
+            // r.file 已是项目相对路径(正斜杠),直接作键。此前对它调 relPathOf 会因「不在项目根下」抛异常,
+            // 整个 create_files 响应退化成错误且校验结果丢失(审查 B-2,2026-11-26)。
+            validationErrors[r.file] = r.errors;
           }
         }
         if (Object.keys(validationErrors).length > 0) {
           result.validation_errors = validationErrors;
+        }
+        if (validatorFailures.length > 0) {
+          result.validator_failures = validatorFailures;
+          result.incomplete = true;
         }
       }
 
@@ -342,7 +353,9 @@ async function runSingleVerify(
     return { scene, status: 'error', errors: [result.stdout.replace('SPAWN_FAILED: ', '')] };
   }
 
-  const analysis = analyzeOutput(result.stdout.split('\n'));
+  // C-1 同族(2026-11-26):与 validation.run_and_verify 一致,两路都分析——场景脚本的运行期错误
+  // (SCRIPT ERROR / ERROR)写在 stderr,只分析 stdout 时退出码 0 就误判 passed。
+  const analysis = analyzeOutput([...result.stdout.split('\n'), ...result.stderr.split('\n')]);
   const entry: Record<string, unknown> = {
     scene,
     status: (result.exitCode === 0 && !analysis.hasErrors) ? 'passed' : 'failed',
