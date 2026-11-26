@@ -284,7 +284,7 @@ describe('ToolDispatcher audit middleware 集成', () => {
     // 外层 confirm_and_execute 的 ctx.action='' 不会额外产生一条(middleware 路径 risk=undefined 跳过)
   });
 
-  it('场景②c: MRTR 第二轮确认(inputResponses confirm=true)→ 同样经补审计落盘', async () => {
+  it('场景②c: MRTR 第二轮确认(inputResponses confirm="yes")→ 同样经补审计落盘', async () => {
     stubWriteScriptRisk();
     // 第一轮 peekToken(返 pending + inputRequired),第二轮 consumeToken(执行)
     const pendingArgs = { action: 'write_script', project_path: tmpProject, script_path: 'res://mrtr.gd' };
@@ -299,7 +299,7 @@ describe('ToolDispatcher audit middleware 集成', () => {
     // 第二轮:用户确认 → consumeToken + _confirmExecute + :410 补审计调用点
     const res = await dispatcher.handleCall(
       { params: { name: 'confirm_and_execute', arguments: { token: 'tok-m' } } },
-      { mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: true } } } } } as never,
+      { mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'yes' } } } } } as never,
     );
 
     expect(res.isError).not.toBe(true);
@@ -346,9 +346,9 @@ describe('ToolDispatcher audit middleware 集成', () => {
       {
         params: { name: 'confirm_and_execute', arguments: { token: 'tok-2' } },
       },
-      // accept 但 confirm=false → acceptedContent 返 {confirm:false} → ELICITATION_DENIED
+      // accept 但 confirm="no" → acceptedContent 返 {confirm:"no"} → ELICITATION_DENIED
       // (对齐 ToolDispatcher.test.ts:582 的 srvCtx 形状)
-      { mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: false } } } } } as never,
+      { mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'no' } } } } } as never,
     );
 
     expect(String(res.content?.[0]?.text)).toContain('ELICITATION_DENIED');

@@ -505,7 +505,7 @@ export class ToolDispatcher {
       // accept-无内容一律返回 undefined，故 confirmed === undefined 不能单独当作「第一轮」。
       const responses = srvCtx?.mcpReq?.inputResponses;
       const confirmed = responses
-        ? acceptedContent<{ confirm: boolean }>(responses, 'confirm')
+        ? acceptedContent<{ confirm?: unknown }>(responses, 'confirm')
         : undefined;
       // M-1(2026-11-26 MCP 安全与协议审查)：区分「尚无响应」与「已响应但未确认」。
       // inputResponse 是 SDK 为 decline/cancel 检测提供的判别视图——kind==='elicit' 即该键已有
@@ -553,16 +553,22 @@ export class ToolDispatcher {
         return inputRequired({
           inputRequests: {
             confirm: inputRequired.elicit({
-              message: `确认执行 "${pending.toolName}" (action: ${String(pending.args.action ?? 'n/a')})?\n参数摘要: ${argsPreview}\n此操作经 confirm_and_execute,需用户 out-of-band 确认(防 AI 自确认)。拒绝请点 cancel/decline。`,
-              requestedSchema: { type: 'object' as const, properties: { confirm: { type: 'boolean' } }, required: ['confirm'] },
+              message: `确认执行 "${pending.toolName}" (action: ${String(pending.args.action ?? 'n/a')})?\n参数摘要: ${argsPreview}\n此操作经 confirm_and_execute,需用户 out-of-band 确认(防 AI 自确认)。同意请在输入框键入 yes(小写)后点 Accept;拒绝请点 Decline / Cancel。`,
+              // 确认值是字符串而不是布尔:Claude Code 2.1.332 的表单里布尔字段设不上值(使用指南 12.12),
+              // 布尔必填会让确认永远无法提交。服务端显式比对 'yes'(见下方第二轮),不依赖客户端 schema 校验——
+              // accept 但不带有效内容(含自动应答、旧版布尔值、大小写不符)一律拒绝。
+              requestedSchema: { type: 'object' as const, properties: { confirm: { type: 'string' } }, required: ['confirm'] },
             }),
           },
           requestState: token,
         });
       }
 
-      // ── 第二轮：用户已响应，但未给出有效确认（decline / cancel / accept 但 confirm 不为 true）──
-      if (confirmed === undefined || confirmed.confirm !== true) {
+      // ── 第二轮：用户已响应，但未给出有效确认（decline / cancel / accept 但 confirm 不是 'yes'）──
+      // 有效确认 = accept 且 confirm 为字符串、去掉首尾空白后恰为 'yes'。忽略首尾空白是因为输入法上屏、
+      // 复制粘贴常带空格而用户看不见;大小写仍然严格(文案写明小写),非字符串(含旧布尔值)一律拒绝。
+      const confirmedYes = typeof confirmed?.confirm === 'string' && confirmed.confirm.trim() === 'yes';
+      if (!confirmedYes) {
         // (控制流上此处 answer.kind 恒为 'elicit';三元仅为类型收窄)
         const elicitation: ElicitationAction = answer.kind === 'elicit' ? answer.action : 'accept';
         const denied = consumeToken(token);  // 消费掉防止重放(未执行的操作不落审计——既有契约,见 ToolDispatcher-audit 场景③b)

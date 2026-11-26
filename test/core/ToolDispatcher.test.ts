@@ -379,7 +379,7 @@ describe('ToolDispatcher.handleCall', () => {
   }
 
   // P0-2 MRTR: 构造第二轮 srvCtx（模拟用户已响应）。
-  // accepted=false 构造 accept + confirm:false（acceptedContent 返 {confirm:false} → 源码拒绝分支）。
+  // accepted=false 构造 accept + confirm:"no"（acceptedContent 返 {confirm:"no"} → 源码拒绝分支）。
   // 注: decline / cancel action 曾因 acceptedContent 返 undefined 被源码误判为第一轮,拒绝场景只能
   // 用本形态绕开;M-1(2026-11-26)已修,真正的 decline/cancel 由下方 M-1 用例直接构造 action 覆盖。
   function mkSrvCtx(accepted: boolean = true) {
@@ -387,8 +387,8 @@ describe('ToolDispatcher.handleCall', () => {
       mcpReq: {
         inputResponses: {
           confirm: accepted
-            ? { action: 'accept' as const, content: { confirm: true } }
-            : { action: 'accept' as const, content: { confirm: false } },
+            ? { action: 'accept' as const, content: { confirm: 'yes' } }
+            : { action: 'accept' as const, content: { confirm: 'no' } },
         },
       },
     } as any;
@@ -612,17 +612,17 @@ describe('ToolDispatcher.handleCall', () => {
   });
 
   // P0-2 MRTR: 原 null/declined 语义（elicitFn 返 null）现已迁移到 MRTR 第二轮。
-  // 本用例构造的是 accept + confirm:false → acceptedContent 返 {confirm:false} → ELICITATION_DENIED。
+  // 本用例构造的是 accept + confirm:"no" → acceptedContent 返 {confirm:"no"} → ELICITATION_DENIED。
   // 真正的 decline / cancel action 会到达第二轮（legacy shim 以 {action} 重入 handler），由下方
   // M-1 用例覆盖；此前注释称「由 SDK 直接拦在 client 侧（不发第二轮 tools/call）」，实测不成立。
-  it('refuses confirmed execution when elicitation unsupported/declined/cancel (null) (T11)', async () => {
+  it('refuses confirmed execution when user answers confirm:"no" (T11)', async () => {
     const elicitFn = vi.fn().mockResolvedValue(null);
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
     mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
     mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
     const dispatcher = createDispatcherForHandleCall({ elicitFn });
-    // 第二轮：accept 但 content.confirm=false → acceptedContent 返 {confirm:false} → ELICITATION_DENIED
+    // 第二轮：accept 但 content.confirm="no" → acceptedContent 返 {confirm:"no"} → ELICITATION_DENIED
     const result = await dispatcher.handleCall(
       { params: { name: 'confirm_and_execute', arguments: { token: 'valid' } } },
       mkSrvCtx(false),
@@ -655,17 +655,60 @@ describe('ToolDispatcher.handleCall', () => {
     expect(mockModule.handleTool).not.toHaveBeenCalled();
   });
 
-  it('refuses confirmed execution when user declines (confirm:false) (T11)', async () => {
+  // 确认值是字符串 'yes'(Claude Code 2.1.332 的表单里布尔字段设不上值,见 wire 层同主题用例):
+  // 大小写不符、旧版布尔值、空串都不是有效确认——accept 了也拒绝并消费 token。
+  it.each([
+    ['大小写不符的 "Yes"', 'Yes'],
+    ['旧版布尔值 true', true],
+    ['空串', ''],
+  ] as Array<[string, unknown]>)('accept 但 confirm 为%s:拒绝并消费 token (T11)', async (_label, value) => {
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
+    mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
+    const dispatcher = createDispatcherForHandleCall();
+    const srvCtxBad = {
+      mcpReq: { inputResponses: { confirm: { action: 'accept', content: { confirm: value } } } },
+    } as unknown as Parameters<ToolDispatcher['handleCall']>[1];
+    const result = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 'valid' } } },
+      srvCtxBad,
+    );
+    expect(result.isError).toBe(true);
+    expect((result as { content?: Array<{ text: string }> }).content?.[0]?.text).toContain('ELICITATION_DENIED');
+    expect(mockConsumeToken).toHaveBeenCalledWith('valid');
+    expect(mockModule.handleTool).not.toHaveBeenCalled();
+  });
+
+  it('accept 且 confirm 为 " yes "(首尾空白):视为有效确认并执行 (T11)', async () => {
+    const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
+    mockGetModuleForTool.mockReturnValue(mockModule);
+    mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'read_scene' }, wasTruncated: false });
+    mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'read_scene' }, wasTruncated: false });
+    const dispatcher = createDispatcherForHandleCall();
+    const srvCtxPadded = {
+      mcpReq: { inputResponses: { confirm: { action: 'accept', content: { confirm: ' yes ' } } } },
+    } as unknown as Parameters<ToolDispatcher['handleCall']>[1];
+    const result = await dispatcher.handleCall(
+      { params: { name: 'confirm_and_execute', arguments: { token: 'valid' } } },
+      srvCtxPadded,
+    );
+    expect(mockConsumeToken).toHaveBeenCalledWith('valid');
+    expect(mockModule.handleTool).toHaveBeenCalledTimes(1);
+    expect(result.isError).not.toBe(true);
+  });
+
+  it('refuses confirmed execution when user declines (confirm:"no") (T11)', async () => {
     const elicitFn = vi.fn().mockResolvedValue({ confirm: false });
     const mockModule = { handleTool: vi.fn().mockResolvedValue(mockToolResult) };
     mockGetModuleForTool.mockReturnValue(mockModule);
     mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
     mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
     const dispatcher = createDispatcherForHandleCall({ elicitFn });
-    // 第二轮：accept 但 content.confirm=false → acceptedContent 返 {confirm:false} → !confirmed.confirm 拒绝
+    // 第二轮：accept 但 content.confirm="no" → acceptedContent 返 {confirm:"no"} → 不是 'yes',拒绝
     const srvCtxDecline = {
       mcpReq: {
-        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: false } } },
+        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'no' } } },
       },
     } as any;
     const result = await dispatcher.handleCall(
@@ -686,7 +729,7 @@ describe('ToolDispatcher.handleCall', () => {
     mockPeekToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' }, wasTruncated: false });
     mockConsumeToken.mockReturnValue({ toolName: 'scene', args: { action: 'remove_node' } });
     const dispatcher = createDispatcherForHandleCall({ elicitFn });
-    // 第二轮：accept 但 content.confirm="true"（string）→ confirm !== true → ELICITATION_DENIED
+    // 第二轮：accept 但 content.confirm="true"（string）→ 不等于 'yes' → ELICITATION_DENIED
     const srvCtxTruthy = {
       mcpReq: {
         inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'true' as any } } },
@@ -1815,7 +1858,7 @@ describe('ToolDispatcher: findGodot override propagation (CR-1/CR-2)', () => {
     // 第二轮（用户已确认）→ consumeToken → _confirmExecute 用 pending.args 重算 override
     const srvCtx = {
       mcpReq: {
-        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: true } } },
+        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'yes' } } },
       },
     } as any;
     await dispatcher.handleCall(
@@ -2012,7 +2055,7 @@ describe('executeToolCall schema validation (Task 3)', () => {
     // 第二轮（用户已确认）→ consumeToken → _confirmExecute → headless dispatch
     const srvCtx = {
       mcpReq: {
-        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: true } } },
+        inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'yes' } } },
       },
     } as any;
     await dispatcher.handleCall(
@@ -2569,7 +2612,7 @@ describe('ToolDispatcher circuit breaker integration (B-1/F1/F2)', () => {
   // 类型从 handleCall 签名用 Parameters 派生,避免新增 any warning(lint 533 上限零余量)
   const mkDispatcher = () => new ToolDispatcher(createOptions());
   const mkSrvCtxConfirmed = () => ({
-    mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: true } } } },
+    mcpReq: { inputResponses: { confirm: { action: 'accept' as const, content: { confirm: 'yes' } } } },
   }) as Parameters<ToolDispatcher['handleCall']>[1];
 
   beforeEach(() => {

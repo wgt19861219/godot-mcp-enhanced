@@ -28,7 +28,12 @@ const DECLINE: ElicitPolicy = () => ({ action: 'decline' });
 const CANCEL: ElicitPolicy = () => ({ action: 'cancel' });
 /** 客户端 accept 却没带 content:按协议属异常应答,服务端不得据此放行。 */
 const ACCEPT_NO_CONTENT: ElicitPolicy = () => ({ action: 'accept' });
-const ACCEPT_CONFIRM: ElicitPolicy = () => ({ action: 'accept', content: { confirm: true } });
+/** 用户按提示在输入框键入 yes:唯一被接受的确认值(字符串——Claude Code 2.1.332 的表单里布尔字段设不上值)。 */
+const ACCEPT_CONFIRM: ElicitPolicy = () => ({ action: 'accept', content: { confirm: 'yes' } });
+/** 以下都不是有效确认:大小写不符 / 旧版布尔值 / 明确说 no。 */
+const ACCEPT_YES_UPPER: ElicitPolicy = () => ({ action: 'accept', content: { confirm: 'Yes' } });
+const ACCEPT_LEGACY_BOOL: ElicitPolicy = () => ({ action: 'accept', content: { confirm: true } });
+const ACCEPT_NO: ElicitPolicy = () => ({ action: 'accept', content: { confirm: 'no' } });
 
 interface JsonRpcResponse { result?: unknown; error?: { code: number; message: string } }
 interface ElicitRequestSeen { message: string; requestedSchema: unknown }
@@ -151,6 +156,9 @@ describe.each(LEGACY_PROTOCOL_VERSIONS)('confirm_and_execute 确认门 wire 层(
     ['decline', DECLINE],
     ['cancel', CANCEL],
     ['accept 但未带 content', ACCEPT_NO_CONTENT],
+    ['accept 但 confirm 为 "Yes"(大小写不符)', ACCEPT_YES_UPPER],
+    ['accept 但 confirm 为旧版布尔值 true', ACCEPT_LEGACY_BOOL],
+    ['accept 但 confirm 为 "no"', ACCEPT_NO],
   ] as Array<[string, ElicitPolicy]>)('用户 %s:只弹一次窗、返回 ELICITATION_DENIED、目标脚本不落盘', async (_label, policy) => {
     const wire = await start(policy);
     const token = await requestToken(wire, projectPath, 'probe.gd');
@@ -158,13 +166,18 @@ describe.each(LEGACY_PROTOCOL_VERSIONS)('confirm_and_execute 确认门 wire 层(
 
     const res = await confirm(wire, token);
 
+    // 确认值是字符串字段:布尔必填在 Claude Code 2.1.332 的表单里设不上值,确认永远无法提交
+    const schema = wire.elicits[0].requestedSchema as { properties?: { confirm?: { type?: string } }; required?: string[] };
+    expect(schema.properties?.confirm?.type).toBe('string');
+    expect(schema.required).toEqual(['confirm']);
+
     expect(wire.elicits.length, '用户拒绝后不得再次发起确认').toBe(1);
     expect((res.result as CallToolResult)?.isError).toBe(true);
     expect(resultText(res)).toContain('ELICITATION_DENIED');
     expect(existsSync(join(projectPath, 'probe.gd')), '被拒绝的操作不得落盘').toBe(false);
   });
 
-  it('用户 accept + confirm:true(对照组):弹一次窗后执行、脚本落盘', async () => {
+  it('用户 accept + confirm:"yes"(对照组):弹一次窗后执行、脚本落盘', async () => {
     const wire = await start(ACCEPT_CONFIRM);
     const token = await requestToken(wire, projectPath, 'probe.gd');
     wire.elicits.length = 0;
@@ -172,6 +185,7 @@ describe.each(LEGACY_PROTOCOL_VERSIONS)('confirm_and_execute 确认门 wire 层(
     const res = await confirm(wire, token);
 
     expect(wire.elicits.length).toBe(1);
+    expect(wire.elicits[0].message).toContain('键入 yes');
     expect((res.result as CallToolResult)?.isError).not.toBe(true);
     expect(existsSync(join(projectPath, 'probe.gd'))).toBe(true);
   });
