@@ -1,7 +1,7 @@
 // 批 B2 (2026-10-26): scene.commit restore point 作用域回滚测试。
 // restore-points 根目录经 GODOT_MCP_RESTORE_POINTS_DIR 指到项目内 tmp(磁盘卫生)。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, utimesSync, readdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -150,6 +150,42 @@ describe('LRU 清理', () => {
     expect(list).toHaveLength(10);
     expect(list.map(p => p.id)).not.toContain(ids[0]!); // 最旧被清
     expect(list.map(p => p.id)).toContain(ids[11]!);    // 最新保留
+  });
+});
+
+// 让 Math.random() 的 base36 小数前 6 位恰为 s——newRunId 的随机段由此可控。取该 6 位格子的正中
+// ((N+0.5)/36^6):toString(36) 输出的是最短可还原表示,贴边的值会变成 "0.000000zzz…",截 6 位后撞车。
+const r36 = (s: string) => (parseInt(s, 36) + 0.5) / 36 ** 6;
+
+describe('同一毫秒内连续建点(2026-11-27 CI:列表顺序随机颠倒)', () => {
+  const FIXED_TS = 1_794_000_000_000;
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(FIXED_TS);
+    let n = 0;
+    // 随机段按创建序递增('000000','000001',…):目录枚举序(NTFS 按名)与创建序相同,
+    // 排序键并列时「退回目录枚举序」就等于旧的排在前面
+    vi.spyOn(Math, 'random').mockImplementation(() => r36((n++).toString(36).padStart(6, '0')));
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('列表仍新→旧:建点时间戳在进程内严格递增,不靠目录枚举序', () => {
+    const rp1 = createRestorePoint(proj, ['scenes/a.tscn'])!;
+    const rp2 = createRestorePoint(proj, ['scenes/a.tscn'])!;
+    expect(rp2.ts).toBeGreaterThan(rp1.ts);
+    expect(listRestorePoints(proj).map(p => p.id)).toEqual([rp2.id, rp1.id]);
+  });
+
+  it('清理删的是最旧的:前 10 个目录 mtime 抹平后建第 11 个,按 mtime 排会误删最新的那个', () => {
+    const first10 = Array.from({ length: 10 }, () => createRestorePoint(proj, ['scenes/a.tscn'])!);
+    const flat = new Date(FIXED_TS);
+    for (const p of first10) utimesSync(join(ROOT, projHash(proj), p.id), flat, flat);
+    const p11 = createRestorePoint(proj, ['scenes/a.tscn'])!;
+    // 清理面:被删的只能是最旧的 first10[0]
+    const remaining = readdirSync(join(ROOT, projHash(proj))).sort();
+    expect(remaining).toEqual([...first10.slice(1).map(p => p.id), p11.id].sort());
+    // 列表面:新→旧
+    const listed = listRestorePoints(proj).map(p => p.id);
+    expect(listed).toEqual([p11.id, ...first10.slice(1).reverse().map(p => p.id)]);
   });
 });
 

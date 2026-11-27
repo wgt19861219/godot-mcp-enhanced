@@ -272,7 +272,9 @@ describe('② server_start 惰性首发', () => {
     expect(ss['declaredMB']).toEqual({ headless: 2048, gut_shard: 8192, game_window: 3072, editor: 4096 });
     expect(ss['killFactor']).toEqual({ headless: 2, gut_shard: 2, game_window: 3, editor: 3 });
     expect(ss['pollSeconds']).toBe(15);
-    expect(ss['tzOffsetMin']).toBe(-new Date().getTimezoneOffset());
+    // JSON 往返后 -0 会变成 +0(进程时区为 UTC 时 tzOffsetMin 为零):toBe 用 Object.is,区分零的符号,
+    // 在 UTC 机器上必红(2026-11-27 CI)。零的符号没有语义,按值比较。
+    expect(ss['tzOffsetMin'] === -new Date().getTimezoneOffset()).toBe(true);
     // 只发一次:第三次调用后 server_start 仍只有一行
     memSample('lease_acquired', { kind: 'game_window' });
     await waitForLineCount(4);

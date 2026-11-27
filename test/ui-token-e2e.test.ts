@@ -125,11 +125,12 @@ Other/colors/x = Color(1, 1, 1, 1)
       action: 'ui_pixel_verify', project_path: dir, scene_path: 'res://main.tscn',
       geometry: GEO, theme_path: 'res://themes/tokens.tres',
     }, ctx) as ToolResult;
-    expect(r.isError).toBeFalsy();
     const body = bodyOf(r);
-    if (body.success !== true) {
+    if (r.isError || body.success !== true) {
       // capture 通道不可用(如无显示环境/dummy renderer):错误须来自 capture 层而非解析层
       // ——解析层正常性由前序 TOKEN_NOT_FOUND/THEME_NOT_FOUND 用例锚定,此处记录实况。
+      // capture 失败走 errorResult(isError=true):降级判断必须先于 isError 断言——否则没有显示器的
+      // CI(如 check 任务不起 xvfb)在走到这里之前就红(2026-11-27 CI)。
       console.log('[token-e2e] pixel_verify capture 不可用(降级断言 capture 层错误):', body.error);
       expect(String(body.error)).toMatch(/像素截图|空白|capture|screenshot/i);
       return;
