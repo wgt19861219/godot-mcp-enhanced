@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { handleTool } from '../src/tools/runtime.js';
@@ -18,6 +19,7 @@ import type { ToolContext } from '../src/types.js';
 const GODOT_PATH = process.env.GODOT_PATH || '';
 const hasGodot = GODOT_PATH !== '' && existsSync(GODOT_PATH);
 const FIXTURE = resolve('test/fixtures/gut-shard-e2e');
+const CLASS_CACHE = join(FIXTURE, '.godot', 'global_script_class_cache.cfg');
 
 function makeCtx(): ToolContext {
   return { findGodot: async () => GODOT_PATH } as unknown as ToolContext;
@@ -27,7 +29,29 @@ function shardTextOf(result: { content: { text: string }[] }): string {
   return JSON.parse(result.content[0].text);
 }
 
+// 夹具的导入缓存(.godot/)被 gitignore:主检出里早就有,全新克隆 / CI 没有。GUT 9.7.1 的
+// gut_cmdln.gd 启动时检查全部 Gut* class_name 是否已导入,缺缓存直接拒跑("Some GUT class_names
+// have not been imported... run godot --headless --import"),一条测试都不执行(total_tests=0)。
+// 2026-11-27 在全新克隆里复现 3 failed;按报错先导入一次后转绿。
+function ensureFixtureImported(): void {
+  if (existsSync(CLASS_CACHE)) return;
+  const imported = spawnSync(GODOT_PATH, ['--headless', '--import', '--path', FIXTURE], {
+    encoding: 'utf-8',
+    timeout: 120_000,
+    windowsHide: true,
+  });
+  if (imported.error || imported.status !== 0 || !existsSync(CLASS_CACHE)) {
+    throw new Error(
+      `[D6-SETUP] gut-shard-e2e 夹具预导入失败(exit=${imported.status}): ${imported.error?.message ?? imported.stderr ?? imported.stdout}`,
+    );
+  }
+}
+
 describe.skipIf(!hasGodot)('D6 e2e: run_tests 分片 + GODOT_TEST_MODE 透传(GUT 9.7.1 + ' + (hasGodot ? 'real Godot' : 'GODOT_PATH unset') + ')', () => {
+  beforeAll(() => {
+    if (hasGodot) ensureFixtureImported();
+  }, 180_000);
+
   it('shards=2: 各片只跑片内文件,delta 永不执行(替换语义),total_tests=6 全过', async () => {
     const result = await handleTool('runtime', {
       action: 'run_tests',

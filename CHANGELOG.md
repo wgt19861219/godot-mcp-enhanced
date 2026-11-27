@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - (已收口) 驱逐豁免 env `GODOT_MCP_WATCHDOG_EXEMPT` **三期已实现**(原二期 spec §L2 设计层 deferred 项)——Task 1 候选过滤(commit 0eec3f20)+ Task 2 可见性四件(见 [0.40.0]),移出遗留清单。
 - (已收口) 杀事件入 JSONL 审计通道 **四期已实现**(原二期 Task 3 终审 deferred M-3 / T3-M-3)——三类杀事件(budget_kill/evict/evict_exhausted)写 `~/.godot-mcp/machine-audit.jsonl` 并与采样通道双落(commit b7b466e4,见 [0.41.0]),移出遗留清单。
 - (已收口) 反馈批 Task 4(挂起)——bridge 实例归属 **0.41.1 已实现**(原 11-22 条挂账的「可见性/隔离面」):spawn 注入 owner → 心跳与 ping 透出 `ownerPid` → `resolveBridgePort` 偏好本 server 条目 → ping 归属注解 + `run_project` 响应被杀尾注(Task 4,commits 759dc487+1dc6fdc8,见 [0.41.1]),移出遗留清单;「跨 server 互杀」根因经代码求证排除,A 窗口消失的原因未定位。
+- **test(e2e): gut-shard 夹具在全新克隆里缺导入缓存时先导入一次**:`test/e2e-gut-shard.test.ts`(2026-11-12 反馈批 D6)依赖夹具 `test/fixtures/gut-shard-e2e` 的导入缓存(`.godot/` 被 gitignore)——主检出里早就有,全新克隆 / CI 没有;GUT 9.7.1 的 `gut_cmdln.gd` 启动时检查全部 `Gut*` class_name 是否已导入,缺缓存直接拒跑(`Some GUT class_names have not been imported… run godot --headless --import`),一条测试都不执行。2026-11-27 推送前在全新克隆里模拟 CI 时暴露:三条用例全红(`expected +0 to be 6` 等),该套 11-12 加入后还没在 CI 上跑过。修法:`beforeAll` 里检测 `.godot/global_script_class_cache.cfg` 缺失就先跑 `godot --headless --import --path <夹具>`,导入失败或缓存仍未生成则抛 `[D6-SETUP]` 明确报错(与 `data-import-integration` 的自预热同款)。红绿:提交 `18150660` 在全新克隆里不带修复 3 failed,带修复 3 passed 且缓存由测试自己生成。只改测试,不改产品代码。产品侧留一个可改进点:`run_tests` 遇到这类 GUT 拒跑时回的是 `total_tests: 0`、`exit_code: 0`,拒跑信息只在 `raw_output` 里。
 
 ## [0.41.2] - 2026-11-27
 
