@@ -299,10 +299,10 @@ export ALLOWED_PROJECT_PATHS="D:/GitHub/godot-mcp-enhanced"
 ### 改动 GDScript 后
 
 6. 编辑 `.gd` 文件后，验证语法有两个层次，按改动范围选用：
-   - **`validate_scripts`**（MCP 工具）：**逐文件 parse**（非完整编译）。快但**有盲区**——不严格检查块缩进一致性（else/match 块体缺缩进、for 循环体跑出循环等结构性 bug 它漏报）。适合单文件小改动的快速反馈。
-   - **`npm run check:gdscript`**：**项目级完整编译**（fixture 项目 `test/fixtures/gdscript-check` 启用 plugin 跑 `godot --headless --import`）。更严格——能抓 validate_scripts 漏的块缩进/结构 bug（实测：animation_commands/ui_commands 的 else 块体缺缩进被它抓到，validate_scripts 漏报）。**改 `addons/**/*.gd` 后必须跑这个**（不只是 validate_scripts）。需 `GODOT_PATH` 环境变量。
+   - **`validate_scripts`**（MCP 工具）：headless 进程里对每个脚本做 Godot `load()` 编译（单次最多 50 个脚本），能报真实 Parse Error（含块缩进，实测 else 块体缺缩进）。它**不等于项目级完整编译**：autoload / 全局 class_name 在 headless 校验器里不可解析，引用它们的报错按项目符号集过滤——全新或从未导入的项目没有类缓存，引用 `class_name` 的脚本会如实报错，先 `godot --headless --import` 或打开编辑器一次再校验；校验器没跑完时返回 `incomplete: true` 与 `validator_failures`，不要当成通过。适合单文件小改动的快速反馈。
+   - **`npm run check:gdscript`**：**项目级完整编译**（fixture 项目 `test/fixtures/gdscript-check` 启用 plugin 跑 `godot --headless --import`）——整项目一起编译并建好全局类缓存，没有上面那些 headless 盲区。**改 `addons/**/*.gd` 后必须跑这个**（不只是 validate_scripts）。需 `GODOT_PATH` 环境变量。
 
-   > ⚠️ 教训（2026-08-01 P2-12 缩进排查）：`validate_scripts` 的"触发 Godot 完整编译"描述是**误导**——它逐文件解析，不等于项目级完整编译。commit `195eabc` 的 animation_commands else 缩进 bug 经 validate_scripts 0 error 漏网，直到 editor 实测才暴露。`check:gdscript` 才是真"完整编译"。详见 memory `Godot MCP verification blind spot`。
+   > ⚠️ 教训订正（2026-08-01 P2-12 缩进排查；2026-11-26 查明根因）：commit `195eabc` 的 animation_commands else 缩进 bug 经 validate_scripts 0 error 漏网，直到 editor 实测才暴露，当时归因为「逐文件解析、不等于项目级完整编译」。真实原因是回归 `6177ddfc`（2026-06-05 拆分 stderr 后，批量校验只读 stdout，而 Godot 的 `SCRIPT ERROR: Parse Error` 全写在 stderr）——validate_scripts 对真实语法错误恒报 0 errors。0.41.2 修复后该写法报 `Expected indented block after "else" block`。「改 addon 后必跑 `check:gdscript`」不变。原记录见 memory `Godot MCP verification blind spot`。
 
 ### 改动 `.claude/rules/` 后（⚠️ 高频踩坑）
 
@@ -437,7 +437,7 @@ CI 双脚本把关: `check-rules-version-bump.mjs` 在模板变更时强制要�
 
 本项目自身就是一个 MCP server,开发时频繁用 MCP 工具验证 Godot 侧行为:
 
-- 编辑 `.gd` 文件后，验证语法：`validate_scripts`（逐文件 parse，快但有盲区）+ **`npm run check:gdscript`**（项目级完整编译，改 `addons/**/*.gd` 后必须跑，抓 validate_scripts 漏的缩进/结构 bug；详见「完成前强制检查」§6）。
+- 编辑 `.gd` 文件后，验证语法：`validate_scripts`（逐脚本 `load()` 编译，能报 Parse Error；全新项目先导入一次，`incomplete: true` 不算通过）+ **`npm run check:gdscript`**（项目级完整编译，改 `addons/**/*.gd` 后必须跑；详见「完成前强制检查」§6）。
 - 使用 `edit_script` 时优先选择 `search_and_replace` 模式(CRLF 安全、行号偏移鲁棒)。
 - 发版前必须运行 `verify_delivery`,确保场景树完整性 + 脚本健康 + 性能正常 + 自定义断言通过。
 - **AI 开发闭环**:`read_scene` / `read_script` → 理解结构 → `write_script` / `edit_script` → `run_and_verify`(错误分析)→ `validate_scripts` + `check:gdscript` → `verify_delivery`(交付门禁)。`dev_loop` 工具可执行→验证→截图一体化,支持 acceptance 验收标准。
