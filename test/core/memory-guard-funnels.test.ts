@@ -435,7 +435,17 @@ describe('⑤ screenshot 漏斗(headless)', () => {
 
   it('过态:bindLeasePid + close 后 releaseLease', async () => {
     const proc = fakeProc(4701);
-    spawnMock.mockImplementation(() => proc);
+    let spawns = 0;
+    spawnMock.mockImplementation(() => {
+      spawns += 1;
+      if (spawns === 1) return proc;
+      // 没有产出文件时 captureScreenshot 会重试(帧延迟翻倍;Linux 默认无头,之后还会再试一次窗口模式)。
+      // 重试若仍拿到那个已经 close 的 proc,就只能等满 timeout——Windows 一次重试约 5s 压线通过,
+      // Linux 两次超过用例的 10s 上限(2026-11-27 CI)。后续每次 spawn 都给一个立刻正常退出的新进程。
+      const retryProc = fakeProc(4701);
+      process.nextTick(() => retryProc.emit('close', 0));
+      return retryProc;
+    });
     const p = captureScreenshot({
       godotPath: GODOT_BIN, projectPath: TMP_PROJECT,
       outputPath: join(TMP_ROOT, 'out2.png'), timeout: 5,
